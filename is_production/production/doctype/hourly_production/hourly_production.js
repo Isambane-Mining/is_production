@@ -1291,11 +1291,14 @@ frappe.ui.form.on('Hourly Production', {
 // PRE-SAVE HOOK — ensure hour_slot is locked before saving
 // ====================================================
 before_save(frm) {
-    // ✅ Only apply on Saturday or Sunday
-    if (is_weekend(frm)) {
-        // Force recalculation of hour slot before the save
+    // Always finalize hour_slot BEFORE saving.
+    // The server performs the same calculation authoritatively.
+    if (frm.is_new() && frm.doc.shift_num_hour) {
         update_hour_slot(frm);
-        console.log('Pre-save hour slot ensured:', frm.doc.hour_slot);
+        console.log(
+            'Pre-save hour slot ensured:',
+            frm.doc.hour_slot
+        );
     }
 },
 
@@ -1304,21 +1307,14 @@ after_save(frm) {
     console.log('After save triggered');
 
     // ====================================================
-    // POST-SAVE HOOK — reapply and lock the correct hour_slot
+    // NAMING PROTECTION
     // ====================================================
-    if (is_weekend(frm)) {
-        const oldSlot = frm.doc.hour_slot;
-        update_hour_slot(frm);
-        const newSlot = frm.doc.hour_slot;
-
-        // If slot changed during save, correct and persist it again
-        if (oldSlot !== newSlot) {
-            frappe.model.set_value(frm.doctype, frm.doc.name, 'hour_slot', newSlot);
-            frm.set_value('hour_slot', newSlot);
-            frm.refresh_field('hour_slot');
-            console.log('Hour slot locked to:', newSlot);
-        }
-    }
+    // Do NOT recalculate or persist hour_slot after save.
+    //
+    // hour_slot forms part of the Hourly Production name:
+    //     location-prod_date-hour_slot
+    //
+    // It is finalized before save and validated server-side.
 
     // Prevent multiple rapid saves
     if (frm.is_saving) {

@@ -11,6 +11,231 @@ from frappe.utils import getdate, add_to_date, nowdate, formatdate
 class HourlyProduction(Document):
 
     # -------------------------------------------------------------------------
+    # Hour Slot / Naming Integrity
+    # -------------------------------------------------------------------------
+    def before_insert(self):
+        """
+        Calculate the authoritative hour slot BEFORE Frappe generates
+        the document name.
+
+        Hourly Production naming is:
+            location-prod_date-hour_slot
+        """
+        self._set_hour_slot_from_shift_num_hour()
+
+    def _set_hour_slot_from_shift_num_hour(self):
+        """
+        Derive hour_sort_key and hour_slot from shift_num_hour.
+
+        IMPORTANT:
+        - Uses the configured shift start time where available.
+        - Uses zero-padded HH:00-HH:00 format.
+        - Prevents naming fields from silently changing on an
+          already-existing Hourly Production document.
+        """
+        if not self.shift_num_hour:
+            return
+
+        try:
+            shift_label, idx_str = self.shift_num_hour.rsplit("-", 1)
+            idx = int(idx_str)
+        except (ValueError, AttributeError):
+            frappe.throw(
+                _(
+                    "Invalid Shift Number of Hour: {0}"
+                ).format(self.shift_num_hour)
+            )
+
+        shift_label = (shift_label or self.shift or "").strip()
+
+        def get_start_hour(value, fallback):
+            if not value:
+                return fallback
+
+            try:
+                return int(str(value).split(":", 1)[0])
+            except (ValueError, TypeError, IndexError):
+                return fallback
+
+        if shift_label == "Day":
+            base = get_start_hour(
+                getattr(self, "day_shift_start", None),
+                6,
+            )
+
+        elif shift_label == "Morning":
+            base = get_start_hour(
+                getattr(self, "morning_shift_start", None),
+                6,
+            )
+
+        elif shift_label == "Afternoon":
+            base = get_start_hour(
+                getattr(self, "afternoon_shift_start", None),
+                14,
+            )
+
+        elif shift_label == "Night":
+            base = get_start_hour(
+                getattr(self, "night_shift_start", None),
+                18,
+            )
+
+        else:
+            frappe.throw(
+                _("Unsupported shift: {0}").format(shift_label)
+            )
+
+        start = (base + (idx - 1)) % 24
+        end = (start + 1) % 24
+
+        expected_slot = (
+            f"{start:02d}:00-{end:02d}:00"
+        )
+
+        self.hour_sort_key = idx
+
+        # -----------------------------------------------------
+        # Existing-document protection
+        # -----------------------------------------------------
+        # Never silently change location/date/hour so that the
+        # stored name and naming fields disagree.
+        # -----------------------------------------------------
+        if (
+            self.name
+            and frappe.db.exists("Hourly Production", self.name)
+            and self.location
+            and self.prod_date
+        ):
+            expected_name = (
+                f"{self.location}-"
+                f"{self.prod_date}-"
+                f"{expected_slot}"
+            )
+
+            if self.name != expected_name:
+                frappe.throw(
+                    _(
+                        "Hourly Production naming fields cannot be "
+                        "changed after the document has been created.<br><br>"
+                        "Current document:<br><b>{0}</b><br><br>"
+                        "Selected values would require:<br><b>{1}</b><br><br>"
+                        "Please correct the document through the approved "
+                        "rename/repair process instead of changing its "
+                        "Site, Production Date, Shift or Hour."
+                    ).format(self.name, expected_name),
+                    title=_("Hourly Production Name Protection"),
+                )
+
+        self.hour_slot = expected_slot
+
+        if self.meta.has_field("locked_hour_slot"):
+            self.locked_hour_slot = expected_slot
+
+    def _protect_existing_naming_fields(self):
+        """
+        Prevent existing Hourly Production records from silently
+        changing the fields that define their document identity.
+
+        Historical records that already contain an old name/hour
+        mismatch remain editable for normal production data.
+        """
+        if self.is_new():
+            return
+
+        stored = frappe.db.get_value(
+            "Hourly Production",
+            self.name,
+            [
+                "location",
+                "prod_date",
+                "shift",
+                "shift_num_hour",
+                "hour_slot",
+                "hour_sort_key",
+            ],
+            as_dict=True,
+        )
+
+        if not stored:
+            return
+
+        def clean(value):
+            return str(value or "").strip()
+
+        def clean_date(value):
+            if not value:
+                return ""
+            try:
+                return str(getdate(value))
+            except Exception:
+                return clean(value)
+
+        changes = []
+
+        checks = [
+            (
+                "Site",
+                clean(stored.location),
+                clean(self.location),
+            ),
+            (
+                "Production Date",
+                clean_date(stored.prod_date),
+                clean_date(self.prod_date),
+            ),
+            (
+                "Shift",
+                clean(stored.shift),
+                clean(self.shift),
+            ),
+            (
+                "Shift Number of Hour",
+                clean(stored.shift_num_hour),
+                clean(self.shift_num_hour),
+            ),
+        ]
+
+        for label, old_value, new_value in checks:
+            if old_value != new_value:
+                changes.append(
+                    f"{label}: "
+                    f"{old_value or '-'} "
+                    f"→ {new_value or '-'}"
+                )
+
+        if changes:
+            frappe.throw(
+                _(
+                    "The naming fields of an existing Hourly Production "
+                    "record cannot be changed."
+                    "<br><br>"
+                    "Document:<br><b>{0}</b>"
+                    "<br><br>{1}"
+                    "<br><br>"
+                    "Create the correct hourly record or use the "
+                    "approved rename/repair process."
+                ).format(
+                    self.name,
+                    "<br>".join(changes),
+                ),
+                title=_(
+                    "Hourly Production Name Protection"
+                ),
+            )
+
+        # Existing records retain the stored naming hour.
+        # This also keeps old legacy mismatches editable.
+        self.hour_slot = stored.hour_slot
+
+        if stored.hour_sort_key is not None:
+            self.hour_sort_key = stored.hour_sort_key
+
+        if self.meta.has_field("locked_hour_slot"):
+            self.locked_hour_slot = stored.hour_slot
+
+
+    # -------------------------------------------------------------------------
     # Asset Link Normalization (v16 migration)
     # -------------------------------------------------------------------------
     def normalize_asset_links(self):
@@ -524,25 +749,11 @@ class HourlyProduction(Document):
 
         self.calculate_day_total_bcm()
 
-        # --- Recompute hour_sort_key & hour_slot ---
-        if self.shift_num_hour:
-            try:
-                shift_label, idx_str = self.shift_num_hour.split("-", 1)
-                idx = int(idx_str)
-
-                self.hour_sort_key = idx
-                base = (
-                    6 if self.shift in ("Day", "Morning") else
-                    14 if self.shift == "Afternoon" else
-                    18 if self.shift == "Night" and self.shift_system == "2x12Hour" else
-                    22
-                )
-                start = (base + (idx - 1)) % 24
-                end = (start + 1) % 24
-                self.hour_slot = f"{start}:00-{end}:00"
-            except (ValueError, IndexError):
-                self.hour_sort_key = None
-                self.hour_slot = None
+        # --- Authoritative Hour Slot / Naming Protection ---
+        if self.is_new():
+            self._set_hour_slot_from_shift_num_hour()
+        else:
+            self._protect_existing_naming_fields()
 
     # -------------------------------------------------------------------------
 
@@ -1664,18 +1875,14 @@ def update_hourly_references():
         if ref:
             values['monthly_production_child_ref'] = ref
         try:
-            _, idx_str = r.shift_num_hour.split("-")
-            idx = int(idx_str)
-            base = (
-                6 if r.shift in ("Day","Morning") else
-                14 if r.shift == "Afternoon" else
-                18 if r.shift == "Night" and r.shift_system == "2x12Hour" else
-                22
-            )
-            start = (base + (idx - 1)) % 24
-            end = (start + 1) % 24
-            values['hour_sort_key'] = idx
-            values['hour_slot'] = f"{start}:00-{end}:00"
+            # hour_sort_key is safe to synchronize.
+            #
+            # DO NOT change hour_slot here. hour_slot is part of the
+            # Hourly Production document name. Changing it with
+            # frappe.db.set_value() would leave the name pointing to
+            # a different hour.
+            _, idx_str = r.shift_num_hour.rsplit("-", 1)
+            values['hour_sort_key'] = int(idx_str)
         except Exception:
             pass
 

@@ -21,6 +21,66 @@ const CATEGORY_ORDER = [
 ];
 
 // Sort helper (display by Asset.asset_name when available)
+const PRE_USE_EXCLUDED_MACHINES = new Set([
+  "426-492",
+  "426-492GWAB",
+  "IS127",
+  "IS127GWAB",
+  "IS0126KLP",
+  "IS077KLP"
+]);
+
+function is_pre_use_excluded(frm, asset) {
+  const assetName = String(
+    (asset && asset.name) || ""
+  ).trim().toUpperCase().replace(/\s+/g, "");
+
+  const plantNo = String(
+    (asset && asset.asset_name) || ""
+  ).trim().toUpperCase().replace(/\s+/g, "");
+
+  return (
+    PRE_USE_EXCLUDED_MACHINES.has(assetName) ||
+    PRE_USE_EXCLUDED_MACHINES.has(plantNo)
+  );
+}
+
+function remove_pre_use_excluded_rows(frm) {
+  if (!frm || !frm.doc) return false;
+
+  const rows = frm.doc.pre_use_assets || [];
+
+  if (!rows.length) return false;
+
+  const originalCount = rows.length;
+
+  frm.doc.pre_use_assets = rows.filter((row) => {
+    const asset = {
+      name: row.asset_name || "",
+      asset_name: row.plant_no || row.asset_name || ""
+    };
+
+    return !is_pre_use_excluded(frm, asset);
+  });
+
+  const removed =
+    originalCount - frm.doc.pre_use_assets.length;
+
+  if (removed > 0) {
+    frm.refresh_field("pre_use_assets");
+
+    console.log(
+      `[PreUseHours] Removed ${removed} excluded machine row(s).`
+    );
+
+    return true;
+  }
+
+  return false;
+}
+
+
+
 function sort_assets(list) {
   return (list || []).slice().sort((a, b) => {
     return (a.asset_name || a.name).localeCompare(b.asset_name || b.name);
@@ -101,7 +161,7 @@ function fetch_assets(frm) {
       limit_page_length: 1000
     },
     callback: function (response) {
-      const assets = sort_assets(response.message || []);
+      const assets = sort_assets((response.message || []).filter((asset) => !is_pre_use_excluded(frm, asset)));
 
       frm.clear_table("pre_use_assets");
       assets.forEach((asset) => {
@@ -166,6 +226,7 @@ function render_integrity_summary(frm) {
 
 frappe.ui.form.on("Pre-Use Hours", {
   refresh: function (frm) {
+    remove_pre_use_excluded_rows(frm);
     frm.add_custom_button(
       __("🔄 Refresh Machines"),
       () => frm.trigger("refresh_machines_from_assets"),
@@ -176,6 +237,7 @@ frappe.ui.form.on("Pre-Use Hours", {
   },
 
   onload_post_render: function (frm) {
+    remove_pre_use_excluded_rows(frm);
     render_integrity_summary(frm);
   },
 
@@ -216,7 +278,7 @@ frappe.ui.form.on("Pre-Use Hours", {
         limit_page_length: 1000
       },
       callback: function (r) {
-        const assets = sort_assets(r.message || []);
+        const assets = sort_assets((r.message || []).filter((asset) => !is_pre_use_excluded(frm, asset)));
         const { byName } = build_asset_maps(assets);
 
         // 0) Normalize existing rows (handles any legacy rows that stored codes)
