@@ -84,8 +84,25 @@ def execute(filters=None):
                     if hrs:
                         completed_days += 1
 
-        worked_days = completed_days
-        remaining_days = (mpp.num_prod_days or 0) - worked_days
+        # --------------------------------------------------------
+        # HOURS-BASED PRODUCTION DAYS
+        #
+        # Monthly Production Planning already converts the production
+        # calendar to hour-equivalent days:
+        #       18 planned hours = 1.00 production day
+        #
+        # Example:
+        #       456 total planned hours / 18 = 25.33 days
+        #       360 worked hours       / 18 = 20.00 days
+        #        96 remaining hours    / 18 =  5.33 days
+        # --------------------------------------------------------
+        monthly_available_days = float(mpp.num_prod_days or 0)
+        remaining_days = float(mpp.month_remaining_production_days or 0)
+        worked_days = max(monthly_available_days - remaining_days, 0)
+
+        total_planned_hours = monthly_available_days * 18.0
+        worked_hours = worked_days * 18.0
+        remaining_hours = remaining_days * 18.0
 
         data["num_prod_days_completed"] = worked_days
         data["month_remaining_prod_days"] = remaining_days
@@ -93,8 +110,19 @@ def execute(filters=None):
         # Changed: MTD Prog Actual BCM’s now comes directly from Monthly Production Planning
         mtd_actual_bcms = flt(mpp.month_actual_bcm)
 
-        mtd_prog_actual_coal = get_mtd_coal_dynamic(site, getdate(end_date), month_start)
-        mtd_prog_actual_waste = mtd_actual_bcms - (mtd_prog_actual_coal / 1.5)
+        progress_factor = (
+            worked_hours / total_planned_hours
+            if total_planned_hours
+            else 0
+        )
+
+        mtd_prog_actual_waste = (
+            waste_bcms_planned * progress_factor
+        )
+
+        mtd_prog_actual_coal = (
+            coal_tons_planned * progress_factor
+        )
 
         data["mtd_actual_bcms"] = mtd_actual_bcms
         data["mtd_prog_actual_coal"] = mtd_prog_actual_coal
@@ -130,6 +158,16 @@ def execute(filters=None):
 
         data["remaining_volume"] = data["monthly_target"] - data["mtd_actual_bcms"]
         data["daily_required"] = data["remaining_volume"] / max((data["month_remaining_prod_days"], 1))
+        data["forecast"] = (
+            mtd_actual_bcms
+            + (
+                (mtd_actual_bcms / worked_hours)
+                * remaining_hours
+            )
+            if worked_hours
+            else mtd_actual_bcms
+        )
+
         data["days_left"] = remaining_days
 
         data["forecast"] = flt(mpp.month_forecated_bcm) if mpp else 0
@@ -366,9 +404,9 @@ def build_html(site, formatted_date, d):
             <tr><td class="label">Actual Daily Achieved</td><td class="unit">BCM</td><td class="num">{fmt(d["actual_daily"])}</td></tr>
             <tr><td colspan="3" style="height:12px; border:none;"></td></tr>
 
-            <tr><td class="label">Monthly Available Days</td><td class="unit"></td><td class="num">{fmt(d["num_prod_days"])}</td></tr>
-            <tr><td class="label">Worked Days</td><td class="unit"></td><td class="num">{fmt(d["num_prod_days_completed"])}</td></tr>
-            <tr><td class="label">Days Left</td><td class="unit"></td><td class="num">{fmt(d["days_left"])}</td></tr>
+            <tr><td class="label">Monthly Available Days</td><td class="unit"></td><td class="num">{float(d["num_prod_days"] or 0):,.2f}</td></tr>
+            <tr><td class="label">Worked Days</td><td class="unit"></td><td class="num">{float(d["num_prod_days_completed"] or 0):,.2f}</td></tr>
+            <tr><td class="label">Days Left</td><td class="unit"></td><td class="num">{float(d["days_left"] or 0):,.2f}</td></tr>
             <tr><td colspan="3" style="height:12px; border:none;"></td></tr>
 
             <tr><td class="label bold">Forecast on Current Rate</td><td class="unit">BCM</td><td class="num">{fmt(d["forecast"])}</td></tr>

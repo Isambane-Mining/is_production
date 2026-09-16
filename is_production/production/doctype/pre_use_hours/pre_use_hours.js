@@ -22,7 +22,6 @@ const CATEGORY_ORDER = [
 
 // Sort helper (display by Asset.asset_name when available)
 const PRE_USE_EXCLUDED_MACHINES = new Set([
-  "426-492",
   "426-492GWAB",
   "IS127",
   "IS127GWAB",
