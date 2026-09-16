@@ -139,6 +139,9 @@ def get_assets(location):
 # GENERAL_LOST_HOURS_TABLE_V1_START
 
 GENERAL_LOST_HOUR_REASONS = {
+    "Tramming Of machine":
+        "Production time lost while tramming or relocating a machine.",
+
     "Training Non Work Hours":
         "Training, induction or scheduled learning activities that stop normal production.",
 
@@ -353,6 +356,122 @@ def _general_lost_hour_duration(row):
     )
 
 
+# GLH_MASTER_DRIVEN_CATEGORIES_START
+
+def _general_lost_hour_normalize_category(value):
+    """
+    Normalize category text before comparing it.
+
+    Handles:
+    - leading / trailing spaces
+    - repeated spaces
+    - non-breaking spaces
+    - zero-width characters
+    - Unicode formatting differences
+    """
+
+    import unicodedata
+
+    text = unicodedata.normalize(
+        "NFKC",
+        str(
+            value
+            or ""
+        ),
+    )
+
+    text = (
+        text
+        .replace("\u200b", "")
+        .replace("\u200c", "")
+        .replace("\u200d", "")
+        .replace("\ufeff", "")
+    )
+
+    return " ".join(
+        text.split()
+    )
+
+
+def _general_lost_hour_allowed_categories():
+    """
+    Return:
+
+        normalized/casefold category
+            ->
+        canonical category
+
+    Daily General Lost Hour Reason is the primary source.
+
+    GENERAL_LOST_HOUR_REASONS remains as legacy/fallback
+    support for older categories.
+    """
+
+    categories = {}
+
+
+    # --------------------------------------------------------
+    # Legacy / fallback categories
+    # --------------------------------------------------------
+
+    for category in GENERAL_LOST_HOUR_REASONS:
+
+        canonical = (
+            _general_lost_hour_normalize_category(
+                category
+            )
+        )
+
+        if not canonical:
+            continue
+
+        categories[
+            canonical.casefold()
+        ] = canonical
+
+
+    # --------------------------------------------------------
+    # Reason Master categories are authoritative.
+    # --------------------------------------------------------
+
+    if frappe.db.exists(
+        "DocType",
+        "Daily General Lost Hour Reason",
+    ):
+
+        master_categories = frappe.get_all(
+            "Daily General Lost Hour Reason",
+            filters={
+                "enabled":
+                    1
+            },
+            pluck="lost_hour_category",
+            limit_page_length=0,
+        )
+
+
+        for category in master_categories:
+
+            canonical = (
+                _general_lost_hour_normalize_category(
+                    category
+                )
+            )
+
+            if not canonical:
+                continue
+
+            categories[
+                canonical.casefold()
+            ] = canonical
+
+
+    return categories
+
+
+# GLH_MASTER_DRIVEN_CATEGORIES_END
+
+
 def sync_general_lost_hours_table(doc):
     rows = (
         doc.get(
@@ -361,10 +480,14 @@ def sync_general_lost_hours_table(doc):
         or []
     )
 
+    allowed_categories = (
+        _general_lost_hour_allowed_categories()
+    )
+
     category_totals = {
         category: 0.0
         for category
-        in GENERAL_LOST_HOUR_REASONS
+        in allowed_categories.values()
     }
 
     grand_total = 0.0
@@ -374,20 +497,40 @@ def sync_general_lost_hours_table(doc):
     for row in rows:
 
         category = (
-            row.lost_hour_category
-            or ""
+            _general_lost_hour_normalize_category(
+                row.lost_hour_category
+            )
         )
 
-        if (
-            category
-            and category
-            not in GENERAL_LOST_HOUR_REASONS
-        ):
-            frappe.throw(
-                "Invalid Lost Hour Category: "
-                + category
+
+        if category:
+
+            canonical_category = (
+                allowed_categories.get(
+                    category.casefold()
+                )
             )
 
+
+            if not canonical_category:
+
+                frappe.throw(
+                    "Invalid Lost Hour Category: "
+                    + category
+                )
+
+
+            category = canonical_category
+
+
+            if (
+                row.lost_hour_category
+                != canonical_category
+            ):
+
+                row.lost_hour_category = (
+                    canonical_category
+                )
 
         if (
             not row.location
@@ -571,7 +714,13 @@ def sync_general_lost_hours_table(doc):
         if category:
             category_totals[
                 category
-            ] += hours
+            ] = (
+                category_totals.get(
+                    category,
+                    0.0
+                )
+                + hours
+            )
 
 
         grand_total += hours
@@ -671,7 +820,7 @@ def sync_general_lost_hours_table(doc):
         asset_category_totals = {
             category: 0.0
             for category
-            in GENERAL_LOST_HOUR_REASONS
+            in allowed_categories.values()
         }
 
         asset_general_total = 0.0
@@ -701,7 +850,13 @@ def sync_general_lost_hours_table(doc):
             if category:
                 asset_category_totals[
                     category
-                ] += hours
+                ] = (
+                    asset_category_totals.get(
+                        category,
+                        0.0
+                    )
+                    + hours
+                )
 
 
         for (
