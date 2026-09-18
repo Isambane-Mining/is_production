@@ -17725,3 +17725,652 @@ def execute(filters=None):
 
 
 # END KOSI_PRODUCTIVITY_SURVEY_ACTUAL_V15
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_COAL_METRIC_TONNES_V19
+#
+# OPTION 1:
+#
+# Coal DETAIL rows use Survey Metric Tonnes.
+#
+# Everything else remains on the existing BCM basis:
+#
+# - Softs / Hards = BCM
+# - Category totals = BCM
+# - Machine totals = BCM
+# - Total Fleet = BCM
+# - Summary cards = BCM based
+# - BCM/HD = BCM based
+# - Tallies = unchanged
+#
+# Coal Productivity detail rows become Tonnes / Hour.
+#
+# Survey documents remain cumulative MTD snapshots, therefore
+# the same Survey-selection rules as V15 are used.
+# ============================================================
+
+import re as _productivity_re_v19
+from collections import defaultdict as _productivity_defaultdict_v19
+
+
+_productivity_execute_before_coal_tonnes_v19 = execute
+
+
+def _productivity_survey_coal_tonnes_v19(
+    survey_name,
+):
+    result = {
+        "Excavator": 0.0,
+        "ADT": 0.0,
+        "Dozer": 0.0,
+    }
+
+    if not survey_name:
+        return result
+
+    doc = frappe.get_doc(
+        "Survey",
+        survey_name,
+    )
+
+    truck_tonnes = 0.0
+    dozer_tonnes = 0.0
+
+    for row in (
+        doc.get(
+            "surveyed_values"
+        )
+        or []
+    ):
+        material = (
+            _productivity_material_v15(
+                row.get(
+                    "mat_type"
+                ),
+                row.get(
+                    "mat_type_ref"
+                ),
+            )
+        )
+
+        if material != "Coal":
+            continue
+
+        handling = (
+            _productivity_re_v19.sub(
+                r"[^a-z]",
+                "",
+                str(
+                    row.get(
+                        "handling_method"
+                    )
+                    or ""
+                ).lower(),
+            )
+        )
+
+        tonnes = (
+            _productivity_float_v15(
+                row.get(
+                    "metric_tonnes"
+                )
+            )
+        )
+
+        if (
+            handling
+            == "truckandshovel"
+        ):
+            truck_tonnes += tonnes
+
+        elif handling == "dozing":
+            dozer_tonnes += tonnes
+
+    result[
+        "Excavator"
+    ] = truck_tonnes
+
+    result[
+        "ADT"
+    ] = truck_tonnes
+
+    result[
+        "Dozer"
+    ] = dozer_tonnes
+
+    return result
+
+
+def _productivity_set_coal_tonnes_v19(
+    row,
+    tonnes,
+):
+    tonnes = (
+        _productivity_float_v15(
+            tonnes
+        )
+    )
+
+    # Keep the Survey-aligned BCM value as internal metadata.
+    # Category / machine / fleet totals have already been
+    # calculated by V15-V18 before V19 changes the display row.
+    row[
+        "productivity_coal_bcm_v19"
+    ] = (
+        _productivity_float_v15(
+            row.get(
+                "output"
+            )
+        )
+    )
+
+    # IMPORTANT:
+    # productivity_bcm_hd has already been calculated using BCM.
+    # Do not recalculate it from tonnes.
+    row[
+        "output"
+    ] = tonnes
+
+    if (
+        "adjusted_bcm"
+        in row
+    ):
+        row[
+            "adjusted_bcm"
+        ] = tonnes
+
+    hours = (
+        _productivity_float_v15(
+            row.get(
+                "working_hours"
+            )
+        )
+    )
+
+    row[
+        "productivity"
+    ] = (
+        round(
+            tonnes / hours,
+            3,
+        )
+        if hours > 0
+        else 0.0
+    )
+
+    row[
+        "productivity_output_unit_v19"
+    ] = "Metric Tonnes"
+
+    row[
+        "productivity_rate_unit_v19"
+    ] = "Tonnes/Hr"
+
+
+def _productivity_actual_column_labels_v19(
+    columns,
+):
+    columns = [
+        dict(column)
+        if hasattr(
+            column,
+            "get",
+        )
+        else column
+
+        for column in (
+            columns or []
+        )
+    ]
+
+    for column in columns:
+
+        if not hasattr(
+            column,
+            "get",
+        ):
+            continue
+
+        fieldname = str(
+            column.get(
+                "fieldname"
+            )
+            or ""
+        ).strip()
+
+        if fieldname in (
+            "output",
+            "adjusted_bcm",
+        ):
+            column[
+                "label"
+            ] = (
+                "Output "
+                "(BCM / Coal Tonnes)"
+            )
+
+        elif (
+            fieldname
+            == "productivity"
+        ):
+            column[
+                "label"
+            ] = (
+                "Productivity "
+                "(BCM/Hr / Coal t/Hr)"
+            )
+
+    return columns
+
+
+def _productivity_apply_coal_tonnes_v19(
+    result,
+    filters,
+):
+    if not result:
+        return result
+
+    filters = frappe._dict(
+        filters or {}
+    )
+
+    bcm_basis = str(
+        filters.get(
+            "bcm_basis"
+        )
+        or ""
+    ).strip().lower()
+
+    # OPTION 1 applies to Actual only.
+    # Tallies must remain completely untouched.
+    if not bcm_basis.startswith(
+        "actual"
+    ):
+        return result
+
+    site = str(
+        filters.get(
+            "site"
+        )
+        or filters.get(
+            "location"
+        )
+        or ""
+    ).strip()
+
+    plans = (
+        _productivity_selected_plans_v15(
+            filters
+        )
+    )
+
+    if (
+        not site
+        or not plans
+    ):
+        return result
+
+    parts = list(
+        result
+    )
+
+    if len(parts) < 2:
+        return result
+
+    columns = (
+        parts[0]
+        or []
+    )
+
+    rows = list(
+        parts[1]
+        or []
+    )
+
+    if not rows:
+        return result
+
+    # Clarify mixed-unit display only for Actual BCM view.
+    columns = (
+        _productivity_actual_column_labels_v19(
+            columns
+        )
+    )
+
+    # --------------------------------------------------------
+    # MONTHLY SECTIONS
+    # --------------------------------------------------------
+
+    header_positions = []
+
+    for index, row in enumerate(
+        rows
+    ):
+        label = str(
+            row.get(
+                "label"
+            )
+            or ""
+        ).strip()
+
+        if (
+            row.get(
+                "is_monthly_plan_header"
+            )
+            or label.upper().startswith(
+                "MONTHLY PRODUCTION:"
+            )
+        ):
+            header_positions.append(
+                index
+            )
+
+    sections = []
+
+    if header_positions:
+
+        for position, start_index in enumerate(
+            header_positions
+        ):
+            end_index = (
+                header_positions[
+                    position + 1
+                ]
+                if (
+                    position + 1
+                    < len(
+                        header_positions
+                    )
+                )
+                else len(rows)
+            )
+
+            sections.append(
+                (
+                    position,
+                    list(
+                        range(
+                            start_index,
+                            end_index,
+                        )
+                    ),
+                    str(
+                        rows[
+                            start_index
+                        ].get(
+                            "label"
+                        )
+                        or ""
+                    ),
+                )
+            )
+
+    else:
+        sections.append(
+            (
+                0,
+                list(
+                    range(
+                        len(rows)
+                    )
+                ),
+                "",
+            )
+        )
+
+    # --------------------------------------------------------
+    # PROCESS EACH MONTHLY PRODUCTION SECTION
+    # --------------------------------------------------------
+
+    for (
+        section_index,
+        indices,
+        header_label,
+    ) in sections:
+
+        section_start, section_end = (
+            _productivity_header_range_v15(
+                header_label
+            )
+        )
+
+        plan_name = (
+            _productivity_plan_for_section_v15(
+                header_label,
+                plans,
+                section_index,
+            )
+        )
+
+        if not plan_name:
+            continue
+
+        # Same cumulative-Survey safety rule as V15.
+        if not (
+            _productivity_full_section_v15(
+                filters,
+                section_start,
+                section_end,
+            )
+        ):
+            continue
+
+        cutoff = (
+            _productivity_effective_end_v15(
+                filters,
+                plan_name,
+                section_end,
+            )
+        )
+
+        survey = (
+            _productivity_latest_survey_v15(
+                site,
+                plan_name,
+                cutoff,
+            )
+        )
+
+        if not survey:
+            continue
+
+        coal_tonnes = (
+            _productivity_survey_coal_tonnes_v19(
+                survey.get(
+                    "name"
+                )
+            )
+        )
+
+        category_lookup = (
+            _productivity_section_categories_v15(
+                rows,
+                indices,
+            )
+        )
+
+        # ----------------------------------------------------
+        # For Summary Per Machine there can be many Coal rows.
+        #
+        # Distribute Survey Coal Tonnes by each machine's
+        # Survey-aligned Coal BCM share.
+        #
+        # For Hours and Material there is normally one Coal row,
+        # therefore it receives the full Survey tonnes total.
+        # ----------------------------------------------------
+
+        for category in (
+            "Excavator",
+            "ADT",
+            "Dozer",
+        ):
+
+            target_tonnes = (
+                _productivity_float_v15(
+                    coal_tonnes.get(
+                        category,
+                        0
+                    )
+                )
+            )
+
+            coal_rows = []
+
+            for index in indices:
+
+                if (
+                    category_lookup.get(
+                        index
+                    )
+                    != category
+                ):
+                    continue
+
+                row = rows[
+                    index
+                ]
+
+                if row.get(
+                    "is_category_total"
+                ):
+                    continue
+
+                if row.get(
+                    "is_total_fleet"
+                ):
+                    continue
+
+                if row.get(
+                    "productivity_is_machine_total"
+                ):
+                    continue
+
+                material = (
+                    _productivity_material_v15(
+                        row.get(
+                            "material"
+                        ),
+                        row.get(
+                            "label"
+                        ),
+                    )
+                )
+
+                if material != "Coal":
+                    continue
+
+                coal_rows.append(
+                    index
+                )
+
+            if not coal_rows:
+                continue
+
+            bcm_values = [
+                max(
+                    _productivity_float_v15(
+                        rows[
+                            index
+                        ].get(
+                            "output"
+                        )
+                    ),
+                    0.0,
+                )
+
+                for index in coal_rows
+            ]
+
+            total_coal_bcm = sum(
+                bcm_values
+            )
+
+            allocated = 0.0
+
+            for position, index in enumerate(
+                coal_rows
+            ):
+
+                if (
+                    position
+                    == len(
+                        coal_rows
+                    ) - 1
+                ):
+                    tonnes = (
+                        target_tonnes
+                        - allocated
+                    )
+
+                elif (
+                    total_coal_bcm > 0
+                ):
+                    tonnes = (
+                        target_tonnes
+                        * bcm_values[
+                            position
+                        ]
+                        / total_coal_bcm
+                    )
+
+                    allocated += (
+                        tonnes
+                    )
+
+                else:
+                    tonnes = 0.0
+
+                _productivity_set_coal_tonnes_v19(
+                    rows[
+                        index
+                    ],
+                    tonnes,
+                )
+
+            # Diagnostic metadata on monthly header.
+            if indices:
+                header_row = rows[
+                    indices[0]
+                ]
+
+                header_row[
+                    "productivity_coal_tonnes_survey_v19"
+                ] = survey.get(
+                    "name"
+                )
+
+                header_row[
+                    f"productivity_{category.lower()}_coal_tonnes_v19"
+                ] = target_tonnes
+
+    parts[0] = columns
+    parts[1] = rows
+
+    if isinstance(
+        result,
+        tuple,
+    ):
+        return tuple(
+            parts
+        )
+
+    return parts
+
+
+def execute(filters=None):
+    result = (
+        _productivity_execute_before_coal_tonnes_v19(
+            filters
+        )
+    )
+
+    return (
+        _productivity_apply_coal_tonnes_v19(
+            result,
+            filters,
+        )
+    )
+
+
+# END KOSI_PRODUCTIVITY_COAL_METRIC_TONNES_V19
