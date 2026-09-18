@@ -18753,3 +18753,503 @@ def execute(filters=None):
 
 
 # END KOSI_PRODUCTIVITY_COAL_REF_BREAKDOWN_V20
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_SURVEY_ROW_BREAKDOWN_V21
+#
+# Actual BCMs / Hours and Material only.
+#
+# Follow the Survey child table row-by-row.
+#
+# IMPORTANT:
+# - DO NOT combine duplicate Material Type Ref rows.
+# - Preserve Survey row order within each material.
+#
+# Example:
+#
+# Coal TOTAL
+#   2COAL - LOAD & HAUL
+#   4LCOAL - LOAD & HAUL
+#   4LCOAL - LOAD & HAUL
+#
+# Softs / Hards use Survey BCM.
+# Coal uses Survey Metric Tonnes.
+#
+# Truck and Shovel breakdown is shown under:
+# - Excavator
+# - ADT
+#
+# Dozing breakdown is shown under:
+# - Dozer
+#
+# Child rows have no allocated Working Hours or Productivity.
+#
+# V20 aggregated child rows are removed and replaced with these
+# exact Survey rows.
+#
+# Summary Per Machine and Tallies remain unchanged.
+# ============================================================
+
+import re as _productivity_re_v21
+
+
+_productivity_execute_before_survey_row_breakdown_v21 = execute
+
+
+def _productivity_survey_rows_v21(
+    survey_name,
+):
+    rows = []
+
+    if not survey_name:
+        return rows
+
+    doc = frappe.get_doc(
+        "Survey",
+        survey_name,
+    )
+
+    for survey_row in (
+        doc.get(
+            "surveyed_values"
+        )
+        or []
+    ):
+
+        material = (
+            _productivity_material_v15(
+                survey_row.get(
+                    "mat_type"
+                ),
+                survey_row.get(
+                    "mat_type_ref"
+                ),
+            )
+        )
+
+        if material not in (
+            "Softs",
+            "Hards",
+            "Coal",
+        ):
+            continue
+
+        handling_raw = str(
+            survey_row.get(
+                "handling_method"
+            )
+            or ""
+        ).strip()
+
+        handling_clean = (
+            _productivity_re_v21.sub(
+                r"[^a-z]",
+                "",
+                handling_raw.lower(),
+            )
+        )
+
+        if (
+            handling_clean
+            == "truckandshovel"
+        ):
+            handling = (
+                "Truck and Shovel"
+            )
+
+        elif (
+            handling_clean
+            == "dozing"
+        ):
+            handling = "Dozing"
+
+        else:
+            continue
+
+        material_ref = str(
+            survey_row.get(
+                "mat_type_ref"
+            )
+            or ""
+        ).strip()
+
+        if not material_ref:
+            material_ref = (
+                f"{material} - UNSPECIFIED"
+            )
+
+        bcm = (
+            _productivity_float_v15(
+                survey_row.get(
+                    "bcm"
+                )
+            )
+        )
+
+        tonnes = (
+            _productivity_float_v15(
+                survey_row.get(
+                    "metric_tonnes"
+                )
+            )
+        )
+
+        rows.append({
+            "idx":
+                survey_row.get(
+                    "idx"
+                ),
+
+            "material":
+                material,
+
+            "material_ref":
+                material_ref,
+
+            "handling":
+                handling,
+
+            "bcm":
+                bcm,
+
+            "metric_tonnes":
+                tonnes,
+
+            "rd":
+                _productivity_float_v15(
+                    survey_row.get(
+                        "rd"
+                    )
+                ),
+        })
+
+    return rows
+
+
+def _productivity_survey_child_v21(
+    parent_row,
+    source_row,
+):
+    material = str(
+        source_row.get(
+            "material"
+        )
+        or ""
+    ).strip()
+
+    if material == "Coal":
+        output = (
+            _productivity_float_v15(
+                source_row.get(
+                    "metric_tonnes"
+                )
+            )
+        )
+
+        unit = "Metric Tonnes"
+
+    else:
+        output = (
+            _productivity_float_v15(
+                source_row.get(
+                    "bcm"
+                )
+            )
+        )
+
+        unit = "BCM"
+
+    child = {
+        "label":
+            source_row.get(
+                "material_ref"
+            ),
+
+        "working_hours":
+            "",
+
+        "output":
+            output,
+
+        "productivity":
+            "",
+
+        "productivity_bcm_hd":
+            "",
+
+        "material":
+            source_row.get(
+                "material_ref"
+            ),
+
+        "from_area":
+            "",
+
+        "to_area":
+            "",
+
+        "hauling_distance_m":
+            "",
+
+        "indent":
+            (
+                int(
+                    parent_row.get(
+                        "indent"
+                    )
+                    or 0
+                )
+                + 1
+            ),
+
+        "style":
+            "color:#555;",
+
+        "productivity_survey_row_breakdown_v21":
+            1,
+
+        "productivity_survey_row_idx_v21":
+            source_row.get(
+                "idx"
+            ),
+
+        "productivity_parent_material_v21":
+            material,
+
+        "productivity_survey_handling_v21":
+            source_row.get(
+                "handling"
+            ),
+
+        "productivity_output_unit_v19":
+            unit,
+    }
+
+    if (
+        "adjusted_bcm"
+        in parent_row
+    ):
+        child[
+            "adjusted_bcm"
+        ] = output
+
+    return child
+
+
+def _productivity_apply_survey_rows_v21(
+    result,
+    filters,
+):
+    if not result:
+        return result
+
+    filters = frappe._dict(
+        filters or {}
+    )
+
+    basis = str(
+        filters.get(
+            "bcm_basis"
+        )
+        or ""
+    ).strip().lower()
+
+    if not basis.startswith(
+        "actual"
+    ):
+        return result
+
+    view = str(
+        filters.get(
+            "summary_view"
+        )
+        or ""
+    ).strip().lower()
+
+    if view != "hours and material":
+        return result
+
+    parts = list(
+        result
+    )
+
+    if len(parts) < 2:
+        return result
+
+    original_rows = list(
+        parts[1]
+        or []
+    )
+
+    if not original_rows:
+        return result
+
+    new_rows = []
+
+    current_category = ""
+    current_survey = ""
+    survey_rows = []
+
+    for row in original_rows:
+
+        # ----------------------------------------------------
+        # Remove V20 aggregated coal child rows.
+        # V21 replaces them with exact Survey rows.
+        # ----------------------------------------------------
+
+        if row.get(
+            "productivity_coal_ref_breakdown_v20"
+        ):
+            continue
+
+        label = str(
+            row.get(
+                "label"
+            )
+            or ""
+        ).strip()
+
+        material_raw = str(
+            row.get(
+                "material"
+            )
+            or ""
+        ).strip()
+
+        survey_name = str(
+            row.get(
+                "productivity_coal_tonnes_survey_v19"
+            )
+            or ""
+        ).strip()
+
+        if survey_name:
+
+            current_survey = (
+                survey_name
+            )
+
+            survey_rows = (
+                _productivity_survey_rows_v21(
+                    current_survey
+                )
+            )
+
+        if label in (
+            "Excavator",
+            "ADT",
+            "Dozer",
+        ):
+            current_category = label
+
+        new_rows.append(
+            row
+        )
+
+        if not material_raw:
+            continue
+
+        if row.get(
+            "productivity_is_machine_total"
+        ):
+            continue
+
+        material = (
+            _productivity_material_v15(
+                material_raw,
+                label,
+            )
+        )
+
+        if material not in (
+            "Softs",
+            "Hards",
+            "Coal",
+        ):
+            continue
+
+        if current_category in (
+            "Excavator",
+            "ADT",
+        ):
+            required_handling = (
+                "Truck and Shovel"
+            )
+
+        elif (
+            current_category
+            == "Dozer"
+        ):
+            required_handling = (
+                "Dozing"
+            )
+
+        else:
+            continue
+
+        # ----------------------------------------------------
+        # IMPORTANT:
+        # Iterate the original Survey rows directly.
+        #
+        # Do not group by Material Type Ref.
+        # Do not deduplicate.
+        #
+        # Duplicate 4LCOAL rows therefore remain separate.
+        # ----------------------------------------------------
+
+        for source_row in survey_rows:
+
+            if (
+                source_row.get(
+                    "material"
+                )
+                != material
+            ):
+                continue
+
+            if (
+                source_row.get(
+                    "handling"
+                )
+                != required_handling
+            ):
+                continue
+
+            new_rows.append(
+                _productivity_survey_child_v21(
+                    row,
+                    source_row,
+                )
+            )
+
+    parts[1] = new_rows
+
+    if isinstance(
+        result,
+        tuple,
+    ):
+        return tuple(
+            parts
+        )
+
+    return parts
+
+
+def execute(filters=None):
+
+    result = (
+        _productivity_execute_before_survey_row_breakdown_v21(
+            filters
+        )
+    )
+
+    return (
+        _productivity_apply_survey_rows_v21(
+            result,
+            filters,
+        )
+    )
+
+
+# END KOSI_PRODUCTIVITY_SURVEY_ROW_BREAKDOWN_V21
