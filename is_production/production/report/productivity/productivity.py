@@ -18374,3 +18374,382 @@ def execute(filters=None):
 
 
 # END KOSI_PRODUCTIVITY_COAL_METRIC_TONNES_V19
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_COAL_REF_BREAKDOWN_V20
+#
+# Hours and Material / Actual BCM only.
+#
+# Keep the existing Coal TOTAL row.
+#
+# Immediately below Coal show the Survey Material Type Ref
+# breakdown, for example:
+#
+#     Coal                       240,301.5 t
+#         2COAL - LOAD & HAUL      xxxxx t
+#         4LCOAL - LOAD & HAUL     xxxxx t
+#
+# Child rows:
+# - use Survey metric_tonnes
+# - preserve exact mat_type_ref wording
+# - have no allocated Working Hours
+# - have no calculated Productivity
+#
+# This avoids inventing per-reference working hours.
+#
+# Excavator / ADT / Dozer / Total Fleet totals remain unchanged.
+# Summary Per Machine remains unchanged.
+# Tallies remains unchanged.
+# ============================================================
+
+import re as _productivity_re_v20
+
+
+_productivity_execute_before_coal_ref_breakdown_v20 = execute
+
+
+def _productivity_survey_coal_refs_v20(
+    survey_name,
+):
+    result = {
+        "Truck and Shovel": {},
+        "Dozing": {},
+    }
+
+    if not survey_name:
+        return result
+
+    doc = frappe.get_doc(
+        "Survey",
+        survey_name,
+    )
+
+    for row in (
+        doc.get(
+            "surveyed_values"
+        )
+        or []
+    ):
+
+        material = (
+            _productivity_material_v15(
+                row.get(
+                    "mat_type"
+                ),
+                row.get(
+                    "mat_type_ref"
+                ),
+            )
+        )
+
+        if material != "Coal":
+            continue
+
+        tonnes = (
+            _productivity_float_v15(
+                row.get(
+                    "metric_tonnes"
+                )
+            )
+        )
+
+        if tonnes == 0:
+            continue
+
+        material_ref = str(
+            row.get(
+                "mat_type_ref"
+            )
+            or ""
+        ).strip()
+
+        if not material_ref:
+            material_ref = (
+                "COAL - UNSPECIFIED"
+            )
+
+        handling = (
+            _productivity_re_v20.sub(
+                r"[^a-z]",
+                "",
+                str(
+                    row.get(
+                        "handling_method"
+                    )
+                    or ""
+                ).lower(),
+            )
+        )
+
+        if (
+            handling
+            == "truckandshovel"
+        ):
+            handling_key = (
+                "Truck and Shovel"
+            )
+
+        elif handling == "dozing":
+            handling_key = "Dozing"
+
+        else:
+            continue
+
+        result[
+            handling_key
+        ][
+            material_ref
+        ] = (
+            result[
+                handling_key
+            ].get(
+                material_ref,
+                0.0,
+            )
+            + tonnes
+        )
+
+    return result
+
+
+def _productivity_coal_child_v20(
+    parent_row,
+    material_ref,
+    tonnes,
+):
+    child = {
+        "label":
+            material_ref,
+
+        "working_hours":
+            "",
+
+        "output":
+            tonnes,
+
+        "productivity":
+            "",
+
+        "productivity_bcm_hd":
+            "",
+
+        "material":
+            material_ref,
+
+        "from_area":
+            "",
+
+        "to_area":
+            "",
+
+        "hauling_distance_m":
+            "",
+
+        "indent":
+            (
+                int(
+                    parent_row.get(
+                        "indent"
+                    )
+                    or 0
+                )
+                + 1
+            ),
+
+        "style":
+            "color:#555;",
+
+        "productivity_coal_ref_breakdown_v20":
+            1,
+
+        "productivity_coal_parent_v20":
+            "Coal",
+
+        "productivity_output_unit_v19":
+            "Metric Tonnes",
+    }
+
+    if (
+        "adjusted_bcm"
+        in parent_row
+    ):
+        child[
+            "adjusted_bcm"
+        ] = tonnes
+
+    return child
+
+
+def _productivity_apply_coal_ref_breakdown_v20(
+    result,
+    filters,
+):
+    if not result:
+        return result
+
+    filters = frappe._dict(
+        filters or {}
+    )
+
+    basis = str(
+        filters.get(
+            "bcm_basis"
+        )
+        or ""
+    ).strip().lower()
+
+    if not basis.startswith(
+        "actual"
+    ):
+        return result
+
+    view = str(
+        filters.get(
+            "summary_view"
+        )
+        or ""
+    ).strip().lower()
+
+    # Survey has no machine link for the individual
+    # coal reference rows, therefore V20 is intentionally
+    # limited to Hours and Material.
+    if view != "hours and material":
+        return result
+
+    parts = list(
+        result
+    )
+
+    if len(parts) < 2:
+        return result
+
+    rows = list(
+        parts[1]
+        or []
+    )
+
+    if not rows:
+        return result
+
+    new_rows = []
+
+    current_category = ""
+    current_survey_name = ""
+    breakdown = {
+        "Truck and Shovel": {},
+        "Dozing": {},
+    }
+
+    for row in rows:
+
+        label = str(
+            row.get(
+                "label"
+            )
+            or ""
+        ).strip()
+
+        material = str(
+            row.get(
+                "material"
+            )
+            or ""
+        ).strip()
+
+        # V19 stores the exact Survey source on the
+        # monthly production header.
+        survey_name = str(
+            row.get(
+                "productivity_coal_tonnes_survey_v19"
+            )
+            or ""
+        ).strip()
+
+        if survey_name:
+
+            current_survey_name = (
+                survey_name
+            )
+
+            breakdown = (
+                _productivity_survey_coal_refs_v20(
+                    current_survey_name
+                )
+            )
+
+        if label in (
+            "Excavator",
+            "ADT",
+            "Dozer",
+        ):
+            current_category = label
+
+        new_rows.append(
+            row
+        )
+
+        if material != "Coal":
+            continue
+
+        if current_category in (
+            "Excavator",
+            "ADT",
+        ):
+            refs = breakdown.get(
+                "Truck and Shovel",
+                {},
+            )
+
+        elif current_category == "Dozer":
+            refs = breakdown.get(
+                "Dozing",
+                {},
+            )
+
+        else:
+            refs = {}
+
+        for (
+            material_ref,
+            tonnes,
+        ) in refs.items():
+
+            new_rows.append(
+                _productivity_coal_child_v20(
+                    row,
+                    material_ref,
+                    tonnes,
+                )
+            )
+
+    parts[1] = new_rows
+
+    if isinstance(
+        result,
+        tuple,
+    ):
+        return tuple(
+            parts
+        )
+
+    return parts
+
+
+def execute(filters=None):
+
+    result = (
+        _productivity_execute_before_coal_ref_breakdown_v20(
+            filters
+        )
+    )
+
+    return (
+        _productivity_apply_coal_ref_breakdown_v20(
+            result,
+            filters,
+        )
+    )
+
+
+# END KOSI_PRODUCTIVITY_COAL_REF_BREAKDOWN_V20
