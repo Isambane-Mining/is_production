@@ -11020,3 +11020,4848 @@ if (
 
 
 // END KOSI_PRODUCTIVITY_ALL_TOTALS_BOLD_V14
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_SURVEY_CHILD_EDIT_V23
+//
+// Exact V22 Survey rows:
+//   From Area
+//   To Area
+//   Hauling Distance
+//
+// become editable.
+//
+// Parent material total rows stay locked.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+    if (!report) {
+        return;
+    }
+
+
+    function esc(
+        value
+    ) {
+
+        return String(
+            value ?? ""
+        )
+            .replace(
+                /&/g,
+                "&amp;"
+            )
+            .replace(
+                /</g,
+                "&lt;"
+            )
+            .replace(
+                />/g,
+                "&gt;"
+            )
+            .replace(
+                /"/g,
+                "&quot;"
+            )
+            .replace(
+                /'/g,
+                "&#039;"
+            );
+    }
+
+
+    function report_rows() {
+
+        const result = [];
+
+        try {
+
+            if (
+                frappe.query_report
+                && Array.isArray(
+                    frappe.query_report.data
+                )
+            ) {
+
+                frappe.query_report.data.forEach(
+                    function (
+                        row
+                    ) {
+
+                        if (
+                            row
+                            && !result.includes(
+                                row
+                            )
+                        ) {
+
+                            result.push(
+                                row
+                            );
+                        }
+                    }
+                );
+            }
+
+        } catch (
+            error
+        ) {
+        }
+
+
+        try {
+
+            const data = (
+                frappe.query_report
+                && frappe.query_report.datatable
+                && frappe.query_report.datatable.datamanager
+                && frappe.query_report.datatable.datamanager.data
+            );
+
+            if (
+                Array.isArray(
+                    data
+                )
+            ) {
+
+                data.forEach(
+                    function (
+                        item
+                    ) {
+
+                        const row = (
+                            item
+                            && (
+                                item.__data
+                                || item
+                            )
+                        );
+
+                        if (
+                            row
+                            && !result.includes(
+                                row
+                            )
+                        ) {
+
+                            result.push(
+                                row
+                            );
+                        }
+                    }
+                );
+            }
+
+        } catch (
+            error
+        ) {
+        }
+
+
+        return result;
+    }
+
+
+    function find_row(
+        row_key
+    ) {
+
+        row_key = String(
+            row_key
+            || ""
+        ).trim();
+
+
+        return (
+            report_rows().find(
+                function (
+                    row
+                ) {
+
+                    return (
+                        String(
+                            row.productivity_edit_key
+                            || ""
+                        ).trim()
+                        === row_key
+                    );
+                }
+            )
+            || null
+        );
+    }
+
+
+    function update_row(
+        row_key,
+        fieldname,
+        value
+    ) {
+
+        report_rows().forEach(
+            function (
+                row
+            ) {
+
+                if (
+                    String(
+                        row.productivity_edit_key
+                        || ""
+                    ).trim()
+                    !== row_key
+                ) {
+                    return;
+                }
+
+                row[
+                    fieldname
+                ] = value;
+            }
+        );
+    }
+
+
+    const previous_formatter = (
+        report.formatter
+    );
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        const fieldname = String(
+            column
+            && column.fieldname
+            || ""
+        ).trim();
+
+
+        const area_fields = [
+            "from_area",
+            "to_area",
+            "hauling_distance_m"
+        ];
+
+
+        // Parent material totals are display totals only.
+        if (
+            data
+            && data.productivity_survey_parent_locked_v23
+            && area_fields.includes(
+                fieldname
+            )
+        ) {
+
+            return "";
+        }
+
+
+        // Exact Survey child row editor.
+        if (
+            data
+            && data.productivity_survey_editable_v23
+            && area_fields.includes(
+                fieldname
+            )
+        ) {
+
+            const row_key = String(
+                data.productivity_edit_key
+                || ""
+            ).trim();
+
+
+            if (!row_key) {
+                return "";
+            }
+
+
+            const current_value = String(
+                data[
+                    fieldname
+                ]
+                ?? ""
+            );
+
+
+            return (
+                '<input'
+                + ' type="text"'
+                + ' class="productivity-inline-edit productivity-survey-v23-input"'
+                + ' data-row-key="'
+                + esc(
+                    row_key
+                )
+                + '"'
+                + ' data-field="'
+                + esc(
+                    fieldname
+                )
+                + '"'
+                + ' value="'
+                + esc(
+                    current_value
+                )
+                + '"'
+                + ' style="'
+                + 'width:100%;'
+                + 'height:26px;'
+                + 'padding:2px 6px;'
+                + 'border:1px solid #d99a00;'
+                + 'background:#fff8dd;'
+                + 'box-sizing:border-box;'
+                + '"'
+                + ' />'
+            );
+        }
+
+
+        if (
+            typeof previous_formatter
+            === "function"
+        ) {
+
+            return previous_formatter.apply(
+                this,
+                arguments
+            );
+        }
+
+
+        return default_formatter(
+            value,
+            row,
+            column,
+            data
+        );
+    };
+
+
+    // ========================================================
+    // INPUT CAPTURE
+    // ========================================================
+
+    $(document)
+        .off(
+            ".productivitySurveyV23"
+        )
+        .on(
+            "input.productivitySurveyV23 change.productivitySurveyV23",
+            ".productivity-survey-v23-input",
+            function () {
+
+                const input = $(
+                    this
+                );
+
+                const row_key = String(
+                    input.attr(
+                        "data-row-key"
+                    )
+                    || ""
+                ).trim();
+
+                const fieldname = String(
+                    input.attr(
+                        "data-field"
+                    )
+                    || ""
+                ).trim();
+
+                const value = String(
+                    input.val()
+                    ?? ""
+                );
+
+
+                if (
+                    !row_key
+                    || !fieldname
+                ) {
+                    return;
+                }
+
+
+                update_row(
+                    row_key,
+                    fieldname,
+                    value
+                );
+
+
+                window.productivity_dirty_overrides = (
+                    window.productivity_dirty_overrides
+                    || {}
+                );
+
+
+                window.productivity_dirty_overrides[
+                    row_key
+                ] = true;
+
+
+                input.addClass(
+                    "productivity-override-dirty"
+                );
+            }
+        );
+
+
+    // ========================================================
+    // SAVE
+    //
+    // Reuse the existing Save Override button.
+    // Standard rows continue through the old save method.
+    // Survey child rows use the V23 endpoint.
+    // ========================================================
+
+    if (
+        typeof productivity_save_one_override
+        === "function"
+    ) {
+
+        const previous_save_one_v23 = (
+            productivity_save_one_override
+        );
+
+
+        productivity_save_one_override = function (
+            row_key
+        ) {
+
+            row_key = String(
+                row_key
+                || ""
+            ).trim();
+
+
+            if (
+                !row_key.startsWith(
+                    "SURVEYV23::"
+                )
+            ) {
+
+                return previous_save_one_v23.apply(
+                    this,
+                    arguments
+                );
+            }
+
+
+            const data = find_row(
+                row_key
+            );
+
+
+            if (!data) {
+
+                return Promise.reject(
+                    new Error(
+                        "Survey Productivity row was not found."
+                    )
+                );
+            }
+
+
+            const filters = (
+                frappe.query_report
+                && frappe.query_report.get_filter_values
+                ? frappe.query_report.get_filter_values()
+                : {}
+            ) || {};
+
+
+            return new Promise(
+                function (
+                    resolve,
+                    reject
+                ) {
+
+                    frappe.call({
+
+                        method:
+                            "is_production.production.report.productivity.productivity.save_productivity_survey_override_v23",
+
+                        args: {
+
+                            row_key:
+                                row_key,
+
+                            site:
+                                filters.site
+                                || filters.location
+                                || "",
+
+                            start_date:
+                                filters.start_date
+                                || filters.from_date
+                                || "",
+
+                            end_date:
+                                filters.end_date
+                                || filters.to_date
+                                || "",
+
+                            shift:
+                                filters.shift
+                                || "",
+
+                            monthly_production_plan:
+                                data.productivity_survey_plan_v23
+                                || "",
+
+                            category:
+                                data.productivity_survey_category_v23
+                                || "",
+
+                            survey_name:
+                                data.productivity_survey_name_v23
+                                || "",
+
+                            survey_idx:
+                                data.productivity_survey_row_idx_v21
+                                || "",
+
+                            material:
+                                data.label
+                                || data.material
+                                || "",
+
+                            from_area:
+                                data.from_area
+                                || "",
+
+                            to_area:
+                                data.to_area
+                                || "",
+
+                            hauling_distance_m:
+                                data.hauling_distance_m
+                                || ""
+                        },
+
+
+                        callback: function (
+                            response
+                        ) {
+
+                            if (
+                                response
+                                && response.exc
+                            ) {
+
+                                reject(
+                                    new Error(
+                                        response.exc
+                                    )
+                                );
+
+                                return;
+                            }
+
+
+                            if (
+                                !response
+                                || !response.message
+                                || !response.message.saved
+                            ) {
+
+                                reject(
+                                    new Error(
+                                        "Survey Productivity override was not saved."
+                                    )
+                                );
+
+                                return;
+                            }
+
+
+                            resolve(
+                                response.message
+                            );
+                        },
+
+
+                        error: function (
+                            error
+                        ) {
+
+                            reject(
+                                error
+                                || new Error(
+                                    "Survey Productivity override save failed."
+                                )
+                            );
+                        }
+                    });
+                }
+            );
+        };
+    }
+
+
+    // Small visual indication.
+    if (
+        !document.getElementById(
+            "productivity-survey-v23-style"
+        )
+    ) {
+
+        const style = document.createElement(
+            "style"
+        );
+
+        style.id = (
+            "productivity-survey-v23-style"
+        );
+
+        style.innerHTML = `
+
+            .productivity-survey-v23-input:focus {
+                background: #ffffff !important;
+                border: 2px solid #d99a00 !important;
+                outline: none !important;
+            }
+
+            .productivity-survey-v23-input.productivity-override-dirty {
+                background: #fff1b8 !important;
+                border: 2px solid #d99a00 !important;
+            }
+
+        `;
+
+        document.head.appendChild(
+            style
+        );
+    }
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_SURVEY_CHILD_EDIT_V23
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_CHILD_PRODUCTIVITY_V24
+//
+// - Child productivity displays 2 decimals.
+// - Material totals are bold.
+// - Parent Material column stays blank.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+    if (!report) {
+        return;
+    }
+
+
+    const previous_formatter_v24 = (
+        report.formatter
+    );
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        const fieldname = String(
+            column
+            && column.fieldname
+            || ""
+        ).trim();
+
+
+        // ----------------------------------------------------
+        // CHILD PRODUCTIVITY
+        //
+        // Show the independent calculated value with decimals.
+        // ----------------------------------------------------
+
+        if (
+            data
+            && data.productivity_child_recalculated_v24
+            && fieldname === "productivity"
+        ) {
+
+            const number = Number(
+                data.productivity
+                || 0
+            );
+
+            if (
+                !Number.isFinite(
+                    number
+                )
+            ) {
+
+                return "";
+            }
+
+
+            return number.toLocaleString(
+                undefined,
+                {
+                    minimumFractionDigits:
+                        0,
+
+                    maximumFractionDigits:
+                        0
+                }
+            );
+        }
+
+
+        let formatted;
+
+
+        if (
+            typeof previous_formatter_v24
+            === "function"
+        ) {
+
+            formatted = (
+                previous_formatter_v24.apply(
+                    this,
+                    arguments
+                )
+            );
+
+        } else {
+
+            formatted = (
+                default_formatter(
+                    value,
+                    row,
+                    column,
+                    data
+                )
+            );
+        }
+
+
+        // ----------------------------------------------------
+        // BOLD MATERIAL TOTAL ROWS
+        // ----------------------------------------------------
+
+        if (
+            data
+            && data.productivity_material_total_v24
+        ) {
+
+            return (
+                "<strong>"
+                + (
+                    formatted
+                    ?? ""
+                )
+                + "</strong>"
+            );
+        }
+
+
+        return formatted;
+    };
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_CHILD_PRODUCTIVITY_V24
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_SAFE_SAVE_PIPELINE_V26
+//
+// Fix:
+//     "Productivity row key does not match the selected
+//      report row."
+//
+// Rules:
+//
+// 1. Ignore stale dirty keys that no longer exist in the
+//    current report.
+//
+// 2. SURVEYV23 rows ALWAYS use:
+//      save_productivity_survey_override_v23()
+//
+// 3. Existing normal Productivity rows continue through
+//    the previous save pipeline.
+//
+// This keeps the existing Save Override + Snapshot behaviour.
+// ============================================================
+
+(function () {
+
+    if (
+        typeof productivity_save_one_override
+        !== "function"
+    ) {
+        return;
+    }
+
+
+    function current_rows_v26() {
+
+        const result = [];
+
+
+        try {
+
+            const rows = (
+                frappe.query_report
+                && frappe.query_report.data
+            );
+
+            if (
+                Array.isArray(
+                    rows
+                )
+            ) {
+
+                rows.forEach(
+                    function (
+                        row
+                    ) {
+
+                        if (
+                            row
+                            && !result.includes(
+                                row
+                            )
+                        ) {
+
+                            result.push(
+                                row
+                            );
+                        }
+                    }
+                );
+            }
+
+        } catch (
+            error
+        ) {
+        }
+
+
+        try {
+
+            const rows = (
+                frappe.query_report
+                && frappe.query_report.datatable
+                && frappe.query_report.datatable.datamanager
+                && frappe.query_report.datatable.datamanager.data
+            );
+
+            if (
+                Array.isArray(
+                    rows
+                )
+            ) {
+
+                rows.forEach(
+                    function (
+                        item
+                    ) {
+
+                        const row = (
+                            item
+                            && (
+                                item.__data
+                                || item
+                            )
+                        );
+
+                        if (
+                            row
+                            && !result.includes(
+                                row
+                            )
+                        ) {
+
+                            result.push(
+                                row
+                            );
+                        }
+                    }
+                );
+            }
+
+        } catch (
+            error
+        ) {
+        }
+
+
+        return result;
+    }
+
+
+    function find_row_v26(
+        row_key
+    ) {
+
+        row_key = String(
+            row_key
+            || ""
+        ).trim();
+
+
+        return (
+            current_rows_v26().find(
+                function (
+                    row
+                ) {
+
+                    return (
+                        String(
+                            row.productivity_edit_key
+                            || ""
+                        ).trim()
+                        === row_key
+                    );
+                }
+            )
+            || null
+        );
+    }
+
+
+    function filters_v26() {
+
+        try {
+
+            if (
+                frappe.query_report
+                && frappe.query_report.get_filter_values
+            ) {
+
+                return (
+                    frappe.query_report.get_filter_values()
+                    || {}
+                );
+            }
+
+        } catch (
+            error
+        ) {
+        }
+
+
+        return {};
+    }
+
+
+    function save_survey_row_v26(
+        row_key,
+        row
+    ) {
+
+        const filters = (
+            filters_v26()
+        );
+
+
+        return new Promise(
+            function (
+                resolve,
+                reject
+            ) {
+
+                frappe.call({
+
+                    method:
+                        "is_production.production.report.productivity.productivity.save_productivity_survey_override_v23",
+
+                    args: {
+
+                        row_key:
+                            row_key,
+
+                        site:
+                            filters.site
+                            || filters.location
+                            || "",
+
+                        start_date:
+                            filters.start_date
+                            || filters.from_date
+                            || "",
+
+                        end_date:
+                            filters.end_date
+                            || filters.to_date
+                            || "",
+
+                        shift:
+                            filters.shift
+                            || "",
+
+                        monthly_production_plan:
+                            row.productivity_survey_plan_v23
+                            || "",
+
+                        category:
+                            row.productivity_survey_category_v23
+                            || "",
+
+                        survey_name:
+                            row.productivity_survey_name_v23
+                            || "",
+
+                        survey_idx:
+                            row.productivity_survey_row_idx_v21
+                            || "",
+
+                        material:
+                            row.label
+                            || row.material
+                            || "",
+
+                        from_area:
+                            row.from_area
+                            || "",
+
+                        to_area:
+                            row.to_area
+                            || "",
+
+                        hauling_distance_m:
+                            row.hauling_distance_m
+                            || ""
+                    },
+
+
+                    callback: function (
+                        response
+                    ) {
+
+                        if (
+                            response
+                            && response.exc
+                        ) {
+
+                            reject(
+                                new Error(
+                                    response.exc
+                                )
+                            );
+
+                            return;
+                        }
+
+
+                        const message = (
+                            response
+                            && response.message
+                        );
+
+
+                        if (
+                            !message
+                            || !message.saved
+                        ) {
+
+                            reject(
+                                new Error(
+                                    "Survey Productivity override was not saved."
+                                )
+                            );
+
+                            return;
+                        }
+
+
+                        // Keep current row data synchronized.
+                        row.from_area = (
+                            message.from_area
+                            || ""
+                        );
+
+                        row.to_area = (
+                            message.to_area
+                            || ""
+                        );
+
+                        row.hauling_distance_m = (
+                            message.hauling_distance_m
+                            || ""
+                        );
+
+
+                        resolve(
+                            message
+                        );
+                    },
+
+
+                    error: function (
+                        error
+                    ) {
+
+                        reject(
+                            error
+                            || new Error(
+                                "Survey Productivity save failed."
+                            )
+                        );
+                    }
+                });
+            }
+        );
+    }
+
+
+    const previous_save_one_v26 = (
+        productivity_save_one_override
+    );
+
+
+    productivity_save_one_override = function (
+        row_key
+    ) {
+
+        row_key = String(
+            row_key
+            || ""
+        ).trim();
+
+
+        if (!row_key) {
+
+            return Promise.resolve({
+                saved:
+                    false,
+
+                skipped:
+                    true,
+
+                reason:
+                    "blank-row-key"
+            });
+        }
+
+
+        const row = find_row_v26(
+            row_key
+        );
+
+
+        // ----------------------------------------------------
+        // STALE KEY
+        //
+        // Old V10/V11/V13 drafts can remain after the report
+        // row structure changes.
+        //
+        // Never send a stale key to the backend validator.
+        // ----------------------------------------------------
+
+        if (!row) {
+
+            console.warn(
+                "Productivity V26: skipped stale override key:",
+                row_key
+            );
+
+
+            if (
+                window.productivity_dirty_overrides
+            ) {
+
+                delete (
+                    window.productivity_dirty_overrides[
+                        row_key
+                    ]
+                );
+            }
+
+
+            return Promise.resolve({
+                saved:
+                    false,
+
+                skipped:
+                    true,
+
+                reason:
+                    "stale-row-key",
+
+                row_key:
+                    row_key
+            });
+        }
+
+
+        // ----------------------------------------------------
+        // EXACT SURVEY CHILD ROW
+        // ----------------------------------------------------
+
+        if (
+            row_key.startsWith(
+                "SURVEYV23::"
+            )
+        ) {
+
+            return save_survey_row_v26(
+                row_key,
+                row
+            );
+        }
+
+
+        // ----------------------------------------------------
+        // NORMAL EXISTING PRODUCTIVITY OVERRIDE
+        // ----------------------------------------------------
+
+        return previous_save_one_v26.apply(
+            this,
+            arguments
+        );
+    };
+
+
+    // ========================================================
+    // REMOVE CURRENTLY DIRTY STALE KEYS
+    // ========================================================
+
+    function cleanup_dirty_keys_v26() {
+
+        const dirty = (
+            window.productivity_dirty_overrides
+            || {}
+        );
+
+
+        Object.keys(
+            dirty
+        ).forEach(
+            function (
+                row_key
+            ) {
+
+                if (
+                    !find_row_v26(
+                        row_key
+                    )
+                ) {
+
+                    delete dirty[
+                        row_key
+                    ];
+                }
+            }
+        );
+
+
+        window.productivity_dirty_overrides = (
+            dirty
+        );
+    }
+
+
+    setTimeout(
+        cleanup_dirty_keys_v26,
+        500
+    );
+
+    setTimeout(
+        cleanup_dirty_keys_v26,
+        1500
+    );
+
+
+    console.log(
+        "KOSI_PRODUCTIVITY_SAFE_SAVE_PIPELINE_V26 loaded"
+    );
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_SAFE_SAVE_PIPELINE_V26
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_SAVE_BUTTON_ROUTER_V27
+//
+// FINAL Save Override button router.
+//
+// Why:
+// The original Save Override button already had an older
+// callback bound to it. Replacing productivity_save_one_override
+// later did not guarantee that old callback was bypassed.
+//
+// V27 takes ownership of the BUTTON CLICK itself.
+//
+// SURVEYV23 rows:
+//     save_productivity_survey_override_v23()
+//
+// Normal existing rows:
+//     existing productivity_save_one_override()
+//
+// Stale row keys:
+//     skipped and removed
+//
+// After row saves:
+//     permanent Productivity snapshot is created normally.
+// ============================================================
+
+(function () {
+
+    const V27_METHOD_SURVEY = (
+        "is_production.production.report.productivity."
+        + "productivity.save_productivity_survey_override_v23"
+    );
+
+    const V27_METHOD_SNAPSHOT = (
+        "is_production.production.report.productivity."
+        + "productivity.save_productivity_override_snapshot"
+    );
+
+
+    function v27_filters() {
+
+        try {
+
+            if (
+                frappe.query_report
+                && frappe.query_report.get_filter_values
+            ) {
+
+                return (
+                    frappe.query_report.get_filter_values()
+                    || {}
+                );
+            }
+
+        } catch (
+            error
+        ) {
+        }
+
+        return {};
+    }
+
+
+    function v27_rows() {
+
+        const result = [];
+
+
+        try {
+
+            const rows = (
+                frappe.query_report
+                && frappe.query_report.data
+            );
+
+            if (
+                Array.isArray(
+                    rows
+                )
+            ) {
+
+                rows.forEach(
+                    function (
+                        row
+                    ) {
+
+                        if (
+                            row
+                            && !result.includes(
+                                row
+                            )
+                        ) {
+
+                            result.push(
+                                row
+                            );
+                        }
+                    }
+                );
+            }
+
+        } catch (
+            error
+        ) {
+        }
+
+
+        try {
+
+            const rows = (
+                frappe.query_report
+                && frappe.query_report.datatable
+                && frappe.query_report.datatable.datamanager
+                && frappe.query_report.datatable.datamanager.data
+            );
+
+            if (
+                Array.isArray(
+                    rows
+                )
+            ) {
+
+                rows.forEach(
+                    function (
+                        item
+                    ) {
+
+                        const row = (
+                            item
+                            && (
+                                item.__data
+                                || item
+                            )
+                        );
+
+                        if (
+                            row
+                            && !result.includes(
+                                row
+                            )
+                        ) {
+
+                            result.push(
+                                row
+                            );
+                        }
+                    }
+                );
+            }
+
+        } catch (
+            error
+        ) {
+        }
+
+
+        return result;
+    }
+
+
+    function v27_find_row(
+        row_key
+    ) {
+
+        row_key = String(
+            row_key
+            || ""
+        ).trim();
+
+
+        return (
+            v27_rows().find(
+                function (
+                    row
+                ) {
+
+                    return (
+                        String(
+                            row.productivity_edit_key
+                            || ""
+                        ).trim()
+                        === row_key
+                    );
+                }
+            )
+            || null
+        );
+    }
+
+
+    function v27_call(
+        options
+    ) {
+
+        return new Promise(
+            function (
+                resolve,
+                reject
+            ) {
+
+                frappe.call({
+
+                    method:
+                        options.method,
+
+                    args:
+                        options.args
+                        || {},
+
+
+                    callback: function (
+                        response
+                    ) {
+
+                        if (
+                            response
+                            && response.exc
+                        ) {
+
+                            reject(
+                                new Error(
+                                    response.exc
+                                )
+                            );
+
+                            return;
+                        }
+
+
+                        resolve(
+                            response
+                            && response.message
+                            ? response.message
+                            : {}
+                        );
+                    },
+
+
+                    error: function (
+                        error
+                    ) {
+
+                        reject(
+                            error
+                            || new Error(
+                                "Productivity save failed."
+                            )
+                        );
+                    }
+                });
+            }
+        );
+    }
+
+
+    async function v27_save_survey_row(
+        row_key,
+        row
+    ) {
+
+        const filters = (
+            v27_filters()
+        );
+
+
+        console.log(
+            "V27 Survey save:",
+            row_key,
+            row.label
+        );
+
+
+        const message = await v27_call({
+
+            method:
+                V27_METHOD_SURVEY,
+
+            args: {
+
+                row_key:
+                    row_key,
+
+                site:
+                    filters.site
+                    || filters.location
+                    || "",
+
+                start_date:
+                    filters.start_date
+                    || filters.from_date
+                    || "",
+
+                end_date:
+                    filters.end_date
+                    || filters.to_date
+                    || "",
+
+                shift:
+                    filters.shift
+                    || "",
+
+                monthly_production_plan:
+                    row.productivity_survey_plan_v23
+                    || "",
+
+                category:
+                    row.productivity_survey_category_v23
+                    || "",
+
+                survey_name:
+                    row.productivity_survey_name_v23
+                    || "",
+
+                survey_idx:
+                    row.productivity_survey_row_idx_v21
+                    || "",
+
+                material:
+                    row.label
+                    || row.material
+                    || "",
+
+                from_area:
+                    row.from_area
+                    || "",
+
+                to_area:
+                    row.to_area
+                    || "",
+
+                hauling_distance_m:
+                    row.hauling_distance_m
+                    || ""
+            }
+        });
+
+
+        if (
+            !message
+            || !message.saved
+        ) {
+
+            throw new Error(
+                "Survey Productivity override was not saved."
+            );
+        }
+
+
+        row.from_area = (
+            message.from_area
+            || ""
+        );
+
+        row.to_area = (
+            message.to_area
+            || ""
+        );
+
+        row.hauling_distance_m = (
+            message.hauling_distance_m
+            || ""
+        );
+
+
+        return message;
+    }
+
+
+    async function v27_save_normal_row(
+        row_key
+    ) {
+
+        if (
+            typeof productivity_save_one_override
+            !== "function"
+        ) {
+
+            throw new Error(
+                "Standard Productivity save function is unavailable."
+            );
+        }
+
+
+        return await Promise.resolve(
+            productivity_save_one_override(
+                row_key
+            )
+        );
+    }
+
+
+    async function v27_create_snapshot() {
+
+        const filters = (
+            v27_filters()
+        );
+
+
+        const message = await v27_call({
+
+            method:
+                V27_METHOD_SNAPSHOT,
+
+            args: {
+
+                filters_json:
+                    JSON.stringify(
+                        filters
+                    )
+            }
+        });
+
+
+        if (
+            !message
+            || !message.saved
+        ) {
+
+            throw new Error(
+                "Productivity snapshot was not created."
+            );
+        }
+
+
+        return message;
+    }
+
+
+    function v27_button() {
+
+        try {
+
+            if (
+                typeof productivity_override_button
+                === "function"
+            ) {
+
+                const button = (
+                    productivity_override_button()
+                );
+
+                if (
+                    button
+                    && button.length
+                ) {
+
+                    return button;
+                }
+            }
+
+        } catch (
+            error
+        ) {
+        }
+
+
+        const candidates = $(
+            "button, .btn"
+        ).filter(
+            function () {
+
+                return (
+                    String(
+                        $(this).text()
+                        || ""
+                    ).trim()
+                    === "Save Override"
+                );
+            }
+        );
+
+
+        return candidates.first();
+    }
+
+
+    function v27_error_text(
+        error
+    ) {
+
+        try {
+
+            if (
+                error
+                && error.message
+            ) {
+
+                return String(
+                    error.message
+                );
+            }
+
+
+            if (
+                error
+                && error.responseJSON
+                && error.responseJSON.exception
+            ) {
+
+                return String(
+                    error.responseJSON.exception
+                );
+            }
+
+        } catch (
+            ignored
+        ) {
+        }
+
+
+        return String(
+            error
+            || "Unknown error"
+        );
+    }
+
+
+    async function v27_save_all() {
+
+        const button = (
+            v27_button()
+        );
+
+
+        button
+            .prop(
+                "disabled",
+                true
+            )
+            .text(
+                __(
+                    "Saving..."
+                )
+            );
+
+
+        // Make sure the active input has pushed its latest
+        // value into the row object before saving.
+        try {
+
+            const active = $(
+                document.activeElement
+            );
+
+            if (
+                active.hasClass(
+                    "productivity-survey-v23-input"
+                )
+            ) {
+
+                active.trigger(
+                    "change"
+                );
+            }
+
+        } catch (
+            error
+        ) {
+        }
+
+
+        window.productivity_dirty_overrides = (
+            window.productivity_dirty_overrides
+            || {}
+        );
+
+
+        const dirty_keys = Object.keys(
+            window.productivity_dirty_overrides
+            || {}
+        );
+
+
+        console.log(
+            "V27 dirty keys:",
+            dirty_keys
+        );
+
+
+        let saved_rows = 0;
+        let stale_rows = 0;
+
+
+        try {
+
+            // =================================================
+            // SAVE ROW OVERRIDES
+            // =================================================
+
+            for (
+                const row_key
+                of dirty_keys
+            ) {
+
+                const key = String(
+                    row_key
+                    || ""
+                ).trim();
+
+
+                if (!key) {
+
+                    delete (
+                        window.productivity_dirty_overrides[
+                            row_key
+                        ]
+                    );
+
+                    continue;
+                }
+
+
+                const row = (
+                    v27_find_row(
+                        key
+                    )
+                );
+
+
+                // ---------------------------------------------
+                // STALE KEY
+                // ---------------------------------------------
+
+                if (!row) {
+
+                    console.warn(
+                        "V27 skipped stale row key:",
+                        key
+                    );
+
+
+                    delete (
+                        window.productivity_dirty_overrides[
+                            row_key
+                        ]
+                    );
+
+
+                    stale_rows += 1;
+
+                    continue;
+                }
+
+
+                // ---------------------------------------------
+                // EXACT SURVEY CHILD
+                // ---------------------------------------------
+
+                if (
+                    key.startsWith(
+                        "SURVEYV23::"
+                    )
+                ) {
+
+                    await v27_save_survey_row(
+                        key,
+                        row
+                    );
+
+                } else {
+
+                    // -----------------------------------------
+                    // NORMAL EXISTING PRODUCTIVITY ROW
+                    // -----------------------------------------
+
+                    await v27_save_normal_row(
+                        key
+                    );
+                }
+
+
+                delete (
+                    window.productivity_dirty_overrides[
+                        row_key
+                    ]
+                );
+
+
+                $(
+                    '.productivity-inline-edit[data-row-key="'
+                    + key
+                    + '"]'
+                )
+                    .removeClass(
+                        "productivity-override-dirty"
+                    )
+                    .addClass(
+                        "productivity-override-saved"
+                    );
+
+
+                saved_rows += 1;
+            }
+
+
+            // =================================================
+            // SNAPSHOT
+            // =================================================
+
+            button.text(
+                __(
+                    "Saving Snapshot..."
+                )
+            );
+
+
+            const snapshot = (
+                await v27_create_snapshot()
+            );
+
+
+            const reference = String(
+                snapshot.snapshot_reference
+                || snapshot.name
+                || ""
+            );
+
+
+            const pdf_url = String(
+                snapshot.file_url
+                || ""
+            );
+
+
+            let message = (
+                "<div style='line-height:1.7;'>"
+                + "<b>Productivity Override saved permanently.</b>"
+                + "<br>Overrides saved: <b>"
+                + String(
+                    saved_rows
+                )
+                + "</b>"
+            );
+
+
+            if (
+                stale_rows > 0
+            ) {
+
+                message += (
+                    "<br>Old stale rows ignored: <b>"
+                    + String(
+                        stale_rows
+                    )
+                    + "</b>"
+                );
+            }
+
+
+            if (reference) {
+
+                message += (
+                    "<br>Reference: <b>"
+                    + frappe.utils.escape_html(
+                        reference
+                    )
+                    + "</b>"
+                );
+            }
+
+
+            if (pdf_url) {
+
+                message += (
+                    "<br>"
+                    + "<a href='"
+                    + frappe.utils.escape_html(
+                        pdf_url
+                    )
+                    + "' target='_blank'>"
+                    + "<b>Open Saved Productivity PDF</b>"
+                    + "</a>"
+                );
+            }
+
+
+            message += (
+                "</div>"
+            );
+
+
+            frappe.msgprint({
+
+                title:
+                    __(
+                        "Save Override"
+                    ),
+
+                indicator:
+                    "green",
+
+                message:
+                    message
+            });
+
+
+            setTimeout(
+                function () {
+
+                    if (
+                        frappe.query_report
+                    ) {
+
+                        frappe.query_report.refresh();
+                    }
+                },
+                500
+            );
+
+
+        } catch (
+            error
+        ) {
+
+            console.error(
+                "Productivity V27 save failed:",
+                error
+            );
+
+
+            frappe.msgprint({
+
+                title:
+                    __(
+                        "Save Override"
+                    ),
+
+                indicator:
+                    "red",
+
+                message:
+                    (
+                        "<b>Save Override failed.</b>"
+                        + "<br><br>"
+                        + frappe.utils.escape_html(
+                            v27_error_text(
+                                error
+                            )
+                        )
+                    )
+            });
+
+
+        } finally {
+
+            button
+                .prop(
+                    "disabled",
+                    false
+                )
+                .text(
+                    __(
+                        "Save Override"
+                    )
+                );
+        }
+    }
+
+
+    // ========================================================
+    // TAKE OWNERSHIP OF ACTUAL BUTTON CLICK
+    // ========================================================
+
+    function v27_bind_button() {
+
+        const button = (
+            v27_button()
+        );
+
+
+        if (
+            !button
+            || !button.length
+        ) {
+
+            return;
+        }
+
+
+        const element = (
+            button.get(
+                0
+            )
+        );
+
+
+        if (!element) {
+            return;
+        }
+
+
+        if (
+            element.dataset
+            && element.dataset.productivityV27Bound
+            === "1"
+        ) {
+
+            return;
+        }
+
+
+        if (
+            element.dataset
+        ) {
+
+            element.dataset.productivityV27Bound = (
+                "1"
+            );
+        }
+
+
+        // Capture-phase listener runs BEFORE the old
+        // Save Override click callback.
+        element.addEventListener(
+            "click",
+
+            function (
+                event
+            ) {
+
+                event.preventDefault();
+                event.stopPropagation();
+                event.stopImmediatePropagation();
+
+
+                v27_save_all();
+            },
+
+            true
+        );
+
+
+        console.log(
+            "KOSI_PRODUCTIVITY_SAVE_BUTTON_ROUTER_V27 bound"
+        );
+    }
+
+
+    // Initial bind.
+    setTimeout(
+        v27_bind_button,
+        300
+    );
+
+    setTimeout(
+        v27_bind_button,
+        1000
+    );
+
+    setTimeout(
+        v27_bind_button,
+        2500
+    );
+
+
+    // Report can rebuild the toolbar/button after refresh.
+    window.__productivity_v27_bind_interval = (
+        window.__productivity_v27_bind_interval
+        || setInterval(
+            v27_bind_button,
+            1500
+        )
+    );
+
+
+    console.log(
+        "KOSI_PRODUCTIVITY_SAVE_BUTTON_ROUTER_V27 loaded"
+    );
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_SAVE_BUTTON_ROUTER_V27
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_BCM_HD_TWO_DECIMAL_V30
+//
+// Final display:
+//     Productivity (BCM/HR) = 0 decimals
+//     Productivity (BCM/HD) = 2 decimals
+//
+// Examples:
+//     136.427 -> 136.43
+//     72.14   -> 72.14
+//     12.734  -> 12.73
+//     0.376   -> 0.38
+//
+// Calculation itself is unchanged.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+    if (!report) {
+        return;
+    }
+
+
+    const previous_formatter_v30 = (
+        report.formatter
+    );
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        const fieldname = String(
+            column
+            && column.fieldname
+            || ""
+        ).trim();
+
+
+        if (
+            fieldname
+            === "productivity_bcm_hd"
+        ) {
+
+            const raw = (
+                data
+                && data.productivity_bcm_hd
+                !== undefined
+                ? data.productivity_bcm_hd
+                : value
+            );
+
+
+            if (
+                raw === ""
+                || raw === null
+                || raw === undefined
+            ) {
+
+                return "";
+            }
+
+
+            const number = Number(
+                String(
+                    raw
+                ).replace(
+                    /,/g,
+                    ""
+                )
+            );
+
+
+            if (
+                !Number.isFinite(
+                    number
+                )
+            ) {
+
+                return "";
+            }
+
+
+            return number.toLocaleString(
+                undefined,
+                {
+                    minimumFractionDigits:
+                        2,
+
+                    maximumFractionDigits:
+                        2
+                }
+            );
+        }
+
+
+        if (
+            typeof previous_formatter_v30
+            === "function"
+        ) {
+
+            return (
+                previous_formatter_v30.apply(
+                    this,
+                    arguments
+                )
+            );
+        }
+
+
+        return default_formatter(
+            value,
+            row,
+            column,
+            data
+        );
+    };
+
+
+    console.log(
+        "KOSI_PRODUCTIVITY_BCM_HD_TWO_DECIMAL_V30 loaded"
+    );
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_BCM_HD_TWO_DECIMAL_V30
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_SUMMARY_CAPTURED_DETAIL_V36
+//
+// Summary Per Machine hierarchy:
+//
+// ADT01
+//     Coal
+//         Ramp 2 - 3 2#Coal
+//         Ramp 1 - 2 2#Coal
+//
+// Overrides older V35 display formatting.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+    if (!report) {
+        return;
+    }
+
+
+    function v36_escape(
+        value
+    ) {
+
+        return String(
+            value ?? ""
+        )
+            .replace(
+                /&/g,
+                "&amp;"
+            )
+            .replace(
+                /</g,
+                "&lt;"
+            )
+            .replace(
+                />/g,
+                "&gt;"
+            )
+            .replace(
+                /"/g,
+                "&quot;"
+            )
+            .replace(
+                /'/g,
+                "&#039;"
+            );
+    }
+
+
+    function v36_is_summary() {
+
+        try {
+
+            const filters = (
+                frappe.query_report
+                    .get_filter_values()
+                || {}
+            );
+
+            return (
+                String(
+                    filters.summary_view
+                    || ""
+                ).trim()
+                === "Summary Per Machine"
+            );
+
+        } catch (
+            error
+        ) {
+
+            return false;
+        }
+    }
+
+
+    const previous_formatter_v36 = (
+        report.formatter
+    );
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        const fieldname = String(
+            column
+            && column.fieldname
+            || ""
+        ).trim();
+
+
+        if (
+            v36_is_summary()
+            && data
+        ) {
+
+            // Exact captured Geo / Material child.
+            if (
+                data.productivity_summary_captured_detail_v36
+            ) {
+
+                if (
+                    fieldname
+                    === "label"
+                ) {
+
+                    return (
+                        '<span style="'
+                        + 'display:inline-block;'
+                        + 'padding-left:42px;'
+                        + 'font-weight:400;'
+                        + '">'
+                        + v36_escape(
+                            data.label
+                        )
+                        + '</span>'
+                    );
+                }
+
+
+                if (
+                    fieldname
+                    === "material"
+                ) {
+
+                    return (
+                        v36_escape(
+                            data.material
+                        )
+                    );
+                }
+            }
+
+
+            // Broad material parent:
+            // Coal / Hards / Softs.
+            if (
+                data.material
+                && !data.productivity_summary_captured_detail_v36
+            ) {
+
+                if (
+                    fieldname
+                    === "label"
+                ) {
+
+                    return (
+                        '<span style="'
+                        + 'display:inline-block;'
+                        + 'padding-left:18px;'
+                        + 'font-weight:700;'
+                        + '">'
+                        + v36_escape(
+                            data.material
+                        )
+                        + '</span>'
+                    );
+                }
+
+
+                if (
+                    fieldname
+                    === "material"
+                ) {
+
+                    return (
+                        '<span style="font-weight:700;">'
+                        + v36_escape(
+                            data.material
+                        )
+                        + '</span>'
+                    );
+                }
+            }
+        }
+
+
+        if (
+            typeof previous_formatter_v36
+            === "function"
+        ) {
+
+            return (
+                previous_formatter_v36.apply(
+                    this,
+                    arguments
+                )
+            );
+        }
+
+
+        return default_formatter(
+            value,
+            row,
+            column,
+            data
+        );
+    };
+
+
+    console.log(
+        "KOSI_PRODUCTIVITY_SUMMARY_CAPTURED_DETAIL_V36 loaded"
+    );
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_SUMMARY_CAPTURED_DETAIL_V36
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_SUMMARY_TREE_V38
+//
+// Summary Per Machine visual tree:
+//
+// ADT
+//     ADT01
+//         Coal
+//             4 - 2Seam Coal
+//         Hards
+//             1 - Overburden
+//         Softs
+//             3 - Softs
+//
+// Uses backend indent levels:
+//
+// Category       = 0
+// Machine        = 1
+// Material       = 2
+// Material Detail= 3
+//
+// Does not alter report values.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+
+    if (!report) {
+
+        return;
+    }
+
+
+    // --------------------------------------------------------
+    // ENABLE NATIVE TREE BEHAVIOUR
+    // --------------------------------------------------------
+
+    report.tree = true;
+
+    report.treeView = true;
+
+    report.initial_depth = 3;
+
+
+    function v38_is_summary() {
+
+        try {
+
+            const filters = (
+                frappe.query_report
+                && frappe.query_report.get_filter_values
+                ? (
+                    frappe.query_report
+                        .get_filter_values()
+                    || {}
+                )
+                : {}
+            );
+
+
+            return (
+                String(
+                    filters.summary_view
+                    || ""
+                ).trim()
+                === "Summary Per Machine"
+            );
+
+        } catch (
+            error
+        ) {
+
+            return false;
+        }
+    }
+
+
+    const previous_formatter_v38 = (
+        report.formatter
+    );
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        let formatted;
+
+
+        if (
+            typeof previous_formatter_v38
+            === "function"
+        ) {
+
+            formatted = (
+                previous_formatter_v38.apply(
+                    this,
+                    arguments
+                )
+            );
+
+        } else {
+
+            formatted = (
+                default_formatter(
+                    value,
+                    row,
+                    column,
+                    data
+                )
+            );
+        }
+
+
+        if (
+            !v38_is_summary()
+            || !data
+        ) {
+
+            return formatted;
+        }
+
+
+        const fieldname = String(
+            column
+            && column.fieldname
+            || ""
+        ).trim();
+
+
+        const level = String(
+            data.productivity_summary_tree_level_v38
+            || ""
+        ).trim();
+
+
+        // ----------------------------------------------------
+        // CATEGORY / MACHINE / MATERIAL TOTALS BOLD
+        // ----------------------------------------------------
+
+        if (
+            (
+                level === "category"
+                || level === "machine"
+                || level === "material"
+                || level === "fleet_total"
+            )
+            && (
+                fieldname === "label"
+                || fieldname === "working_hours"
+                || fieldname === "output"
+                || fieldname === "adjusted_bcm"
+                || fieldname === "productivity"
+                || fieldname === "productivity_bcm_hd"
+            )
+        ) {
+
+            return (
+                '<span style="font-weight:700;">'
+                + formatted
+                + '</span>'
+            );
+        }
+
+
+        return formatted;
+    };
+
+
+    console.log(
+        "KOSI_PRODUCTIVITY_SUMMARY_TREE_V38 loaded"
+    );
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_SUMMARY_TREE_V38
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_MACHINE_MATERIAL_COLUMN_V44
+//
+// Summary Per Machine:
+//
+// ADT01  ...  Coal / Hards / Softs
+//
+// Keep the machine name in Label even though Material is
+// populated on the same machine row.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+
+    if (!report) {
+
+        return;
+    }
+
+
+    function esc_v44(value) {
+
+        return String(
+            value
+            ?? ""
+        )
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+
+    const previous_formatter_v44 = (
+        report.formatter
+    );
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        const fieldname = String(
+            column
+            && column.fieldname
+            || ""
+        ).trim();
+
+
+        if (
+            data
+            && data.productivity_summary_machine_material_list_v44
+        ) {
+
+            // Keep ADT01 / ADT02 / etc in Label.
+            if (
+                fieldname === "label"
+            ) {
+
+                return (
+                    '<span style="font-weight:700;">'
+                    + esc_v44(
+                        data.label
+                    )
+                    + '</span>'
+                );
+            }
+
+
+            // Show combined material on the right.
+            if (
+                fieldname === "material"
+            ) {
+
+                return (
+                    esc_v44(
+                        data.material
+                    )
+                );
+            }
+        }
+
+
+        if (
+            typeof previous_formatter_v44
+            === "function"
+        ) {
+
+            return (
+                previous_formatter_v44.apply(
+                    this,
+                    arguments
+                )
+            );
+        }
+
+
+        return default_formatter(
+            value,
+            row,
+            column,
+            data
+        );
+    };
+
+
+    console.log(
+        "KOSI_PRODUCTIVITY_MACHINE_MATERIAL_COLUMN_V44 loaded"
+    );
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_MACHINE_MATERIAL_COLUMN_V44
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_ADT_MATERIAL_ROWS_V45
+//
+// ADT material display:
+//
+// ADT01    ...    Coal
+// ADT01    ...    Hards
+// ADT01    ...    Softs
+//
+// Do NOT render Coal/Hards/Softs inside Label.
+// Material must appear in Material column.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+
+    if (!report) {
+
+        return;
+    }
+
+
+    function v45_escape(
+        value
+    ) {
+
+        return String(
+            value
+            ?? ""
+        )
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+
+    const previous_formatter_v45 = (
+        report.formatter
+    );
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        const fieldname = String(
+            column
+            && column.fieldname
+            || ""
+        ).trim();
+
+
+        // ====================================================
+        // ADT MATERIAL ROW
+        //
+        // Force:
+        //
+        // Label    = ADT01
+        // Material = Coal
+        //
+        // This overrides old V35/V36 display formatters.
+        // ====================================================
+
+        if (
+            data
+            && data.productivity_summary_adt_material_row_v45
+        ) {
+
+            if (
+                fieldname
+                === "label"
+            ) {
+
+                return (
+                    '<span style="font-weight:400;">'
+                    + v45_escape(
+                        data.label
+                    )
+                    + '</span>'
+                );
+            }
+
+
+            if (
+                fieldname
+                === "material"
+            ) {
+
+                return (
+                    '<span style="font-weight:400;">'
+                    + v45_escape(
+                        data.material
+                    )
+                    + '</span>'
+                );
+            }
+        }
+
+
+        if (
+            typeof previous_formatter_v45
+            === "function"
+        ) {
+
+            return (
+                previous_formatter_v45.apply(
+                    this,
+                    arguments
+                )
+            );
+        }
+
+
+        return default_formatter(
+            value,
+            row,
+            column,
+            data
+        );
+    };
+
+
+    console.log(
+        "KOSI_PRODUCTIVITY_ADT_MATERIAL_ROWS_V45 loaded"
+    );
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_ADT_MATERIAL_ROWS_V45
+
+// KOSI_PRODUCTIVITY_V45_BLANK_MATERIAL_LABEL_V46
+(function () {
+    const report = frappe.query_reports["Productivity"];
+    if (!report) return;
+
+    const previous_formatter_v46 = report.formatter;
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+        const fieldname = String(
+            column && column.fieldname || ""
+        ).trim();
+
+        if (
+            data &&
+            data.productivity_summary_adt_material_row_v45
+        ) {
+            // Material child row:
+            // left Label must be blank.
+            if (fieldname === "label") {
+                return "";
+            }
+
+            // Show Coal / Hards / Softs only here.
+            if (fieldname === "material") {
+                return String(
+                    data.material || ""
+                );
+            }
+        }
+
+        if (typeof previous_formatter_v46 === "function") {
+            return previous_formatter_v46.apply(
+                this,
+                arguments
+            );
+        }
+
+        return default_formatter(
+            value,
+            row,
+            column,
+            data
+        );
+    };
+})();
+// END KOSI_PRODUCTIVITY_V45_BLANK_MATERIAL_LABEL_V46
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_ADT_DOZER_MATERIAL_ROWS_V47
+//
+// ADT + DOZER material rows:
+//
+// Label column    = blank
+// Material column = Coal / Hards / Softs / Midburden / etc.
+//
+// Machine total remains on its own row.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+
+    if (!report) {
+
+        return;
+    }
+
+
+    function v47_escape(
+        value
+    ) {
+
+        return String(
+            value
+            ?? ""
+        )
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+
+    const previous_formatter_v47 = (
+        report.formatter
+    );
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        const fieldname = String(
+            column
+            && column.fieldname
+            || ""
+        ).trim();
+
+
+        if (
+            data
+            && data.productivity_summary_equipment_material_v47
+        ) {
+
+            // Material row:
+            // do not repeat the machine/material wording
+            // in the left Label column.
+            if (
+                fieldname === "label"
+            ) {
+
+                return "";
+            }
+
+
+            // Material appears only in Material column.
+            if (
+                fieldname === "material"
+            ) {
+
+                return (
+                    '<span style="font-weight:400;">'
+                    + v47_escape(
+                        data.material
+                    )
+                    + '</span>'
+                );
+            }
+        }
+
+
+        if (
+            typeof previous_formatter_v47
+            === "function"
+        ) {
+
+            return (
+                previous_formatter_v47.apply(
+                    this,
+                    arguments
+                )
+            );
+        }
+
+
+        return default_formatter(
+            value,
+            row,
+            column,
+            data
+        );
+    };
+
+
+    console.log(
+        "KOSI_PRODUCTIVITY_ADT_DOZER_MATERIAL_ROWS_V47 loaded"
+    );
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_ADT_DOZER_MATERIAL_ROWS_V47
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_AREA_ON_BREAKDOWN_V51
+//
+// SUMMARY PER MACHINE:
+//
+// Coal / Hards / Softs:
+//     BCM/HD visible
+//     From / To / Distance blank
+//
+// Material breakdown:
+//     BCM/HD blank
+//     From / To / Distance visible
+//
+// This final formatter overrides old yellow parent inputs.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+
+    if (!report) {
+
+        return;
+    }
+
+
+    function v51_escape(
+        value
+    ) {
+
+        return String(
+            value
+            ?? ""
+        )
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+
+    const previous_formatter_v51 = (
+        report.formatter
+    );
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        const fieldname = String(
+            column
+            && column.fieldname
+            || ""
+        ).trim();
+
+
+        // ====================================================
+        // BROAD MATERIAL PARENT
+        //
+        // Coal/Hards/Softs:
+        // do not show area controls here.
+        // ====================================================
+
+        if (
+            data
+            && data.productivity_summary_area_parent_v51
+        ) {
+
+            if (
+                fieldname === "from_area"
+                || fieldname === "to_area"
+                || fieldname === "hauling_distance_m"
+            ) {
+
+                return "";
+            }
+        }
+
+
+        // ====================================================
+        // MATERIAL BREAKDOWN
+        //
+        // Show plain area values here.
+        // BCM/HD stays blank.
+        // ====================================================
+
+        if (
+            data
+            && data.productivity_summary_area_detail_v51
+        ) {
+
+            if (
+                fieldname
+                === "productivity_bcm_hd"
+            ) {
+
+                return "";
+            }
+
+
+            if (
+                fieldname === "from_area"
+                || fieldname === "to_area"
+                || fieldname === "hauling_distance_m"
+            ) {
+
+                return (
+                    v51_escape(
+                        data[
+                            fieldname
+                        ]
+                    )
+                );
+            }
+        }
+
+
+        if (
+            typeof previous_formatter_v51
+            === "function"
+        ) {
+
+            return (
+                previous_formatter_v51.apply(
+                    this,
+                    arguments
+                )
+            );
+        }
+
+
+        return default_formatter(
+            value,
+            row,
+            column,
+            data
+        );
+    };
+
+
+    console.log(
+        "KOSI_PRODUCTIVITY_AREA_ON_BREAKDOWN_V51 loaded"
+    );
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_AREA_ON_BREAKDOWN_V51
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_BREAKDOWN_AREA_EDIT_V52
+//
+// Editable ONLY on material breakdown rows:
+//
+//     From Area
+//     To Area
+//     Hauling Distance (M)
+//
+// Changes are saved immediately using the existing permanent
+// Productivity Area Override backend.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+
+    if (!report) {
+
+        return;
+    }
+
+
+    window.__productivity_v52_rows = (
+        window.__productivity_v52_rows
+        || {}
+    );
+
+
+    function v52_escape(
+        value
+    ) {
+
+        return String(
+            value
+            ?? ""
+        )
+            .replace(
+                /&/g,
+                "&amp;"
+            )
+            .replace(
+                /</g,
+                "&lt;"
+            )
+            .replace(
+                />/g,
+                "&gt;"
+            )
+            .replace(
+                /"/g,
+                "&quot;"
+            )
+            .replace(
+                /'/g,
+                "&#039;"
+            );
+    }
+
+
+    const previous_formatter_v52 = (
+        report.formatter
+    );
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        const fieldname = String(
+            column
+            && column.fieldname
+            || ""
+        ).trim();
+
+
+        if (
+            data
+            && data.productivity_summary_area_edit_v52
+            && (
+                fieldname === "from_area"
+                || fieldname === "to_area"
+                || fieldname === "hauling_distance_m"
+            )
+        ) {
+
+            const row_key = String(
+                data.row_key
+                || ""
+            ).trim();
+
+
+            if (!row_key) {
+
+                return "";
+            }
+
+
+            window.__productivity_v52_rows[
+                row_key
+            ] = data;
+
+
+            const field_value = String(
+                data[
+                    fieldname
+                ]
+                || ""
+            );
+
+
+            return (
+                '<input'
+                + ' type="text"'
+                + ' class="productivity-v52-area-input"'
+                + ' data-row-key="'
+                + v52_escape(
+                    row_key
+                )
+                + '"'
+                + ' data-field="'
+                + v52_escape(
+                    fieldname
+                )
+                + '"'
+                + ' value="'
+                + v52_escape(
+                    field_value
+                )
+                + '"'
+                + ' autocomplete="off"'
+                + ' style="'
+                + 'width:100%;'
+                + 'box-sizing:border-box;'
+                + 'padding:4px 6px;'
+                + 'border:1px solid #d8b04c;'
+                + 'border-radius:3px;'
+                + 'background:#fff8d8;'
+                + '"'
+                + '>'
+            );
+        }
+
+
+        if (
+            typeof previous_formatter_v52
+            === "function"
+        ) {
+
+            return (
+                previous_formatter_v52.apply(
+                    this,
+                    arguments
+                )
+            );
+        }
+
+
+        return default_formatter(
+            value,
+            row,
+            column,
+            data
+        );
+    };
+
+
+    if (
+        !window.__productivity_v52_input_bound
+    ) {
+
+        window.__productivity_v52_input_bound = true;
+
+
+        document.addEventListener(
+            "input",
+            function (
+                event
+            ) {
+
+                const input = (
+                    event.target
+                    && event.target.closest
+                    ? event.target.closest(
+                        ".productivity-v52-area-input"
+                    )
+                    : null
+                );
+
+
+                if (!input) {
+
+                    return;
+                }
+
+
+                const row_key = String(
+                    input.dataset.rowKey
+                    || ""
+                ).trim();
+
+
+                const fieldname = String(
+                    input.dataset.field
+                    || ""
+                ).trim();
+
+
+                const data = (
+                    window.__productivity_v52_rows[
+                        row_key
+                    ]
+                );
+
+
+                if (
+                    !data
+                    || !fieldname
+                ) {
+
+                    return;
+                }
+
+
+                data[
+                    fieldname
+                ] = input.value;
+            },
+            true
+        );
+
+
+        document.addEventListener(
+            "change",
+            function (
+                event
+            ) {
+
+                const input = (
+                    event.target
+                    && event.target.closest
+                    ? event.target.closest(
+                        ".productivity-v52-area-input"
+                    )
+                    : null
+                );
+
+
+                if (!input) {
+
+                    return;
+                }
+
+
+                const row_key = String(
+                    input.dataset.rowKey
+                    || ""
+                ).trim();
+
+
+                const fieldname = String(
+                    input.dataset.field
+                    || ""
+                ).trim();
+
+
+                const data = (
+                    window.__productivity_v52_rows[
+                        row_key
+                    ]
+                );
+
+
+                if (
+                    !row_key
+                    || !data
+                    || !fieldname
+                ) {
+
+                    return;
+                }
+
+
+                data[
+                    fieldname
+                ] = String(
+                    input.value
+                    || ""
+                ).trim();
+
+
+                input.disabled = true;
+
+
+                frappe.call({
+                    method:
+                        "is_production.production.report.productivity.productivity.save_productivity_area_override",
+
+                    args: {
+                        row_key:
+                            row_key,
+
+                        site:
+                            data.productivity_v52_site
+                            || "",
+
+                        start_date:
+                            data.productivity_v52_start_date
+                            || "",
+
+                        end_date:
+                            data.productivity_v52_end_date
+                            || "",
+
+                        shift:
+                            data.productivity_v52_shift
+                            || "",
+
+                        monthly_production_plan:
+                            data.productivity_v52_plan
+                            || "",
+
+                        category:
+                            data.productivity_v52_category
+                            || "",
+
+                        machine:
+                            data.productivity_v52_machine
+                            || "",
+
+                        material:
+                            data.productivity_v52_material
+                            || "",
+
+                        from_area:
+                            data.from_area
+                            || "",
+
+                        to_area:
+                            data.to_area
+                            || "",
+
+                        hauling_distance_m:
+                            data.hauling_distance_m
+                            || "",
+                    },
+
+
+                    callback: function (
+                        response
+                    ) {
+
+                        const saved = (
+                            response.message
+                            || {}
+                        );
+
+
+                        if (
+                            Object.prototype.hasOwnProperty.call(
+                                saved,
+                                "from_area"
+                            )
+                        ) {
+
+                            data.from_area = String(
+                                saved.from_area
+                                || ""
+                            );
+                        }
+
+
+                        if (
+                            Object.prototype.hasOwnProperty.call(
+                                saved,
+                                "to_area"
+                            )
+                        ) {
+
+                            data.to_area = String(
+                                saved.to_area
+                                || ""
+                            );
+                        }
+
+
+                        if (
+                            Object.prototype.hasOwnProperty.call(
+                                saved,
+                                "hauling_distance_m"
+                            )
+                        ) {
+
+                            data.hauling_distance_m = String(
+                                saved.hauling_distance_m
+                                || ""
+                            );
+                        }
+
+
+                        input.disabled = false;
+
+
+                        frappe.show_alert({
+                            message:
+                                "Productivity area saved",
+
+                            indicator:
+                                "green",
+                        });
+                    },
+
+
+                    error: function () {
+
+                        input.disabled = false;
+
+
+                        frappe.show_alert({
+                            message:
+                                "Productivity area was not saved",
+
+                            indicator:
+                                "red",
+                        });
+                    },
+                });
+            },
+            true
+        );
+    }
+
+
+    console.log(
+        "KOSI_PRODUCTIVITY_BREAKDOWN_AREA_EDIT_V52 loaded"
+    );
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_BREAKDOWN_AREA_EDIT_V52
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_MATERIAL_HEADING_V53
+//
+// Coal / Hards / Softs become bold material headings.
+// BCM/HD is blank on these rows.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+
+    if (!report) {
+
+        return;
+    }
+
+
+    function v53_escape(
+        value
+    ) {
+
+        return String(
+            value
+            ?? ""
+        )
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+
+    const previous_formatter_v53 = (
+        report.formatter
+    );
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        const fieldname = String(
+            column
+            && column.fieldname
+            || ""
+        ).trim();
+
+
+        if (
+            data
+            && data.productivity_material_heading_v53
+        ) {
+
+            // Always blank BCM/HD on Coal/Hards/Softs parent.
+            if (
+                fieldname
+                === "productivity_bcm_hd"
+            ) {
+
+                return "";
+            }
+
+
+            // Make the Material heading bold.
+            if (
+                fieldname
+                === "material"
+            ) {
+
+                return (
+                    '<span style="font-weight:700;">'
+                    + v53_escape(
+                        data.material
+                    )
+                    + '</span>'
+                );
+            }
+        }
+
+
+        if (
+            typeof previous_formatter_v53
+            === "function"
+        ) {
+
+            return (
+                previous_formatter_v53.apply(
+                    this,
+                    arguments
+                )
+            );
+        }
+
+
+        return default_formatter(
+            value,
+            row,
+            column,
+            data
+        );
+    };
+
+
+    console.log(
+        "KOSI_PRODUCTIVITY_MATERIAL_HEADING_V53 loaded"
+    );
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_MATERIAL_HEADING_V53
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_DOZER_BREAKDOWN_V55
+//
+// DOZER:
+// parent material = bold heading
+// breakdown row = editable From / To / Hauling Distance
+//
+// To Area and Hauling Distance are NOT auto populated.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+
+    if (!report) {
+
+        return;
+    }
+
+
+    window.__productivity_v55_dozer_rows = (
+        window.__productivity_v55_dozer_rows
+        || {}
+    );
+
+
+    function v55_escape(
+        value
+    ) {
+
+        return String(
+            value
+            ?? ""
+        )
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+
+    const previous_formatter_v55 = (
+        report.formatter
+    );
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        const fieldname = String(
+            column
+            && column.fieldname
+            || ""
+        ).trim();
+
+
+        // ====================================================
+        // DOZER PARENT HEADING
+        // ====================================================
+
+        if (
+            data
+            && data.productivity_dozer_heading_v55
+        ) {
+
+            if (
+                fieldname
+                === "material"
+            ) {
+
+                return (
+                    '<span style="font-weight:700;">'
+                    + v55_escape(
+                        data.material
+                    )
+                    + '</span>'
+                );
+            }
+
+
+            if (
+                fieldname === "productivity_bcm_hd"
+                || fieldname === "from_area"
+                || fieldname === "to_area"
+                || fieldname === "hauling_distance_m"
+            ) {
+
+                return "";
+            }
+        }
+
+
+        // ====================================================
+        // DOZER DETAIL
+        // ====================================================
+
+        if (
+            data
+            && data.productivity_dozer_detail_v55
+        ) {
+
+            if (
+                fieldname === "label"
+            ) {
+
+                return "";
+            }
+
+
+            if (
+                fieldname
+                === "productivity_bcm_hd"
+            ) {
+
+                return "";
+            }
+
+
+            if (
+                fieldname === "from_area"
+                || fieldname === "to_area"
+                || fieldname === "hauling_distance_m"
+            ) {
+
+                const row_key = String(
+                    data.row_key
+                    || ""
+                ).trim();
+
+
+                if (!row_key) {
+
+                    return "";
+                }
+
+
+                window.__productivity_v55_dozer_rows[
+                    row_key
+                ] = data;
+
+
+                const field_value = String(
+                    data[
+                        fieldname
+                    ]
+                    || ""
+                );
+
+
+                return (
+                    '<input'
+                    + ' type="text"'
+                    + ' class="productivity-v55-dozer-input"'
+                    + ' data-row-key="'
+                    + v55_escape(
+                        row_key
+                    )
+                    + '"'
+                    + ' data-field="'
+                    + v55_escape(
+                        fieldname
+                    )
+                    + '"'
+                    + ' value="'
+                    + v55_escape(
+                        field_value
+                    )
+                    + '"'
+                    + ' autocomplete="off"'
+                    + ' style="'
+                    + 'width:100%;'
+                    + 'box-sizing:border-box;'
+                    + 'padding:4px 6px;'
+                    + 'border:1px solid #d8a12e;'
+                    + 'border-radius:3px;'
+                    + 'background:#fff8d8;'
+                    + '"'
+                    + '>'
+                );
+            }
+        }
+
+
+        if (
+            typeof previous_formatter_v55
+            === "function"
+        ) {
+
+            return (
+                previous_formatter_v55.apply(
+                    this,
+                    arguments
+                )
+            );
+        }
+
+
+        return default_formatter(
+            value,
+            row,
+            column,
+            data
+        );
+    };
+
+
+    if (
+        !window.__productivity_v55_dozer_bound
+    ) {
+
+        window.__productivity_v55_dozer_bound = true;
+
+
+        document.addEventListener(
+            "input",
+            function (
+                event
+            ) {
+
+                const input = (
+                    event.target
+                    && event.target.closest
+                    ? event.target.closest(
+                        ".productivity-v55-dozer-input"
+                    )
+                    : null
+                );
+
+
+                if (!input) {
+
+                    return;
+                }
+
+
+                const row_key = String(
+                    input.dataset.rowKey
+                    || ""
+                ).trim();
+
+
+                const fieldname = String(
+                    input.dataset.field
+                    || ""
+                ).trim();
+
+
+                const data = (
+                    window.__productivity_v55_dozer_rows[
+                        row_key
+                    ]
+                );
+
+
+                if (
+                    !data
+                    || !fieldname
+                ) {
+
+                    return;
+                }
+
+
+                data[
+                    fieldname
+                ] = input.value;
+            },
+            true
+        );
+
+
+        document.addEventListener(
+            "change",
+            function (
+                event
+            ) {
+
+                const input = (
+                    event.target
+                    && event.target.closest
+                    ? event.target.closest(
+                        ".productivity-v55-dozer-input"
+                    )
+                    : null
+                );
+
+
+                if (!input) {
+
+                    return;
+                }
+
+
+                const row_key = String(
+                    input.dataset.rowKey
+                    || ""
+                ).trim();
+
+
+                const fieldname = String(
+                    input.dataset.field
+                    || ""
+                ).trim();
+
+
+                const data = (
+                    window.__productivity_v55_dozer_rows[
+                        row_key
+                    ]
+                );
+
+
+                if (
+                    !row_key
+                    || !data
+                    || !fieldname
+                ) {
+
+                    return;
+                }
+
+
+                data[
+                    fieldname
+                ] = String(
+                    input.value
+                    || ""
+                ).trim();
+
+
+                input.disabled = true;
+
+
+                frappe.call({
+
+                    method:
+                        "is_production.production.report.productivity.productivity.save_productivity_area_override",
+
+                    args: {
+
+                        row_key:
+                            row_key,
+
+                        site:
+                            data.productivity_v55_site
+                            || "",
+
+                        start_date:
+                            data.productivity_v55_start_date
+                            || "",
+
+                        end_date:
+                            data.productivity_v55_end_date
+                            || "",
+
+                        shift:
+                            data.productivity_v55_shift
+                            || "",
+
+                        monthly_production_plan:
+                            data.productivity_v55_plan
+                            || "",
+
+                        category:
+                            "Dozer",
+
+                        machine:
+                            data.productivity_v55_machine
+                            || "",
+
+                        material:
+                            data.productivity_v55_save_material
+                            || "",
+
+                        from_area:
+                            data.from_area
+                            || "",
+
+                        to_area:
+                            data.to_area
+                            || "",
+
+                        hauling_distance_m:
+                            data.hauling_distance_m
+                            || "",
+                    },
+
+
+                    callback: function (
+                        response
+                    ) {
+
+                        const saved = (
+                            response.message
+                            || {}
+                        );
+
+
+                        data.from_area = String(
+                            saved.from_area
+                            ?? data.from_area
+                            ?? ""
+                        );
+
+
+                        data.to_area = String(
+                            saved.to_area
+                            ?? data.to_area
+                            ?? ""
+                        );
+
+
+                        data.hauling_distance_m = String(
+                            saved.hauling_distance_m
+                            ?? data.hauling_distance_m
+                            ?? ""
+                        );
+
+
+                        input.disabled = false;
+
+
+                        frappe.show_alert({
+                            message:
+                                "Dozer area saved",
+
+                            indicator:
+                                "green",
+                        });
+                    },
+
+
+                    error: function () {
+
+                        input.disabled = false;
+
+
+                        frappe.show_alert({
+                            message:
+                                "Dozer area was not saved",
+
+                            indicator:
+                                "red",
+                        });
+                    },
+                });
+            },
+            true
+        );
+    }
+
+
+    console.log(
+        "KOSI_PRODUCTIVITY_DOZER_BREAKDOWN_V55 loaded"
+    );
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_DOZER_BREAKDOWN_V55
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_BREAKDOWN_BCM_HD_V57
+//
+// Show BCM/HD on ADT + Dozer breakdown rows.
+//
+// Formula is calculated server-side:
+//
+// Output / average hauling distance.
+//
+// Broad material headings remain blank.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+
+    if (!report) {
+
+        return;
+    }
+
+
+    const previous_formatter_v57 = (
+        report.formatter
+    );
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        const fieldname = String(
+            column
+            && column.fieldname
+            || ""
+        ).trim();
+
+
+        if (
+            data
+            && fieldname
+            === "productivity_bcm_hd"
+        ) {
+
+            // -----------------------------------------------
+            // Parent material headings stay blank.
+            // -----------------------------------------------
+
+            if (
+                data.productivity_material_heading_v53
+                || data.productivity_dozer_heading_v55
+            ) {
+
+                return "";
+            }
+
+
+            // -----------------------------------------------
+            // ADT / DOZER breakdown calculation.
+            // -----------------------------------------------
+
+            if (
+                data.productivity_breakdown_bcm_hd_v57
+            ) {
+
+                const number = Number(
+                    data.productivity_bcm_hd
+                );
+
+
+                if (
+                    !Number.isFinite(
+                        number
+                    )
+                ) {
+
+                    return "";
+                }
+
+
+                return number.toFixed(
+                    2
+                );
+            }
+        }
+
+
+        if (
+            typeof previous_formatter_v57
+            === "function"
+        ) {
+
+            return (
+                previous_formatter_v57.apply(
+                    this,
+                    arguments
+                )
+            );
+        }
+
+
+        return default_formatter(
+            value,
+            row,
+            column,
+            data
+        );
+    };
+
+
+    // --------------------------------------------------------
+    // When user changes Hauling Distance:
+    //
+    // existing V52/V55 saves it.
+    //
+    // Refresh shortly afterwards so the newly calculated
+    // BCM/HD value appears.
+    // --------------------------------------------------------
+
+    if (
+        !window.__productivity_v57_bound
+    ) {
+
+        window.__productivity_v57_bound = true;
+
+
+        document.addEventListener(
+            "change",
+            function (
+                event
+            ) {
+
+                const input = (
+                    event.target
+                    && event.target.closest
+                    ? event.target.closest(
+                        '.productivity-v52-area-input[data-field="hauling_distance_m"], '
+                        + '.productivity-v55-dozer-input[data-field="hauling_distance_m"]'
+                    )
+                    : null
+                );
+
+
+                if (!input) {
+
+                    return;
+                }
+
+
+                clearTimeout(
+                    window.__productivity_v57_refresh_timer
+                );
+
+
+                window.__productivity_v57_refresh_timer = (
+                    setTimeout(
+                        function () {
+
+                            if (
+                                frappe.query_report
+                                && frappe.query_report.refresh
+                            ) {
+
+                                frappe.query_report.refresh();
+                            }
+
+                        },
+                        1500
+                    )
+                );
+            },
+            true
+        );
+    }
+
+
+    console.log(
+        "KOSI_PRODUCTIVITY_BREAKDOWN_BCM_HD_V57 loaded"
+    );
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_BREAKDOWN_BCM_HD_V57
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_HOURS_HIDE_COAL_HARDS_LABELS_V58
+//
+// Hours and Material:
+//
+// Coal / Hards remain visible headings.
+//
+// Their detailed child-row wording is hidden ONLY from the
+// Label column.
+//
+// No row or calculation is removed.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+
+    if (!report) {
+
+        return;
+    }
+
+
+    const previous_formatter_v58 = (
+        report.formatter
+    );
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        const fieldname = String(
+            column
+            && column.fieldname
+            || ""
+        ).trim();
+
+
+        if (
+            data
+            && data.productivity_hours_hide_label_v58
+            && fieldname === "label"
+        ) {
+
+            return "";
+        }
+
+
+        if (
+            typeof previous_formatter_v58
+            === "function"
+        ) {
+
+            return (
+                previous_formatter_v58.apply(
+                    this,
+                    arguments
+                )
+            );
+        }
+
+
+        return default_formatter(
+            value,
+            row,
+            column,
+            data
+        );
+    };
+
+
+    console.log(
+        "KOSI_PRODUCTIVITY_HOURS_HIDE_COAL_HARDS_LABELS_V58 loaded"
+    );
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_HOURS_HIDE_COAL_HARDS_LABELS_V58
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_HOURS_HIDE_SOFTS_DOZER_LABELS_V59
+//
+// Hours and Material only.
+//
+// Hide Label wording for:
+//
+// Softs child:
+//     Topsoil Dump
+//
+// Dozer child:
+//     Midburden Dozing
+//
+// The row itself remains.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+
+    if (!report) {
+
+        return;
+    }
+
+
+    const previous_formatter_v59 = (
+        report.formatter
+    );
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        const fieldname = String(
+            column
+            && column.fieldname
+            || ""
+        ).trim();
+
+
+        if (
+            data
+            && data.productivity_hours_hide_label_v59
+            && fieldname === "label"
+        ) {
+
+            return "";
+        }
+
+
+        if (
+            typeof previous_formatter_v59
+            === "function"
+        ) {
+
+            return (
+                previous_formatter_v59.apply(
+                    this,
+                    arguments
+                )
+            );
+        }
+
+
+        return default_formatter(
+            value,
+            row,
+            column,
+            data
+        );
+    };
+
+
+    console.log(
+        "KOSI_PRODUCTIVITY_HOURS_HIDE_SOFTS_DOZER_LABELS_V59 loaded"
+    );
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_HOURS_HIDE_SOFTS_DOZER_LABELS_V59
