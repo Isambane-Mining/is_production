@@ -1,0 +1,151 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:snapshot_reference",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "snapshot_reference",
+  "title",
+  "site",
+  "start_date",
+  "end_date",
+  "monthly_production_plans",
+  "shift",
+  "machine_type",
+  "asset",
+  "bcm_basis",
+  "summary_view",
+  "saved_by",
+  "saved_at",
+  "snapshot_pdf",
+  "snapshot_html",
+  "snapshot_data"
+ ],
+ "fields": [
+  {
+   "fieldname": "snapshot_reference",
+   "fieldtype": "Data",
+   "label": "Snapshot Reference",
+   "read_only": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Title",
+   "read_only": 1
+  },
+  {
+   "fieldname": "site",
+   "fieldtype": "Link",
+   "label": "Site",
+   "options": "Location",
+   "read_only": 1
+  },
+  {
+   "fieldname": "start_date",
+   "fieldtype": "Date",
+   "label": "Start Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "end_date",
+   "fieldtype": "Date",
+   "label": "End Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "monthly_production_plans",
+   "fieldtype": "Small Text",
+   "label": "Monthly Production",
+   "read_only": 1
+  },
+  {
+   "fieldname": "shift",
+   "fieldtype": "Data",
+   "label": "Shift",
+   "read_only": 1
+  },
+  {
+   "fieldname": "machine_type",
+   "fieldtype": "Data",
+   "label": "Machine Type",
+   "read_only": 1
+  },
+  {
+   "fieldname": "asset",
+   "fieldtype": "Data",
+   "label": "Asset",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bcm_basis",
+   "fieldtype": "Data",
+   "label": "BCM Basis",
+   "read_only": 1
+  },
+  {
+   "fieldname": "summary_view",
+   "fieldtype": "Data",
+   "label": "Summary",
+   "read_only": 1
+  },
+  {
+   "fieldname": "saved_by",
+   "fieldtype": "Link",
+   "label": "Saved By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "saved_at",
+   "fieldtype": "Datetime",
+   "label": "Saved At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "snapshot_pdf",
+   "fieldtype": "Attach",
+   "label": "Saved Productivity Report",
+   "read_only": 1
+  },
+  {
+   "fieldname": "snapshot_html",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "label": "Snapshot HTML",
+   "read_only": 1
+  },
+  {
+   "fieldname": "snapshot_data",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "label": "Snapshot Data",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "module": "Production",
+ "name": "Productivity Override Snapshot",
+ "naming_rule": "By fieldname",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

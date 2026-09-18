@@ -4,6 +4,7 @@
 import frappe
 from frappe.utils import flt, format_date, getdate
 from datetime import datetime
+from is_production.production.report.daily_reporting import daily_reporting
 
 
 def execute(filters=None):
@@ -12,9 +13,28 @@ def execute(filters=None):
 
     site = filters.get("site")
     end_date = filters.get("end_date")
+    monthly_production = filters.get("monthly_production")
     formatted_date = format_date(end_date, "dd/MM/yyyy") if end_date else ""
 
-    mpp = get_monthly_plan(site, end_date)
+    # Always respect the Monthly Production Planning document selected
+    # by the user on the Production Dashboard.
+    #
+    # Only fall back to date-based lookup when the report is opened
+    # directly without a selected monthly_production filter.
+    if (
+        monthly_production
+        and frappe.db.exists(
+            "Monthly Production Planning",
+            monthly_production,
+        )
+    ):
+        mpp = frappe.get_doc(
+            "Monthly Production Planning",
+            monthly_production,
+        )
+    else:
+        mpp = get_monthly_plan(site, end_date)
+
     month_start = getdate(mpp.prod_month_start_date) if mpp else None
 
     data = {
@@ -54,47 +74,111 @@ def execute(filters=None):
             "num_prod_days": flt(mpp.num_prod_days),
         })
 
-        completed_days = 0
-        if month_start:
-            child_rows = frappe.get_all(
+        # --------------------------------------------------------
+        # SELECTED-END-DATE PRODUCTION HOURS
+        #
+        # Production day:
+        #   Day   06:00 -> 18:00
+        #   Night 18:00 -> 06:00 next calendar morning
+        #
+        # The Monthly Production Days row belongs to its
+        # shift_start_date. Selecting 15 September therefore
+        # includes the complete 15 September production day,
+        # but excludes the row dated 16 September.
+        #
+        # 18 planned hours = 1.00 production day.
+        # --------------------------------------------------------
+
+        monthly_available_days = float(mpp.num_prod_days or 0)
+        total_planned_hours = monthly_available_days * 18.0
+
+        worked_hours = 0.0
+
+        if month_start and end_date:
+            selected_rows = frappe.get_all(
                 "Monthly Production Days",
                 filters={
                     "parent": mpp.name,
-                    "shift_start_date": ["between", [month_start, end_date]]
+                    "shift_start_date": [
+                        "between",
+                        [month_start, getdate(end_date)]
+                    ],
                 },
                 fields=[
                     "shift_start_date",
-                    "shift_day_hours", "shift_night_hours",
-                    "shift_morning_hours", "shift_afternoon_hours"
-                ]
+                    "shift_day_hours",
+                    "shift_night_hours",
+                    "shift_morning_hours",
+                    "shift_afternoon_hours",
+                ],
+                order_by="shift_start_date asc",
             )
 
-            for r in child_rows:
-                dt = r.get("shift_start_date")
-                if isinstance(dt, str):
-                    dt = datetime.strptime(dt, "%Y-%m-%d").date()
+            for r in selected_rows:
+                worked_hours += flt(r.get("shift_day_hours"))
+                worked_hours += flt(r.get("shift_night_hours"))
+                worked_hours += flt(r.get("shift_morning_hours"))
+                worked_hours += flt(r.get("shift_afternoon_hours"))
 
-                if dt and dt.weekday() != 6:
-                    hrs = (
-                        (r.get("shift_day_hours") or 0)
-                        + (r.get("shift_night_hours") or 0)
-                        + (r.get("shift_morning_hours") or 0)
-                        + (r.get("shift_afternoon_hours") or 0)
-                    )
-                    if hrs:
-                        completed_days += 1
+        if total_planned_hours:
+            worked_hours = min(worked_hours, total_planned_hours)
 
-        worked_days = completed_days
-        remaining_days = (mpp.num_prod_days or 0) - worked_days
+        worked_days = worked_hours / 18.0 if worked_hours else 0.0
+        remaining_hours = max(total_planned_hours - worked_hours, 0.0)
+        remaining_days = remaining_hours / 18.0
 
         data["num_prod_days_completed"] = worked_days
         data["month_remaining_prod_days"] = remaining_days
 
-        # Changed: MTD Prog Actual BCM’s now comes directly from Monthly Production Planning
-        mtd_actual_bcms = flt(mpp.month_actual_bcm)
+        # MTD Actual BCM respects the user-selected production day.
+        #
+        # Hourly Production.prod_date represents the complete production
+        # day, including the Night shift ending at 06:00 next morning.
+        # Same MTD Actual BCM source as Daily & Shift Report.
+        #
+        # This is the source used by the Summary section:
+        # get_actual_bcms_for_date(site, end_date, month_start)
+        #
+        # It respects the selected production date and keeps the
+        # Weekly Report aligned with Daily & Shift Report.
+        mtd_actual_bcms = daily_reporting.get_actual_bcms_for_date(
+            site,
+            getdate(end_date),
+            month_start,
+        )
 
-        mtd_prog_actual_coal = get_mtd_coal_dynamic(site, getdate(end_date), month_start)
-        mtd_prog_actual_waste = mtd_actual_bcms - (mtd_prog_actual_coal / 1.5)
+        # --------------------------------------------------------
+        # ACTUAL PRODUCTION THROUGH SELECTED PRODUCTION DATE
+        # --------------------------------------------------------
+        #
+        # Actual BCM:
+        #   Truck & Shovel + Dozing from Hourly Production.
+        #
+        # Actual Coal:
+        #   Survey / actual coal production through selected date.
+        #
+        # Actual Waste:
+        #   Actual BCM - Actual Coal BCM
+        #
+        # Coal conversion:
+        #   1.5 tons = 1 BCM
+        # --------------------------------------------------------
+
+        mtd_prog_actual_coal = get_mtd_coal_dynamic(
+            site,
+            getdate(end_date),
+            month_start,
+        )
+
+        actual_coal_bcm = (
+            mtd_prog_actual_coal / 1.5
+            if mtd_prog_actual_coal
+            else 0
+        )
+
+        mtd_prog_actual_waste = (
+            mtd_actual_bcms - actual_coal_bcm
+        )
 
         data["mtd_actual_bcms"] = mtd_actual_bcms
         data["mtd_prog_actual_coal"] = mtd_prog_actual_coal
@@ -116,24 +200,59 @@ def execute(filters=None):
             data["forecast_waste"] = data["mtd_prog_actual_waste"]
             data["forecast_coal"] = data["mtd_prog_actual_coal"]
 
+        # --------------------------------------------------------
+        # PROGRESS TARGETS - HOURS BASED
+        #
+        # MTD Target Waste:
+        #   Monthly Waste Target / Total Planned Hours * Worked Hours
+        #
+        # MTD Target Coal:
+        #   Monthly Coal Target / Total Planned Hours * Worked Hours
+        # --------------------------------------------------------
+
+        # Same progress-target formulas as Production Summary.
         data["mtd_prog_target_waste"] = (
-            (data["waste_bcms_planned"] / data["num_prod_days"]) * data["num_prod_days_completed"]
-            if data["num_prod_days"] else 0
+            (
+                data["waste_bcms_planned"]
+                / data["num_prod_days"]
+            )
+            * data["num_prod_days_completed"]
+            if data["num_prod_days"]
+            else 0
         )
-        data["short_over_waste"] = data["mtd_prog_target_waste"] - data["mtd_prog_actual_waste"]
+
+        data["short_over_waste"] = (
+            data["mtd_prog_target_waste"]
+            - data["mtd_prog_actual_waste"]
+        )
 
         data["mtd_prog_target_coal"] = (
-            (data["coal_tons_planned"] / data["num_prod_days"]) * data["num_prod_days_completed"]
-            if data["num_prod_days"] else 0
+            (
+                data["coal_tons_planned"]
+                / data["num_prod_days"]
+            )
+            * data["num_prod_days_completed"]
+            if data["num_prod_days"]
+            else 0
         )
-        data["short_over_coal"] = data["mtd_prog_target_coal"] - data["mtd_prog_actual_coal"]
+
+        data["short_over_coal"] = (
+            data["mtd_prog_target_coal"]
+            - data["mtd_prog_actual_coal"]
+        )
 
         data["remaining_volume"] = data["monthly_target"] - data["mtd_actual_bcms"]
         data["daily_required"] = data["remaining_volume"] / max((data["month_remaining_prod_days"], 1))
+
+        # Same Forecast source as Production Summary.
+        data["forecast"] = flt(mpp.month_forecated_bcm)
+
         data["days_left"] = remaining_days
 
-        data["forecast"] = flt(mpp.month_forecated_bcm) if mpp else 0
-        data["short_over_forecast"] = data["monthly_target"] - data["forecast"]
+        data["short_over_forecast"] = (
+            data["monthly_target"]
+            - data["forecast"]
+        )
 
         data["strip_ratio"] = round(
             (data["mtd_prog_actual_waste"] / data["mtd_prog_actual_coal"])
@@ -223,6 +342,67 @@ def get_coal_from_hourly(start_date, end_date, site, COAL_CONVERSION):
 
     return (coal_bcm or 0) * COAL_CONVERSION
 
+
+def get_mtd_actual_bcms_from_days(parent_name, month_start, end_date):
+    """
+    Same source used by Production Summary.
+
+    Sum Monthly Production Days.total_daily_bcms from the
+    monthly plan start through the selected production date.
+    """
+    if not parent_name or not month_start or not end_date:
+        return 0
+
+    rows = frappe.get_all(
+        "Monthly Production Days",
+        filters={
+            "parent": parent_name,
+            "shift_start_date": [
+                "between",
+                [month_start, end_date],
+            ],
+        },
+        fields=["total_daily_bcms"],
+        order_by="shift_start_date asc",
+    )
+
+    return sum(
+        flt(row.get("total_daily_bcms"))
+        for row in rows
+    )
+
+
+def get_mtd_actual_bcm(site, start_date, end_date):
+    """
+    Return Truck and Shovel plus Dozing BCM from the monthly
+    production start through the selected production day.
+
+    Hourly Production.prod_date is the production-day key.
+    A selected prod_date includes its complete Day and Night shift
+    and excludes the following production day.
+    """
+    if not site or not start_date or not end_date:
+        return 0
+
+    result = frappe.db.sql(
+        """
+        SELECT
+            COALESCE(
+                SUM(
+                    COALESCE(total_ts_bcm, 0)
+                    + COALESCE(total_dozing_bcm, 0)
+                ),
+                0
+            ) AS total_bcm
+        FROM `tabHourly Production`
+        WHERE location = %s
+          AND prod_date BETWEEN %s AND %s
+        """,
+        (site, start_date, end_date),
+        as_dict=True,
+    )
+
+    return flt(result[0].total_bcm) if result else 0
 
 def get_actual_ts_for_day(site, date):
     if not site or not date:
@@ -366,9 +546,9 @@ def build_html(site, formatted_date, d):
             <tr><td class="label">Actual Daily Achieved</td><td class="unit">BCM</td><td class="num">{fmt(d["actual_daily"])}</td></tr>
             <tr><td colspan="3" style="height:12px; border:none;"></td></tr>
 
-            <tr><td class="label">Monthly Available Days</td><td class="unit"></td><td class="num">{fmt(d["num_prod_days"])}</td></tr>
-            <tr><td class="label">Worked Days</td><td class="unit"></td><td class="num">{fmt(d["num_prod_days_completed"])}</td></tr>
-            <tr><td class="label">Days Left</td><td class="unit"></td><td class="num">{fmt(d["days_left"])}</td></tr>
+            <tr><td class="label">Monthly Available Days</td><td class="unit"></td><td class="num">{flt(d['num_prod_days']):,.1f}</td></tr>
+            <tr><td class="label">Worked Days</td><td class="unit"></td><td class="num">{flt(d['num_prod_days_completed']):,.1f}</td></tr>
+            <tr><td class="label">Days Left</td><td class="unit"></td><td class="num">{flt(d['days_left']):,.1f}</td></tr>
             <tr><td colspan="3" style="height:12px; border:none;"></td></tr>
 
             <tr><td class="label bold">Forecast on Current Rate</td><td class="unit">BCM</td><td class="num">{fmt(d["forecast"])}</td></tr>

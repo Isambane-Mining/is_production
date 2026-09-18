@@ -649,17 +649,49 @@ class PreUseHours(Document):
 
 
 
-            if eng_hrs_start is None:
-                row_issues.append("❗ <span style='color:orange;'>Missing Engine Hours Start</span>")
-            if eng_hrs_end is None:
-                row_issues.append("❗ <span style='color:orange;'>Missing Engine Hours End</span>")
+            # Engine-hours value 0 means NOT CAPTURED.
+            #
+            # Do not calculate 0 - previous_reading because that
+            # creates a false negative working-hours value.
+            start_missing = (
+                eng_hrs_start is None
+                or flt(eng_hrs_start) == 0
+            )
+            end_missing = (
+                eng_hrs_end is None
+                or flt(eng_hrs_end) == 0
+            )
 
-            if eng_hrs_start is not None and eng_hrs_end is not None:
-                working_hours = round(flt(eng_hrs_end) - flt(eng_hrs_start), 1)
+            if start_missing:
+                row_issues.append(
+                    "❗ <span style='color:orange;'>"
+                    "Missing Engine Hours Start"
+                    "</span>"
+                )
+
+            if end_missing:
+                row_issues.append(
+                    "❗ <span style='color:orange;'>"
+                    "Missing Engine Hours End"
+                    "</span>"
+                )
+
+            if start_missing or end_missing:
+                row.working_hours = 0.0
+
+            else:
+                working_hours = round(
+                    flt(eng_hrs_end) - flt(eng_hrs_start),
+                    1,
+                )
                 row.working_hours = working_hours
 
                 if working_hours < 0:
-                    row_issues.append("❌ <span style='color:red;'>Negative Working Hours</span>")
+                    row_issues.append(
+                        "❌ <span style='color:red;'>"
+                        "Negative Working Hours"
+                        "</span>"
+                    )
                 elif working_hours > max_shift_hours:
                     row_issues.append(
                         "❌ <span style='color:red;'>"
@@ -667,14 +699,20 @@ class PreUseHours(Document):
                         "</span>"
                     )
                 elif working_hours == 0:
-                    row_issues.append("⚠️ <span style='color:orange;'>Zero Working Hours</span>")
+                    row_issues.append(
+                        "⚠️ <span style='color:orange;'>"
+                        "Zero Working Hours"
+                        "</span>"
+                    )
 
             if row_issues:
                 warning_count += sum("⚠️" in i or "orange" in i for i in row_issues)
                 error_count += sum("❌" in i or "red" in i for i in row_issues)
 
                 errors.append({
-                    "row": idx,
+                    # Use the actual child-table row number shown
+                    # in the Pre Use grid.
+                    "row": row.idx or idx,
                     "asset": row.asset_name,
                     "issues": row_issues
                 })

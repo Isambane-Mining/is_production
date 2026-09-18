@@ -1,0 +1,111 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:row_key",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "row_key",
+  "site",
+  "start_date",
+  "end_date",
+  "shift",
+  "monthly_production_plan",
+  "category",
+  "machine",
+  "material",
+  "from_area",
+  "to_area",
+  "hauling_distance_m"
+ ],
+ "fields": [
+  {
+   "fieldname": "row_key",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Row Key",
+   "read_only": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "site",
+   "fieldtype": "Link",
+   "label": "Site",
+   "options": "Location"
+  },
+  {
+   "fieldname": "start_date",
+   "fieldtype": "Date",
+   "label": "Start Date"
+  },
+  {
+   "fieldname": "end_date",
+   "fieldtype": "Date",
+   "label": "End Date"
+  },
+  {
+   "fieldname": "shift",
+   "fieldtype": "Data",
+   "label": "Shift"
+  },
+  {
+   "fieldname": "monthly_production_plan",
+   "fieldtype": "Link",
+   "label": "Monthly Production",
+   "options": "Monthly Production Planning"
+  },
+  {
+   "fieldname": "category",
+   "fieldtype": "Data",
+   "label": "Category"
+  },
+  {
+   "fieldname": "machine",
+   "fieldtype": "Data",
+   "label": "Machine"
+  },
+  {
+   "fieldname": "material",
+   "fieldtype": "Data",
+   "label": "Material"
+  },
+  {
+   "fieldname": "from_area",
+   "fieldtype": "Small Text",
+   "label": "From Area"
+  },
+  {
+   "fieldname": "to_area",
+   "fieldtype": "Small Text",
+   "label": "To Area"
+  },
+  {
+   "fieldname": "hauling_distance_m",
+   "fieldtype": "Data",
+   "label": "Hauling Distance (M)"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "module": "Production",
+ "name": "Productivity Area Override",
+ "naming_rule": "By fieldname",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
