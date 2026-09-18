@@ -16219,3 +16219,1509 @@ def execute(
 
 
 # END KOSI_PRODUCTIVITY_ALL_TOTALS_BOLD_V14
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_SURVEY_ACTUAL_V15
+#
+# ACTUAL BCM SURVEY ALIGNMENT
+#
+# Rules:
+#
+# - Applies ONLY to Actual BCMs.
+# - Tallies BCMs remain unchanged.
+# - Working Hours remain from Pre-Use.
+# - Survey documents are cumulative MTD snapshots.
+# - Never sum Survey documents together.
+# - Use latest submitted Survey for the selected MPP whose
+#   last_production_shift_start_date is on/before report end.
+#
+# Truck + Shovel Survey BCM:
+#     Excavator and ADT use the same surveyed BCM.
+#
+# Dozing Survey BCM:
+#     Dozer uses surveyed Dozing BCM.
+#
+# Total Fleet:
+#     Excavator + Dozer.
+#     ADT is NOT added again.
+#
+# Existing machine/material distribution is retained
+# proportionally where multiple machine rows exist, but category
+# + material BCM totals are forced to the Survey source of truth.
+# ============================================================
+
+import json as _productivity_json_v15
+import re as _productivity_re_v15
+from collections import defaultdict as _productivity_defaultdict_v15
+
+
+_productivity_execute_before_survey_actual_v15 = execute
+
+
+def _productivity_float_v15(value):
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _productivity_date_v15(value):
+    if not value:
+        return None
+
+    try:
+        return frappe.utils.getdate(value)
+    except Exception:
+        return None
+
+
+def _productivity_category_v15(value):
+    text = str(value or "").strip().lower()
+
+    if not text:
+        return ""
+
+    if "excavator" in text:
+        return "Excavator"
+
+    if (
+        text == "adt"
+        or text.startswith("adt")
+        or " adt" in text
+    ):
+        return "ADT"
+
+    if "dozer" in text:
+        return "Dozer"
+
+    return ""
+
+
+def _productivity_material_v15(
+    material,
+    fallback=None,
+):
+    text = " ".join(
+        str(value or "").strip()
+        for value in (
+            material,
+            fallback,
+        )
+        if value
+    ).lower()
+
+    if not text:
+        return "Unassigned"
+
+    if "coal" in text:
+        return "Coal"
+
+    if (
+        "soft" in text
+        or "topsoil" in text
+    ):
+        return "Softs"
+
+    if (
+        "hard" in text
+        or "midburden" in text
+        or "overburden" in text
+        or "burden" in text
+        or "waste" in text
+    ):
+        return "Hards"
+
+    return (
+        str(material or fallback or "Unassigned")
+        .strip()
+    )
+
+
+def _productivity_selected_plans_v15(filters):
+    filters = frappe._dict(
+        filters or {}
+    )
+
+    result = []
+
+    keys = (
+        "monthly_production_plans",
+        "monthly_production_plan",
+        "monthly_production",
+        "define_monthly_production",
+    )
+
+    for key in keys:
+        raw = filters.get(key)
+
+        if not raw:
+            continue
+
+        values = []
+
+        if isinstance(
+            raw,
+            (
+                list,
+                tuple,
+                set,
+            ),
+        ):
+            values = list(raw)
+
+        elif isinstance(raw, str):
+            text = raw.strip()
+
+            if not text:
+                continue
+
+            try:
+                parsed = (
+                    _productivity_json_v15.loads(
+                        text
+                    )
+                )
+
+                if isinstance(
+                    parsed,
+                    list,
+                ):
+                    values = parsed
+                else:
+                    values = [text]
+
+            except Exception:
+                values = [
+                    part.strip()
+                    for part in text.split(",")
+                    if part.strip()
+                ]
+
+        else:
+            values = [raw]
+
+        for value in values:
+            name = str(
+                value or ""
+            ).strip()
+
+            if (
+                name
+                and name not in result
+            ):
+                result.append(
+                    name
+                )
+
+    return result
+
+
+def _productivity_plan_end_v15(
+    plan_name,
+):
+    match = (
+        _productivity_re_v15.match(
+            r"^(\d{4}-\d{2}-\d{2})",
+            str(plan_name or ""),
+        )
+    )
+
+    if not match:
+        return None
+
+    return _productivity_date_v15(
+        match.group(1)
+    )
+
+
+def _productivity_header_range_v15(
+    label,
+):
+    matches = (
+        _productivity_re_v15.findall(
+            r"(\d{2})-(\d{2})-(\d{4})",
+            str(label or ""),
+        )
+    )
+
+    if not matches:
+        return None, None
+
+    dates = []
+
+    for day, month, year in matches:
+        value = (
+            _productivity_date_v15(
+                f"{year}-{month}-{day}"
+            )
+        )
+
+        if value:
+            dates.append(value)
+
+    if not dates:
+        return None, None
+
+    return (
+        dates[0],
+        dates[-1],
+    )
+
+
+def _productivity_plan_for_section_v15(
+    header_label,
+    plans,
+    section_index,
+):
+    if not plans:
+        return None
+
+    start_date, end_date = (
+        _productivity_header_range_v15(
+            header_label
+        )
+    )
+
+    if end_date:
+        for plan in plans:
+            plan_end = (
+                _productivity_plan_end_v15(
+                    plan
+                )
+            )
+
+            if (
+                plan_end
+                and plan_end == end_date
+            ):
+                return plan
+
+    if len(plans) == 1:
+        return plans[0]
+
+    if (
+        section_index
+        < len(plans)
+    ):
+        return plans[
+            section_index
+        ]
+
+    return None
+
+
+def _productivity_effective_end_v15(
+    filters,
+    plan_name,
+    section_end,
+):
+    filters = frappe._dict(
+        filters or {}
+    )
+
+    candidates = []
+
+    filter_end = (
+        _productivity_date_v15(
+            filters.get(
+                "end_date"
+            )
+        )
+    )
+
+    plan_end = (
+        _productivity_plan_end_v15(
+            plan_name
+        )
+    )
+
+    for value in (
+        filter_end,
+        section_end,
+        plan_end,
+    ):
+        if value:
+            candidates.append(
+                value
+            )
+
+    if not candidates:
+        return None
+
+    return min(
+        candidates
+    )
+
+
+def _productivity_full_section_v15(
+    filters,
+    section_start,
+    section_end,
+):
+    if (
+        not section_start
+        or not section_end
+    ):
+        return True
+
+    filters = frappe._dict(
+        filters or {}
+    )
+
+    filter_start = (
+        _productivity_date_v15(
+            filters.get(
+                "start_date"
+            )
+        )
+    )
+
+    filter_end = (
+        _productivity_date_v15(
+            filters.get(
+                "end_date"
+            )
+        )
+    )
+
+    # Survey values are cumulative MTD snapshots.
+    #
+    # Until period-difference Survey logic is deliberately added,
+    # do not force cumulative Survey values into a partial
+    # monthly-period report.
+    if (
+        filter_start
+        and filter_start > section_start
+    ):
+        return False
+
+    if (
+        filter_end
+        and filter_end < section_end
+    ):
+        return False
+
+    return True
+
+
+def _productivity_latest_survey_v15(
+    site,
+    plan_name,
+    cutoff_date=None,
+):
+    if (
+        not site
+        or not plan_name
+    ):
+        return None
+
+    survey_filters = {
+        "location": site,
+        "docstatus": 1,
+        "monthly_production_plan_ref":
+            plan_name,
+    }
+
+    if cutoff_date:
+        survey_filters[
+            "last_production_shift_start_date"
+        ] = [
+            "<=",
+            cutoff_date,
+        ]
+
+    surveys = frappe.get_all(
+        "Survey",
+        filters=survey_filters,
+        fields=[
+            "name",
+            "last_production_shift_start_date",
+            "survey_datetime",
+            "total_ts_bcm",
+            "total_dozing_bcm",
+            "total_surveyed_bcm",
+            "modified",
+        ],
+        order_by=(
+            "last_production_shift_start_date desc, "
+            "survey_datetime desc, "
+            "modified desc"
+        ),
+        limit=1,
+    )
+
+    if not surveys:
+        return None
+
+    survey_info = surveys[0]
+
+    doc = frappe.get_doc(
+        "Survey",
+        survey_info.name,
+    )
+
+    ts = (
+        _productivity_defaultdict_v15(
+            float
+        )
+    )
+
+    dozing = (
+        _productivity_defaultdict_v15(
+            float
+        )
+    )
+
+    for row in (
+        doc.get(
+            "surveyed_values"
+        )
+        or []
+    ):
+        handling = (
+            _productivity_re_v15.sub(
+                r"[^a-z]",
+                "",
+                str(
+                    row.get(
+                        "handling_method"
+                    )
+                    or ""
+                ).lower(),
+            )
+        )
+
+        material = (
+            _productivity_material_v15(
+                row.get(
+                    "mat_type"
+                ),
+                row.get(
+                    "mat_type_ref"
+                ),
+            )
+        )
+
+        bcm = (
+            _productivity_float_v15(
+                row.get(
+                    "bcm"
+                )
+            )
+        )
+
+        # Handles both:
+        #   Truck and Shovel
+        #   Truckand Shovel
+        if (
+            handling
+            == "truckandshovel"
+        ):
+            ts[material] += bcm
+
+        elif handling == "dozing":
+            dozing[material] += bcm
+
+    return {
+        "name":
+            survey_info.name,
+
+        "last_production_shift_start_date":
+            survey_info.last_production_shift_start_date,
+
+        "survey_datetime":
+            survey_info.survey_datetime,
+
+        "Excavator":
+            dict(ts),
+
+        "ADT":
+            dict(ts),
+
+        "Dozer":
+            dict(dozing),
+
+        "total_ts_bcm":
+            sum(ts.values()),
+
+        "total_dozing_bcm":
+            sum(dozing.values()),
+
+        "total_surveyed_bcm":
+            (
+                sum(ts.values())
+                + sum(
+                    dozing.values()
+                )
+            ),
+    }
+
+
+def _productivity_output_v15(
+    row,
+):
+    if not row:
+        return 0.0
+
+    return (
+        _productivity_float_v15(
+            row.get(
+                "output"
+            )
+        )
+    )
+
+
+def _productivity_hd_numeric_v15(
+    value,
+):
+    text = str(
+        value or ""
+    ).replace(
+        ",",
+        "",
+    )
+
+    values = [
+        _productivity_float_v15(
+            number
+        )
+        for number in (
+            _productivity_re_v15.findall(
+                r"\d+(?:\.\d+)?",
+                text,
+            )
+        )
+    ]
+
+    if not values:
+        return 0.0
+
+    if len(values) >= 2:
+        return (
+            values[0]
+            + values[1]
+        ) / 2.0
+
+    return values[0]
+
+
+def _productivity_set_output_v15(
+    row,
+    value,
+    category=None,
+):
+    value = (
+        _productivity_float_v15(
+            value
+        )
+    )
+
+    row["output"] = value
+
+    if (
+        "adjusted_bcm"
+        in row
+    ):
+        row[
+            "adjusted_bcm"
+        ] = value
+
+    hours = (
+        _productivity_float_v15(
+            row.get(
+                "working_hours"
+            )
+        )
+    )
+
+    row[
+        "productivity"
+    ] = (
+        round(
+            value / hours,
+            3,
+        )
+        if hours > 0
+        else 0.0
+    )
+
+    if category in (
+        "ADT",
+        "Dozer",
+    ):
+        hd = (
+            _productivity_hd_numeric_v15(
+                row.get(
+                    "hauling_distance_m"
+                )
+            )
+        )
+
+        if hd > 0:
+            row[
+                "productivity_bcm_hd"
+            ] = round(
+                value / hd,
+                3,
+            )
+
+        elif (
+            "productivity_bcm_hd"
+            in row
+        ):
+            row[
+                "productivity_bcm_hd"
+            ] = ""
+
+
+def _productivity_section_categories_v15(
+    rows,
+    indices,
+):
+    categories = {}
+
+    current = ""
+
+    for index in indices:
+        row = rows[index]
+
+        label = str(
+            row.get(
+                "label"
+            )
+            or ""
+        ).strip()
+
+        if (
+            label.lower()
+            == "total fleet"
+        ):
+            current = ""
+            continue
+
+        explicit = (
+            _productivity_category_v15(
+                row.get(
+                    "category"
+                )
+                or row.get(
+                    "asset_category"
+                )
+            )
+        )
+
+        label_category = (
+            _productivity_category_v15(
+                label
+            )
+        )
+
+        if explicit:
+            current = explicit
+
+        elif (
+            label in (
+                "Excavator",
+                "ADT",
+                "Dozer",
+            )
+        ):
+            current = label
+
+        elif label_category:
+            # Useful for machine rows such as ADT01,
+            # while remaining inside the same category.
+            if (
+                label_category
+                in (
+                    "Excavator",
+                    "ADT",
+                    "Dozer",
+                )
+            ):
+                current = (
+                    label_category
+                )
+
+        if current:
+            categories[
+                index
+            ] = current
+
+    return categories
+
+
+def _productivity_align_category_v15(
+    rows,
+    indices,
+    category,
+    target_map,
+    machine_view=False,
+):
+    target_map = dict(
+        target_map
+        or {}
+    )
+
+    groups = (
+        _productivity_defaultdict_v15(
+            list
+        )
+    )
+
+    material_indices = []
+
+    # ----------------------------------------
+    # Find material rows
+    # ----------------------------------------
+    for index in indices:
+        row = rows[index]
+
+        if row.get(
+            "is_category_total"
+        ):
+            continue
+
+        if row.get(
+            "is_total_fleet"
+        ):
+            continue
+
+        if row.get(
+            "productivity_is_machine_total"
+        ):
+            continue
+
+        material = str(
+            row.get(
+                "material"
+            )
+            or ""
+        ).strip()
+
+        if not material:
+            continue
+
+        # KOSI_PRODUCTIVITY_SURVEY_MACHINE_KEY_FIX_V16
+        # KOSI_PRODUCTIVITY_SURVEY_MACHINE_LABEL_FIX_V17
+        #
+        # Summary Per Machine material rows identify the machine
+        # through label in the current report structure.
+        # Keep support for machine / asset_name as well.
+        if machine_view:
+            machine_name = str(
+                row.get("machine")
+                or row.get("asset_name")
+                or row.get("label")
+                or ""
+            ).strip()
+
+            if not machine_name:
+                continue
+
+        key = (
+            _productivity_material_v15(
+                material,
+                row.get(
+                    "label"
+                ),
+            )
+        )
+
+        groups[
+            key
+        ].append(
+            index
+        )
+
+        material_indices.append(
+            index
+        )
+
+    # ----------------------------------------
+    # Align each material to Survey
+    # ----------------------------------------
+    for material, group in groups.items():
+        target = (
+            _productivity_float_v15(
+                target_map.get(
+                    material,
+                    0
+                )
+            )
+        )
+
+        current_values = [
+            max(
+                _productivity_output_v15(
+                    rows[index]
+                ),
+                0.0,
+            )
+            for index in group
+        ]
+
+        current_total = sum(
+            current_values
+        )
+
+        new_values = []
+
+        if target <= 0:
+            new_values = [
+                0.0
+                for _ in group
+            ]
+
+        elif current_total > 0:
+            allocated = 0.0
+
+            for position, current in enumerate(
+                current_values
+            ):
+                if (
+                    position
+                    == len(group) - 1
+                ):
+                    new_value = (
+                        target
+                        - allocated
+                    )
+
+                else:
+                    new_value = (
+                        target
+                        * current
+                        / current_total
+                    )
+
+                    allocated += (
+                        new_value
+                    )
+
+                new_values.append(
+                    new_value
+                )
+
+        else:
+            new_values = [
+                0.0
+                for _ in group
+            ]
+
+            if group:
+                new_values[0] = (
+                    target
+                )
+
+        for index, new_value in zip(
+            group,
+            new_values,
+        ):
+            _productivity_set_output_v15(
+                rows[index],
+                new_value,
+                category,
+            )
+
+    # ----------------------------------------
+    # Machine totals in Summary Per Machine
+    # ----------------------------------------
+    if machine_view:
+        machine_totals = (
+            _productivity_defaultdict_v15(
+                float
+            )
+        )
+
+        for index in material_indices:
+            row = rows[index]
+
+            # KOSI_PRODUCTIVITY_SURVEY_MACHINE_TOTAL_FIX_V18
+            #
+            # Summary Per Machine material rows currently use
+            # label as the machine identifier.
+            machine = str(
+                row.get(
+                    "machine"
+                )
+                or row.get(
+                    "asset_name"
+                )
+                or row.get(
+                    "label"
+                )
+                or ""
+            ).strip()
+
+            if not machine:
+                continue
+
+            machine_totals[
+                machine
+            ] += (
+                _productivity_output_v15(
+                    row
+                )
+            )
+
+        for index in indices:
+            row = rows[index]
+
+            if not row.get(
+                "productivity_is_machine_total"
+            ):
+                continue
+
+            machine = str(
+                row.get(
+                    "machine"
+                )
+                or row.get(
+                    "asset_name"
+                )
+                or row.get(
+                    "label"
+                )
+                or ""
+            ).strip()
+
+            if machine in machine_totals:
+                _productivity_set_output_v15(
+                    row,
+                    machine_totals[
+                        machine
+                    ],
+                    category,
+                )
+
+    # ----------------------------------------
+    # Category total
+    # ----------------------------------------
+    target_total = sum(
+        _productivity_float_v15(
+            value
+        )
+        for value in (
+            target_map.values()
+        )
+    )
+
+    category_total_indices = []
+
+    for index in indices:
+        row = rows[index]
+
+        label = str(
+            row.get(
+                "label"
+            )
+            or ""
+        ).strip()
+
+        if (
+            label == category
+            or (
+                row.get(
+                    "is_category_total"
+                )
+                and (
+                    _productivity_category_v15(
+                        row.get(
+                            "category"
+                        )
+                        or label
+                    )
+                    == category
+                )
+            )
+        ):
+            category_total_indices.append(
+                index
+            )
+
+    for index in (
+        category_total_indices
+    ):
+        _productivity_set_output_v15(
+            rows[index],
+            target_total,
+            category,
+        )
+
+    return {
+        "output":
+            target_total,
+
+        "category_total_indices":
+            category_total_indices,
+    }
+
+
+def _productivity_apply_survey_v15(
+    result,
+    filters,
+):
+    if not result:
+        return result
+
+    filters = frappe._dict(
+        filters or {}
+    )
+
+    bcm_basis = str(
+        filters.get(
+            "bcm_basis"
+        )
+        or ""
+    ).strip().lower()
+
+    # Tallies remain completely untouched.
+    if not bcm_basis.startswith(
+        "actual"
+    ):
+        return result
+
+    plans = (
+        _productivity_selected_plans_v15(
+            filters
+        )
+    )
+
+    site = str(
+        filters.get(
+            "site"
+        )
+        or filters.get(
+            "location"
+        )
+        or ""
+    ).strip()
+
+    if (
+        not plans
+        or not site
+    ):
+        return result
+
+    parts = list(
+        result
+    )
+
+    if len(parts) < 2:
+        return result
+
+    rows = list(
+        parts[1]
+        or []
+    )
+
+    if not rows:
+        return result
+
+    # ----------------------------------------
+    # Build monthly sections
+    # ----------------------------------------
+    header_positions = []
+
+    for index, row in enumerate(
+        rows
+    ):
+        label = str(
+            row.get(
+                "label"
+            )
+            or ""
+        ).strip()
+
+        if (
+            row.get(
+                "is_monthly_plan_header"
+            )
+            or label.upper().startswith(
+                "MONTHLY PRODUCTION:"
+            )
+        ):
+            header_positions.append(
+                index
+            )
+
+    sections = []
+
+    if header_positions:
+        for position, start_index in enumerate(
+            header_positions
+        ):
+            end_index = (
+                header_positions[
+                    position + 1
+                ]
+                if (
+                    position + 1
+                    < len(
+                        header_positions
+                    )
+                )
+                else len(rows)
+            )
+
+            sections.append(
+                (
+                    position,
+                    list(
+                        range(
+                            start_index,
+                            end_index,
+                        )
+                    ),
+                    str(
+                        rows[
+                            start_index
+                        ].get(
+                            "label"
+                        )
+                        or ""
+                    ),
+                )
+            )
+
+    else:
+        sections.append(
+            (
+                0,
+                list(
+                    range(
+                        len(rows)
+                    )
+                ),
+                "",
+            )
+        )
+
+    summary_accumulator = {
+        "Excavator": {
+            "output": 0.0,
+            "hours": 0.0,
+        },
+        "Dozer": {
+            "output": 0.0,
+            "hours": 0.0,
+        },
+    }
+
+    summary_view = str(
+        filters.get(
+            "summary_view"
+        )
+        or ""
+    ).strip().lower()
+
+    machine_view = (
+        "summary per machine"
+        in summary_view
+    )
+
+    for (
+        section_index,
+        indices,
+        header_label,
+    ) in sections:
+
+        section_start, section_end = (
+            _productivity_header_range_v15(
+                header_label
+            )
+        )
+
+        plan_name = (
+            _productivity_plan_for_section_v15(
+                header_label,
+                plans,
+                section_index,
+            )
+        )
+
+        if not plan_name:
+            continue
+
+        # Do not use cumulative MTD Survey values for a
+        # deliberately partial monthly section.
+        if not (
+            _productivity_full_section_v15(
+                filters,
+                section_start,
+                section_end,
+            )
+        ):
+            continue
+
+        cutoff = (
+            _productivity_effective_end_v15(
+                filters,
+                plan_name,
+                section_end,
+            )
+        )
+
+        survey = (
+            _productivity_latest_survey_v15(
+                site,
+                plan_name,
+                cutoff,
+            )
+        )
+
+        if not survey:
+            continue
+
+        # Store invisible diagnostic metadata on header.
+        if indices:
+            rows[
+                indices[0]
+            ][
+                "productivity_survey_source"
+            ] = survey[
+                "name"
+            ]
+
+        category_lookup = (
+            _productivity_section_categories_v15(
+                rows,
+                indices,
+            )
+        )
+
+        category_indices = {
+            "Excavator": [],
+            "ADT": [],
+            "Dozer": [],
+        }
+
+        for index in indices:
+            category = (
+                category_lookup.get(
+                    index
+                )
+            )
+
+            if category in (
+                category_indices
+            ):
+                category_indices[
+                    category
+                ].append(
+                    index
+                )
+
+        category_results = {}
+
+        for category in (
+            "Excavator",
+            "ADT",
+            "Dozer",
+        ):
+            category_results[
+                category
+            ] = (
+                _productivity_align_category_v15(
+                    rows,
+                    category_indices[
+                        category
+                    ],
+                    category,
+                    survey.get(
+                        category
+                    )
+                    or {},
+                    machine_view,
+                )
+            )
+
+        # ------------------------------------
+        # Total Fleet = Excavator + Dozer
+        # ADT is duplicate haul output.
+        # ------------------------------------
+        fleet_output = (
+            category_results[
+                "Excavator"
+            ][
+                "output"
+            ]
+            + category_results[
+                "Dozer"
+            ][
+                "output"
+            ]
+        )
+
+        for index in indices:
+            row = rows[index]
+
+            label = str(
+                row.get(
+                    "label"
+                )
+                or ""
+            ).strip()
+
+            if (
+                row.get(
+                    "is_total_fleet"
+                )
+                or label.lower()
+                == "total fleet"
+            ):
+                _productivity_set_output_v15(
+                    row,
+                    fleet_output,
+                    None,
+                )
+
+        # ------------------------------------
+        # Summary cards
+        # ------------------------------------
+        for category in (
+            "Excavator",
+            "Dozer",
+        ):
+            total_indices = (
+                category_results[
+                    category
+                ][
+                    "category_total_indices"
+                ]
+            )
+
+            if not total_indices:
+                continue
+
+            row = rows[
+                total_indices[0]
+            ]
+
+            summary_accumulator[
+                category
+            ][
+                "output"
+            ] += (
+                _productivity_output_v15(
+                    row
+                )
+            )
+
+            summary_accumulator[
+                category
+            ][
+                "hours"
+            ] += (
+                _productivity_float_v15(
+                    row.get(
+                        "working_hours"
+                    )
+                )
+            )
+
+    parts[1] = rows
+
+    # Update report summary cards so they follow the
+    # Survey-aligned category totals.
+    if (
+        len(parts) > 4
+        and isinstance(
+            parts[4],
+            list,
+        )
+    ):
+        for item in parts[4]:
+            label = str(
+                item.get(
+                    "label"
+                )
+                or ""
+            ).lower()
+
+            if (
+                "truck + shovel productivity"
+                in label
+            ):
+                values = (
+                    summary_accumulator[
+                        "Excavator"
+                    ]
+                )
+
+                if values[
+                    "hours"
+                ] > 0:
+                    item[
+                        "value"
+                    ] = str(
+                        int(
+                            round(
+                                values[
+                                    "output"
+                                ]
+                                / values[
+                                    "hours"
+                                ]
+                            )
+                        )
+                    )
+
+            elif (
+                "dozing productivity"
+                in label
+            ):
+                values = (
+                    summary_accumulator[
+                        "Dozer"
+                    ]
+                )
+
+                if values[
+                    "hours"
+                ] > 0:
+                    item[
+                        "value"
+                    ] = str(
+                        int(
+                            round(
+                                values[
+                                    "output"
+                                ]
+                                / values[
+                                    "hours"
+                                ]
+                            )
+                        )
+                    )
+
+    if isinstance(
+        result,
+        tuple,
+    ):
+        return tuple(
+            parts
+        )
+
+    return parts
+
+
+def execute(filters=None):
+    result = (
+        _productivity_execute_before_survey_actual_v15(
+            filters
+        )
+    )
+
+    return (
+        _productivity_apply_survey_v15(
+            result,
+            filters,
+        )
+    )
+
+
+# END KOSI_PRODUCTIVITY_SURVEY_ACTUAL_V15
