@@ -1305,13 +1305,6 @@ function hodRenderSiteCard(row) {
                 ? "hod-browser-warning"
                 : "hod-browser-negative";
 
-    const productionHoursClass =
-        hodNumber(
-            row.production_excavator_hours
-        ) > 0
-            ? "hod-browser-primary"
-            : "hod-browser-negative";
-
     const forecastDeliveryClass =
         hodNumber(row.forecast_delivery_percent) >= 100
             ? "hod-browser-positive"
@@ -1414,23 +1407,7 @@ function hodRenderSiteCard(row) {
                     )}
 
                     ${hodMetricRow(
-                        "Excavator hours (Production Hours)",
-                        "HRS",
-                        hodFormatNumber(
-                            row.production_excavator_hours,
-                            1
-                        ),
-                        productionHoursClass
-                    )}
-
-                    ${hodMetricRow(
-                        `Average BCM/H (${hodFormatNumber(
-                            row.actual_bcm,
-                            0
-                        )} BCM / ${hodFormatNumber(
-                            row.production_excavator_hours,
-                            1
-                        )} HRS)`,
+                        "Average BCM/H",
                         "",
                         hodFormatNumber(
                             row.average_bcm_h,

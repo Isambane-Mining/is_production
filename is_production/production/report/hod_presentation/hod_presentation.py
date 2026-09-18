@@ -479,10 +479,10 @@ def get_report_payload(
 
     average_bcm_h = (
         round(
-            actual_bcm / production_hours,
+            actual_bcm / total_hours,
             1,
         )
-        if production_hours
+        if total_hours
         else 0
     )
 
