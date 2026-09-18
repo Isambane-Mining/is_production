@@ -311,20 +311,6 @@ def get_columns():
             "width": 125,
         },
         {
-            "label": _("Excavator Hours (From Pre-Use)"),
-            "fieldname": "total_excavator_hours",
-            "fieldtype": "Float",
-            "precision": 1,
-            "width": 175,
-        },
-        {
-            "label": _("Non-Production Hours"),
-            "fieldname": "non_production_excavator_hours",
-            "fieldtype": "Float",
-            "precision": 1,
-            "width": 165,
-        },
-        {
             "label": _("Excavator Production Hours"),
             "fieldname": "production_excavator_hours",
             "fieldtype": "Float",
@@ -493,10 +479,10 @@ def get_report_payload(
 
     average_bcm_h = (
         round(
-            actual_bcm / production_hours,
+            actual_bcm / total_hours,
             1,
         )
-        if production_hours
+        if total_hours
         else 0
     )
 
