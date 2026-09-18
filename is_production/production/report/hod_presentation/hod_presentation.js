@@ -1305,13 +1305,6 @@ function hodRenderSiteCard(row) {
                 ? "hod-browser-warning"
                 : "hod-browser-negative";
 
-    const nonProductionHoursClass =
-        hodNumber(
-            row.non_production_excavator_hours
-        ) > 0
-            ? "hod-browser-warning"
-            : "hod-browser-muted";
-
     const productionHoursClass =
         hodNumber(
             row.production_excavator_hours
@@ -1418,25 +1411,6 @@ function hodRenderSiteCard(row) {
                             row.daily_achieved_bcm,
                             1
                         )
-                    )}
-
-                    ${hodMetricRow(
-                        "Excavator hours (From Pre-Use)",
-                        "HRS",
-                        hodFormatNumber(
-                            row.total_excavator_hours,
-                            1
-                        )
-                    )}
-
-                    ${hodMetricRow(
-                        "Non-production hours",
-                        "HRS",
-                        hodFormatNumber(
-                            row.non_production_excavator_hours,
-                            1
-                        ),
-                        nonProductionHoursClass
                     )}
 
                     ${hodMetricRow(
