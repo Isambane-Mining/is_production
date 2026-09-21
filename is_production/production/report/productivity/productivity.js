@@ -15865,3 +15865,160 @@ if (
 
 
 // END KOSI_PRODUCTIVITY_HOURS_HIDE_SOFTS_DOZER_LABELS_V59
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_EXCAVATOR_DISPLAY_FORMATTER_V66
+//
+// Excavator material child rows in Summary Per Machine:
+//
+// Label             = BLANK
+// Working Hours     = BLANK
+// Productivity      = BLANK
+// Productivity/HD   = BLANK
+// From Area         = BLANK
+// To Area           = BLANK
+// Hauling Distance  = BLANK
+//
+// Output BCM remains visible.
+//
+// Coal / Hards / Softs appear ONLY in Material column.
+//
+// Targets rows created by V64/V65 only.
+// ============================================================
+
+(function () {
+
+    const report =
+        frappe.query_reports["Productivity"];
+
+    if (!report) {
+        return;
+    }
+
+
+    const previous_formatter_v66 =
+        report.formatter;
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        let formatted_value;
+
+
+        // ----------------------------------------------------
+        // KEEP ALL EXISTING FORMATTER BEHAVIOUR
+        // ----------------------------------------------------
+
+        if (
+            typeof previous_formatter_v66
+            === "function"
+        ) {
+
+            formatted_value =
+                previous_formatter_v66(
+                    value,
+                    row,
+                    column,
+                    data,
+                    default_formatter
+                );
+
+        } else {
+
+            formatted_value =
+                default_formatter(
+                    value,
+                    row,
+                    column,
+                    data
+                );
+        }
+
+
+        // ----------------------------------------------------
+        // EXCAVATOR MATERIAL CHILD ROW
+        // ----------------------------------------------------
+
+        const is_excavator_material_row =
+            Boolean(
+                data
+                && (
+                    data.productivity_excavator_material_v64
+                    || data.productivity_excavator_material_display_v65
+                )
+            );
+
+
+        if (!is_excavator_material_row) {
+            return formatted_value;
+        }
+
+
+        const fieldname =
+            String(
+                column.fieldname
+                || ""
+            );
+
+
+        // ----------------------------------------------------
+        // THESE MUST DISPLAY BLANK
+        // ----------------------------------------------------
+
+        const blank_fields = [
+            "label",
+            "working_hours",
+            "productivity",
+            "productivity_bcm_hd",
+            "from_area",
+            "to_area",
+            "hauling_distance_m"
+        ];
+
+
+        if (
+            blank_fields.includes(
+                fieldname
+            )
+        ) {
+
+            return "";
+        }
+
+
+        // ----------------------------------------------------
+        // MATERIAL MUST REMAIN VISIBLE
+        // ----------------------------------------------------
+
+        if (
+            fieldname === "material"
+        ) {
+
+            return default_formatter(
+                data.material || "",
+                row,
+                column,
+                data
+            );
+        }
+
+
+        // ----------------------------------------------------
+        // OUTPUT BCM MUST REMAIN VISIBLE
+        // ----------------------------------------------------
+
+        return formatted_value;
+    };
+
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_EXCAVATOR_DISPLAY_FORMATTER_V66
