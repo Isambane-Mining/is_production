@@ -31460,7 +31460,7 @@ def _productivity_v50_apply_row_logic(rows):
             current_parent_material = None
             continue
 
-        if current_category not in ("ADT", "Dozer"):
+        if current_category not in ("ADT", "Dozer", "Excavator"):
             continue
 
         # Machine total row (ADT01 / IS0601 / Dozer etc.)
@@ -39723,3 +39723,1029 @@ def execute(filters=None):
 
 
 # END KOSI_PRODUCTIVITY_FINAL_COAL_TONNES_V63
+
+
+# KOSI_PRODUCTIVITY_EXCAVATOR_BREAKDOWN_V63
+# V63 widens the existing ADT/Dozer material breakdown logic
+# so Summary Per Machine also shows Coal / Hards / Softs per Excavator.
+# END KOSI_PRODUCTIVITY_EXCAVATOR_BREAKDOWN_V63
+
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_EXCAVATOR_MATERIAL_PER_MACHINE_V64
+#
+# Summary Per Machine:
+#
+# Excavator
+#   EX01
+#       Coal
+#       Hards
+#       Softs
+#
+#   IS0330
+#       Coal
+#       Hards
+#       Softs
+#
+#
+# RULES
+# ------------------------------------------------------------
+#
+# Machine Working Hours remain authoritative Pre-Use Hours.
+#
+# Material hours are allocated from the existing machine
+# activity proportions and always reconcile to the machine
+# Working Hours.
+#
+# Machine output remains authoritative report output.
+#
+# Material BCM is allocated using machine material-production
+# proportions and always reconciles to the machine output.
+#
+# Therefore:
+#
+#     sum(material hours) = machine working hours
+#     sum(material BCM)   = machine output
+#
+#
+# Excavator:
+#
+#     From Area           = blank
+#     To Area             = blank
+#     Hauling Distance    = blank
+#     Productivity BCM/HD = blank
+#
+#
+# Applies to:
+#
+#     Actual BCMs  -> Summary Per Machine
+#     Tallies BCMs -> Summary Per Machine
+#
+# Does NOT modify:
+#
+#     Hours and Material
+#     ADT breakdown
+#     Dozer breakdown
+#
+# ============================================================
+
+
+_productivity_execute_before_excavator_material_v64 = execute
+
+
+def _productivity_v64_float(
+    value,
+):
+
+    try:
+
+        return float(
+            value
+            or 0
+        )
+
+    except Exception:
+
+        return 0.0
+
+
+def _productivity_v64_target(
+    filters,
+):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+
+    view = str(
+        filters.get(
+            "summary_view"
+        )
+        or ""
+    ).strip().lower()
+
+
+    basis = str(
+        filters.get(
+            "bcm_basis"
+        )
+        or ""
+    ).strip().lower()
+
+
+    return (
+        view == "summary per machine"
+        and (
+            basis.startswith(
+                "actual"
+            )
+            or basis.startswith(
+                "tallies"
+            )
+        )
+    )
+
+
+def _productivity_v64_material_name(
+    value,
+):
+
+    text = str(
+        value
+        or ""
+    ).strip()
+
+
+    lower = text.lower()
+
+
+    if "coal" in lower:
+
+        return "Coal"
+
+
+    if (
+        "hard" in lower
+        or "overburden" in lower
+    ):
+
+        return "Hards"
+
+
+    if (
+        "soft" in lower
+        or "topsoil" in lower
+    ):
+
+        return "Softs"
+
+
+    return ""
+
+
+def _productivity_v64_machine_materials(
+    filters,
+):
+
+    raw_map = (
+        _productivity_material_output_map(
+            filters
+        )
+        or {}
+    )
+
+
+    excavators = (
+        raw_map.get(
+            "Excavator",
+            {}
+        )
+        or {}
+    )
+
+
+    result = {}
+
+
+    for machine, parts in excavators.items():
+
+        machine_name = str(
+            machine
+            or ""
+        ).strip()
+
+
+        if not machine_name:
+
+            continue
+
+
+        grouped = {}
+
+
+        for part in (
+            parts
+            or []
+        ):
+
+            if not hasattr(
+                part,
+                "get",
+            ):
+
+                continue
+
+
+            material = (
+                _productivity_v64_material_name(
+                    part.get(
+                        "material"
+                    )
+                )
+            )
+
+
+            if not material:
+
+                continue
+
+
+            item = grouped.setdefault(
+                material,
+                {
+                    "material":
+                        material,
+
+                    "raw_output":
+                        0.0,
+
+                    "activity_hours":
+                        0.0,
+                },
+            )
+
+
+            item[
+                "raw_output"
+            ] += (
+                _productivity_v64_float(
+                    part.get(
+                        "raw_output"
+                    )
+                )
+            )
+
+
+            item[
+                "activity_hours"
+            ] += (
+                _productivity_v64_float(
+                    part.get(
+                        "activity_hours"
+                    )
+                )
+            )
+
+
+        ordered = []
+
+
+        for material in (
+            "Coal",
+            "Hards",
+            "Softs",
+        ):
+
+            if material in grouped:
+
+                ordered.append(
+                    grouped[
+                        material
+                    ]
+                )
+
+
+        if ordered:
+
+            result[
+                machine_name
+            ] = ordered
+
+
+    return result
+
+
+def _productivity_v64_allocate(
+    total,
+    weights,
+    precision=3,
+):
+
+    total = (
+        _productivity_v64_float(
+            total
+        )
+    )
+
+
+    weights = [
+        max(
+            0.0,
+            _productivity_v64_float(
+                value
+            ),
+        )
+        for value in weights
+    ]
+
+
+    if not weights:
+
+        return []
+
+
+    weight_total = sum(
+        weights
+    )
+
+
+    if weight_total <= 0:
+
+        weights = [
+            1.0
+            for _value in weights
+        ]
+
+        weight_total = float(
+            len(
+                weights
+            )
+        )
+
+
+    values = []
+
+    allocated = 0.0
+
+
+    for index, weight in enumerate(
+        weights
+    ):
+
+        if index == len(
+            weights
+        ) - 1:
+
+            value = round(
+                total
+                - allocated,
+                precision,
+            )
+
+
+        else:
+
+            value = round(
+                total
+                * weight
+                / weight_total,
+                precision,
+            )
+
+
+            allocated += (
+                value
+            )
+
+
+        # Protect tiny rounding residue.
+        if (
+            value < 0
+            and abs(
+                value
+            ) < 0.01
+        ):
+
+            value = 0.0
+
+
+        values.append(
+            value
+        )
+
+
+    return values
+
+
+def _productivity_v64_child_rows(
+    machine_row,
+    parts,
+):
+
+    machine_hours = (
+        _productivity_v64_float(
+            machine_row.get(
+                "working_hours"
+            )
+        )
+    )
+
+
+    machine_output = (
+        _productivity_v64_float(
+            machine_row.get(
+                "output"
+            )
+        )
+    )
+
+
+    # No activity for a zero machine.
+    if (
+        machine_hours <= 0
+        and machine_output <= 0
+    ):
+
+        return []
+
+
+    # --------------------------------------------------------
+    # HOURS
+    #
+    # Prefer activity-hour proportions.
+    # Fallback to raw-output proportions.
+    # --------------------------------------------------------
+
+    hour_weights = [
+        _productivity_v64_float(
+            part.get(
+                "activity_hours"
+            )
+        )
+        for part in parts
+    ]
+
+
+    if sum(
+        hour_weights
+    ) <= 0:
+
+        hour_weights = [
+            _productivity_v64_float(
+                part.get(
+                    "raw_output"
+                )
+            )
+            for part in parts
+        ]
+
+
+    allocated_hours = (
+        _productivity_v64_allocate(
+            machine_hours,
+            hour_weights,
+            precision=3,
+        )
+    )
+
+
+    # --------------------------------------------------------
+    # OUTPUT
+    #
+    # Use existing machine material-output proportions but
+    # scale them back to the authoritative machine output.
+    # --------------------------------------------------------
+
+    output_weights = [
+        _productivity_v64_float(
+            part.get(
+                "raw_output"
+            )
+        )
+        for part in parts
+    ]
+
+
+    if sum(
+        output_weights
+    ) <= 0:
+
+        output_weights = (
+            hour_weights
+        )
+
+
+    allocated_outputs = (
+        _productivity_v64_allocate(
+            machine_output,
+            output_weights,
+            precision=3,
+        )
+    )
+
+
+    children = []
+
+
+    try:
+
+        machine_indent = int(
+            float(
+                machine_row.get(
+                    "indent"
+                )
+                or 0
+            )
+        )
+
+    except Exception:
+
+        machine_indent = 1
+
+
+    for index, part in enumerate(
+        parts
+    ):
+
+        material = str(
+            part.get(
+                "material"
+            )
+            or ""
+        ).strip()
+
+
+        hours = (
+            allocated_hours[
+                index
+            ]
+        )
+
+
+        output = (
+            allocated_outputs[
+                index
+            ]
+        )
+
+
+        productivity = (
+            round(
+                output / hours
+            )
+            if hours > 0
+            else 0
+        )
+
+
+        child = {
+            "label":
+                material,
+
+            "working_hours":
+                hours,
+
+            "output":
+                output,
+
+            "productivity":
+                productivity,
+
+            "productivity_bcm_hd":
+                "",
+
+            "material":
+                material,
+
+            "from_area":
+                "",
+
+            "to_area":
+                "",
+
+            "hauling_distance_m":
+                "",
+
+            "indent":
+                machine_indent + 1,
+
+            "style":
+                "font-weight:600;",
+
+            "productivity_excavator_material_v64":
+                1,
+
+            "productivity_excavator_machine_v64":
+                str(
+                    machine_row.get(
+                        "label"
+                    )
+                    or ""
+                ).strip(),
+        }
+
+
+        # Preserve optional fields expected by current report.
+        if "adjusted_bcm" in machine_row:
+
+            child[
+                "adjusted_bcm"
+            ] = output
+
+
+        children.append(
+            child
+        )
+
+
+    return children
+
+
+def _productivity_apply_excavator_material_v64(
+    result,
+    filters,
+):
+
+    if not result:
+
+        return result
+
+
+    if not (
+        _productivity_v64_target(
+            filters
+        )
+    ):
+
+        return result
+
+
+    parts = list(
+        result
+    )
+
+
+    if len(
+        parts
+    ) < 2:
+
+        return result
+
+
+    rows = [
+        dict(
+            row
+        )
+        if hasattr(
+            row,
+            "get",
+        )
+        else row
+
+        for row in (
+            parts[
+                1
+            ]
+            or []
+        )
+    ]
+
+
+    material_map = (
+        _productivity_v64_machine_materials(
+            filters
+        )
+    )
+
+
+    if not material_map:
+
+        return result
+
+
+    new_rows = []
+
+    inside_excavator = False
+
+
+    for row in rows:
+
+        if not hasattr(
+            row,
+            "get",
+        ):
+
+            new_rows.append(
+                row
+            )
+
+            continue
+
+
+        label = str(
+            row.get(
+                "label"
+            )
+            or ""
+        ).strip()
+
+
+        # ----------------------------------------------------
+        # EXCAVATOR CATEGORY START
+        # ----------------------------------------------------
+
+        if label == "Excavator":
+
+            inside_excavator = True
+
+            new_rows.append(
+                row
+            )
+
+            continue
+
+
+        # ----------------------------------------------------
+        # NEXT CATEGORY = END EXCAVATOR
+        # ----------------------------------------------------
+
+        if (
+            inside_excavator
+            and label in (
+                "ADT",
+                "Dozer",
+                "Total Fleet",
+            )
+        ):
+
+            inside_excavator = False
+
+
+            new_rows.append(
+                row
+            )
+
+            continue
+
+
+        new_rows.append(
+            row
+        )
+
+
+        if not inside_excavator:
+
+            continue
+
+
+        # ----------------------------------------------------
+        # Only actual machine rows.
+        #
+        # Existing material/detail rows always contain
+        # material or one of the existing structure markers.
+        # ----------------------------------------------------
+
+        material = str(
+            row.get(
+                "material"
+            )
+            or ""
+        ).strip()
+
+
+        if material:
+
+            continue
+
+
+        if row.get(
+            "productivity_excavator_material_v64"
+        ):
+
+            continue
+
+
+        if not label:
+
+            continue
+
+
+        machine_parts = (
+            material_map.get(
+                label
+            )
+        )
+
+
+        if not machine_parts:
+
+            continue
+
+
+        children = (
+            _productivity_v64_child_rows(
+                row,
+                machine_parts,
+            )
+        )
+
+
+        new_rows.extend(
+            children
+        )
+
+
+    parts[
+        1
+    ] = new_rows
+
+
+    if isinstance(
+        result,
+        tuple,
+    ):
+
+        return tuple(
+            parts
+        )
+
+
+    return parts
+
+
+def execute(filters=None):
+
+    result = (
+        _productivity_execute_before_excavator_material_v64(
+            filters
+        )
+    )
+
+
+    return (
+        _productivity_apply_excavator_material_v64(
+            result,
+            filters,
+        )
+    )
+
+
+# END KOSI_PRODUCTIVITY_EXCAVATOR_MATERIAL_PER_MACHINE_V64
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_EXCAVATOR_MATERIAL_DISPLAY_V65
+#
+# Excavator Summary Per Machine child material rows:
+#
+#   LABEL            = blank
+#   WORKING HOURS    = blank
+#   PRODUCTIVITY     = blank
+#   MATERIAL         = Coal / Hards / Softs
+#   OUTPUT BCM       = remains visible
+#
+# Machine row keeps:
+#
+#   machine number
+#   machine working hours
+#   machine output
+#   machine productivity
+#
+# Only affects rows created by V64.
+# ============================================================
+
+
+_productivity_execute_before_excavator_material_display_v65 = execute
+
+
+def _productivity_apply_excavator_material_display_v65(
+    result,
+    filters=None,
+):
+
+    if not result:
+
+        return result
+
+
+    parts = list(
+        result
+    )
+
+
+    if len(
+        parts
+    ) < 2:
+
+        return result
+
+
+    rows = []
+
+
+    for row in (
+        parts[
+            1
+        ]
+        or []
+    ):
+
+        if not hasattr(
+            row,
+            "get",
+        ):
+
+            rows.append(
+                row
+            )
+
+            continue
+
+
+        row = dict(
+            row
+        )
+
+
+        if row.get(
+            "productivity_excavator_material_v64"
+        ):
+
+            # Preserve the calculated allocated hours privately
+            # in case they are needed for reconciliation later.
+            row[
+                "productivity_excavator_allocated_hours_v65"
+            ] = row.get(
+                "working_hours"
+            )
+
+
+            # Material must display ONLY in Material column.
+            row[
+                "label"
+            ] = ""
+
+
+            # Do not display Working Hours on material rows.
+            row[
+                "working_hours"
+            ] = ""
+
+
+            # Without displayed material hours, BCM/HR must
+            # also remain blank.
+            row[
+                "productivity"
+            ] = ""
+
+
+            # Excavator BCM/HD stays blank.
+            row[
+                "productivity_bcm_hd"
+            ] = ""
+
+
+            # Ensure all area / hauling fields remain blank
+            # for Excavator material rows.
+            row[
+                "from_area"
+            ] = ""
+
+            row[
+                "to_area"
+            ] = ""
+
+            row[
+                "hauling_distance_m"
+            ] = ""
+
+
+            row[
+                "productivity_excavator_material_display_v65"
+            ] = 1
+
+
+        rows.append(
+            row
+        )
+
+
+    parts[
+        1
+    ] = rows
+
+
+    if isinstance(
+        result,
+        tuple,
+    ):
+
+        return tuple(
+            parts
+        )
+
+
+    return parts
+
+
+def execute(filters=None):
+
+    result = (
+        _productivity_execute_before_excavator_material_display_v65(
+            filters
+        )
+    )
+
+
+    return (
+        _productivity_apply_excavator_material_display_v65(
+            result,
+            filters,
+        )
+    )
+
+
+# END KOSI_PRODUCTIVITY_EXCAVATOR_MATERIAL_DISPLAY_V65
