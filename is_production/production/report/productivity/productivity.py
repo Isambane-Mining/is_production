@@ -40749,3 +40749,1741 @@ def execute(filters=None):
 
 
 # END KOSI_PRODUCTIVITY_EXCAVATOR_MATERIAL_DISPLAY_V65
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_TALLIES_FINAL_ALIGNMENT_V67
+#
+# TALLIES ONLY.
+#
+# 1. Final report-summary KPIs are calculated from the final
+#    displayed category totals:
+#
+#       Truck + Shovel = Excavator BCM / Excavator Hours
+#       Dozing         = Dozer BCM / Dozer Hours
+#
+#    This replaces the older arithmetic average of individual
+#    machine productivity values.
+#
+# 2. Summary Per Machine / Dozer:
+#
+#    Existing detailed material rows are scaled back to their
+#    Tallies parent material totals so:
+#
+#       sum(detail BCM)   = Tallies material BCM
+#       sum(detail hours) = Tallies material hours
+#
+#    Existing detail proportions are retained where possible.
+#
+# 3. Actual BCMs are NOT changed.
+# ============================================================
+
+
+_productivity_execute_before_tallies_final_alignment_v67 = execute
+
+
+def _productivity_v67_float(value):
+
+    try:
+        return float(
+            value
+            or 0
+        )
+
+    except Exception:
+        return 0.0
+
+
+def _productivity_v67_is_tallies(filters):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+    basis = str(
+        filters.get(
+            "bcm_basis"
+        )
+        or ""
+    ).strip().lower()
+
+    return basis.startswith(
+        "tallies"
+    )
+
+
+def _productivity_v67_is_summary_machine(filters):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+    view = str(
+        filters.get(
+            "summary_view"
+        )
+        or ""
+    ).strip().lower()
+
+    return (
+        view
+        == "summary per machine"
+    )
+
+
+def _productivity_v67_allocate(
+    total,
+    weights,
+    precision=3,
+):
+
+    total = (
+        _productivity_v67_float(
+            total
+        )
+    )
+
+    weights = [
+        max(
+            0.0,
+            _productivity_v67_float(
+                value
+            ),
+        )
+        for value in (
+            weights
+            or []
+        )
+    ]
+
+    if not weights:
+        return []
+
+    weight_total = sum(
+        weights
+    )
+
+    if weight_total <= 0:
+
+        weights = [
+            1.0
+            for _value in weights
+        ]
+
+        weight_total = float(
+            len(
+                weights
+            )
+        )
+
+    result = []
+
+    allocated = 0.0
+
+    for index, weight in enumerate(
+        weights
+    ):
+
+        if index == len(
+            weights
+        ) - 1:
+
+            value = round(
+                total
+                - allocated,
+                precision,
+            )
+
+        else:
+
+            value = round(
+                total
+                * weight
+                / weight_total,
+                precision,
+            )
+
+            allocated += (
+                value
+            )
+
+        if (
+            value < 0
+            and abs(
+                value
+            ) < 0.001
+        ):
+            value = 0.0
+
+        result.append(
+            value
+        )
+
+    return result
+
+
+def _productivity_v67_fix_dozer_details(
+    rows,
+):
+
+    rows = [
+        dict(
+            row
+        )
+        if hasattr(
+            row,
+            "get",
+        )
+        else row
+        for row in (
+            rows
+            or []
+        )
+    ]
+
+    inside_dozer = False
+
+    current_machine = None
+    current_parent_index = None
+    detail_indices = []
+
+
+    def flush_parent():
+
+        nonlocal current_parent_index
+        nonlocal detail_indices
+
+        if (
+            current_parent_index is None
+            or not detail_indices
+        ):
+            current_parent_index = None
+            detail_indices = []
+            return
+
+        parent = rows[
+            current_parent_index
+        ]
+
+        parent_output = (
+            _productivity_v67_float(
+                parent.get(
+                    "output"
+                )
+            )
+        )
+
+        parent_hours = (
+            _productivity_v67_float(
+                parent.get(
+                    "working_hours"
+                )
+            )
+        )
+
+        output_weights = [
+            _productivity_v67_float(
+                rows[index].get(
+                    "output"
+                )
+            )
+            for index in detail_indices
+        ]
+
+        if sum(
+            output_weights
+        ) <= 0:
+
+            output_weights = [
+                _productivity_v67_float(
+                    rows[index].get(
+                        "working_hours"
+                    )
+                )
+                for index in detail_indices
+            ]
+
+        allocated_outputs = (
+            _productivity_v67_allocate(
+                parent_output,
+                output_weights,
+                precision=3,
+            )
+        )
+
+        hour_weights = [
+            _productivity_v67_float(
+                rows[index].get(
+                    "working_hours"
+                )
+            )
+            for index in detail_indices
+        ]
+
+        if sum(
+            hour_weights
+        ) <= 0:
+
+            hour_weights = (
+                output_weights
+            )
+
+        allocated_hours = (
+            _productivity_v67_allocate(
+                parent_hours,
+                hour_weights,
+                precision=3,
+            )
+        )
+
+        for position, index in enumerate(
+            detail_indices
+        ):
+
+            row = rows[
+                index
+            ]
+
+            output = (
+                allocated_outputs[
+                    position
+                ]
+            )
+
+            hours = (
+                allocated_hours[
+                    position
+                ]
+            )
+
+            row[
+                "output"
+            ] = output
+
+            row[
+                "working_hours"
+            ] = hours
+
+            row[
+                "productivity"
+            ] = (
+                round(
+                    output
+                    / hours
+                )
+                if hours > 0
+                else 0
+            )
+
+            if "adjusted_bcm" in row:
+                row[
+                    "adjusted_bcm"
+                ] = output
+
+            row[
+                "productivity_tallies_detail_aligned_v67"
+            ] = 1
+
+        current_parent_index = None
+        detail_indices = []
+
+
+    for index, row in enumerate(
+        rows
+    ):
+
+        if not hasattr(
+            row,
+            "get",
+        ):
+            continue
+
+        label = str(
+            row.get(
+                "label"
+            )
+            or ""
+        ).strip()
+
+        material = str(
+            row.get(
+                "material"
+            )
+            or ""
+        ).strip()
+
+
+        if label == "Dozer":
+
+            flush_parent()
+
+            inside_dozer = True
+            current_machine = None
+
+            continue
+
+
+        if (
+            inside_dozer
+            and label
+            == "Total Fleet"
+        ):
+
+            flush_parent()
+
+            inside_dozer = False
+            current_machine = None
+
+            break
+
+
+        if not inside_dozer:
+            continue
+
+
+        # Machine total row.
+        if (
+            label
+            and not material
+        ):
+
+            flush_parent()
+
+            current_machine = label
+
+            continue
+
+
+        # Tallies material parent under machine.
+        if (
+            current_machine
+            and material
+            and label
+            == current_machine
+        ):
+
+            flush_parent()
+
+            current_parent_index = index
+            detail_indices = []
+
+            continue
+
+
+        # Exact material / route detail beneath parent.
+        if (
+            current_machine
+            and current_parent_index
+            is not None
+            and material
+        ):
+
+            detail_indices.append(
+                index
+            )
+
+
+    flush_parent()
+
+    return rows
+
+
+def _productivity_v67_fix_summary_kpis(
+    result_parts,
+):
+
+    if len(
+        result_parts
+    ) < 5:
+
+        return result_parts
+
+    rows = (
+        result_parts[
+            1
+        ]
+        or []
+    )
+
+    summary = [
+        dict(
+            item
+        )
+        if hasattr(
+            item,
+            "get",
+        )
+        else item
+        for item in (
+            result_parts[
+                4
+            ]
+            or []
+        )
+    ]
+
+    excavator = None
+    dozer = None
+
+    for row in rows:
+
+        if not hasattr(
+            row,
+            "get",
+        ):
+            continue
+
+        label = str(
+            row.get(
+                "label"
+            )
+            or ""
+        ).strip()
+
+        if label == "Excavator":
+            excavator = row
+
+        elif label == "Dozer":
+            dozer = row
+
+
+    ts_productivity = 0.0
+
+    if excavator:
+
+        hours = (
+            _productivity_v67_float(
+                excavator.get(
+                    "working_hours"
+                )
+            )
+        )
+
+        output = (
+            _productivity_v67_float(
+                excavator.get(
+                    "output"
+                )
+            )
+        )
+
+        if hours > 0:
+
+            ts_productivity = (
+                output
+                / hours
+            )
+
+
+    dozer_productivity = 0.0
+
+    if dozer:
+
+        hours = (
+            _productivity_v67_float(
+                dozer.get(
+                    "working_hours"
+                )
+            )
+        )
+
+        output = (
+            _productivity_v67_float(
+                dozer.get(
+                    "output"
+                )
+            )
+        )
+
+        if hours > 0:
+
+            dozer_productivity = (
+                output
+                / hours
+            )
+
+
+    for item in summary:
+
+        if not hasattr(
+            item,
+            "get",
+        ):
+            continue
+
+        label = str(
+            item.get(
+                "label"
+            )
+            or ""
+        )
+
+        if (
+            "Truck + Shovel Productivity"
+            in label
+        ):
+
+            item[
+                "value"
+            ] = str(
+                round(
+                    ts_productivity
+                )
+            )
+
+        elif (
+            "Dozing Productivity"
+            in label
+        ):
+
+            item[
+                "value"
+            ] = str(
+                round(
+                    dozer_productivity
+                )
+            )
+
+
+    result_parts[
+        4
+    ] = summary
+
+    return result_parts
+
+
+def _productivity_apply_tallies_final_alignment_v67(
+    result,
+    filters,
+):
+
+    if not (
+        _productivity_v67_is_tallies(
+            filters
+        )
+    ):
+
+        # IMPORTANT:
+        # Actual BCMs and all other bases pass through untouched.
+        return result
+
+
+    if not result:
+
+        return result
+
+
+    parts = list(
+        result
+    )
+
+
+    if len(
+        parts
+    ) < 2:
+
+        return result
+
+
+    if (
+        _productivity_v67_is_summary_machine(
+            filters
+        )
+    ):
+
+        parts[
+            1
+        ] = (
+            _productivity_v67_fix_dozer_details(
+                parts[
+                    1
+                ]
+            )
+        )
+
+
+    parts = (
+        _productivity_v67_fix_summary_kpis(
+            parts
+        )
+    )
+
+
+    if isinstance(
+        result,
+        tuple,
+    ):
+
+        return tuple(
+            parts
+        )
+
+
+    return parts
+
+
+def execute(filters=None):
+
+    result = (
+        _productivity_execute_before_tallies_final_alignment_v67(
+            filters
+        )
+    )
+
+    return (
+        _productivity_apply_tallies_final_alignment_v67(
+            result,
+            filters,
+        )
+    )
+
+
+# END KOSI_PRODUCTIVITY_TALLIES_FINAL_ALIGNMENT_V67
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_ACTUAL_SUMMARY_ALIGNMENT_V68
+#
+# ACTUAL BCMs -> Summary Per Machine ONLY.
+#
+# Problem:
+#
+# Hours and Material uses the final Survey Actual BCM total,
+# while Summary Per Machine can still contain the older
+# captured machine BCM total.
+#
+# Fix:
+#
+# - Hours and Material remains the source of truth for the
+#   final category Actual BCM.
+#
+# - Excavator machine BCMs are proportionally scaled so they
+#   reconcile exactly to the final Excavator Actual BCM.
+#
+# - ADT machine BCMs are proportionally scaled so they
+#   reconcile exactly to the final ADT Actual BCM.
+#
+# - Working Hours are NOT changed.
+#
+# - Dozer Actual is NOT changed.
+#
+# - Total Fleet becomes:
+#
+#       corrected Excavator Actual BCM + Dozer Actual BCM
+#
+# - Tallies BCMs are NOT changed.
+#
+# ============================================================
+
+
+_productivity_execute_before_actual_summary_alignment_v68 = execute
+
+
+def _productivity_v68_float(value):
+
+    try:
+        return float(
+            value
+            or 0
+        )
+
+    except Exception:
+        return 0.0
+
+
+def _productivity_v68_is_target(filters):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+    basis = str(
+        filters.get(
+            "bcm_basis"
+        )
+        or ""
+    ).strip().lower()
+
+    view = str(
+        filters.get(
+            "summary_view"
+        )
+        or ""
+    ).strip().lower()
+
+    return (
+        basis.startswith(
+            "actual"
+        )
+        and view
+        == "summary per machine"
+    )
+
+
+def _productivity_v68_allocate(
+    total,
+    weights,
+    precision=3,
+):
+
+    total = (
+        _productivity_v68_float(
+            total
+        )
+    )
+
+    weights = [
+        max(
+            0.0,
+            _productivity_v68_float(
+                value
+            ),
+        )
+        for value in (
+            weights
+            or []
+        )
+    ]
+
+    if not weights:
+        return []
+
+    weight_total = sum(
+        weights
+    )
+
+    if weight_total <= 0:
+
+        weights = [
+            1.0
+            for _value in weights
+        ]
+
+        weight_total = float(
+            len(
+                weights
+            )
+        )
+
+    result = []
+
+    allocated = 0.0
+
+    for index, weight in enumerate(
+        weights
+    ):
+
+        if index == len(
+            weights
+        ) - 1:
+
+            value = round(
+                total
+                - allocated,
+                precision,
+            )
+
+        else:
+
+            value = round(
+                total
+                * weight
+                / weight_total,
+                precision,
+            )
+
+            allocated += (
+                value
+            )
+
+        if (
+            value < 0
+            and abs(
+                value
+            ) < 0.001
+        ):
+            value = 0.0
+
+        result.append(
+            value
+        )
+
+    return result
+
+
+def _productivity_v68_category_row(
+    rows,
+    category,
+):
+
+    for row in (
+        rows
+        or []
+    ):
+
+        if not hasattr(
+            row,
+            "get",
+        ):
+            continue
+
+        label = str(
+            row.get(
+                "label"
+            )
+            or ""
+        ).strip()
+
+        if label == category:
+            return row
+
+    return None
+
+
+def _productivity_v68_source_totals(
+    filters,
+):
+
+    source_filters = dict(
+        filters
+        or {}
+    )
+
+    source_filters[
+        "summary_view"
+    ] = "Hours and Material"
+
+    source_result = (
+        _productivity_execute_before_actual_summary_alignment_v68(
+            source_filters
+        )
+    )
+
+    source_rows = (
+        source_result[
+            1
+        ]
+        or []
+    )
+
+    result = {}
+
+    for category in (
+        "Excavator",
+        "ADT",
+        "Dozer",
+        "Total Fleet",
+    ):
+
+        row = (
+            _productivity_v68_category_row(
+                source_rows,
+                category,
+            )
+        )
+
+        if not row:
+            continue
+
+        result[
+            category
+        ] = {
+            "hours":
+                _productivity_v68_float(
+                    row.get(
+                        "working_hours"
+                    )
+                ),
+
+            "output":
+                _productivity_v68_float(
+                    row.get(
+                        "output"
+                    )
+                ),
+        }
+
+    return result
+
+
+def _productivity_v68_is_asset(
+    value,
+):
+
+    name = str(
+        value
+        or ""
+    ).strip()
+
+    if not name:
+        return False
+
+    try:
+        return bool(
+            frappe.db.exists(
+                "Asset",
+                name,
+            )
+        )
+
+    except Exception:
+        return False
+
+
+def _productivity_v68_recalc_row(
+    row,
+):
+
+    hours_raw = row.get(
+        "working_hours"
+    )
+
+    output = (
+        _productivity_v68_float(
+            row.get(
+                "output"
+            )
+        )
+    )
+
+    # V65 intentionally blanks Excavator material hours
+    # and productivity. Keep those display rows blank.
+    if hours_raw in (
+        "",
+        None,
+    ):
+
+        if row.get(
+            "productivity_excavator_material_display_v65"
+        ):
+            row[
+                "productivity"
+            ] = ""
+
+        return
+
+
+    hours = (
+        _productivity_v68_float(
+            hours_raw
+        )
+    )
+
+    row[
+        "productivity"
+    ] = (
+        round(
+            output
+            / hours
+        )
+        if hours > 0
+        else 0
+    )
+
+
+def _productivity_v68_scale_machine_section(
+    rows,
+    category,
+    target_output,
+):
+
+    category_names = {
+        "Excavator",
+        "ADT",
+        "Dozer",
+        "Total Fleet",
+    }
+
+    start = None
+    end = len(
+        rows
+    )
+
+    for index, row in enumerate(
+        rows
+    ):
+
+        if not hasattr(
+            row,
+            "get",
+        ):
+            continue
+
+        label = str(
+            row.get(
+                "label"
+            )
+            or ""
+        ).strip()
+
+        if label == category:
+
+            start = index
+
+            continue
+
+        if (
+            start is not None
+            and index > start
+            and label
+            in category_names
+        ):
+
+            end = index
+            break
+
+
+    if start is None:
+
+        return rows
+
+
+    category_row = rows[
+        start
+    ]
+
+
+    machine_indices = []
+
+    seen_assets = set()
+
+
+    for index in range(
+        start + 1,
+        end,
+    ):
+
+        row = rows[
+            index
+        ]
+
+        if not hasattr(
+            row,
+            "get",
+        ):
+            continue
+
+        label = str(
+            row.get(
+                "label"
+            )
+            or ""
+        ).strip()
+
+        material = str(
+            row.get(
+                "material"
+            )
+            or ""
+        ).strip()
+
+
+        if (
+            label
+            and not material
+            and label not in seen_assets
+            and _productivity_v68_is_asset(
+                label
+            )
+        ):
+
+            machine_indices.append(
+                index
+            )
+
+            seen_assets.add(
+                label
+            )
+
+
+    if not machine_indices:
+
+        return rows
+
+
+    old_outputs = [
+        _productivity_v68_float(
+            rows[
+                index
+            ].get(
+                "output"
+            )
+        )
+        for index in machine_indices
+    ]
+
+
+    weights = list(
+        old_outputs
+    )
+
+
+    if sum(
+        weights
+    ) <= 0:
+
+        weights = [
+            _productivity_v68_float(
+                rows[
+                    index
+                ].get(
+                    "working_hours"
+                )
+            )
+            for index in machine_indices
+        ]
+
+
+    new_outputs = (
+        _productivity_v68_allocate(
+            target_output,
+            weights,
+            precision=3,
+        )
+    )
+
+
+    for position, machine_index in enumerate(
+        machine_indices
+    ):
+
+        machine_row = rows[
+            machine_index
+        ]
+
+        old_output = (
+            old_outputs[
+                position
+            ]
+        )
+
+        new_output = (
+            new_outputs[
+                position
+            ]
+        )
+
+
+        machine_row[
+            "output"
+        ] = new_output
+
+
+        if "adjusted_bcm" in machine_row:
+
+            machine_row[
+                "adjusted_bcm"
+            ] = new_output
+
+
+        _productivity_v68_recalc_row(
+            machine_row
+        )
+
+
+        next_machine_index = (
+            machine_indices[
+                position + 1
+            ]
+            if position + 1
+            < len(
+                machine_indices
+            )
+            else end
+        )
+
+
+        factor = (
+            new_output
+            / old_output
+            if old_output > 0
+            else 0.0
+        )
+
+
+        for child_index in range(
+            machine_index + 1,
+            next_machine_index,
+        ):
+
+            child = rows[
+                child_index
+            ]
+
+            if not hasattr(
+                child,
+                "get",
+            ):
+                continue
+
+
+            child_old_output = (
+                _productivity_v68_float(
+                    child.get(
+                        "output"
+                    )
+                )
+            )
+
+
+            if old_output > 0:
+
+                child_new_output = round(
+                    child_old_output
+                    * factor,
+                    3,
+                )
+
+            else:
+
+                child_new_output = 0.0
+
+
+            child[
+                "output"
+            ] = child_new_output
+
+
+            if "adjusted_bcm" in child:
+
+                child[
+                    "adjusted_bcm"
+                ] = child_new_output
+
+
+            # BCM/HD changes in the same proportion because
+            # hauling distance remains unchanged.
+            bcm_hd_raw = child.get(
+                "productivity_bcm_hd"
+            )
+
+            if bcm_hd_raw not in (
+                "",
+                None,
+            ):
+
+                child[
+                    "productivity_bcm_hd"
+                ] = round(
+                    _productivity_v68_float(
+                        bcm_hd_raw
+                    )
+                    * factor,
+                    3,
+                )
+
+
+            _productivity_v68_recalc_row(
+                child
+            )
+
+
+    category_row[
+        "output"
+    ] = round(
+        target_output,
+        3,
+    )
+
+
+    if "adjusted_bcm" in category_row:
+
+        category_row[
+            "adjusted_bcm"
+        ] = round(
+            target_output,
+            3,
+        )
+
+
+    _productivity_v68_recalc_row(
+        category_row
+    )
+
+
+    category_row[
+        "productivity_actual_summary_aligned_v68"
+    ] = 1
+
+
+    return rows
+
+
+def _productivity_v68_update_total_fleet(
+    rows,
+):
+
+    excavator = (
+        _productivity_v68_category_row(
+            rows,
+            "Excavator",
+        )
+    )
+
+    dozer = (
+        _productivity_v68_category_row(
+            rows,
+            "Dozer",
+        )
+    )
+
+    total_fleet = (
+        _productivity_v68_category_row(
+            rows,
+            "Total Fleet",
+        )
+    )
+
+
+    if not (
+        excavator
+        and dozer
+        and total_fleet
+    ):
+
+        return rows
+
+
+    output = (
+        _productivity_v68_float(
+            excavator.get(
+                "output"
+            )
+        )
+        +
+        _productivity_v68_float(
+            dozer.get(
+                "output"
+            )
+        )
+    )
+
+
+    total_fleet[
+        "output"
+    ] = round(
+        output,
+        3,
+    )
+
+
+    if "adjusted_bcm" in total_fleet:
+
+        total_fleet[
+            "adjusted_bcm"
+        ] = round(
+            output,
+            3,
+        )
+
+
+    _productivity_v68_recalc_row(
+        total_fleet
+    )
+
+
+    return rows
+
+
+def _productivity_v68_update_summary_kpis(
+    result_parts,
+):
+
+    if len(
+        result_parts
+    ) < 5:
+
+        return result_parts
+
+
+    rows = (
+        result_parts[
+            1
+        ]
+        or []
+    )
+
+
+    summary = [
+        dict(
+            item
+        )
+        if hasattr(
+            item,
+            "get",
+        )
+        else item
+        for item in (
+            result_parts[
+                4
+            ]
+            or []
+        )
+    ]
+
+
+    excavator = (
+        _productivity_v68_category_row(
+            rows,
+            "Excavator",
+        )
+    )
+
+    dozer = (
+        _productivity_v68_category_row(
+            rows,
+            "Dozer",
+        )
+    )
+
+
+    ts_productivity = 0.0
+
+    dozer_productivity = 0.0
+
+
+    if excavator:
+
+        hours = (
+            _productivity_v68_float(
+                excavator.get(
+                    "working_hours"
+                )
+            )
+        )
+
+        output = (
+            _productivity_v68_float(
+                excavator.get(
+                    "output"
+                )
+            )
+        )
+
+        if hours > 0:
+
+            ts_productivity = (
+                output
+                / hours
+            )
+
+
+    if dozer:
+
+        hours = (
+            _productivity_v68_float(
+                dozer.get(
+                    "working_hours"
+                )
+            )
+        )
+
+        output = (
+            _productivity_v68_float(
+                dozer.get(
+                    "output"
+                )
+            )
+        )
+
+        if hours > 0:
+
+            dozer_productivity = (
+                output
+                / hours
+            )
+
+
+    for item in summary:
+
+        if not hasattr(
+            item,
+            "get",
+        ):
+            continue
+
+
+        label = str(
+            item.get(
+                "label"
+            )
+            or ""
+        )
+
+
+        if (
+            "Truck + Shovel Productivity"
+            in label
+        ):
+
+            item[
+                "value"
+            ] = str(
+                round(
+                    ts_productivity
+                )
+            )
+
+
+        elif (
+            "Dozing Productivity"
+            in label
+        ):
+
+            item[
+                "value"
+            ] = str(
+                round(
+                    dozer_productivity
+                )
+            )
+
+
+    result_parts[
+        4
+    ] = summary
+
+
+    return result_parts
+
+
+def _productivity_apply_actual_summary_alignment_v68(
+    result,
+    filters,
+):
+
+    if not (
+        _productivity_v68_is_target(
+            filters
+        )
+    ):
+
+        # Tallies and Hours and Material pass through untouched.
+        return result
+
+
+    if not result:
+
+        return result
+
+
+    parts = list(
+        result
+    )
+
+
+    if len(
+        parts
+    ) < 2:
+
+        return result
+
+
+    rows = [
+        dict(
+            row
+        )
+        if hasattr(
+            row,
+            "get",
+        )
+        else row
+
+        for row in (
+            parts[
+                1
+            ]
+            or []
+        )
+    ]
+
+
+    source = (
+        _productivity_v68_source_totals(
+            filters
+        )
+    )
+
+
+    for category in (
+        "Excavator",
+        "ADT",
+    ):
+
+        target = (
+            source.get(
+                category
+            )
+        )
+
+
+        if not target:
+
+            continue
+
+
+        rows = (
+            _productivity_v68_scale_machine_section(
+                rows,
+                category,
+                target[
+                    "output"
+                ],
+            )
+        )
+
+
+    # Dozer is deliberately not modified.
+    rows = (
+        _productivity_v68_update_total_fleet(
+            rows
+        )
+    )
+
+
+    parts[
+        1
+    ] = rows
+
+
+    parts = (
+        _productivity_v68_update_summary_kpis(
+            parts
+        )
+    )
+
+
+    if isinstance(
+        result,
+        tuple,
+    ):
+
+        return tuple(
+            parts
+        )
+
+
+    return parts
+
+
+def execute(filters=None):
+
+    result = (
+        _productivity_execute_before_actual_summary_alignment_v68(
+            filters
+        )
+    )
+
+
+    return (
+        _productivity_apply_actual_summary_alignment_v68(
+            result,
+            filters,
+        )
+    )
+
+
+# END KOSI_PRODUCTIVITY_ACTUAL_SUMMARY_ALIGNMENT_V68
