@@ -19678,3 +19678,532 @@ if (
 })();
 
 // END KOSI_PRODUCTIVITY_ADT_DOZER_MATCH_EXCAVATOR_DISPLAY_V87
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_SURVEY_SOURCE_DISPLAY_V89
+//
+// FINAL UI RULE:
+//
+// From Area
+// To Area
+// Hauling Distance
+//
+// are READ-ONLY values populated directly from Survey.
+//
+// No yellow input boxes.
+// No manual override saving.
+//
+// Existing Save Override button is converted to:
+//
+//     Save Snapshot
+//
+// so permanent Productivity snapshots remain available.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports
+        && frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+
+    if (!report) {
+
+        return;
+    }
+
+
+    const previous_formatter = (
+        report.formatter
+    );
+
+
+    report.formatter =
+        function (
+            value,
+            row,
+            column,
+            data,
+            default_formatter
+        ) {
+
+            if (
+                data
+                && column
+                && Number(
+                    data.productivity_manual_disabled_v89
+                    || 0
+                ) === 1
+                && [
+                    "from_area",
+                    "to_area",
+                    "hauling_distance_m"
+                ].includes(
+                    String(
+                        column.fieldname
+                        || ""
+                    )
+                )
+            ) {
+
+                // --------------------------------------------
+                // IMPORTANT:
+                //
+                // Bypass all older manual-input formatters.
+                // Render Survey value as plain report text.
+                // --------------------------------------------
+
+                return default_formatter(
+                    value,
+                    row,
+                    column,
+                    data
+                );
+            }
+
+
+            if (
+                typeof previous_formatter
+                === "function"
+            ) {
+
+                return previous_formatter.call(
+                    this,
+                    value,
+                    row,
+                    column,
+                    data,
+                    default_formatter
+                );
+            }
+
+
+            return default_formatter(
+                value,
+                row,
+                column,
+                data
+            );
+        };
+
+
+    // ========================================================
+    // MANUAL OVERRIDE IS NO LONGER USED.
+    // ========================================================
+
+    window.productivity_dirty_overrides = {};
+
+
+    // ========================================================
+    // KEEP SNAPSHOT FUNCTIONALITY
+    //
+    // Existing button becomes "Save Snapshot".
+    // ========================================================
+
+
+    function v89_snapshot_button() {
+
+        if (
+            typeof productivity_override_button
+            !== "function"
+        ) {
+
+            return null;
+        }
+
+
+        const button = (
+            productivity_override_button()
+        );
+
+
+        if (
+            !button
+            || !button.length
+        ) {
+
+            return null;
+        }
+
+
+        button
+            .show()
+            .prop(
+                "disabled",
+                false
+            )
+            .text(
+                __(
+                    "Save Snapshot"
+                )
+            );
+
+
+        return button;
+    }
+
+
+    if (
+        typeof productivity_update_override_button
+        === "function"
+    ) {
+
+        productivity_update_override_button =
+            function () {
+
+                v89_snapshot_button();
+            };
+    }
+
+
+    if (
+        typeof productivity_save_all_overrides
+        === "function"
+    ) {
+
+        productivity_save_all_overrides =
+            async function () {
+
+                const button = (
+                    v89_snapshot_button()
+                );
+
+
+                if (
+                    !button
+                    || !button.length
+                ) {
+
+                    return;
+                }
+
+
+                button
+                    .prop(
+                        "disabled",
+                        true
+                    )
+                    .text(
+                        __(
+                            "Saving Snapshot..."
+                        )
+                    );
+
+
+                try {
+
+                    if (
+                        typeof productivity_create_permanent_snapshot
+                        !== "function"
+                    ) {
+
+                        throw new Error(
+                            "Productivity snapshot function not found."
+                        );
+                    }
+
+
+                    const snapshot = await (
+                        productivity_create_permanent_snapshot()
+                    );
+
+
+                    frappe.msgprint({
+
+                        title:
+                            __(
+                                "Save Snapshot"
+                            ),
+
+                        indicator:
+                            "green",
+
+                        message:
+                            __(
+                                "Productivity snapshot saved successfully."
+                            )
+                    });
+
+
+                    return snapshot;
+
+
+                } catch (
+                    error
+                ) {
+
+                    console.error(
+                        "Productivity snapshot save failed:",
+                        error
+                    );
+
+
+                    frappe.msgprint({
+
+                        title:
+                            __(
+                                "Save Snapshot"
+                            ),
+
+                        indicator:
+                            "red",
+
+                        message:
+                            __(
+                                "The Productivity snapshot could not be saved."
+                            )
+                    });
+
+
+                    throw error;
+
+
+                } finally {
+
+                    button
+                        .prop(
+                            "disabled",
+                            false
+                        )
+                        .text(
+                            __(
+                                "Save Snapshot"
+                            )
+                        );
+                }
+            };
+    }
+
+
+    // ========================================================
+    // Older scripts may update the button after report refresh.
+    // Keep the final label correct.
+    // ========================================================
+
+    setTimeout(
+        v89_snapshot_button,
+        200
+    );
+
+
+    setTimeout(
+        v89_snapshot_button,
+        1000
+    );
+
+
+    setTimeout(
+        v89_snapshot_button,
+        2500
+    );
+
+
+    // ========================================================
+    // REMOVE YELLOW MANUAL INPUT STYLING IF ANY OLD VIRTUAL
+    // GRID CELL EXISTS MOMENTARILY DURING REFRESH.
+    // ========================================================
+
+    if (
+        !document.getElementById(
+            "productivity-survey-source-v89-style"
+        )
+    ) {
+
+        const style =
+            document.createElement(
+                "style"
+            );
+
+
+        style.id =
+            "productivity-survey-source-v89-style";
+
+
+        style.innerHTML = `
+
+            .productivity-v89-survey-value {
+                font-weight: 400 !important;
+            }
+
+        `;
+
+
+        document.head.appendChild(
+            style
+        );
+    }
+
+})();
+
+// END KOSI_PRODUCTIVITY_SURVEY_SOURCE_DISPLAY_V89
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_SURVEY_READONLY_ALL_V90
+//
+// FINAL DISPLAY RULE:
+//
+// Excavator
+// ADT
+// Dozer
+//
+// From Area
+// To Area
+// Hauling Distance
+//
+// are ALWAYS plain read-only values.
+//
+// The values still come from Survey through Python V89.
+//
+// This final formatter intentionally bypasses ALL older
+// Productivity manual-input formatters for these 3 columns.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports
+        && frappe.query_reports["Productivity"]
+    );
+
+
+    if (!report) {
+        return;
+    }
+
+
+    const previous_formatter =
+        report.formatter;
+
+
+    const survey_fields = [
+        "from_area",
+        "to_area",
+        "hauling_distance_m"
+    ];
+
+
+    report.formatter =
+        function (
+            value,
+            row,
+            column,
+            data,
+            default_formatter
+        ) {
+
+            const fieldname = String(
+                column
+                && column.fieldname
+                || ""
+            ).trim();
+
+
+            // =================================================
+            // IMPORTANT:
+            //
+            // Route fields NEVER pass through the older
+            // Excavator / ADT / Dozer editable formatters.
+            //
+            // Use the normal Frappe formatter directly.
+            // =================================================
+
+            if (
+                survey_fields.includes(
+                    fieldname
+                )
+            ) {
+
+                return default_formatter(
+                    value,
+                    row,
+                    column,
+                    data
+                );
+            }
+
+
+            if (
+                typeof previous_formatter
+                === "function"
+            ) {
+
+                return previous_formatter.call(
+                    this,
+                    value,
+                    row,
+                    column,
+                    data,
+                    default_formatter
+                );
+            }
+
+
+            return default_formatter(
+                value,
+                row,
+                column,
+                data
+            );
+        };
+
+
+    // ========================================================
+    // FALLBACK CSS
+    //
+    // In case the report virtual grid briefly reuses older
+    // rendered input HTML, make those legacy inputs look and
+    // behave as read-only text.
+    // ========================================================
+
+    if (
+        !document.getElementById(
+            "productivity-survey-readonly-v90-style"
+        )
+    ) {
+
+        const style =
+            document.createElement(
+                "style"
+            );
+
+
+        style.id =
+            "productivity-survey-readonly-v90-style";
+
+
+        style.innerHTML = `
+
+            input.productivity-inline-edit[data-field="from_area"],
+            input.productivity-inline-edit[data-field="to_area"],
+            input.productivity-inline-edit[data-field="hauling_distance_m"],
+
+            input.productivity-v87-area-input[data-field="from_area"],
+            input.productivity-v87-area-input[data-field="to_area"],
+            input.productivity-v87-area-input[data-field="hauling_distance_m"] {
+
+                pointer-events: none !important;
+                border: none !important;
+                outline: none !important;
+                box-shadow: none !important;
+                background: transparent !important;
+                padding-left: 0 !important;
+                padding-right: 0 !important;
+                font-weight: 400 !important;
+            }
+
+        `;
+
+
+        document.head.appendChild(
+            style
+        );
+    }
+
+})();
+
+// END KOSI_PRODUCTIVITY_SURVEY_READONLY_ALL_V90
