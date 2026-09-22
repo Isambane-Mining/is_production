@@ -16022,3 +16022,3659 @@ if (
 
 
 // END KOSI_PRODUCTIVITY_EXCAVATOR_DISPLAY_FORMATTER_V66
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_MACHINE_TYPE_MULTISELECT_V72
+//
+// Machine Type:
+//   blank             = all
+//   Excavator         = Excavator only
+//   ADT               = ADT only
+//   Dozer             = Dozer only
+//   Excavator + ADT   = both
+//
+// Backend V72 safely handles the selected array.
+// ============================================================
+
+(function () {
+    const report =
+        frappe.query_reports
+        && frappe.query_reports["Productivity"];
+
+    if (
+        !report
+        || !Array.isArray(report.filters)
+    ) {
+        return;
+    }
+
+    const filter = report.filters.find(
+        item =>
+            item
+            && item.fieldname === "machine_type"
+    );
+
+    if (!filter) {
+        return;
+    }
+
+    const machine_types = [
+        "Excavator",
+        "ADT",
+        "Dozer"
+    ];
+
+    filter.fieldtype = "MultiSelectList";
+
+    // Remove old Select/Link options.
+    delete filter.options;
+
+    filter.get_data = function (txt) {
+        const search = String(
+            txt || ""
+        ).trim().toLowerCase();
+
+        return machine_types
+            .filter(value =>
+                !search
+                || value.toLowerCase().includes(search)
+            )
+            .map(value => ({
+                value: value,
+                description: ""
+            }));
+    };
+
+    filter.placeholder = __(
+        "Select Machine Types"
+    );
+})();
+
+// END KOSI_PRODUCTIVITY_MACHINE_TYPE_MULTISELECT_V72
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_EXCAVATOR_AREA_INPUT_V73
+//
+// FINAL FRONT-END DISPLAY RULE.
+//
+// Backend V72 already provides:
+//
+//     from_area
+//     to_area
+//     hauling_distance_m
+//     productivity_editable = 1
+//     productivity_edit_key
+//
+// V66 previously hid Excavator area fields.
+//
+// V73 runs AFTER V66/V72 and restores editable yellow inputs
+// ONLY on V71 Excavator detail rows:
+//
+//     Machine
+//         Coal
+//             Ramp detail       <-- editable here
+//         Hards
+//             Overburden detail <-- editable here
+//         Softs
+//             Topsoil detail    <-- editable here
+//
+// Machine totals and Coal/Hards/Softs subtotal rows remain
+// clean and non-editable.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports
+        && frappe.query_reports["Productivity"]
+    );
+
+    if (!report) {
+        return;
+    }
+
+
+    // ========================================================
+    // MEMORY
+    // ========================================================
+
+    window.__productivity_excavator_area_v73 =
+        window.__productivity_excavator_area_v73
+        || {};
+
+
+    function clean(value) {
+
+        if (
+            value === null
+            || value === undefined
+        ) {
+            return "";
+        }
+
+        return String(value);
+    }
+
+
+    function escape_html(value) {
+
+        return clean(value)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+
+    function get_key(data) {
+
+        return clean(
+            data.productivity_edit_key
+            || data.row_key
+            || ""
+        ).trim();
+    }
+
+
+    function remember_row(data) {
+
+        const row_key = get_key(data);
+
+        if (!row_key) {
+            return null;
+        }
+
+        const memory =
+            window.__productivity_excavator_area_v73;
+
+        if (!memory[row_key]) {
+
+            memory[row_key] = {
+
+                row_key:
+                    row_key,
+
+                site:
+                    clean(
+                        data.productivity_edit_site
+                    ),
+
+                start_date:
+                    clean(
+                        data.productivity_edit_start_date
+                    ),
+
+                end_date:
+                    clean(
+                        data.productivity_edit_end_date
+                    ),
+
+                shift:
+                    clean(
+                        data.productivity_edit_shift
+                    ),
+
+                monthly_production_plan:
+                    clean(
+                        data.productivity_edit_monthly_plan
+                    ),
+
+                category:
+                    clean(
+                        data.productivity_edit_category
+                        || "Excavator"
+                    ),
+
+                machine:
+                    clean(
+                        data.productivity_edit_machine
+                        || data.productivity_excavator_parent_machine_v71
+                    ),
+
+                material:
+                    clean(
+                        data.productivity_edit_material
+                        || data.material
+                    ),
+
+                from_area:
+                    clean(
+                        data.from_area
+                    ),
+
+                to_area:
+                    clean(
+                        data.to_area
+                    ),
+
+                hauling_distance_m:
+                    clean(
+                        data.hauling_distance_m
+                    )
+            };
+
+        } else {
+
+            // Keep report values synchronized unless user is
+            // currently typing an unsaved value.
+            const state = memory[row_key];
+
+            if (!state.dirty_from_area) {
+                state.from_area =
+                    clean(data.from_area);
+            }
+
+            if (!state.dirty_to_area) {
+                state.to_area =
+                    clean(data.to_area);
+            }
+
+            if (!state.dirty_hauling_distance_m) {
+                state.hauling_distance_m =
+                    clean(
+                        data.hauling_distance_m
+                    );
+            }
+        }
+
+        return memory[row_key];
+    }
+
+
+    // ========================================================
+    // INPUT EVENT
+    // ========================================================
+
+    window.productivityExcavatorAreaV73Input =
+        function (input) {
+
+            if (!input) {
+                return;
+            }
+
+            const row_key =
+                clean(
+                    input.dataset.rowKey
+                ).trim();
+
+            const field =
+                clean(
+                    input.dataset.field
+                ).trim();
+
+            if (
+                !row_key
+                || !field
+            ) {
+                return;
+            }
+
+            const memory =
+                window.__productivity_excavator_area_v73;
+
+            const state =
+                memory[row_key];
+
+            if (!state) {
+                return;
+            }
+
+            state[field] =
+                clean(
+                    input.value
+                );
+
+            state[
+                "dirty_" + field
+            ] = true;
+
+            input.classList.add(
+                "productivity-excavator-area-v73-dirty"
+            );
+        };
+
+
+    // ========================================================
+    // SAVE
+    // ========================================================
+
+    window.productivityExcavatorAreaV73Save =
+        function (input) {
+
+            if (!input) {
+                return;
+            }
+
+            const row_key =
+                clean(
+                    input.dataset.rowKey
+                ).trim();
+
+            const field =
+                clean(
+                    input.dataset.field
+                ).trim();
+
+            if (
+                !row_key
+                || !field
+            ) {
+                return;
+            }
+
+            const memory =
+                window.__productivity_excavator_area_v73;
+
+            const state =
+                memory[row_key];
+
+            if (!state) {
+                return;
+            }
+
+            state[field] =
+                clean(
+                    input.value
+                );
+
+            input.disabled = true;
+
+            frappe.call({
+
+                method:
+                    "is_production.production.report.productivity.productivity.save_productivity_area_override",
+
+                args: {
+
+                    row_key:
+                        state.row_key,
+
+                    site:
+                        state.site,
+
+                    start_date:
+                        state.start_date,
+
+                    end_date:
+                        state.end_date,
+
+                    shift:
+                        state.shift,
+
+                    monthly_production_plan:
+                        state.monthly_production_plan,
+
+                    category:
+                        state.category,
+
+                    machine:
+                        state.machine,
+
+                    material:
+                        state.material,
+
+                    from_area:
+                        state.from_area,
+
+                    to_area:
+                        state.to_area,
+
+                    hauling_distance_m:
+                        state.hauling_distance_m
+                },
+
+                freeze:
+                    false,
+
+                callback:
+                    function (response) {
+
+                        input.disabled = false;
+
+                        if (
+                            response
+                            && response.message
+                            && response.message.saved
+                        ) {
+
+                            state.dirty_from_area =
+                                false;
+
+                            state.dirty_to_area =
+                                false;
+
+                            state.dirty_hauling_distance_m =
+                                false;
+
+                            input.classList.remove(
+                                "productivity-excavator-area-v73-dirty"
+                            );
+
+                            input.classList.add(
+                                "productivity-excavator-area-v73-saved"
+                            );
+
+                            setTimeout(
+                                function () {
+
+                                    input.classList.remove(
+                                        "productivity-excavator-area-v73-saved"
+                                    );
+
+                                },
+                                1200
+                            );
+
+                            frappe.show_alert(
+                                {
+                                    message:
+                                        __(
+                                            "Productivity area saved"
+                                        ),
+
+                                    indicator:
+                                        "green"
+                                },
+                                2
+                            );
+
+                        } else {
+
+                            frappe.msgprint(
+                                __(
+                                    "Productivity area could not be saved."
+                                )
+                            );
+                        }
+                    },
+
+                error:
+                    function () {
+
+                        input.disabled = false;
+
+                        frappe.msgprint(
+                            __(
+                                "Productivity area could not be saved."
+                            )
+                        );
+                    }
+            });
+        };
+
+
+    // ========================================================
+    // FINAL FORMATTER WRAPPER
+    // ========================================================
+
+    const previous_formatter =
+        report.formatter;
+
+
+    report.formatter =
+        function (
+            value,
+            row,
+            column,
+            data,
+            default_formatter
+        ) {
+
+            let formatted_value;
+
+            if (
+                typeof previous_formatter
+                === "function"
+            ) {
+
+                formatted_value =
+                    previous_formatter.call(
+                        this,
+                        value,
+                        row,
+                        column,
+                        data,
+                        default_formatter
+                    );
+
+            } else {
+
+                formatted_value =
+                    default_formatter(
+                        value,
+                        row,
+                        column,
+                        data
+                    );
+            }
+
+
+            if (
+                !data
+                || !column
+            ) {
+                return formatted_value;
+            }
+
+
+            // =================================================
+            // ONLY V71 EXCAVATOR DETAIL ROWS
+            // =================================================
+
+            const is_excavator_detail =
+                Number(
+                    data.productivity_excavator_detail_v71
+                    || 0
+                ) === 1;
+
+
+            const is_editable =
+                Number(
+                    data.productivity_editable
+                    || 0
+                ) === 1;
+
+
+            if (
+                !is_excavator_detail
+                || !is_editable
+            ) {
+                return formatted_value;
+            }
+
+
+            const fieldname =
+                clean(
+                    column.fieldname
+                );
+
+
+            if (
+                ![
+                    "from_area",
+                    "to_area",
+                    "hauling_distance_m"
+                ].includes(
+                    fieldname
+                )
+            ) {
+                return formatted_value;
+            }
+
+
+            const state =
+                remember_row(
+                    data
+                );
+
+
+            if (!state) {
+                return formatted_value;
+            }
+
+
+            const field_value =
+                clean(
+                    state[
+                        fieldname
+                    ]
+                );
+
+
+            return (
+                '<input'
+                + ' type="text"'
+                + ' class="productivity-excavator-area-v73-input"'
+                + ' data-row-key="'
+                + escape_html(
+                    state.row_key
+                )
+                + '"'
+                + ' data-field="'
+                + escape_html(
+                    fieldname
+                )
+                + '"'
+                + ' value="'
+                + escape_html(
+                    field_value
+                )
+                + '"'
+                + ' oninput="productivityExcavatorAreaV73Input(this)"'
+                + ' onchange="productivityExcavatorAreaV73Save(this)"'
+                + ' onblur="productivityExcavatorAreaV73Save(this)"'
+                + ' />'
+            );
+        };
+
+
+    // ========================================================
+    // STYLE - SAME IDEA AS ADT YELLOW CAPTURE CELLS
+    // ========================================================
+
+    if (
+        !document.getElementById(
+            "productivity-excavator-area-v73-style"
+        )
+    ) {
+
+        const style =
+            document.createElement(
+                "style"
+            );
+
+        style.id =
+            "productivity-excavator-area-v73-style";
+
+        style.innerHTML = `
+
+            .productivity-excavator-area-v73-input {
+
+                width:
+                    100% !important;
+
+                min-width:
+                    95px !important;
+
+                height:
+                    26px !important;
+
+                padding:
+                    2px 6px !important;
+
+                border:
+                    1px solid #d99a00 !important;
+
+                background:
+                    #fff8dd !important;
+
+                box-shadow:
+                    none !important;
+
+                font-size:
+                    12px !important;
+
+                color:
+                    #222 !important;
+
+                cursor:
+                    text !important;
+
+                pointer-events:
+                    auto !important;
+
+                position:
+                    relative !important;
+
+                z-index:
+                    10 !important;
+            }
+
+
+            .productivity-excavator-area-v73-input:focus {
+
+                background:
+                    #ffffff !important;
+
+                border:
+                    2px solid #d99a00 !important;
+
+                outline:
+                    none !important;
+            }
+
+
+            .productivity-excavator-area-v73-input.productivity-excavator-area-v73-dirty {
+
+                background:
+                    #fff1b8 !important;
+
+                border:
+                    2px solid #d99a00 !important;
+            }
+
+
+            .productivity-excavator-area-v73-input.productivity-excavator-area-v73-saved {
+
+                background:
+                    #e7f7e7 !important;
+
+                border:
+                    1px solid #5a9f5a !important;
+            }
+
+        `;
+
+        document.head.appendChild(
+            style
+        );
+    }
+
+})();
+
+// END KOSI_PRODUCTIVITY_EXCAVATOR_AREA_INPUT_V73
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_EXCAVATOR_DISPLAY_V74
+//
+// V74 final display rules:
+//
+// Excavator V71 detail rows:
+//
+//     Label:
+//         keep existing V66/V71 detail name.
+//
+//     Material:
+//         BLANK - do not duplicate detail name.
+//
+//     Productivity (BCM/Hr):
+//         show backend calculated productivity.
+//
+// Area fields:
+//         leave V73 yellow editable inputs untouched.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports
+        && frappe.query_reports["Productivity"]
+    );
+
+    if (!report) {
+        return;
+    }
+
+
+    const previous_formatter =
+        report.formatter;
+
+
+    function number_value(
+        value
+    ) {
+
+        if (
+            value === null
+            || value === undefined
+            || value === ""
+        ) {
+
+            return 0;
+        }
+
+        const number = Number(
+            String(value)
+                .replace(/,/g, "")
+                .trim()
+        );
+
+        return Number.isFinite(
+            number
+        )
+            ? number
+            : 0;
+    }
+
+
+    function format_productivity(
+        value
+    ) {
+
+        const number =
+            number_value(
+                value
+            );
+
+        if (!number) {
+            return "0";
+        }
+
+        // Same clean style as the existing report.
+        if (
+            Math.abs(
+                number
+                - Math.round(
+                    number
+                )
+            ) < 0.005
+        ) {
+
+            return String(
+                Math.round(
+                    number
+                )
+            );
+        }
+
+        return number
+            .toFixed(2)
+            .replace(
+                /\.00$/,
+                ""
+            )
+            .replace(
+                /(\.\d)0$/,
+                "$1"
+            );
+    }
+
+
+    report.formatter =
+        function (
+            value,
+            row,
+            column,
+            data,
+            default_formatter
+        ) {
+
+            let formatted_value;
+
+            if (
+                typeof previous_formatter
+                === "function"
+            ) {
+
+                formatted_value =
+                    previous_formatter.call(
+                        this,
+                        value,
+                        row,
+                        column,
+                        data,
+                        default_formatter
+                    );
+
+            } else {
+
+                formatted_value =
+                    default_formatter(
+                        value,
+                        row,
+                        column,
+                        data
+                    );
+            }
+
+
+            if (
+                !data
+                || !column
+            ) {
+
+                return formatted_value;
+            }
+
+
+            const is_excavator_detail =
+                Number(
+                    data.productivity_excavator_detail_v71
+                    || 0
+                ) === 1;
+
+
+            if (!is_excavator_detail) {
+
+                return formatted_value;
+            }
+
+
+            const fieldname =
+                String(
+                    column.fieldname
+                    || ""
+                ).trim();
+
+
+            // =================================================
+            // MATERIAL MUST NOT DISPLAY UNDER EXCAVATOR
+            // =================================================
+
+            if (
+                fieldname
+                === "material"
+            ) {
+
+                return "";
+            }
+
+
+            // =================================================
+            // PRODUCTIVITY BCM/HR
+            // =================================================
+
+            if (
+                fieldname
+                === "productivity"
+            ) {
+
+                let productivity =
+                    number_value(
+                        data.productivity
+                    );
+
+
+                // Fallback only if backend value is absent.
+                if (
+                    productivity <= 0
+                ) {
+
+                    const hours =
+                        number_value(
+                            data.working_hours
+                        );
+
+                    const output =
+                        number_value(
+                            (
+                                data.adjusted_bcm
+                                !== undefined
+                                && data.adjusted_bcm
+                                !== null
+                                && data.adjusted_bcm
+                                !== ""
+                            )
+                                ? data.adjusted_bcm
+                                : data.output
+                        );
+
+
+                    if (
+                        hours > 0
+                        && output > 0
+                    ) {
+
+                        productivity =
+                            output / hours;
+                    }
+                }
+
+
+                return (
+                    '<div style="'
+                    + 'text-align:right;'
+                    + 'padding-right:4px;'
+                    + '">'
+                    + format_productivity(
+                        productivity
+                    )
+                    + '</div>'
+                );
+            }
+
+
+            return formatted_value;
+        };
+
+})();
+
+// END KOSI_PRODUCTIVITY_EXCAVATOR_DISPLAY_V74
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_KEEP_MATERIAL_TOTALS_DISPLAY_V75
+//
+// KEEP:
+//
+//     Coal / Hards / Softs subtotal rows + totals.
+//
+// DETAIL ROW:
+//
+//     Label:
+//         Ramp 2 - 3 2#Coal
+//
+//     Material:
+//         BLANK, because detail is already displayed in Label.
+//
+//     Productivity BCM/Hr:
+//         display.
+//
+//     Productivity BCM/HD:
+//         display when hauling distance exists.
+//
+// V73 yellow area inputs remain untouched.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports
+        && frappe.query_reports["Productivity"]
+    );
+
+    if (!report) {
+        return;
+    }
+
+
+    const previous_formatter =
+        report.formatter;
+
+
+    function number_value(
+        value
+    ) {
+
+        if (
+            value === null
+            || value === undefined
+            || value === ""
+        ) {
+
+            return 0;
+        }
+
+        const number = Number(
+            String(value)
+                .replace(/,/g, "")
+                .trim()
+        );
+
+        return Number.isFinite(
+            number
+        )
+            ? number
+            : 0;
+    }
+
+
+    function display_number(
+        value,
+        decimals = 2
+    ) {
+
+        const number =
+            number_value(
+                value
+            );
+
+        if (!number) {
+            return "";
+        }
+
+        if (
+            Math.abs(
+                number
+                - Math.round(
+                    number
+                )
+            ) < 0.005
+        ) {
+
+            return String(
+                Math.round(
+                    number
+                )
+            );
+        }
+
+        return number
+            .toFixed(
+                decimals
+            )
+            .replace(
+                /\.00$/,
+                ""
+            )
+            .replace(
+                /(\.\d)0$/,
+                "$1"
+            );
+    }
+
+
+    function right_value(
+        value
+    ) {
+
+        return (
+            '<div style="'
+            + 'text-align:right;'
+            + 'padding-right:4px;'
+            + '">'
+            + value
+            + '</div>'
+        );
+    }
+
+
+    report.formatter =
+        function (
+            value,
+            row,
+            column,
+            data,
+            default_formatter
+        ) {
+
+            let formatted_value;
+
+            if (
+                typeof previous_formatter
+                === "function"
+            ) {
+
+                formatted_value =
+                    previous_formatter.call(
+                        this,
+                        value,
+                        row,
+                        column,
+                        data,
+                        default_formatter
+                    );
+
+            } else {
+
+                formatted_value =
+                    default_formatter(
+                        value,
+                        row,
+                        column,
+                        data
+                    );
+            }
+
+
+            if (
+                !data
+                || !column
+            ) {
+
+                return formatted_value;
+            }
+
+
+            const fieldname =
+                String(
+                    column.fieldname
+                    || ""
+                ).trim();
+
+
+            const is_detail =
+                Number(
+                    data.productivity_excavator_detail_v71
+                    || 0
+                ) === 1;
+
+
+            // =================================================
+            // MATERIAL SUBTOTAL ROWS:
+            //
+            // DO NOTHING.
+            //
+            // This preserves:
+            //     Coal
+            //     Hards
+            //     Softs
+            //
+            // with all their subtotal values.
+            // =================================================
+
+            if (!is_detail) {
+
+                return formatted_value;
+            }
+
+
+            // =================================================
+            // DETAIL MATERIAL NAME ALREADY EXISTS IN LABEL
+            // =================================================
+
+            if (
+                fieldname === "material"
+            ) {
+
+                return "";
+            }
+
+
+            // =================================================
+            // PRODUCTIVITY BCM/HR
+            // =================================================
+
+            if (
+                fieldname === "productivity"
+            ) {
+
+                let productivity =
+                    number_value(
+                        data.productivity
+                    );
+
+                if (
+                    productivity <= 0
+                ) {
+
+                    const hours =
+                        number_value(
+                            data.working_hours
+                        );
+
+                    const bcm =
+                        number_value(
+                            (
+                                data.adjusted_bcm
+                                !== undefined
+                                && data.adjusted_bcm
+                                !== null
+                                && data.adjusted_bcm !== ""
+                            )
+                                ? data.adjusted_bcm
+                                : data.output
+                        );
+
+                    if (
+                        hours > 0
+                        && bcm > 0
+                    ) {
+
+                        productivity =
+                            bcm / hours;
+                    }
+                }
+
+                return right_value(
+                    display_number(
+                        productivity,
+                        2
+                    )
+                );
+            }
+
+
+            // =================================================
+            // PRODUCTIVITY BCM/HD
+            // =================================================
+
+            if (
+                fieldname
+                === "productivity_bcm_hd"
+            ) {
+
+                const bcm_hd =
+                    number_value(
+                        data.productivity_bcm_hd
+                    );
+
+                if (!bcm_hd) {
+                    return "";
+                }
+
+                return right_value(
+                    display_number(
+                        bcm_hd,
+                        2
+                    )
+                );
+            }
+
+
+            return formatted_value;
+        };
+
+})();
+
+// END KOSI_PRODUCTIVITY_KEEP_MATERIAL_TOTALS_DISPLAY_V75
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_EXCAVATOR_SAME_AS_ADT_DISPLAY_V76
+//
+// Final Excavator display:
+//
+//   Label column:
+//     machine total only (e.g. IS0604)
+//
+//   Material column:
+//     Coal / Hards / Softs subtotal rows remain
+//     detail rows show:
+//         Ramp 2 - 3 2#Coal
+//         Ramp 1 Overburden
+//         Topsoil Dump
+//
+//   Detail row label is blank.
+//   Detail row productivity BCM/Hr is shown.
+//   Detail row productivity BCM/HD is shown when distance exists.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports
+        && frappe.query_reports["Productivity"]
+    );
+
+    if (!report) {
+        return;
+    }
+
+    const previous_formatter = report.formatter;
+
+    function number_value(value) {
+        if (
+            value === null
+            || value === undefined
+            || value === ""
+        ) {
+            return 0;
+        }
+
+        const number = Number(
+            String(value)
+                .replace(/,/g, "")
+                .trim()
+        );
+
+        return Number.isFinite(number) ? number : 0;
+    }
+
+    function display_number(value, decimals = 2) {
+        const number = number_value(value);
+
+        if (!number) {
+            return "";
+        }
+
+        if (
+            Math.abs(number - Math.round(number)) < 0.005
+        ) {
+            return String(Math.round(number));
+        }
+
+        return number
+            .toFixed(decimals)
+            .replace(/\.00$/, "")
+            .replace(/(\.\d)0$/, "$1");
+    }
+
+    function right_value(value) {
+        return (
+            '<div style="text-align:right;padding-right:4px;">'
+            + value
+            + '</div>'
+        );
+    }
+
+    function escape_html(text) {
+        return String(text || "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+    }
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+        let formatted_value;
+
+        if (typeof previous_formatter === "function") {
+            formatted_value = previous_formatter.call(
+                this,
+                value,
+                row,
+                column,
+                data,
+                default_formatter
+            );
+        } else {
+            formatted_value = default_formatter(
+                value,
+                row,
+                column,
+                data
+            );
+        }
+
+        if (!data || !column) {
+            return formatted_value;
+        }
+
+        const fieldname = String(
+            column.fieldname || ""
+        ).trim();
+
+        const is_excavator_detail =
+            Number(data.productivity_excavator_detail_v71 || 0) === 1;
+
+        // Leave all non-detail rows untouched.
+        // This keeps the main subtotal headings:
+        // Coal / Hards / Softs
+        if (!is_excavator_detail) {
+            return formatted_value;
+        }
+
+        // Detail rows:
+        // move visible name out of Label and into Material column
+        if (fieldname === "label") {
+            return "";
+        }
+
+        if (fieldname === "material") {
+            const material_text = String(
+                data.material || data.label || ""
+            ).trim();
+
+            if (!material_text) {
+                return "";
+            }
+
+            return (
+                '<div style="padding-left:0px;">'
+                + escape_html(material_text)
+                + '</div>'
+            );
+        }
+
+        if (fieldname === "productivity") {
+            let productivity = number_value(data.productivity);
+
+            if (productivity <= 0) {
+                const hours = number_value(data.working_hours);
+                const bcm = number_value(
+                    (
+                        data.adjusted_bcm !== undefined
+                        && data.adjusted_bcm !== null
+                        && data.adjusted_bcm !== ""
+                    )
+                        ? data.adjusted_bcm
+                        : data.output
+                );
+
+                if (hours > 0 && bcm > 0) {
+                    productivity = bcm / hours;
+                }
+            }
+
+            return right_value(
+                display_number(productivity, 2)
+            );
+        }
+
+        if (fieldname === "productivity_bcm_hd") {
+            const bcm_hd = number_value(
+                data.productivity_bcm_hd
+            );
+
+            if (!bcm_hd) {
+                return "";
+            }
+
+            return right_value(
+                display_number(bcm_hd, 2)
+            );
+        }
+
+        return formatted_value;
+    };
+
+})();
+
+// END KOSI_PRODUCTIVITY_EXCAVATOR_SAME_AS_ADT_DISPLAY_V76
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_EXCAVATOR_MATERIAL_TOTAL_DISPLAY_V78
+//
+// Excavator material subtotal rows:
+//
+//     Coal     3 hrs    122 BCM    40.67 BCM/Hr
+//     Hards   10 hrs    420 BCM    42.00 BCM/Hr
+//     Softs   18 hrs    750 BCM    41.67 BCM/Hr
+//
+// Keep detail rows unchanged.
+//
+// Backend V77 already calculates:
+//     working_hours
+//     output / adjusted_bcm
+//     productivity
+//
+// V78 only ensures those values are VISIBLE and BOLD.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports
+        && frappe.query_reports["Productivity"]
+    );
+
+    if (!report) {
+        return;
+    }
+
+    const previous_formatter =
+        report.formatter;
+
+
+    function number_value(value) {
+
+        if (
+            value === null
+            || value === undefined
+            || value === ""
+        ) {
+            return 0;
+        }
+
+        const number = Number(
+            String(value)
+                .replace(/,/g, "")
+                .trim()
+        );
+
+        return Number.isFinite(number)
+            ? number
+            : 0;
+    }
+
+
+    function display_number(
+        value,
+        decimals = 2
+    ) {
+
+        const number =
+            number_value(value);
+
+        if (
+            value === ""
+            || value === null
+            || value === undefined
+        ) {
+            return "";
+        }
+
+        if (
+            Math.abs(
+                number - Math.round(number)
+            ) < 0.005
+        ) {
+            return String(
+                Math.round(number)
+            );
+        }
+
+        return number
+            .toFixed(decimals)
+            .replace(/\.00$/, "")
+            .replace(/(\.\d)0$/, "$1");
+    }
+
+
+    function display_hours(value) {
+
+        const number =
+            number_value(value);
+
+        if (!number) {
+            return "";
+        }
+
+        if (
+            Math.abs(
+                number - Math.round(number)
+            ) < 0.0005
+        ) {
+            return String(
+                Math.round(number)
+            );
+        }
+
+        return number
+            .toFixed(3)
+            .replace(/0+$/, "")
+            .replace(/\.$/, "");
+    }
+
+
+    function display_bcm(value) {
+
+        const number =
+            number_value(value);
+
+        if (!number) {
+            return "";
+        }
+
+        if (
+            Math.abs(
+                number - Math.round(number)
+            ) < 0.0005
+        ) {
+
+            return Math.round(number)
+                .toLocaleString();
+        }
+
+        return number
+            .toLocaleString(
+                undefined,
+                {
+                    maximumFractionDigits: 3
+                }
+            );
+    }
+
+
+    function bold_right(value) {
+
+        return (
+            '<div style="'
+            + 'font-weight:700;'
+            + 'text-align:right;'
+            + 'padding-right:4px;'
+            + '">'
+            + value
+            + '</div>'
+        );
+    }
+
+
+    function bold_text(value) {
+
+        return (
+            '<div style="'
+            + 'font-weight:700;'
+            + '">'
+            + String(value || "")
+            + '</div>'
+        );
+    }
+
+
+    report.formatter =
+        function (
+            value,
+            row,
+            column,
+            data,
+            default_formatter
+        ) {
+
+            let formatted_value;
+
+            if (
+                typeof previous_formatter
+                === "function"
+            ) {
+
+                formatted_value =
+                    previous_formatter.call(
+                        this,
+                        value,
+                        row,
+                        column,
+                        data,
+                        default_formatter
+                    );
+
+            } else {
+
+                formatted_value =
+                    default_formatter(
+                        value,
+                        row,
+                        column,
+                        data
+                    );
+            }
+
+
+            if (
+                !data
+                || !column
+            ) {
+                return formatted_value;
+            }
+
+
+            const is_material_total =
+                Number(
+                    data.productivity_excavator_material_total_v77
+                    || 0
+                ) === 1;
+
+
+            if (!is_material_total) {
+                return formatted_value;
+            }
+
+
+            const fieldname =
+                String(
+                    column.fieldname
+                    || ""
+                ).trim();
+
+
+            // =================================================
+            // MATERIAL HEADING
+            //
+            // Coal / Hards / Softs
+            // =================================================
+
+            if (
+                fieldname === "material"
+            ) {
+
+                return bold_text(
+                    data.material
+                    || ""
+                );
+            }
+
+
+            // =================================================
+            // WORKING HOURS
+            // =================================================
+
+            if (
+                fieldname === "working_hours"
+            ) {
+
+                return bold_right(
+                    display_hours(
+                        data.working_hours
+                    )
+                );
+            }
+
+
+            // =================================================
+            // BCM / OUTPUT
+            // =================================================
+
+            if (
+                fieldname === "output"
+                || fieldname === "adjusted_bcm"
+            ) {
+
+                const bcm =
+                    (
+                        data.adjusted_bcm !== undefined
+                        && data.adjusted_bcm !== null
+                        && data.adjusted_bcm !== ""
+                    )
+                        ? data.adjusted_bcm
+                        : data.output;
+
+                return bold_right(
+                    display_bcm(
+                        bcm
+                    )
+                );
+            }
+
+
+            // =================================================
+            // PRODUCTIVITY BCM/Hr
+            // =================================================
+
+            if (
+                fieldname === "productivity"
+            ) {
+
+                let productivity =
+                    number_value(
+                        data.productivity
+                    );
+
+                if (
+                    productivity <= 0
+                ) {
+
+                    const hours =
+                        number_value(
+                            data.working_hours
+                        );
+
+                    const bcm =
+                        number_value(
+                            (
+                                data.adjusted_bcm !== undefined
+                                && data.adjusted_bcm !== null
+                                && data.adjusted_bcm !== ""
+                            )
+                                ? data.adjusted_bcm
+                                : data.output
+                        );
+
+                    if (
+                        hours > 0
+                        && bcm > 0
+                    ) {
+
+                        productivity =
+                            bcm / hours;
+                    }
+                }
+
+                return bold_right(
+                    display_number(
+                        productivity,
+                        2
+                    )
+                );
+            }
+
+
+            return formatted_value;
+        };
+
+})();
+
+// END KOSI_PRODUCTIVITY_EXCAVATOR_MATERIAL_TOTAL_DISPLAY_V78
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_MANUAL_SAVE_ONLY_V80
+//
+// IMPORTANT:
+//
+// NO AUTO SAVE.
+//
+// User may edit:
+//
+//     From Area
+//     To Area
+//     Hauling Distance
+//
+// Values stay as draft/dirty values in the current report.
+//
+// Nothing is written to the database on:
+//
+//     input
+//     change
+//     blur
+//
+// User clicks:
+//
+//     SAVE OVERRIDE
+//
+// when completely finished.
+//
+// Existing Save Override workflow then saves dirty overrides
+// one-by-one and creates the final report snapshot.
+// ============================================================
+
+(function () {
+
+    // ========================================================
+    // CANCEL ANY V79 AUTO-SAVE TIMERS
+    // ========================================================
+
+    try {
+
+        const locks =
+            window.__productivity_area_save_v79
+            || {};
+
+        Object.keys(
+            locks
+        ).forEach(
+            function (row_key) {
+
+                const lock =
+                    locks[row_key];
+
+                if (
+                    lock
+                    && lock.timer
+                ) {
+
+                    clearTimeout(
+                        lock.timer
+                    );
+
+                    lock.timer = null;
+                }
+
+                if (lock) {
+
+                    lock.pending =
+                        false;
+
+                    lock.saving =
+                        false;
+                }
+            }
+        );
+
+    } catch (error) {
+
+        console.warn(
+            "Productivity V80 timer cleanup:",
+            error
+        );
+    }
+
+
+    function clean(
+        value
+    ) {
+
+        if (
+            value === null
+            || value === undefined
+        ) {
+
+            return "";
+        }
+
+        return String(
+            value
+        );
+    }
+
+
+    function get_row_key(
+        input
+    ) {
+
+        return clean(
+            input
+            && input.dataset
+                ? input.dataset.rowKey
+                : ""
+        ).trim();
+    }
+
+
+    function get_field(
+        input
+    ) {
+
+        return clean(
+            input
+            && input.dataset
+                ? input.dataset.field
+                : ""
+        ).trim();
+    }
+
+
+    // ========================================================
+    // FIND CURRENT REPORT ROW
+    // ========================================================
+
+    function find_report_row(
+        row_key
+    ) {
+
+        if (
+            !frappe.query_report
+            || !Array.isArray(
+                frappe.query_report.data
+            )
+        ) {
+
+            return null;
+        }
+
+        for (
+            const item
+            of frappe.query_report.data
+        ) {
+
+            const row = (
+                item
+                && (
+                    item.__data
+                    || item
+                )
+            );
+
+            if (!row) {
+                continue;
+            }
+
+            const key = clean(
+                row.productivity_edit_key
+                || row.row_key
+                || ""
+            ).trim();
+
+            if (
+                key
+                === row_key
+            ) {
+
+                return row;
+            }
+        }
+
+        return null;
+    }
+
+
+    // ========================================================
+    // SYNC DRAFT INTO SAVE OVERRIDE DATA
+    // ========================================================
+
+    function sync_manual_draft(
+        input
+    ) {
+
+        if (!input) {
+            return;
+        }
+
+
+        const row_key =
+            get_row_key(
+                input
+            );
+
+
+        const field =
+            get_field(
+                input
+            );
+
+
+        if (
+            !row_key
+            || !field
+        ) {
+
+            return;
+        }
+
+
+        if (
+            ![
+                "from_area",
+                "to_area",
+                "hauling_distance_m"
+            ].includes(
+                field
+            )
+        ) {
+
+            return;
+        }
+
+
+        const value =
+            clean(
+                input.value
+            );
+
+
+        // ----------------------------------------------------
+        // Keep V73 memory synchronized.
+        // ----------------------------------------------------
+
+        window.__productivity_excavator_area_v73 = (
+            window.__productivity_excavator_area_v73
+            || {}
+        );
+
+
+        let state = (
+            window.__productivity_excavator_area_v73[
+                row_key
+            ]
+        );
+
+
+        if (!state) {
+
+            state = {
+                row_key:
+                    row_key
+            };
+
+            window.__productivity_excavator_area_v73[
+                row_key
+            ] = state;
+        }
+
+
+        state[
+            field
+        ] = value;
+
+
+        state[
+            "dirty_" + field
+        ] = true;
+
+
+        // ----------------------------------------------------
+        // Find actual report row.
+        // ----------------------------------------------------
+
+        const report_row =
+            find_report_row(
+                row_key
+            );
+
+
+        if (report_row) {
+
+            report_row[
+                field
+            ] = value;
+        }
+
+
+        // ----------------------------------------------------
+        // Existing Save Override uses this map.
+        // ----------------------------------------------------
+
+        window.productivity_editable_rows = (
+            window.productivity_editable_rows
+            || {}
+        );
+
+
+        let editable_row = (
+            window.productivity_editable_rows[
+                row_key
+            ]
+        );
+
+
+        if (!editable_row) {
+
+            editable_row = (
+                report_row
+                || {}
+            );
+
+
+            window.productivity_editable_rows[
+                row_key
+            ] = editable_row;
+        }
+
+
+        editable_row[
+            field
+        ] = value;
+
+
+        editable_row.productivity_edit_key =
+            row_key;
+
+
+        editable_row.row_key =
+            row_key;
+
+
+        // ----------------------------------------------------
+        // If this is an Excavator V73 row, ensure all metadata
+        // required by save_productivity_area_override exists.
+        // ----------------------------------------------------
+
+        if (state) {
+
+            editable_row.productivity_edit_site = (
+                editable_row.productivity_edit_site
+                || state.site
+                || ""
+            );
+
+
+            editable_row.productivity_edit_start_date = (
+                editable_row.productivity_edit_start_date
+                || state.start_date
+                || ""
+            );
+
+
+            editable_row.productivity_edit_end_date = (
+                editable_row.productivity_edit_end_date
+                || state.end_date
+                || ""
+            );
+
+
+            editable_row.productivity_edit_shift = (
+                editable_row.productivity_edit_shift
+                || state.shift
+                || ""
+            );
+
+
+            editable_row.productivity_edit_monthly_plan = (
+                editable_row.productivity_edit_monthly_plan
+                || state.monthly_production_plan
+                || ""
+            );
+
+
+            editable_row.productivity_edit_category = (
+                editable_row.productivity_edit_category
+                || state.category
+                || "Excavator"
+            );
+
+
+            editable_row.productivity_edit_machine = (
+                editable_row.productivity_edit_machine
+                || state.machine
+                || ""
+            );
+
+
+            editable_row.productivity_edit_material = (
+                editable_row.productivity_edit_material
+                || state.material
+                || ""
+            );
+
+
+            editable_row.from_area =
+                clean(
+                    state.from_area
+                );
+
+
+            editable_row.to_area =
+                clean(
+                    state.to_area
+                );
+
+
+            editable_row.hauling_distance_m =
+                clean(
+                    state.hauling_distance_m
+                );
+        }
+
+
+        // ----------------------------------------------------
+        // MARK DIRTY.
+        //
+        // This tells the existing SAVE OVERRIDE button:
+        // "save this row when user clicks the button".
+        // ----------------------------------------------------
+
+        window.productivity_dirty_overrides = (
+            window.productivity_dirty_overrides
+            || {}
+        );
+
+
+        window.productivity_dirty_overrides[
+            row_key
+        ] = true;
+
+
+        // Add the generic class used by the existing override
+        // workflow as well as our own visual dirty class.
+        input.classList.add(
+            "productivity-inline-edit"
+        );
+
+
+        input.classList.add(
+            "productivity-override-dirty"
+        );
+
+
+        input.classList.add(
+            "productivity-excavator-area-v73-dirty"
+        );
+
+
+        input.classList.remove(
+            "productivity-excavator-area-v73-saved"
+        );
+
+
+        // Refresh Save Override button state/count.
+        if (
+            typeof productivity_update_override_button
+            === "function"
+        ) {
+
+            productivity_update_override_button();
+        }
+    }
+
+
+    // ========================================================
+    // INPUT EVENT
+    //
+    // Capture draft ONLY.
+    // NO frappe.call.
+    // NO database write.
+    // ========================================================
+
+    window.productivityExcavatorAreaV73Input =
+        function (
+            input
+        ) {
+
+            sync_manual_draft(
+                input
+            );
+        };
+
+
+    // ========================================================
+    // CHANGE / BLUR EVENT
+    //
+    // Keep latest value synchronized, BUT DO NOT SAVE.
+    //
+    // The existing HTML still calls this function from
+    // onchange/onblur. We deliberately make it draft-only.
+    // ========================================================
+
+    window.productivityExcavatorAreaV73Save =
+        function (
+            input
+        ) {
+
+            sync_manual_draft(
+                input
+            );
+
+            // IMPORTANT:
+            // NO frappe.call HERE.
+        };
+
+
+    // ========================================================
+    // STYLE UNSAVED INPUTS
+    // ========================================================
+
+    if (
+        !document.getElementById(
+            "productivity-manual-save-v80-style"
+        )
+    ) {
+
+        const style =
+            document.createElement(
+                "style"
+            );
+
+
+        style.id =
+            "productivity-manual-save-v80-style";
+
+
+        style.innerHTML = `
+
+            .productivity-excavator-area-v73-input.productivity-override-dirty {
+
+                background:
+                    #fff1b8 !important;
+
+                border:
+                    2px solid #d99a00 !important;
+            }
+
+        `;
+
+
+        document.head.appendChild(
+            style
+        );
+    }
+
+
+    console.log(
+        "Productivity V80: manual Save Override mode enabled."
+    );
+
+})();
+
+// END KOSI_PRODUCTIVITY_MANUAL_SAVE_ONLY_V80
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_ZERO_DECIMALS_DISPLAY_V83
+//
+// FINAL DISPLAY RULE:
+//
+// Working Hours       = 0 decimals
+// Output BCM          = 0 decimals
+// Productivity BCM/Hr = 0 decimals
+//
+// BCM/HD stays unchanged.
+//
+// Totals remain bold:
+//   Category total
+//   Machine total
+//   Coal/Hards/Softs subtotal
+//   Total Fleet
+//
+// Backend calculations remain exact.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports
+        && frappe.query_reports["Productivity"]
+    );
+
+    if (!report) {
+        return;
+    }
+
+
+    const previous_formatter =
+        report.formatter;
+
+
+    function number_value(
+        value
+    ) {
+
+        if (
+            value === null
+            || value === undefined
+            || value === ""
+        ) {
+
+            return null;
+        }
+
+
+        const number = Number(
+            String(
+                value
+            )
+                .replace(
+                    /,/g,
+                    ""
+                )
+                .trim()
+        );
+
+
+        return Number.isFinite(
+            number
+        )
+            ? number
+            : null;
+    }
+
+
+    function zero_decimal(
+        value
+    ) {
+
+        const number =
+            number_value(
+                value
+            );
+
+
+        if (number === null) {
+            return "";
+        }
+
+
+        return Math.round(
+            number
+        ).toLocaleString(
+            "en-US",
+            {
+                maximumFractionDigits: 0,
+                minimumFractionDigits: 0
+            }
+        );
+    }
+
+
+    function right_value(
+        value,
+        bold
+    ) {
+
+        return (
+            '<div style="'
+            + 'text-align:right;'
+            + 'padding-right:4px;'
+            + (
+                bold
+                    ? 'font-weight:700;'
+                    : ''
+            )
+            + '">'
+            + value
+            + '</div>'
+        );
+    }
+
+
+    function is_total_row(
+        data
+    ) {
+
+        if (!data) {
+            return false;
+        }
+
+
+        return Boolean(
+
+            Number(
+                data.is_category_total
+                || 0
+            )
+
+            ||
+
+            Number(
+                data.is_machine_total
+                || 0
+            )
+
+            ||
+
+            Number(
+                data.productivity_is_machine_total
+                || 0
+            )
+
+            ||
+
+            Number(
+                data.productivity_excavator_material_total_v77
+                || 0
+            )
+
+            ||
+
+            Number(
+                data.is_total_fleet
+                || 0
+            )
+
+            ||
+
+            Number(
+                data.productivity_summary_total_fleet_v37
+                || 0
+            )
+        );
+    }
+
+
+    report.formatter =
+        function (
+            value,
+            row,
+            column,
+            data,
+            default_formatter
+        ) {
+
+            let formatted_value;
+
+
+            if (
+                typeof previous_formatter
+                === "function"
+            ) {
+
+                formatted_value =
+                    previous_formatter.call(
+                        this,
+                        value,
+                        row,
+                        column,
+                        data,
+                        default_formatter
+                    );
+
+            } else {
+
+                formatted_value =
+                    default_formatter(
+                        value,
+                        row,
+                        column,
+                        data
+                    );
+            }
+
+
+            if (
+                !data
+                || !column
+            ) {
+
+                return formatted_value;
+            }
+
+
+            const fieldname =
+                String(
+                    column.fieldname
+                    || ""
+                ).trim();
+
+
+            // -----------------------------------------------
+            // DO NOT CHANGE BCM/HD.
+            // -----------------------------------------------
+
+            if (
+                fieldname
+                === "productivity_bcm_hd"
+            ) {
+
+                return formatted_value;
+            }
+
+
+            if (
+                ![
+                    "working_hours",
+                    "output",
+                    "adjusted_bcm",
+                    "productivity"
+                ].includes(
+                    fieldname
+                )
+            ) {
+
+                return formatted_value;
+            }
+
+
+            let field_value;
+
+
+            if (
+                fieldname
+                === "output"
+                || fieldname
+                === "adjusted_bcm"
+            ) {
+
+                field_value = (
+                    data.adjusted_bcm !== undefined
+                    && data.adjusted_bcm !== null
+                    && data.adjusted_bcm !== ""
+                )
+                    ? data.adjusted_bcm
+                    : data.output;
+
+            } else {
+
+                field_value =
+                    data[
+                        fieldname
+                    ];
+            }
+
+
+            const display =
+                zero_decimal(
+                    field_value
+                );
+
+
+            if (
+                display === ""
+            ) {
+
+                return "";
+            }
+
+
+            return right_value(
+                display,
+                is_total_row(
+                    data
+                )
+            );
+        };
+
+})();
+
+// END KOSI_PRODUCTIVITY_ZERO_DECIMALS_DISPLAY_V83
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_BOLD_ONLY_V84
+//
+// ONLY THESE ROWS ARE BOLD:
+//
+// 1. CATEGORY
+//
+//      Excavator
+//      ADT
+//      Dozer
+//
+// 2. MACHINE TOTAL
+//
+//      EX01
+//      IS0312
+//      IS0330
+//      etc.
+//
+// 3. EXCAVATOR MATERIAL SUBTOTAL
+//
+//      Coal
+//      Hards
+//      Softs
+//
+// EVERYTHING UNDER MATERIAL TOTAL:
+//      Ramp 2 - 3 2#Coal
+//      Ramp 1 - 2 2#Coal
+//      Ramp 1 Overburden
+//      Ramp 3 Overburden
+//      Topsoil Dump
+//
+// stays NORMAL weight.
+//
+// V83 zero-decimal display remains unchanged.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports
+        && frappe.query_reports["Productivity"]
+    );
+
+    if (!report) {
+        return;
+    }
+
+
+    const previous_formatter =
+        report.formatter;
+
+
+    function text_value(
+        value
+    ) {
+
+        if (
+            value === null
+            || value === undefined
+        ) {
+
+            return "";
+        }
+
+        return String(
+            value
+        ).trim();
+    }
+
+
+    function is_excavator_detail(
+        data
+    ) {
+
+        return (
+            Number(
+                data.productivity_excavator_detail_v71
+                || 0
+            ) === 1
+        );
+    }
+
+
+    function is_category_total(
+        data
+    ) {
+
+        if (!data) {
+            return false;
+        }
+
+
+        if (
+            Number(
+                data.is_category_total
+                || 0
+            ) === 1
+        ) {
+
+            return true;
+        }
+
+
+        return (
+            text_value(
+                data.productivity_summary_tree_level_v38
+            ) === "category"
+        );
+    }
+
+
+    function is_machine_total(
+        data
+    ) {
+
+        if (!data) {
+            return false;
+        }
+
+
+        if (
+            is_excavator_detail(
+                data
+            )
+        ) {
+
+            return false;
+        }
+
+
+        const label =
+            text_value(
+                data.label
+            );
+
+
+        const material =
+            text_value(
+                data.material
+            );
+
+
+        // Machine rows have machine name in Label and no
+        // material in the Material column.
+        if (
+            !label
+            || material
+        ) {
+
+            return false;
+        }
+
+
+        return Boolean(
+
+            Number(
+                data.is_machine_total
+                || 0
+            ) === 1
+
+            ||
+
+            (
+                text_value(
+                    data.productivity_summary_tree_level_v38
+                ) === "machine"
+
+                &&
+
+                Number(
+                    data.productivity_summary_tree_machine_v38
+                    || 0
+                ) === 1
+            )
+        );
+    }
+
+
+    function is_material_subtotal(
+        data
+    ) {
+
+        if (!data) {
+            return false;
+        }
+
+
+        if (
+            is_excavator_detail(
+                data
+            )
+        ) {
+
+            return false;
+        }
+
+
+        // V77 explicitly marks the Excavator material totals.
+        if (
+            Number(
+                data.productivity_excavator_material_total_v77
+                || 0
+            ) === 1
+        ) {
+
+            return true;
+        }
+
+
+        return false;
+    }
+
+
+    function should_be_bold(
+        data
+    ) {
+
+        return Boolean(
+            is_category_total(
+                data
+            )
+            ||
+            is_machine_total(
+                data
+            )
+            ||
+            is_material_subtotal(
+                data
+            )
+        );
+    }
+
+
+    function apply_weight(
+        html,
+        bold
+    ) {
+
+        const class_name = (
+            bold
+                ? "productivity-v84-bold"
+                : "productivity-v84-normal"
+        );
+
+
+        return (
+            '<span class="'
+            + class_name
+            + '" style="display:contents;">'
+            + (
+                html === null
+                || html === undefined
+                    ? ""
+                    : html
+            )
+            + '</span>'
+        );
+    }
+
+
+    report.formatter =
+        function (
+            value,
+            row,
+            column,
+            data,
+            default_formatter
+        ) {
+
+            let formatted_value;
+
+
+            if (
+                typeof previous_formatter
+                === "function"
+            ) {
+
+                formatted_value =
+                    previous_formatter.call(
+                        this,
+                        value,
+                        row,
+                        column,
+                        data,
+                        default_formatter
+                    );
+
+            } else {
+
+                formatted_value =
+                    default_formatter(
+                        value,
+                        row,
+                        column,
+                        data
+                    );
+            }
+
+
+            if (
+                !data
+                || !column
+            ) {
+
+                return formatted_value;
+            }
+
+
+            const fieldname =
+                text_value(
+                    column.fieldname
+                );
+
+
+            // Only control the report display columns.
+            //
+            // Area input boxes remain completely untouched.
+            if (
+                ![
+                    "label",
+                    "working_hours",
+                    "output",
+                    "adjusted_bcm",
+                    "productivity",
+                    "productivity_bcm_hd",
+                    "material"
+                ].includes(
+                    fieldname
+                )
+            ) {
+
+                return formatted_value;
+            }
+
+
+            return apply_weight(
+                formatted_value,
+                should_be_bold(
+                    data
+                )
+            );
+        };
+
+
+    // ========================================================
+    // FINAL FONT-WEIGHT OVERRIDE
+    //
+    // !important is intentional because older formatter
+    // versions may already have added bold inline styles.
+    // ========================================================
+
+    if (
+        !document.getElementById(
+            "productivity-v84-bold-only-style"
+        )
+    ) {
+
+        const style =
+            document.createElement(
+                "style"
+            );
+
+
+        style.id =
+            "productivity-v84-bold-only-style";
+
+
+        style.innerHTML = `
+
+            .productivity-v84-bold,
+            .productivity-v84-bold * {
+
+                font-weight:
+                    700 !important;
+            }
+
+
+            .productivity-v84-normal,
+            .productivity-v84-normal * {
+
+                font-weight:
+                    400 !important;
+            }
+
+        `;
+
+
+        document.head.appendChild(
+            style
+        );
+    }
+
+})();
+
+// END KOSI_PRODUCTIVITY_BOLD_ONLY_V84
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_ADT_DOZER_MATCH_EXCAVATOR_DISPLAY_V87
+//
+// ADT + DOZER now use the same final interaction as Excavator.
+//
+// MATERIAL SUBTOTAL:
+//     bold
+//     no yellow area input
+//
+// DETAIL:
+//     normal weight
+//     editable yellow From Area
+//     editable yellow To Area
+//     editable yellow Hauling Distance
+//
+// IMPORTANT:
+//     typing does NOT save.
+//
+// User must click:
+//     SAVE OVERRIDE
+//
+// Existing zero-decimal display remains.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports
+        && frappe.query_reports["Productivity"]
+    );
+
+
+    if (!report) {
+        return;
+    }
+
+
+    const previous_formatter =
+        report.formatter;
+
+
+    function clean(
+        value
+    ) {
+
+        if (
+            value === null
+            || value === undefined
+        ) {
+
+            return "";
+        }
+
+
+        return String(
+            value
+        );
+    }
+
+
+    function escape_html(
+        value
+    ) {
+
+        return frappe.utils.escape_html(
+            clean(
+                value
+            )
+        );
+    }
+
+
+    function find_row(
+        row_key
+    ) {
+
+        const data = (
+            frappe.query_report
+            && Array.isArray(
+                frappe.query_report.data
+            )
+                ? frappe.query_report.data
+                : []
+        );
+
+
+        for (
+            const item
+            of data
+        ) {
+
+            const row = (
+                item
+                && (
+                    item.__data
+                    || item
+                )
+            );
+
+
+            if (!row) {
+                continue;
+            }
+
+
+            const key = clean(
+                row.productivity_edit_key
+                || row.row_key
+                || ""
+            ).trim();
+
+
+            if (
+                key
+                === row_key
+            ) {
+
+                return row;
+            }
+        }
+
+
+        return null;
+    }
+
+
+    function sync_draft(
+        input
+    ) {
+
+        if (!input) {
+            return;
+        }
+
+
+        const row_key = clean(
+            input.dataset.rowKey
+            || ""
+        ).trim();
+
+
+        const field = clean(
+            input.dataset.field
+            || ""
+        ).trim();
+
+
+        if (
+            !row_key
+            || ![
+                "from_area",
+                "to_area",
+                "hauling_distance_m"
+            ].includes(
+                field
+            )
+        ) {
+
+            return;
+        }
+
+
+        const value = clean(
+            input.value
+        );
+
+
+        const row = (
+            find_row(
+                row_key
+            )
+        );
+
+
+        if (!row) {
+
+            console.warn(
+                "Productivity V87 row not found:",
+                row_key
+            );
+
+            return;
+        }
+
+
+        row[
+            field
+        ] = value;
+
+
+        window.productivity_editable_rows = (
+            window.productivity_editable_rows
+            || {}
+        );
+
+
+        window.productivity_editable_rows[
+            row_key
+        ] = row;
+
+
+        window.productivity_dirty_overrides = (
+            window.productivity_dirty_overrides
+            || {}
+        );
+
+
+        window.productivity_dirty_overrides[
+            row_key
+        ] = true;
+
+
+        input.classList.add(
+            "productivity-v87-dirty"
+        );
+
+
+        if (
+            typeof productivity_update_override_button
+            === "function"
+        ) {
+
+            productivity_update_override_button();
+        }
+    }
+
+
+    // No auto-save.
+    window.productivityAllMachineAreaV87Input =
+        function (
+            input
+        ) {
+
+            sync_draft(
+                input
+            );
+        };
+
+
+    // onchange / blur also only synchronize the draft.
+    window.productivityAllMachineAreaV87Change =
+        function (
+            input
+        ) {
+
+            sync_draft(
+                input
+            );
+        };
+
+
+    function input_html(
+        data,
+        fieldname
+    ) {
+
+        const row_key = clean(
+            data.productivity_edit_key
+            || data.row_key
+            || ""
+        ).trim();
+
+
+        if (!row_key) {
+            return "";
+        }
+
+
+        const value = clean(
+            data[
+                fieldname
+            ]
+            || ""
+        );
+
+
+        return (
+            '<input'
+            + ' type="text"'
+            + ' class="productivity-v87-area-input"'
+            + ' data-row-key="'
+            + escape_html(
+                row_key
+            )
+            + '"'
+            + ' data-field="'
+            + escape_html(
+                fieldname
+            )
+            + '"'
+            + ' value="'
+            + escape_html(
+                value
+            )
+            + '"'
+            + ' oninput="productivityAllMachineAreaV87Input(this)"'
+            + ' onchange="productivityAllMachineAreaV87Change(this)"'
+            + ' onblur="productivityAllMachineAreaV87Change(this)"'
+            + '>'
+        );
+    }
+
+
+    report.formatter =
+        function (
+            value,
+            row,
+            column,
+            data,
+            default_formatter
+        ) {
+
+            let formatted_value;
+
+
+            if (
+                typeof previous_formatter
+                === "function"
+            ) {
+
+                formatted_value = (
+                    previous_formatter.call(
+                        this,
+                        value,
+                        row,
+                        column,
+                        data,
+                        default_formatter
+                    )
+                );
+
+            } else {
+
+                formatted_value = (
+                    default_formatter(
+                        value,
+                        row,
+                        column,
+                        data
+                    )
+                );
+            }
+
+
+            if (
+                !data
+                || !column
+            ) {
+
+                return formatted_value;
+            }
+
+
+            const fieldname = clean(
+                column.fieldname
+                || ""
+            ).trim();
+
+
+            const is_detail = (
+                Number(
+                    data.productivity_all_machine_detail_v87
+                    || 0
+                )
+                === 1
+            );
+
+
+            const is_material_total = (
+                Number(
+                    data.productivity_all_machine_material_total_v87
+                    || 0
+                )
+                === 1
+            );
+
+
+            // =================================================
+            // ADT / DOZER MATERIAL TOTAL
+            // =================================================
+
+            if (is_material_total) {
+
+                if (
+                    [
+                        "from_area",
+                        "to_area",
+                        "hauling_distance_m",
+                        "productivity_bcm_hd"
+                    ].includes(
+                        fieldname
+                    )
+                ) {
+
+                    return "";
+                }
+
+
+                if (
+                    [
+                        "label",
+                        "working_hours",
+                        "output",
+                        "adjusted_bcm",
+                        "productivity",
+                        "material"
+                    ].includes(
+                        fieldname
+                    )
+                ) {
+
+                    return (
+                        '<span class="productivity-v87-bold">'
+                        + formatted_value
+                        + '</span>'
+                    );
+                }
+
+
+                return formatted_value;
+            }
+
+
+            // =================================================
+            // ADT / DOZER DETAIL
+            // =================================================
+
+            if (is_detail) {
+
+                if (
+                    [
+                        "from_area",
+                        "to_area",
+                        "hauling_distance_m"
+                    ].includes(
+                        fieldname
+                    )
+                ) {
+
+                    return input_html(
+                        data,
+                        fieldname
+                    );
+                }
+
+
+                if (
+                    [
+                        "label",
+                        "working_hours",
+                        "output",
+                        "adjusted_bcm",
+                        "productivity",
+                        "productivity_bcm_hd",
+                        "material"
+                    ].includes(
+                        fieldname
+                    )
+                ) {
+
+                    return (
+                        '<span class="productivity-v87-normal">'
+                        + formatted_value
+                        + '</span>'
+                    );
+                }
+            }
+
+
+            return formatted_value;
+        };
+
+
+    if (
+        !document.getElementById(
+            "productivity-v87-style"
+        )
+    ) {
+
+        const style =
+            document.createElement(
+                "style"
+            );
+
+
+        style.id =
+            "productivity-v87-style";
+
+
+        style.innerHTML = `
+
+            .productivity-v87-bold,
+            .productivity-v87-bold * {
+                font-weight: 700 !important;
+            }
+
+
+            .productivity-v87-normal,
+            .productivity-v87-normal * {
+                font-weight: 400 !important;
+            }
+
+
+            .productivity-v87-area-input {
+                width: 100% !important;
+                min-width: 90px !important;
+                height: 25px !important;
+                padding: 2px 6px !important;
+                box-sizing: border-box !important;
+                border: 1px solid #e5a100 !important;
+                background: #fff8d8 !important;
+                border-radius: 0 !important;
+                font-weight: 400 !important;
+            }
+
+
+            .productivity-v87-area-input.productivity-v87-dirty {
+                border: 2px solid #d69000 !important;
+                background: #fff0b3 !important;
+            }
+
+        `;
+
+
+        document.head.appendChild(
+            style
+        );
+    }
+
+})();
+
+// END KOSI_PRODUCTIVITY_ADT_DOZER_MATCH_EXCAVATOR_DISPLAY_V87
