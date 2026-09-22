@@ -42793,3 +42793,8954 @@ def execute(filters=None):
 
 
 # END KOSI_PRODUCTIVITY_DOZER_DUPLICATE_CLEANUP_V69
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_EXCAVATOR_MATERIAL_HOURS_V70
+#
+# Summary Per Machine only.
+#
+# Purpose:
+#
+# 1. Keep one Excavator machine-total row.
+# 2. Group duplicate material rows for the same Excavator.
+# 3. Split the Excavator working hours across its materials.
+# 4. Ensure material hours add back to machine working hours.
+# 5. Recalculate material BCM/Hr.
+# 6. Blank repeated machine labels on material rows.
+#
+# ADT / Dozer / category totals are not changed.
+# ============================================================
+
+_productivity_execute_before_excavator_material_hours_v70 = execute
+
+
+def _productivity_v70_float(value):
+
+    if value in (
+        None,
+        "",
+    ):
+        return 0.0
+
+    try:
+
+        if isinstance(
+            value,
+            str,
+        ):
+            value = (
+                value
+                .replace(",", "")
+                .strip()
+            )
+
+        return float(
+            value
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return 0.0
+
+
+def _productivity_v70_is_summary_machine(
+    filters,
+):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+    view = str(
+        filters.get(
+            "summary_view"
+        )
+        or ""
+    ).strip().lower()
+
+    return (
+        view
+        == "summary per machine"
+    )
+
+
+def _productivity_v70_is_machine_total(
+    row,
+):
+
+    if not hasattr(
+        row,
+        "get",
+    ):
+        return False
+
+    return bool(
+        row.get(
+            "is_machine_total"
+        )
+        or row.get(
+            "productivity_is_machine_total"
+        )
+    )
+
+
+def _productivity_v70_transform_excavator_children(
+    children,
+    machine,
+    machine_hours,
+):
+
+    material_groups = {}
+    sequence = []
+
+    # --------------------------------------------------------
+    # BUILD MATERIAL GROUPS
+    # --------------------------------------------------------
+
+    for original_row in (
+        children
+        or []
+    ):
+
+        if not hasattr(
+            original_row,
+            "get",
+        ):
+            sequence.append(
+                (
+                    "other",
+                    original_row,
+                )
+            )
+            continue
+
+        row = dict(
+            original_row
+        )
+
+        label = str(
+            row.get(
+                "label"
+            )
+            or ""
+        ).strip()
+
+        material = str(
+            row.get(
+                "material"
+            )
+            or ""
+        ).strip()
+
+        # ----------------------------------------------------
+        # REMOVE EMPTY FALLBACK DUPLICATE MACHINE ROW
+        # ----------------------------------------------------
+
+        if (
+            label
+            == machine
+            and not material
+            and not _productivity_v70_is_machine_total(
+                row
+            )
+            and (
+                row.get(
+                    "productivity_summary_tree_machine_v38"
+                )
+                or str(
+                    row.get(
+                        "productivity_summary_tree_level_v38"
+                    )
+                    or ""
+                ).strip().lower()
+                == "machine"
+            )
+        ):
+            continue
+
+        # ----------------------------------------------------
+        # NON-MATERIAL ROW
+        # ----------------------------------------------------
+
+        if not material:
+
+            sequence.append(
+                (
+                    "other",
+                    row,
+                )
+            )
+
+            continue
+
+        key = material.casefold()
+
+        if key not in material_groups:
+
+            material_groups[
+                key
+            ] = {
+                "row": row,
+                "material": material,
+                "hours": 0.0,
+                "output": 0.0,
+                "adjusted_bcm": 0.0,
+                "has_adjusted_bcm": (
+                    "adjusted_bcm"
+                    in row
+                ),
+            }
+
+            sequence.append(
+                (
+                    "material",
+                    key,
+                )
+            )
+
+        group = material_groups[
+            key
+        ]
+
+        group[
+            "hours"
+        ] += max(
+            0.0,
+            _productivity_v70_float(
+                row.get(
+                    "working_hours"
+                )
+            ),
+        )
+
+        group[
+            "output"
+        ] += max(
+            0.0,
+            _productivity_v70_float(
+                row.get(
+                    "output"
+                )
+            ),
+        )
+
+        if (
+            "adjusted_bcm"
+            in row
+        ):
+
+            group[
+                "has_adjusted_bcm"
+            ] = True
+
+            group[
+                "adjusted_bcm"
+            ] += max(
+                0.0,
+                _productivity_v70_float(
+                    row.get(
+                        "adjusted_bcm"
+                    )
+                ),
+            )
+
+    if not material_groups:
+
+        return [
+            value
+            for kind, value
+            in sequence
+            if kind == "other"
+        ]
+
+    keys = list(
+        material_groups.keys()
+    )
+
+    # --------------------------------------------------------
+    # DETERMINE SPLIT WEIGHT
+    #
+    # Prefer the material hours already present in the report.
+    #
+    # If those are blank, use material output as the fallback
+    # weight so the machine hours can still be reconciled.
+    # --------------------------------------------------------
+
+    raw_hours_total = sum(
+        material_groups[
+            key
+        ][
+            "hours"
+        ]
+        for key in keys
+    )
+
+    output_total = sum(
+        material_groups[
+            key
+        ][
+            "output"
+        ]
+        for key in keys
+    )
+
+    weights = {}
+
+    if raw_hours_total > 0:
+
+        for key in keys:
+
+            weights[
+                key
+            ] = material_groups[
+                key
+            ][
+                "hours"
+            ]
+
+    elif output_total > 0:
+
+        for key in keys:
+
+            weights[
+                key
+            ] = material_groups[
+                key
+            ][
+                "output"
+            ]
+
+    else:
+
+        for key in keys:
+
+            weights[
+                key
+            ] = 1.0
+
+    weight_total = sum(
+        weights.values()
+    )
+
+    # --------------------------------------------------------
+    # ALIGN MATERIAL HOURS TO MACHINE HOURS
+    # --------------------------------------------------------
+
+    allocated = 0.0
+
+    for position, key in enumerate(
+        keys
+    ):
+
+        group = material_groups[
+            key
+        ]
+
+        if machine_hours > 0:
+
+            if (
+                position
+                == len(
+                    keys
+                )
+                - 1
+            ):
+
+                split_hours = (
+                    machine_hours
+                    - allocated
+                )
+
+            else:
+
+                split_hours = (
+                    machine_hours
+                    * weights[
+                        key
+                    ]
+                    / weight_total
+                )
+
+                split_hours = round(
+                    split_hours,
+                    3,
+                )
+
+                allocated += (
+                    split_hours
+                )
+
+            split_hours = max(
+                0.0,
+                split_hours,
+            )
+
+        else:
+
+            split_hours = group[
+                "hours"
+            ]
+
+        row = group[
+            "row"
+        ]
+
+        row[
+            "label"
+        ] = ""
+
+        row[
+            "material"
+        ] = group[
+            "material"
+        ]
+
+        row[
+            "working_hours"
+        ] = round(
+            split_hours,
+            3,
+        )
+
+        row[
+            "output"
+        ] = round(
+            group[
+                "output"
+            ],
+            3,
+        )
+
+        if group[
+            "has_adjusted_bcm"
+        ]:
+
+            row[
+                "adjusted_bcm"
+            ] = round(
+                group[
+                    "adjusted_bcm"
+                ],
+                3,
+            )
+
+        if split_hours > 0:
+
+            row[
+                "productivity"
+            ] = round(
+                group[
+                    "output"
+                ]
+                / split_hours,
+                2,
+            )
+
+        else:
+
+            row[
+                "productivity"
+            ] = 0.0
+
+        row[
+            "productivity_excavator_material_hours_v70"
+        ] = 1
+
+        material_groups[
+            key
+        ][
+            "final_row"
+        ] = row
+
+    # --------------------------------------------------------
+    # REBUILD CHILD ROWS IN ORIGINAL MATERIAL ORDER
+    # --------------------------------------------------------
+
+    rebuilt = []
+    emitted = set()
+
+    for kind, value in sequence:
+
+        if kind == "other":
+
+            rebuilt.append(
+                value
+            )
+
+            continue
+
+        key = value
+
+        if key in emitted:
+            continue
+
+        emitted.add(
+            key
+        )
+
+        rebuilt.append(
+            material_groups[
+                key
+            ][
+                "final_row"
+            ]
+        )
+
+    return rebuilt
+
+
+def _productivity_v70_align_excavator_rows(
+    rows,
+):
+
+    rows = list(
+        rows
+        or []
+    )
+
+    output = []
+
+    inside_excavator = False
+
+    i = 0
+
+    while i < len(
+        rows
+    ):
+
+        original_row = rows[
+            i
+        ]
+
+        if not hasattr(
+            original_row,
+            "get",
+        ):
+
+            output.append(
+                original_row
+            )
+
+            i += 1
+            continue
+
+        row = dict(
+            original_row
+        )
+
+        label = str(
+            row.get(
+                "label"
+            )
+            or ""
+        ).strip()
+
+        material = str(
+            row.get(
+                "material"
+            )
+            or ""
+        ).strip()
+
+        # ----------------------------------------------------
+        # START EXCAVATOR SECTION
+        # ----------------------------------------------------
+
+        if (
+            label
+            == "Excavator"
+            and not material
+        ):
+
+            inside_excavator = True
+
+            output.append(
+                row
+            )
+
+            i += 1
+            continue
+
+        # ----------------------------------------------------
+        # END EXCAVATOR SECTION
+        # ----------------------------------------------------
+
+        if (
+            inside_excavator
+            and not material
+            and label
+            in (
+                "ADT",
+                "Dozer",
+                "Total Fleet",
+            )
+        ):
+
+            inside_excavator = False
+
+            output.append(
+                row
+            )
+
+            i += 1
+            continue
+
+        if not inside_excavator:
+
+            output.append(
+                row
+            )
+
+            i += 1
+            continue
+
+        # ----------------------------------------------------
+        # MACHINE TOTAL ROW
+        # ----------------------------------------------------
+
+        if not (
+            _productivity_v70_is_machine_total(
+                row
+            )
+            and label
+        ):
+
+            output.append(
+                row
+            )
+
+            i += 1
+            continue
+
+        machine = label
+
+        machine_hours = max(
+            0.0,
+            _productivity_v70_float(
+                row.get(
+                    "working_hours"
+                )
+            ),
+        )
+
+        # Keep machine total untouched.
+        output.append(
+            row
+        )
+
+        i += 1
+
+        children = []
+
+        # ----------------------------------------------------
+        # COLLECT THIS MACHINE'S CHILD ROWS
+        # ----------------------------------------------------
+
+        while i < len(
+            rows
+        ):
+
+            candidate_original = rows[
+                i
+            ]
+
+            if not hasattr(
+                candidate_original,
+                "get",
+            ):
+
+                children.append(
+                    candidate_original
+                )
+
+                i += 1
+                continue
+
+            candidate = dict(
+                candidate_original
+            )
+
+            candidate_label = str(
+                candidate.get(
+                    "label"
+                )
+                or ""
+            ).strip()
+
+            candidate_material = str(
+                candidate.get(
+                    "material"
+                )
+                or ""
+            ).strip()
+
+            if (
+                _productivity_v70_is_machine_total(
+                    candidate
+                )
+                and candidate_label
+            ):
+                break
+
+            if (
+                not candidate_material
+                and candidate_label
+                in (
+                    "ADT",
+                    "Dozer",
+                    "Total Fleet",
+                )
+            ):
+                break
+
+            children.append(
+                candidate
+            )
+
+            i += 1
+
+        output.extend(
+            _productivity_v70_transform_excavator_children(
+                children,
+                machine,
+                machine_hours,
+            )
+        )
+
+    return output
+
+
+def _productivity_apply_excavator_material_hours_v70(
+    result,
+    filters,
+):
+
+    if not (
+        _productivity_v70_is_summary_machine(
+            filters
+        )
+    ):
+        return result
+
+    if not result:
+        return result
+
+    parts = list(
+        result
+    )
+
+    if len(
+        parts
+    ) < 2:
+        return result
+
+    parts[
+        1
+    ] = (
+        _productivity_v70_align_excavator_rows(
+            parts[
+                1
+            ]
+        )
+    )
+
+    if isinstance(
+        result,
+        tuple,
+    ):
+
+        return tuple(
+            parts
+        )
+
+    return parts
+
+
+def execute(filters=None):
+
+    result = (
+        _productivity_execute_before_excavator_material_hours_v70(
+            filters
+        )
+    )
+
+    return (
+        _productivity_apply_excavator_material_hours_v70(
+            result,
+            filters,
+        )
+    )
+
+
+# END KOSI_PRODUCTIVITY_EXCAVATOR_MATERIAL_HOURS_V70
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_EXCAVATOR_DETAIL_V71
+#
+# SUMMARY PER MACHINE ONLY
+#
+# Final Excavator hierarchy:
+#
+#     MACHINE TOTAL
+#         MATERIAL SUBTOTAL
+#             MATERIAL DETAIL
+#             MATERIAL DETAIL
+#
+# Example:
+#
+#     IS0330
+#         Coal
+#             Ramp 2 - 3 2#Coal
+#             Ramp 1 - 2 2#Coal
+#         Hards
+#             Ramp 1 Overburden
+#             Ramp 3 Overburden
+#         Softs
+#             Topsoil Dump
+#
+# IMPORTANT:
+#
+# - Existing machine totals remain unchanged.
+# - Existing machine/material totals remain unchanged.
+# - Detail rows are sourced from Hours and Material.
+# - Detail hours reconcile to material subtotal hours.
+# - Detail BCM reconciles to material subtotal BCM.
+# - Excavator area / hauling distance remains blank.
+# - ADT is untouched.
+# - Dozer is untouched.
+# ============================================================
+
+
+_productivity_execute_before_excavator_detail_v71 = execute
+
+
+def _productivity_v71_number(
+    value,
+):
+
+    if value in (
+        None,
+        "",
+    ):
+        return 0.0
+
+    try:
+
+        if isinstance(
+            value,
+            str,
+        ):
+
+            value = (
+                value
+                .replace(",", "")
+                .strip()
+            )
+
+        return float(
+            value
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+
+        return 0.0
+
+
+def _productivity_v71_is_summary_machine(
+    filters,
+):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+    return (
+        str(
+            filters.get(
+                "summary_view"
+            )
+            or ""
+        ).strip().lower()
+        == "summary per machine"
+    )
+
+
+def _productivity_v71_rows_from_result(
+    result,
+):
+
+    if not result:
+        return []
+
+    if not isinstance(
+        result,
+        (list, tuple),
+    ):
+        return []
+
+    if len(
+        result
+    ) < 2:
+        return []
+
+    return list(
+        result[1]
+        or []
+    )
+
+
+def _productivity_v71_get_excavator_templates(
+    filters,
+):
+
+    """
+    Read the existing Hours and Material Excavator section.
+
+    Returns:
+
+        {
+            "Coal": [
+                {
+                    "name": "Ramp 2 - 3 2#Coal",
+                    "hours": ...,
+                    "output": ...,
+                },
+                ...
+            ],
+            "Hards": [...],
+            "Softs": [...],
+        }
+
+    No source calculation is changed.
+    """
+
+    source_filters = dict(
+        filters
+        or {}
+    )
+
+    source_filters[
+        "summary_view"
+    ] = "Hours and Material"
+
+    source_result = (
+        _productivity_execute_before_excavator_detail_v71(
+            source_filters
+        )
+    )
+
+    source_rows = (
+        _productivity_v71_rows_from_result(
+            source_result
+        )
+    )
+
+    templates = {}
+
+    inside_excavator = False
+    current_material = ""
+
+    for original_row in source_rows:
+
+        if not hasattr(
+            original_row,
+            "get",
+        ):
+            continue
+
+        row = dict(
+            original_row
+        )
+
+        label = str(
+            row.get(
+                "label"
+            )
+            or ""
+        ).strip()
+
+        material = str(
+            row.get(
+                "material"
+            )
+            or ""
+        ).strip()
+
+        # ----------------------------------------------------
+        # START EXCAVATOR SECTION
+        # ----------------------------------------------------
+
+        if (
+            label
+            == "Excavator"
+            and not material
+        ):
+
+            inside_excavator = True
+            current_material = ""
+            continue
+
+        # ----------------------------------------------------
+        # END EXCAVATOR SECTION
+        # ----------------------------------------------------
+
+        if (
+            inside_excavator
+            and label
+            == "ADT"
+            and not material
+        ):
+
+            break
+
+        if not inside_excavator:
+            continue
+
+        # ----------------------------------------------------
+        # MATERIAL PARENT:
+        #
+        # Softs
+        # Coal
+        # Hards
+        # ----------------------------------------------------
+
+        is_parent = bool(
+            row.get(
+                "is_machine_total"
+            )
+            or row.get(
+                "productivity_is_machine_total"
+            )
+        )
+
+        edit_category = str(
+            row.get(
+                "productivity_edit_category"
+            )
+            or ""
+        ).strip()
+
+        if (
+            is_parent
+            and label
+            and edit_category
+            == "Excavator"
+        ):
+
+            current_material = label
+
+            templates.setdefault(
+                current_material,
+                []
+            )
+
+            continue
+
+        # ----------------------------------------------------
+        # DETAIL:
+        #
+        # Topsoil Dump
+        # Ramp 2 - 3 2#Coal
+        # Ramp 1 Overburden
+        # etc.
+        # ----------------------------------------------------
+
+        if not current_material:
+            continue
+
+        try:
+
+            indent = int(
+                float(
+                    row.get(
+                        "indent"
+                    )
+                    or 0
+                )
+            )
+
+        except (
+            TypeError,
+            ValueError,
+        ):
+
+            indent = 0
+
+        if indent < 1:
+            continue
+
+        detail_name = (
+            label
+            or material
+        )
+
+        detail_name = str(
+            detail_name
+            or ""
+        ).strip()
+
+        if not detail_name:
+            continue
+
+        templates[
+            current_material
+        ].append({
+            "name":
+                detail_name,
+
+            "hours":
+                max(
+                    0.0,
+                    _productivity_v71_number(
+                        row.get(
+                            "working_hours"
+                        )
+                    ),
+                ),
+
+            "output":
+                max(
+                    0.0,
+                    _productivity_v71_number(
+                        row.get(
+                            "adjusted_bcm"
+                        )
+                        if row.get(
+                            "adjusted_bcm"
+                        )
+                        not in (
+                            None,
+                            "",
+                        )
+                        else row.get(
+                            "output"
+                        )
+                    ),
+                ),
+        })
+
+    # --------------------------------------------------------
+    # COMBINE DUPLICATE DETAIL NAMES
+    # --------------------------------------------------------
+
+    final_templates = {}
+
+    for parent_material, details in (
+        templates.items()
+    ):
+
+        grouped = {}
+        order = []
+
+        for detail in details:
+
+            name = str(
+                detail.get(
+                    "name"
+                )
+                or ""
+            ).strip()
+
+            if not name:
+                continue
+
+            key = name.casefold()
+
+            if key not in grouped:
+
+                grouped[
+                    key
+                ] = {
+                    "name": name,
+                    "hours": 0.0,
+                    "output": 0.0,
+                }
+
+                order.append(
+                    key
+                )
+
+            grouped[
+                key
+            ][
+                "hours"
+            ] += _productivity_v71_number(
+                detail.get(
+                    "hours"
+                )
+            )
+
+            grouped[
+                key
+            ][
+                "output"
+            ] += _productivity_v71_number(
+                detail.get(
+                    "output"
+                )
+            )
+
+        final_templates[
+            parent_material
+        ] = [
+            grouped[
+                key
+            ]
+            for key in order
+        ]
+
+    return final_templates
+
+
+def _productivity_v71_allocate_values(
+    total_value,
+    details,
+    weight_field,
+):
+
+    total_value = max(
+        0.0,
+        _productivity_v71_number(
+            total_value
+        ),
+    )
+
+    if not details:
+        return []
+
+    weights = [
+        max(
+            0.0,
+            _productivity_v71_number(
+                detail.get(
+                    weight_field
+                )
+            ),
+        )
+        for detail in details
+    ]
+
+    weight_total = sum(
+        weights
+    )
+
+    if weight_total <= 0:
+
+        # Fallback to equal split.
+        weights = [
+            1.0
+            for detail in details
+        ]
+
+        weight_total = float(
+            len(
+                details
+            )
+        )
+
+    values = []
+    allocated = 0.0
+
+    for index, weight in enumerate(
+        weights
+    ):
+
+        if (
+            index
+            == len(
+                weights
+            )
+            - 1
+        ):
+
+            value = (
+                total_value
+                - allocated
+            )
+
+        else:
+
+            value = (
+                total_value
+                * weight
+                / weight_total
+            )
+
+            value = round(
+                value,
+                3,
+            )
+
+            allocated += value
+
+        values.append(
+            max(
+                0.0,
+                value,
+            )
+        )
+
+    return values
+
+
+def _productivity_v71_make_detail_rows(
+    parent_row,
+    machine,
+    parent_material,
+    templates,
+):
+
+    """
+    Split ONE existing Excavator material subtotal into
+    its visible material-detail children.
+
+    Parent subtotal itself is never changed.
+    """
+
+    detail_templates = (
+        templates.get(
+            parent_material
+        )
+        or []
+    )
+
+    if not detail_templates:
+        return []
+
+    parent_hours = max(
+        0.0,
+        _productivity_v71_number(
+            parent_row.get(
+                "working_hours"
+            )
+        ),
+    )
+
+    parent_output = max(
+        0.0,
+        _productivity_v71_number(
+            parent_row.get(
+                "adjusted_bcm"
+            )
+            if parent_row.get(
+                "adjusted_bcm"
+            )
+            not in (
+                None,
+                "",
+            )
+            else parent_row.get(
+                "output"
+            )
+        ),
+    )
+
+    # Hours follow the existing Hours and Material
+    # detail-hour proportions.
+    detail_hours = (
+        _productivity_v71_allocate_values(
+            parent_hours,
+            detail_templates,
+            "hours",
+        )
+    )
+
+    # BCM follows the existing Hours and Material
+    # detail-output proportions.
+    detail_outputs = (
+        _productivity_v71_allocate_values(
+            parent_output,
+            detail_templates,
+            "output",
+        )
+    )
+
+    created = []
+
+    for index, template in enumerate(
+        detail_templates
+    ):
+
+        hours = (
+            detail_hours[
+                index
+            ]
+            if index
+            < len(
+                detail_hours
+            )
+            else 0.0
+        )
+
+        output = (
+            detail_outputs[
+                index
+            ]
+            if index
+            < len(
+                detail_outputs
+            )
+            else 0.0
+        )
+
+        productivity = (
+            output
+            / hours
+            if hours > 0
+            else 0.0
+        )
+
+        row = {
+            # Match ADT-style display:
+            # machine name remains only on machine row.
+            "label":
+                "",
+
+            "working_hours":
+                round(
+                    hours,
+                    3,
+                ),
+
+            "output":
+                round(
+                    output,
+                    3,
+                ),
+
+            "adjusted_bcm":
+                round(
+                    output,
+                    3,
+                ),
+
+            "productivity":
+                round(
+                    productivity,
+                    2,
+                ),
+
+            "material":
+                template[
+                    "name"
+                ],
+
+            # Excavator must remain blank for area/distance.
+            "from_area":
+                "",
+
+            "to_area":
+                "",
+
+            "hauling_distance_m":
+                "",
+
+            # Three-level hierarchy:
+            # Category 0
+            # Machine  1
+            # Material 2
+            # Detail   3
+            "indent":
+                3,
+
+            "is_category_total":
+                0,
+
+            "is_machine_total":
+                0,
+
+            "productivity_is_machine_total":
+                0,
+
+            "productivity_editable":
+                0,
+
+            "productivity_edit_category":
+                "Excavator",
+
+            "productivity_excavator_detail_v71":
+                1,
+
+            "productivity_excavator_parent_machine_v71":
+                machine,
+
+            "productivity_excavator_parent_material_v71":
+                parent_material,
+
+            "productivity_summary_tree_level_v38":
+                "excavator_material_detail_v71",
+        }
+
+        created.append(
+            row
+        )
+
+    return created
+
+
+def _productivity_v71_add_excavator_details(
+    rows,
+    templates,
+):
+
+    output_rows = []
+
+    inside_excavator = False
+    current_machine = ""
+
+    for original_row in (
+        rows
+        or []
+    ):
+
+        if not hasattr(
+            original_row,
+            "get",
+        ):
+
+            output_rows.append(
+                original_row
+            )
+
+            continue
+
+        row = dict(
+            original_row
+        )
+
+        label = str(
+            row.get(
+                "label"
+            )
+            or ""
+        ).strip()
+
+        material = str(
+            row.get(
+                "material"
+            )
+            or ""
+        ).strip()
+
+        # ----------------------------------------------------
+        # EXCAVATOR CATEGORY
+        # ----------------------------------------------------
+
+        if (
+            label
+            == "Excavator"
+            and not material
+        ):
+
+            inside_excavator = True
+            current_machine = ""
+
+            output_rows.append(
+                row
+            )
+
+            continue
+
+        # ----------------------------------------------------
+        # END EXCAVATOR CATEGORY
+        # ----------------------------------------------------
+
+        if (
+            inside_excavator
+            and label
+            == "ADT"
+            and not material
+        ):
+
+            inside_excavator = False
+            current_machine = ""
+
+            output_rows.append(
+                row
+            )
+
+            continue
+
+        if not inside_excavator:
+
+            output_rows.append(
+                row
+            )
+
+            continue
+
+        # ----------------------------------------------------
+        # MACHINE TOTAL
+        # ----------------------------------------------------
+
+        is_machine_total = bool(
+            row.get(
+                "is_machine_total"
+            )
+            or row.get(
+                "productivity_is_machine_total"
+            )
+        )
+
+        if (
+            is_machine_total
+            and label
+            and not material
+        ):
+
+            current_machine = label
+
+            output_rows.append(
+                row
+            )
+
+            continue
+
+        # Keep existing row first.
+        output_rows.append(
+            row
+        )
+
+        # ----------------------------------------------------
+        # EXISTING MACHINE MATERIAL SUBTOTAL
+        #
+        # Current structure:
+        #
+        #     label    = ""
+        #     material = Coal / Hards / Softs
+        #     indent   = 2
+        # ----------------------------------------------------
+
+        if (
+            not current_machine
+            or not material
+            or label
+        ):
+            continue
+
+        if material not in templates:
+            continue
+
+        try:
+
+            indent = int(
+                float(
+                    row.get(
+                        "indent"
+                    )
+                    or 0
+                )
+            )
+
+        except (
+            TypeError,
+            ValueError,
+        ):
+
+            indent = 0
+
+        if indent < 2:
+            continue
+
+        details = (
+            _productivity_v71_make_detail_rows(
+                row,
+                current_machine,
+                material,
+                templates,
+            )
+        )
+
+        output_rows.extend(
+            details
+        )
+
+    return output_rows
+
+
+def _productivity_apply_excavator_detail_v71(
+    result,
+    filters,
+):
+
+    if not (
+        _productivity_v71_is_summary_machine(
+            filters
+        )
+    ):
+
+        return result
+
+    if not result:
+        return result
+
+    if not isinstance(
+        result,
+        (tuple, list),
+    ):
+
+        return result
+
+    parts = list(
+        result
+    )
+
+    if len(
+        parts
+    ) < 2:
+        return result
+
+    templates = (
+        _productivity_v71_get_excavator_templates(
+            filters
+        )
+    )
+
+    if not templates:
+        return result
+
+    parts[
+        1
+    ] = (
+        _productivity_v71_add_excavator_details(
+            parts[
+                1
+            ],
+            templates,
+        )
+    )
+
+    if isinstance(
+        result,
+        tuple,
+    ):
+
+        return tuple(
+            parts
+        )
+
+    return parts
+
+
+def execute(filters=None):
+
+    result = (
+        _productivity_execute_before_excavator_detail_v71(
+            filters
+        )
+    )
+
+    return (
+        _productivity_apply_excavator_detail_v71(
+            result,
+            filters,
+        )
+    )
+
+
+# END KOSI_PRODUCTIVITY_EXCAVATOR_DETAIL_V71
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_EXCAVATOR_AREA_MULTISELECT_V72
+#
+# 1. Restore / populate Excavator From Area.
+# 2. Make Excavator material/detail rows editable.
+# 3. Allow Machine Type to contain one or many categories.
+#
+# Machine Type behaviour:
+#
+#   blank                  -> all categories
+#   Excavator              -> Excavator only
+#   ADT                    -> ADT only
+#   Excavator + ADT        -> Excavator + ADT only
+#   Excavator + ADT + Dozer -> all three categories
+#
+# Existing BCM / hours / productivity calculations are
+# deliberately not changed.
+# ============================================================
+
+
+_productivity_execute_before_excavator_area_multiselect_v72 = execute
+
+
+def _productivity_v72_machine_types(value):
+
+    import json
+
+    values = []
+
+    if value in (
+        None,
+        "",
+    ):
+        return values
+
+    if isinstance(
+        value,
+        (list, tuple, set),
+    ):
+
+        values = list(
+            value
+        )
+
+    elif isinstance(
+        value,
+        str,
+    ):
+
+        text = value.strip()
+
+        if not text:
+            return []
+
+        if text.startswith("["):
+
+            try:
+                parsed = json.loads(
+                    text
+                )
+
+                if isinstance(
+                    parsed,
+                    list,
+                ):
+                    values = parsed
+                else:
+                    values = [
+                        text
+                    ]
+
+            except Exception:
+                values = [
+                    text
+                ]
+
+        else:
+
+            values = [
+                part.strip()
+                for part in (
+                    text
+                    .replace("\n", ",")
+                    .split(",")
+                )
+                if part.strip()
+            ]
+
+    else:
+
+        values = [
+            value
+        ]
+
+    aliases = {
+        "excavator":
+            "Excavator",
+
+        "excavators":
+            "Excavator",
+
+        "adt":
+            "ADT",
+
+        "adts":
+            "ADT",
+
+        "dozer":
+            "Dozer",
+
+        "dozers":
+            "Dozer",
+    }
+
+    result = []
+    seen = set()
+
+    for value in values:
+
+        if isinstance(
+            value,
+            dict,
+        ):
+
+            value = (
+                value.get(
+                    "value"
+                )
+                or value.get(
+                    "label"
+                )
+                or ""
+            )
+
+        cleaned = str(
+            value
+            or ""
+        ).strip()
+
+        canonical = aliases.get(
+            cleaned.lower()
+        )
+
+        if (
+            canonical
+            and canonical
+            not in seen
+        ):
+
+            seen.add(
+                canonical
+            )
+
+            result.append(
+                canonical
+            )
+
+    return result
+
+
+def _productivity_v72_rows(
+    result,
+):
+
+    if not isinstance(
+        result,
+        (list, tuple),
+    ):
+
+        return []
+
+    if len(
+        result
+    ) < 2:
+
+        return []
+
+    return list(
+        result[1]
+        or []
+    )
+
+
+def _productivity_v72_area_text(
+    values,
+):
+
+    cleaned = []
+
+    seen = set()
+
+    for value in (
+        values
+        or []
+    ):
+
+        for part in str(
+            value
+            or ""
+        ).split(","):
+
+            part = part.strip()
+
+            if (
+                part
+                and part.lower()
+                not in seen
+            ):
+
+                seen.add(
+                    part.lower()
+                )
+
+                cleaned.append(
+                    part
+                )
+
+    return " / ".join(
+        sorted(
+            cleaned,
+            key=lambda value: value.lower(),
+        )
+    )
+
+
+def _productivity_v72_source_excavator_areas(
+    filters,
+):
+
+    """
+    Read the Productivity result immediately BEFORE the old
+    'Excavator No Area' rule blanked the values.
+
+    Returns:
+        exact[(machine, parent_material, detail)] = {...}
+        parent[(machine, parent_material)] = {...}
+    """
+
+    source_filters = dict(
+        filters
+        or {}
+    )
+
+    # Multi-select cannot be passed to the old SQL equality
+    # machine filter. Get the complete source and filter later.
+    source_filters[
+        "machine_type"
+    ] = ""
+
+    try:
+
+        source_result = (
+            _productivity_execute_before_excavator_no_area(
+                source_filters
+            )
+        )
+
+    except Exception:
+
+        return {}, {}
+
+    source_rows = (
+        _productivity_v72_rows(
+            source_result
+        )
+    )
+
+    exact = {}
+    parent = {}
+
+    current_category = ""
+    current_machine = ""
+
+    categories = (
+        "Excavator",
+        "ADT",
+        "Dozer",
+    )
+
+    for original_row in source_rows:
+
+        if not hasattr(
+            original_row,
+            "get",
+        ):
+            continue
+
+        row = dict(
+            original_row
+        )
+
+        label = str(
+            row.get(
+                "label"
+            )
+            or ""
+        ).strip()
+
+        material = str(
+            row.get(
+                "material"
+            )
+            or ""
+        ).strip()
+
+        if int(
+            row.get(
+                "is_monthly_plan_header"
+            )
+            or 0
+        ) == 1:
+
+            current_category = ""
+            current_machine = ""
+            continue
+
+        if (
+            label in categories
+            and int(
+                row.get(
+                    "is_category_total"
+                )
+                or 0
+            ) == 1
+        ):
+
+            current_category = label
+            current_machine = ""
+            continue
+
+        if current_category != "Excavator":
+            continue
+
+        is_machine_total = bool(
+            row.get(
+                "is_machine_total"
+            )
+            or row.get(
+                "productivity_is_machine_total"
+            )
+        )
+
+        if (
+            is_machine_total
+            and label
+            and not material
+        ):
+
+            current_machine = label
+            continue
+
+        machine = str(
+            row.get(
+                "productivity_summary_parent_machine_v34"
+            )
+            or row.get(
+                "productivity_v55_machine"
+            )
+            or row.get(
+                "productivity_edit_machine"
+            )
+            or current_machine
+            or ""
+        ).strip()
+
+        parent_material = str(
+            row.get(
+                "productivity_summary_parent_material_v34"
+            )
+            or row.get(
+                "productivity_v55_parent_material"
+            )
+            or row.get(
+                "productivity_edit_material"
+            )
+            or material
+            or ""
+        ).strip()
+
+        detail_name = str(
+            row.get(
+                "productivity_v55_display_material"
+            )
+            or material
+            or label
+            or ""
+        ).strip()
+
+        from_area = str(
+            row.get(
+                "from_area"
+            )
+            or ""
+        ).strip()
+
+        to_area = str(
+            row.get(
+                "to_area"
+            )
+            or ""
+        ).strip()
+
+        if (
+            not machine
+            or not parent_material
+        ):
+            continue
+
+        parent_key = (
+            machine,
+            parent_material,
+        )
+
+        if parent_key not in parent:
+
+            parent[
+                parent_key
+            ] = {
+                "from_area": [],
+                "to_area": [],
+            }
+
+        if from_area:
+
+            parent[
+                parent_key
+            ][
+                "from_area"
+            ].append(
+                from_area
+            )
+
+        if to_area:
+
+            parent[
+                parent_key
+            ][
+                "to_area"
+            ].append(
+                to_area
+            )
+
+        if detail_name:
+
+            exact_key = (
+                machine,
+                parent_material,
+                detail_name,
+            )
+
+            current = exact.setdefault(
+                exact_key,
+                {
+                    "from_area": [],
+                    "to_area": [],
+                },
+            )
+
+            if from_area:
+
+                current[
+                    "from_area"
+                ].append(
+                    from_area
+                )
+
+            if to_area:
+
+                current[
+                    "to_area"
+                ].append(
+                    to_area
+                )
+
+    for values in (
+        exact,
+        parent,
+    ):
+
+        for key, data in values.items():
+
+            data[
+                "from_area"
+            ] = (
+                _productivity_v72_area_text(
+                    data.get(
+                        "from_area"
+                    )
+                )
+            )
+
+            data[
+                "to_area"
+            ] = (
+                _productivity_v72_area_text(
+                    data.get(
+                        "to_area"
+                    )
+                )
+            )
+
+    return exact, parent
+
+
+def _productivity_v72_first_plan(
+    filters,
+):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+    plans = filters.get(
+        "monthly_production_plans"
+    )
+
+    if isinstance(
+        plans,
+        (list, tuple),
+    ):
+
+        return str(
+            plans[0]
+            if plans
+            else ""
+        ).strip()
+
+    if isinstance(
+        plans,
+        str,
+    ):
+
+        import json
+
+        text = plans.strip()
+
+        if text.startswith("["):
+
+            try:
+
+                decoded = json.loads(
+                    text
+                )
+
+                if (
+                    isinstance(
+                        decoded,
+                        list,
+                    )
+                    and decoded
+                ):
+
+                    return str(
+                        decoded[0]
+                    ).strip()
+
+            except Exception:
+                pass
+
+        return text
+
+    return ""
+
+
+def _productivity_v72_make_editable_key(
+    filters,
+    row,
+    machine,
+    material,
+    current_plan="",
+    current_start="",
+    current_end="",
+):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+    site = str(
+        filters.get(
+            "site"
+        )
+        or filters.get(
+            "location"
+        )
+        or ""
+    ).strip()
+
+    start_date = str(
+        row.get(
+            "monthly_start_date"
+        )
+        or current_start
+        or filters.get(
+            "start_date"
+        )
+        or filters.get(
+            "from_date"
+        )
+        or ""
+    ).strip()
+
+    end_date = str(
+        row.get(
+            "monthly_end_date"
+        )
+        or current_end
+        or filters.get(
+            "end_date"
+        )
+        or filters.get(
+            "to_date"
+        )
+        or ""
+    ).strip()
+
+    shift = str(
+        filters.get(
+            "shift"
+        )
+        or ""
+    ).strip()
+
+    plan = str(
+        row.get(
+            "monthly_production_plan"
+        )
+        or current_plan
+        or _productivity_v72_first_plan(
+            filters
+        )
+        or ""
+    ).strip()
+
+    base_key = (
+        _productivity_manual_edit_key(
+            site,
+            start_date,
+            end_date,
+            shift,
+            plan,
+            "Excavator",
+            machine,
+            material,
+        )
+    )
+
+    view = str(
+        filters.get(
+            "summary_view"
+        )
+        or ""
+    ).strip()
+
+    if (
+        "_productivity_view_scope_key_v8"
+        in globals()
+    ):
+
+        row_key = (
+            _productivity_view_scope_key_v8(
+                view,
+                base_key,
+            )
+        )
+
+    else:
+
+        row_key = (
+            "VIEW::"
+            + view
+            + "::"
+            + base_key
+        )
+
+    return {
+        "row_key":
+            row_key,
+
+        "site":
+            site,
+
+        "start_date":
+            start_date,
+
+        "end_date":
+            end_date,
+
+        "shift":
+            shift,
+
+        "plan":
+            plan,
+    }
+
+
+def _productivity_v72_restore_excavator_area(
+    rows,
+    filters,
+):
+
+    rows = [
+        dict(row)
+        if hasattr(
+            row,
+            "get",
+        )
+        else row
+
+        for row in (
+            rows
+            or []
+        )
+    ]
+
+    exact, parent = (
+        _productivity_v72_source_excavator_areas(
+            filters
+        )
+    )
+
+    current_category = ""
+    current_machine = ""
+    current_plan = ""
+    current_start = ""
+    current_end = ""
+
+    editable_rows = []
+    editable_keys = []
+
+    for row in rows:
+
+        if not hasattr(
+            row,
+            "get",
+        ):
+            continue
+
+        label = str(
+            row.get(
+                "label"
+            )
+            or ""
+        ).strip()
+
+        material = str(
+            row.get(
+                "material"
+            )
+            or ""
+        ).strip()
+
+        if row.get(
+            "monthly_production_plan"
+        ):
+
+            current_plan = str(
+                row.get(
+                    "monthly_production_plan"
+                )
+                or ""
+            ).strip()
+
+        if row.get(
+            "monthly_start_date"
+        ):
+
+            current_start = str(
+                row.get(
+                    "monthly_start_date"
+                )
+                or ""
+            ).strip()
+
+        if row.get(
+            "monthly_end_date"
+        ):
+
+            current_end = str(
+                row.get(
+                    "monthly_end_date"
+                )
+                or ""
+            ).strip()
+
+        if int(
+            row.get(
+                "is_monthly_plan_header"
+            )
+            or 0
+        ) == 1:
+
+            current_category = ""
+            current_machine = ""
+            continue
+
+        if (
+            label
+            in (
+                "Excavator",
+                "ADT",
+                "Dozer",
+            )
+            and int(
+                row.get(
+                    "is_category_total"
+                )
+                or 0
+            ) == 1
+        ):
+
+            current_category = label
+            current_machine = ""
+            continue
+
+        if current_category != "Excavator":
+            continue
+
+        is_machine_total = bool(
+            row.get(
+                "is_machine_total"
+            )
+            or row.get(
+                "productivity_is_machine_total"
+            )
+        )
+
+        if (
+            is_machine_total
+            and label
+            and not material
+        ):
+
+            current_machine = label
+            continue
+
+        machine = str(
+            row.get(
+                "productivity_excavator_parent_machine_v71"
+            )
+            or row.get(
+                "productivity_edit_machine"
+            )
+            or current_machine
+            or ""
+        ).strip()
+
+        if not machine:
+            continue
+
+        is_v71_detail = (
+            int(
+                row.get(
+                    "productivity_excavator_detail_v71"
+                )
+                or 0
+            )
+            == 1
+        )
+
+        if is_v71_detail:
+
+            parent_material = str(
+                row.get(
+                    "productivity_excavator_parent_material_v71"
+                )
+                or ""
+            ).strip()
+
+            detail_name = material
+
+            save_material = (
+                parent_material
+                + " :: "
+                + detail_name
+            )
+
+        else:
+
+            parent_material = material
+            detail_name = material
+            save_material = material
+
+        if not parent_material:
+            continue
+
+        exact_source = exact.get(
+            (
+                machine,
+                parent_material,
+                detail_name,
+            )
+        )
+
+        parent_source = parent.get(
+            (
+                machine,
+                parent_material,
+            )
+        )
+
+        if exact_source:
+
+            if exact_source.get(
+                "from_area"
+            ):
+
+                row[
+                    "from_area"
+                ] = exact_source[
+                    "from_area"
+                ]
+
+            if exact_source.get(
+                "to_area"
+            ):
+
+                row[
+                    "to_area"
+                ] = exact_source[
+                    "to_area"
+                ]
+
+        elif parent_source:
+
+            if parent_source.get(
+                "from_area"
+            ):
+
+                row[
+                    "from_area"
+                ] = parent_source[
+                    "from_area"
+                ]
+
+            if parent_source.get(
+                "to_area"
+            ):
+
+                row[
+                    "to_area"
+                ] = parent_source[
+                    "to_area"
+                ]
+
+        key_data = (
+            _productivity_v72_make_editable_key(
+                filters,
+                row,
+                machine,
+                save_material,
+                current_plan,
+                current_start,
+                current_end,
+            )
+        )
+
+        row[
+            "productivity_editable"
+        ] = 1
+
+        row[
+            "productivity_edit_key"
+        ] = key_data[
+            "row_key"
+        ]
+
+        row[
+            "row_key"
+        ] = key_data[
+            "row_key"
+        ]
+
+        row[
+            "productivity_edit_site"
+        ] = key_data[
+            "site"
+        ]
+
+        row[
+            "productivity_edit_start_date"
+        ] = key_data[
+            "start_date"
+        ]
+
+        row[
+            "productivity_edit_end_date"
+        ] = key_data[
+            "end_date"
+        ]
+
+        row[
+            "productivity_edit_shift"
+        ] = key_data[
+            "shift"
+        ]
+
+        row[
+            "productivity_edit_monthly_plan"
+        ] = key_data[
+            "plan"
+        ]
+
+        row[
+            "productivity_edit_category"
+        ] = "Excavator"
+
+        row[
+            "productivity_edit_machine"
+        ] = machine
+
+        row[
+            "productivity_edit_material"
+        ] = save_material
+
+        row[
+            "productivity_excavator_area_v72"
+        ] = 1
+
+        editable_rows.append(
+            row
+        )
+
+        editable_keys.append(
+            key_data[
+                "row_key"
+            ]
+        )
+
+    # --------------------------------------------------------
+    # APPLY SAVED MANUAL OVERRIDES LAST
+    # --------------------------------------------------------
+
+    override_map = {}
+
+    unique_keys = list(
+        dict.fromkeys(
+            editable_keys
+        )
+    )
+
+    if (
+        unique_keys
+        and frappe.db.exists(
+            "DocType",
+            "Productivity Area Override",
+        )
+    ):
+
+        saved_rows = frappe.get_all(
+            "Productivity Area Override",
+            filters={
+                "row_key": [
+                    "in",
+                    unique_keys,
+                ],
+            },
+            fields=[
+                "row_key",
+                "from_area",
+                "to_area",
+                "hauling_distance_m",
+            ],
+            limit_page_length=0,
+        )
+
+        override_map = {
+            str(
+                saved.row_key
+                or ""
+            ).strip():
+                saved
+
+            for saved in saved_rows
+        }
+
+    for row in editable_rows:
+
+        row_key = str(
+            row.get(
+                "productivity_edit_key"
+            )
+            or ""
+        ).strip()
+
+        saved = override_map.get(
+            row_key
+        )
+
+        if not saved:
+            continue
+
+        row[
+            "from_area"
+        ] = str(
+            saved.from_area
+            or ""
+        ).strip()
+
+        row[
+            "to_area"
+        ] = str(
+            saved.to_area
+            or ""
+        ).strip()
+
+        row[
+            "hauling_distance_m"
+        ] = str(
+            saved.hauling_distance_m
+            or ""
+        ).strip()
+
+        row[
+            "productivity_manual_override"
+        ] = 1
+
+    return rows
+
+
+def _productivity_v72_filter_machine_types(
+    rows,
+    selected_types,
+):
+
+    if not selected_types:
+        return rows
+
+    selected = set(
+        selected_types
+    )
+
+    categories = (
+        "Excavator",
+        "ADT",
+        "Dozer",
+    )
+
+    result = []
+    current_category = ""
+
+    for original_row in (
+        rows
+        or []
+    ):
+
+        if not hasattr(
+            original_row,
+            "get",
+        ):
+
+            if (
+                not current_category
+                or current_category
+                in selected
+            ):
+
+                result.append(
+                    original_row
+                )
+
+            continue
+
+        row = dict(
+            original_row
+        )
+
+        label = str(
+            row.get(
+                "label"
+            )
+            or ""
+        ).strip()
+
+        material = str(
+            row.get(
+                "material"
+            )
+            or ""
+        ).strip()
+
+        if (
+            int(
+                row.get(
+                    "is_monthly_plan_header"
+                )
+                or 0
+            ) == 1
+            or label.startswith(
+                "MONTHLY PRODUCTION:"
+            )
+        ):
+
+            current_category = ""
+
+            result.append(
+                row
+            )
+
+            continue
+
+        if (
+            label in categories
+            and not material
+        ):
+
+            current_category = label
+
+            if label in selected:
+
+                result.append(
+                    row
+                )
+
+            continue
+
+        if (
+            label == "Total Fleet"
+            or int(
+                row.get(
+                    "is_total_fleet"
+                )
+                or 0
+            ) == 1
+        ):
+
+            current_category = ""
+
+            # When a machine-type filter is active the user
+            # requested ONLY the selected sections.
+            continue
+
+        if current_category in selected:
+
+            result.append(
+                row
+            )
+
+    return result
+
+
+def _productivity_apply_v72(
+    result,
+    filters,
+    selected_types,
+):
+
+    if not result:
+        return result
+
+    if not isinstance(
+        result,
+        (tuple, list),
+    ):
+
+        return result
+
+    parts = list(
+        result
+    )
+
+    if len(
+        parts
+    ) < 2:
+        return result
+
+    rows = list(
+        parts[1]
+        or []
+    )
+
+    # Restore Excavator area only in the machine breakdown
+    # report that we are currently working on.
+    view = str(
+        frappe._dict(
+            filters
+            or {}
+        ).get(
+            "summary_view"
+        )
+        or ""
+    ).strip().lower()
+
+    if view == "summary per machine":
+
+        rows = (
+            _productivity_v72_restore_excavator_area(
+                rows,
+                filters,
+            )
+        )
+
+    rows = (
+        _productivity_v72_filter_machine_types(
+            rows,
+            selected_types,
+        )
+    )
+
+    parts[
+        1
+    ] = rows
+
+    if isinstance(
+        result,
+        tuple,
+    ):
+
+        return tuple(
+            parts
+        )
+
+    return parts
+
+
+def execute(filters=None):
+
+    original_filters = frappe._dict(
+        filters
+        or {}
+    )
+
+    selected_types = (
+        _productivity_v72_machine_types(
+            original_filters.get(
+                "machine_type"
+            )
+        )
+    )
+
+    run_filters = dict(
+        original_filters
+    )
+
+    # IMPORTANT:
+    #
+    # Old Productivity SQL accepts only one machine type with
+    # "=". Never pass a MultiSelectList array to that SQL.
+    #
+    # Fetch full report, then safely filter the finished rows.
+    if selected_types:
+
+        run_filters[
+            "machine_type"
+        ] = ""
+
+    result = (
+        _productivity_execute_before_excavator_area_multiselect_v72(
+            run_filters
+        )
+    )
+
+    return (
+        _productivity_apply_v72(
+            result,
+            original_filters,
+            selected_types,
+        )
+    )
+
+
+# END KOSI_PRODUCTIVITY_EXCAVATOR_AREA_MULTISELECT_V72
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_EXCAVATOR_CLEAN_DETAIL_V74
+#
+# SUMMARY PER MACHINE ONLY
+#
+# Final Excavator layout:
+#
+#     Excavator
+#         MACHINE
+#             Detail
+#             Detail
+#             Detail
+#
+# Removed from display:
+#
+#     Coal
+#     Hards
+#     Softs
+#
+# Detail rows keep their internal parent-material metadata,
+# therefore area overrides and V73 editing still work.
+#
+# Productivity BCM/Hr:
+#
+#     Output BCM / Working Hours
+#
+# Existing V71 productivity is preserved. If missing, V74
+# calculates it as a fallback.
+# ============================================================
+
+
+_productivity_execute_before_excavator_clean_detail_v74 = execute
+
+
+def _productivity_v74_float(
+    value,
+):
+
+    if value in (
+        None,
+        "",
+    ):
+        return 0.0
+
+    try:
+
+        if isinstance(
+            value,
+            str,
+        ):
+
+            value = (
+                value
+                .replace(",", "")
+                .strip()
+            )
+
+        return float(
+            value
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+
+        return 0.0
+
+
+def _productivity_v74_clean_excavator(
+    rows,
+    filters,
+):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+    if str(
+        filters.get(
+            "summary_view"
+        )
+        or ""
+    ).strip().lower() != "summary per machine":
+
+        return rows
+
+    cleaned = []
+
+    inside_excavator = False
+    current_machine = ""
+
+    for original_row in (
+        rows
+        or []
+    ):
+
+        if not hasattr(
+            original_row,
+            "get",
+        ):
+
+            cleaned.append(
+                original_row
+            )
+
+            continue
+
+        row = dict(
+            original_row
+        )
+
+        label = str(
+            row.get(
+                "label"
+            )
+            or ""
+        ).strip()
+
+        material = str(
+            row.get(
+                "material"
+            )
+            or ""
+        ).strip()
+
+        # ----------------------------------------------------
+        # CATEGORY START
+        # ----------------------------------------------------
+
+        if (
+            label == "Excavator"
+            and not material
+        ):
+
+            inside_excavator = True
+            current_machine = ""
+
+            cleaned.append(
+                row
+            )
+
+            continue
+
+        # ----------------------------------------------------
+        # CATEGORY END
+        # ----------------------------------------------------
+
+        if (
+            inside_excavator
+            and label in (
+                "ADT",
+                "Dozer",
+                "Total Fleet",
+            )
+            and not material
+        ):
+
+            inside_excavator = False
+            current_machine = ""
+
+            cleaned.append(
+                row
+            )
+
+            continue
+
+        if not inside_excavator:
+
+            cleaned.append(
+                row
+            )
+
+            continue
+
+        # ----------------------------------------------------
+        # MACHINE TOTAL
+        # ----------------------------------------------------
+
+        is_machine_total = bool(
+            row.get(
+                "is_machine_total"
+            )
+            or row.get(
+                "productivity_is_machine_total"
+            )
+        )
+
+        if (
+            is_machine_total
+            and label
+            and not material
+        ):
+
+            current_machine = label
+
+            cleaned.append(
+                row
+            )
+
+            continue
+
+        # ----------------------------------------------------
+        # V71 DETAIL ROW
+        # ----------------------------------------------------
+
+        is_detail = (
+            int(
+                row.get(
+                    "productivity_excavator_detail_v71"
+                )
+                or 0
+            )
+            == 1
+        )
+
+        if is_detail:
+
+            # Detail now sits directly below machine.
+            row[
+                "indent"
+            ] = 2
+
+            row[
+                "productivity_excavator_clean_v74"
+            ] = 1
+
+            hours = (
+                _productivity_v74_float(
+                    row.get(
+                        "working_hours"
+                    )
+                )
+            )
+
+            output = (
+                _productivity_v74_float(
+                    row.get(
+                        "adjusted_bcm"
+                    )
+                    if row.get(
+                        "adjusted_bcm"
+                    )
+                    not in (
+                        None,
+                        "",
+                    )
+                    else row.get(
+                        "output"
+                    )
+                )
+            )
+
+            existing_productivity = (
+                _productivity_v74_float(
+                    row.get(
+                        "productivity"
+                    )
+                )
+            )
+
+            # Preserve the existing V71 calculation.
+            # Only calculate when no productivity exists.
+            if (
+                existing_productivity <= 0
+                and hours > 0
+                and output > 0
+            ):
+
+                row[
+                    "productivity"
+                ] = round(
+                    output / hours,
+                    2,
+                )
+
+            cleaned.append(
+                row
+            )
+
+            continue
+
+        # ----------------------------------------------------
+        # REMOVE MATERIAL SUBTOTAL PARENT
+        #
+        # Current V71 structure:
+        #
+        #     label    = ""
+        #     material = Coal / Hards / Softs
+        #     indent   = 2
+        #
+        # V74 removes this display row.
+        # ----------------------------------------------------
+
+        try:
+
+            indent = int(
+                float(
+                    row.get(
+                        "indent"
+                    )
+                    or 0
+                )
+            )
+
+        except (
+            TypeError,
+            ValueError,
+        ):
+
+            indent = 0
+
+        if (
+            current_machine
+            and not label
+            and material
+            and indent >= 2
+        ):
+
+            continue
+
+        # Keep anything else untouched.
+        cleaned.append(
+            row
+        )
+
+    return cleaned
+
+
+def _productivity_apply_excavator_clean_detail_v74(
+    result,
+    filters,
+):
+
+    if not result:
+        return result
+
+    if not isinstance(
+        result,
+        (tuple, list),
+    ):
+
+        return result
+
+    parts = list(
+        result
+    )
+
+    if len(
+        parts
+    ) < 2:
+
+        return result
+
+    parts[
+        1
+    ] = (
+        _productivity_v74_clean_excavator(
+            parts[
+                1
+            ],
+            filters,
+        )
+    )
+
+    if isinstance(
+        result,
+        tuple,
+    ):
+
+        return tuple(
+            parts
+        )
+
+    return parts
+
+
+def execute(filters=None):
+
+    result = (
+        _productivity_execute_before_excavator_clean_detail_v74(
+            filters
+        )
+    )
+
+    return (
+        _productivity_apply_excavator_clean_detail_v74(
+            result,
+            filters,
+        )
+    )
+
+
+# END KOSI_PRODUCTIVITY_EXCAVATOR_CLEAN_DETAIL_V74
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_KEEP_MATERIAL_TOTALS_V75
+#
+# FINAL EXCAVATOR STRUCTURE:
+#
+#     MACHINE TOTAL
+#
+#         MATERIAL SUBTOTAL      <-- KEEP
+#             DETAIL
+#             DETAIL
+#
+# Example:
+#
+#     IS0312
+#         Coal                   <-- KEEP + totals
+#             Ramp 2 - 3 2#Coal
+#             Ramp 1 - 2 2#Coal
+#
+#         Hards                  <-- KEEP + totals
+#             Ramp 1 Overburden
+#             Ramp 3 Overburden
+#
+#         Softs                  <-- KEEP + totals
+#             Topsoil Dump
+#
+# Detail rows:
+#     Productivity BCM/Hr = BCM / Hours
+#     Productivity BCM/HD = BCM / average hauling distance
+#
+# The Material column duplication is handled by JS V75.
+# ============================================================
+
+
+# If the previous incorrect V74 was installed, bypass it and
+# use the execute function that existed immediately before V74.
+#
+# If V74 was never installed, use the current execute chain.
+if (
+    "_productivity_execute_before_excavator_clean_detail_v74"
+    in globals()
+):
+
+    _productivity_execute_before_keep_material_totals_v75 = (
+        _productivity_execute_before_excavator_clean_detail_v74
+    )
+
+else:
+
+    _productivity_execute_before_keep_material_totals_v75 = (
+        execute
+    )
+
+
+def _productivity_v75_float(
+    value,
+):
+
+    if value in (
+        None,
+        "",
+    ):
+        return 0.0
+
+    try:
+
+        if isinstance(
+            value,
+            str,
+        ):
+
+            value = (
+                value
+                .replace(",", "")
+                .strip()
+            )
+
+        return float(
+            value
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+
+        return 0.0
+
+
+def _productivity_v75_average_hd(
+    value,
+):
+
+    """
+    Convert hauling distance to an average numeric distance.
+
+    Examples:
+
+        500-1000    -> 750
+        1000-1500   -> 1250
+        500-800     -> 650
+        750         -> 750
+    """
+
+    import re
+
+    text = str(
+        value
+        or ""
+    ).strip()
+
+    if not text:
+        return 0.0
+
+    text = (
+        text
+        .replace("–", "-")
+        .replace("—", "-")
+        .replace(",", "")
+    )
+
+    numbers = re.findall(
+        r"\d+(?:\.\d+)?",
+        text,
+    )
+
+    if not numbers:
+        return 0.0
+
+    values = [
+        float(number)
+        for number in numbers
+    ]
+
+    if len(values) >= 2:
+
+        return (
+            values[0]
+            + values[1]
+        ) / 2.0
+
+    return values[0]
+
+
+def _productivity_v75_apply_calculations(
+    rows,
+    filters,
+):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+    if str(
+        filters.get(
+            "summary_view"
+        )
+        or ""
+    ).strip().lower() != "summary per machine":
+
+        return rows
+
+    final_rows = []
+
+    for original_row in (
+        rows
+        or []
+    ):
+
+        if not hasattr(
+            original_row,
+            "get",
+        ):
+
+            final_rows.append(
+                original_row
+            )
+
+            continue
+
+        row = dict(
+            original_row
+        )
+
+        is_detail = (
+            int(
+                row.get(
+                    "productivity_excavator_detail_v71"
+                )
+                or 0
+            )
+            == 1
+        )
+
+        if is_detail:
+
+            hours = (
+                _productivity_v75_float(
+                    row.get(
+                        "working_hours"
+                    )
+                )
+            )
+
+            bcm = (
+                _productivity_v75_float(
+                    row.get(
+                        "adjusted_bcm"
+                    )
+                    if row.get(
+                        "adjusted_bcm"
+                    )
+                    not in (
+                        None,
+                        "",
+                    )
+                    else row.get(
+                        "output"
+                    )
+                )
+            )
+
+            # -----------------------------------------------
+            # PRODUCTIVITY BCM/HR
+            # -----------------------------------------------
+
+            if (
+                hours > 0
+                and bcm > 0
+            ):
+
+                row[
+                    "productivity"
+                ] = round(
+                    bcm / hours,
+                    2,
+                )
+
+            # -----------------------------------------------
+            # PRODUCTIVITY BCM/HD
+            # -----------------------------------------------
+
+            average_hd = (
+                _productivity_v75_average_hd(
+                    row.get(
+                        "hauling_distance_m"
+                    )
+                )
+            )
+
+            if (
+                average_hd > 0
+                and bcm > 0
+            ):
+
+                row[
+                    "productivity_bcm_hd"
+                ] = round(
+                    bcm / average_hd,
+                    2,
+                )
+
+                row[
+                    "productivity_average_hd_v75"
+                ] = round(
+                    average_hd,
+                    3,
+                )
+
+            else:
+
+                row[
+                    "productivity_bcm_hd"
+                ] = ""
+
+            row[
+                "productivity_excavator_calc_v75"
+            ] = 1
+
+        # IMPORTANT:
+        #
+        # Coal / Hards / Softs subtotal rows are not removed
+        # and are not modified here.
+        final_rows.append(
+            row
+        )
+
+    return final_rows
+
+
+def _productivity_apply_keep_material_totals_v75(
+    result,
+    filters,
+):
+
+    if not result:
+        return result
+
+    if not isinstance(
+        result,
+        (tuple, list),
+    ):
+        return result
+
+    parts = list(
+        result
+    )
+
+    if len(parts) < 2:
+        return result
+
+    parts[
+        1
+    ] = (
+        _productivity_v75_apply_calculations(
+            parts[1],
+            filters,
+        )
+    )
+
+    if isinstance(
+        result,
+        tuple,
+    ):
+
+        return tuple(
+            parts
+        )
+
+    return parts
+
+
+def execute(filters=None):
+
+    result = (
+        _productivity_execute_before_keep_material_totals_v75(
+            filters
+        )
+    )
+
+    return (
+        _productivity_apply_keep_material_totals_v75(
+            result,
+            filters,
+        )
+    )
+
+
+# END KOSI_PRODUCTIVITY_KEEP_MATERIAL_TOTALS_V75
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_EXCAVATOR_SAME_AS_ADT_V76
+#
+# Goal:
+#   Make Excavator Summary Per Machine display like ADT:
+#
+#       IS0604
+#           Coal      <-- keep subtotal row with totals
+#               Ramp 2 - 3 2#Coal
+#               Ramp 1 - 2 2#Coal
+#           Hards     <-- keep subtotal row with totals
+#               Ramp 1 Overburden
+#               Ramp 3 Overburden
+#           Softs     <-- keep subtotal row with totals
+#               Topsoil Dump
+#
+# Display handling is done in JS:
+#   - detail row Label -> blank
+#   - detail row Material -> show detail name
+#
+# This Python block only ensures calculations are available on
+# Excavator detail rows:
+#   Productivity BCM/Hr = BCM / Hours
+#   Productivity BCM/HD = BCM / average hauling distance
+# ============================================================
+
+_productivity_execute_before_excavator_same_as_adt_v76 = execute
+
+
+def _productivity_v76_float(value):
+    if value in (None, ""):
+        return 0.0
+
+    try:
+        if isinstance(value, str):
+            value = value.replace(",", "").strip()
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _productivity_v76_average_hd(value):
+    import re
+
+    text = str(value or "").strip()
+    if not text:
+        return 0.0
+
+    text = (
+        text
+        .replace("–", "-")
+        .replace("—", "-")
+        .replace(",", "")
+    )
+
+    numbers = re.findall(r"\d+(?:\.\d+)?", text)
+    if not numbers:
+        return 0.0
+
+    values = [float(n) for n in numbers]
+
+    if len(values) >= 2:
+        return (values[0] + values[1]) / 2.0
+
+    return values[0]
+
+
+def _productivity_apply_excavator_same_as_adt_v76(result, filters):
+    if not result:
+        return result
+
+    if not isinstance(result, (tuple, list)):
+        return result
+
+    filters = frappe._dict(filters or {})
+    summary_view = str(filters.get("summary_view") or "").strip().lower()
+
+    if summary_view != "summary per machine":
+        return result
+
+    parts = list(result)
+
+    if len(parts) < 2:
+        return result
+
+    rows = parts[1] or []
+    final_rows = []
+
+    for original_row in rows:
+        if not hasattr(original_row, "get"):
+            final_rows.append(original_row)
+            continue
+
+        row = dict(original_row)
+
+        is_excavator_detail = (
+            int(row.get("productivity_excavator_detail_v71") or 0) == 1
+        )
+
+        if is_excavator_detail:
+            hours = _productivity_v76_float(row.get("working_hours"))
+
+            bcm = _productivity_v76_float(
+                row.get("adjusted_bcm")
+                if row.get("adjusted_bcm") not in (None, "")
+                else row.get("output")
+            )
+
+            if hours > 0 and bcm > 0:
+                row["productivity"] = round(bcm / hours, 2)
+            else:
+                row["productivity"] = ""
+
+            average_hd = _productivity_v76_average_hd(
+                row.get("hauling_distance_m")
+            )
+
+            if average_hd > 0 and bcm > 0:
+                row["productivity_bcm_hd"] = round(
+                    bcm / average_hd,
+                    2,
+                )
+                row["productivity_average_hd_v76"] = round(
+                    average_hd,
+                    3,
+                )
+            else:
+                row["productivity_bcm_hd"] = ""
+
+            row["productivity_excavator_display_v76"] = 1
+
+        final_rows.append(row)
+
+    parts[1] = final_rows
+
+    if isinstance(result, tuple):
+        return tuple(parts)
+
+    return parts
+
+
+def execute(filters=None):
+    result = _productivity_execute_before_excavator_same_as_adt_v76(filters)
+    return _productivity_apply_excavator_same_as_adt_v76(result, filters)
+
+
+# END KOSI_PRODUCTIVITY_EXCAVATOR_SAME_AS_ADT_V76
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_EXCAVATOR_MATERIAL_TOTALS_V77
+#
+# Goal:
+#   For Summary Per Machine -> Excavator
+#   populate material subtotal rows with:
+#       - Working Hours
+#       - Output
+#       - Productivity (BCM/Hr)
+#
+# Example:
+#   IS0312
+#       Coal      -> hours + output + bcm/hr
+#           Ramp 2 - 3 2#Coal
+#           Ramp 1 - 2 2#Coal
+# ============================================================
+
+_productivity_execute_before_excavator_material_totals_v77 = execute
+
+
+def _productivity_v77_float(value):
+    if value in (None, ""):
+        return 0.0
+
+    try:
+        if isinstance(value, str):
+            value = value.replace(",", "").strip()
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _productivity_v77_indent(row):
+    try:
+        return int(float(row.get("indent") or 0))
+    except Exception:
+        return 0
+
+
+def _productivity_v77_is_excavator_material_total(row):
+    if not hasattr(row, "get"):
+        return False
+
+    material = str(row.get("material") or "").strip()
+    label = str(row.get("label") or "").strip()
+
+    if not material:
+        return False
+
+    if int(row.get("productivity_excavator_detail_v71") or 0) == 1:
+        return False
+
+    if int(row.get("is_machine_total") or 0) == 1:
+        return False
+
+    if int(row.get("productivity_is_machine_total") or 0) == 1:
+        return False
+
+    if int(row.get("is_category_total") or 0) == 1:
+        return False
+
+    # Excavator material subtotal rows are the parent rows
+    # like Coal / Hards / Softs.
+    # Usually label is blank and indent is 2.
+    if label:
+        return False
+
+    return _productivity_v77_indent(row) >= 2
+
+
+def _productivity_v77_fill_material_totals(rows, filters):
+    filters = frappe._dict(filters or {})
+
+    if str(filters.get("summary_view") or "").strip().lower() != "summary per machine":
+        return rows
+
+    rows = list(rows or [])
+    current_section = ""
+
+    i = 0
+    while i < len(rows):
+        row = rows[i]
+
+        if not hasattr(row, "get"):
+            i += 1
+            continue
+
+        label = str(row.get("label") or "").strip()
+        material = str(row.get("material") or "").strip()
+
+        # Track section
+        if not material and label in ("Excavator", "ADT", "Dozer", "Total Fleet"):
+            current_section = label
+
+        if current_section == "Excavator" and _productivity_v77_is_excavator_material_total(row):
+            parent_indent = _productivity_v77_indent(row)
+
+            total_hours = 0.0
+            total_output = 0.0
+
+            j = i + 1
+            while j < len(rows):
+                child = rows[j]
+
+                if not hasattr(child, "get"):
+                    break
+
+                child_indent = _productivity_v77_indent(child)
+
+                # stop when next sibling/parent is reached
+                if child_indent <= parent_indent:
+                    break
+
+                # sum detail rows beneath material subtotal
+                child_hours = _productivity_v77_float(child.get("working_hours"))
+
+                child_output = _productivity_v77_float(
+                    child.get("adjusted_bcm")
+                    if child.get("adjusted_bcm") not in (None, "")
+                    else child.get("output")
+                )
+
+                total_hours += child_hours
+                total_output += child_output
+
+                j += 1
+
+            row["working_hours"] = round(total_hours, 3)
+
+            if row.get("adjusted_bcm") not in (None, ""):
+                row["adjusted_bcm"] = round(total_output, 3)
+
+            row["output"] = round(total_output, 3)
+
+            if total_hours > 0 and total_output > 0:
+                row["productivity"] = round(total_output / total_hours, 2)
+            else:
+                row["productivity"] = ""
+
+            row["productivity_excavator_material_total_v77"] = 1
+
+        i += 1
+
+    return rows
+
+
+def _productivity_apply_excavator_material_totals_v77(result, filters):
+    if not result:
+        return result
+
+    if not isinstance(result, (tuple, list)):
+        return result
+
+    parts = list(result)
+
+    if len(parts) < 2:
+        return result
+
+    parts[1] = _productivity_v77_fill_material_totals(parts[1], filters)
+
+    if isinstance(result, tuple):
+        return tuple(parts)
+
+    return parts
+
+
+def execute(filters=None):
+    result = _productivity_execute_before_excavator_material_totals_v77(filters)
+    return _productivity_apply_excavator_material_totals_v77(result, filters)
+
+
+# END KOSI_PRODUCTIVITY_EXCAVATOR_MATERIAL_TOTALS_V77
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_SNAPSHOT_SAME_AS_REPORT_V81
+#
+# Make Productivity Override Snapshot / PDF use the same
+# Excavator layout as the current Summary Per Machine report.
+#
+# SCREEN:
+#
+#     Excavator
+#         IS0312
+#             Coal          2.936   122.366   41.68
+#                 Ramp 2... 1       37        41.76
+#                 Ramp 1... 2       85        41.64
+#
+#             Hards         10.068  419.540   41.67
+#                 Ramp 1 Overburden
+#                 Ramp 3 Overburden
+#
+#             Softs         17.996  749.928   41.67
+#                 Topsoil Dump
+#
+# Snapshot rules:
+#
+# - Keep machine headings.
+# - Keep Coal / Hards / Softs subtotal headings.
+# - Keep subtotal Hours / BCM / BCM-Hr.
+# - Detail name appears in Material column.
+# - Detail Label column remains blank.
+# - From Area / To Area / Hauling Distance saved values remain.
+# - Productivity BCM/HD remains.
+# - ADT / Dozer remain unchanged.
+#
+# This affects snapshot HTML/PDF formatting only.
+# ============================================================
+
+
+_productivity_snapshot_build_html_before_v81 = (
+    _productivity_snapshot_build_html
+)
+
+
+def _productivity_snapshot_v81_float(
+    value,
+):
+
+    if value in (
+        None,
+        "",
+    ):
+        return 0.0
+
+    try:
+
+        if isinstance(
+            value,
+            str,
+        ):
+
+            value = (
+                value
+                .replace(",", "")
+                .strip()
+            )
+
+        return float(
+            value
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+
+        return 0.0
+
+
+def _productivity_snapshot_v81_indent(
+    row,
+):
+
+    try:
+
+        return int(
+            float(
+                row.get(
+                    "indent"
+                )
+                or 0
+            )
+        )
+
+    except Exception:
+
+        return 0
+
+
+def _productivity_snapshot_v81_prepare_rows(
+    rows,
+):
+
+    prepared = []
+
+    current_category = ""
+
+    categories = (
+        "Excavator",
+        "ADT",
+        "Dozer",
+        "Total Fleet",
+    )
+
+    for original_row in (
+        rows
+        or []
+    ):
+
+        if not hasattr(
+            original_row,
+            "get",
+        ):
+
+            prepared.append(
+                original_row
+            )
+
+            continue
+
+
+        row = dict(
+            original_row
+        )
+
+
+        label = str(
+            row.get(
+                "label"
+            )
+            or ""
+        ).strip()
+
+
+        material = str(
+            row.get(
+                "material"
+            )
+            or ""
+        ).strip()
+
+
+        # ----------------------------------------------------
+        # MONTHLY PRODUCTION HEADING
+        # ----------------------------------------------------
+
+        if (
+            int(
+                row.get(
+                    "is_monthly_plan_header"
+                )
+                or 0
+            ) == 1
+            or label.startswith(
+                "MONTHLY PRODUCTION:"
+            )
+        ):
+
+            current_category = ""
+
+            prepared.append(
+                row
+            )
+
+            continue
+
+
+        # ----------------------------------------------------
+        # CATEGORY
+        # ----------------------------------------------------
+
+        if (
+            label in categories
+            and not material
+        ):
+
+            current_category = label
+
+            prepared.append(
+                row
+            )
+
+            continue
+
+
+        # ADT / DOZER untouched.
+        if current_category != "Excavator":
+
+            prepared.append(
+                row
+            )
+
+            continue
+
+
+        # ----------------------------------------------------
+        # EXCAVATOR DETAIL
+        #
+        # Screen V76:
+        #
+        #     Label = blank
+        #     Material = Ramp 2 - 3 2#Coal
+        # ----------------------------------------------------
+
+        is_detail = (
+            int(
+                row.get(
+                    "productivity_excavator_detail_v71"
+                )
+                or 0
+            )
+            == 1
+        )
+
+
+        if is_detail:
+
+            row[
+                "label"
+            ] = ""
+
+
+            # Keep detail name in Material.
+            row[
+                "material"
+            ] = material
+
+
+            hours = (
+                _productivity_snapshot_v81_float(
+                    row.get(
+                        "working_hours"
+                    )
+                )
+            )
+
+
+            bcm = (
+                _productivity_snapshot_v81_float(
+                    row.get(
+                        "adjusted_bcm"
+                    )
+                    if row.get(
+                        "adjusted_bcm"
+                    )
+                    not in (
+                        None,
+                        "",
+                    )
+                    else row.get(
+                        "output"
+                    )
+                )
+            )
+
+
+            if (
+                hours > 0
+                and bcm > 0
+            ):
+
+                row[
+                    "productivity"
+                ] = round(
+                    bcm / hours,
+                    2,
+                )
+
+
+            row[
+                "productivity_snapshot_detail_v81"
+            ] = 1
+
+
+            prepared.append(
+                row
+            )
+
+            continue
+
+
+        # ----------------------------------------------------
+        # MATERIAL SUBTOTAL
+        #
+        # Coal / Hards / Softs
+        #
+        # V77 already calculated:
+        #
+        # working_hours
+        # output
+        # productivity
+        #
+        # For snapshot rendering mark this subtotal like a bold
+        # machine-style total row.
+        # ----------------------------------------------------
+
+        is_material_total = (
+            int(
+                row.get(
+                    "productivity_excavator_material_total_v77"
+                )
+                or 0
+            )
+            == 1
+        )
+
+
+        if not is_material_total:
+
+            indent = (
+                _productivity_snapshot_v81_indent(
+                    row
+                )
+            )
+
+
+            if (
+                not label
+                and material
+                and indent >= 2
+                and material
+                in (
+                    "Coal",
+                    "Hards",
+                    "Softs",
+                )
+            ):
+
+                is_material_total = True
+
+
+        if is_material_total:
+
+            hours = (
+                _productivity_snapshot_v81_float(
+                    row.get(
+                        "working_hours"
+                    )
+                )
+            )
+
+
+            bcm = (
+                _productivity_snapshot_v81_float(
+                    row.get(
+                        "adjusted_bcm"
+                    )
+                    if row.get(
+                        "adjusted_bcm"
+                    )
+                    not in (
+                        None,
+                        "",
+                    )
+                    else row.get(
+                        "output"
+                    )
+                )
+            )
+
+
+            if (
+                hours > 0
+                and bcm > 0
+            ):
+
+                row[
+                    "productivity"
+                ] = round(
+                    bcm / hours,
+                    2,
+                )
+
+
+            # Snapshot builder already knows how to visually
+            # emphasize machine total rows.
+            #
+            # Do this only on the cloned snapshot row.
+            row[
+                "is_machine_total"
+            ] = 1
+
+
+            row[
+                "productivity_is_machine_total"
+            ] = 1
+
+
+            row[
+                "productivity_snapshot_material_total_v81"
+            ] = 1
+
+
+            prepared.append(
+                row
+            )
+
+            continue
+
+
+        prepared.append(
+            row
+        )
+
+
+    return prepared
+
+
+def _productivity_snapshot_v81_looks_like_rows(
+    value,
+):
+
+    if not isinstance(
+        value,
+        (
+            list,
+            tuple,
+        ),
+    ):
+
+        return False
+
+
+    sample = None
+
+
+    for item in value:
+
+        if hasattr(
+            item,
+            "get",
+        ):
+
+            sample = item
+            break
+
+
+    if sample is None:
+        return False
+
+
+    # Column definitions have fieldname + fieldtype.
+    if (
+        sample.get(
+            "fieldname"
+        )
+        and sample.get(
+            "fieldtype"
+        )
+    ):
+
+        return False
+
+
+    # Report rows normally have at least one of these.
+    return any(
+        key in sample
+        for key in (
+            "label",
+            "working_hours",
+            "output",
+            "material",
+            "is_category_total",
+        )
+    )
+
+
+def _productivity_snapshot_build_html(
+    *args,
+    **kwargs,
+):
+
+    args = list(
+        args
+    )
+
+
+    # --------------------------------------------------------
+    # KEYWORD ROWS
+    # --------------------------------------------------------
+
+    for key in (
+        "rows",
+        "data",
+    ):
+
+        if (
+            key in kwargs
+            and _productivity_snapshot_v81_looks_like_rows(
+                kwargs[
+                    key
+                ]
+            )
+        ):
+
+            original = kwargs[
+                key
+            ]
+
+
+            prepared = (
+                _productivity_snapshot_v81_prepare_rows(
+                    original
+                )
+            )
+
+
+            kwargs[
+                key
+            ] = (
+                tuple(
+                    prepared
+                )
+                if isinstance(
+                    original,
+                    tuple,
+                )
+                else prepared
+            )
+
+
+    # --------------------------------------------------------
+    # POSITIONAL ROWS
+    #
+    # Wrapper deliberately does not rely on the exact old
+    # function signature, making this safe with the existing
+    # snapshot builder.
+    # --------------------------------------------------------
+
+    for index, value in enumerate(
+        args
+    ):
+
+        if not (
+            _productivity_snapshot_v81_looks_like_rows(
+                value
+            )
+        ):
+
+            continue
+
+
+        prepared = (
+            _productivity_snapshot_v81_prepare_rows(
+                value
+            )
+        )
+
+
+        args[
+            index
+        ] = (
+            tuple(
+                prepared
+            )
+            if isinstance(
+                value,
+                tuple,
+            )
+            else prepared
+        )
+
+
+        # There should only be one report-row list.
+        break
+
+
+    return (
+        _productivity_snapshot_build_html_before_v81(
+            *args,
+            **kwargs,
+        )
+    )
+
+
+# END KOSI_PRODUCTIVITY_SNAPSHOT_SAME_AS_REPORT_V81
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_SNAPSHOT_PRECISION_V82
+#
+# Fix Productivity Override Snapshot so saved values match
+# the current Productivity report.
+#
+# BEFORE:
+#
+#   2.936   -> 3
+#   122.366 -> 122
+#   41.68   -> 42
+#
+# AFTER:
+#
+#   2.936
+#   122.366
+#   41.68
+#
+# Rules:
+#
+# - Whole numbers remain whole numbers.
+# - Hours / BCM retain up to 3 decimals.
+# - Productivity is already calculated/rounded by the report
+#   to the required precision and is preserved.
+#
+# Excavator subtotal:
+#
+#   Coal / Hards / Softs
+#
+# - remains bold
+# - retains Hours / BCM / BCM-Hr
+# - From Area stays blank
+# - To Area stays blank
+# - Hauling Distance stays blank
+# - BCM/HD stays blank
+#
+# Detail rows retain:
+#
+# - Material
+# - From Area
+# - To Area
+# - Hauling Distance
+# - BCM/HD
+# ============================================================
+
+
+_productivity_snapshot_format_number_before_v82 = (
+    _productivity_snapshot_format_number
+)
+
+
+def _productivity_snapshot_v82_number(
+    value,
+):
+
+    if value in (
+        None,
+        "",
+    ):
+        return None
+
+    try:
+
+        if isinstance(
+            value,
+            str,
+        ):
+
+            value = (
+                value
+                .replace(",", "")
+                .strip()
+            )
+
+        return float(
+            value
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+
+        return None
+
+
+def _productivity_snapshot_format_number(
+    value,
+):
+
+    """
+    Snapshot-friendly numeric formatting.
+
+    Examples:
+
+        31          -> 31
+        1292        -> 1,292
+        2.936       -> 2.936
+        122.366     -> 122.366
+        41.68       -> 41.68
+        95,706.731  -> 95,706.731
+    """
+
+    number = (
+        _productivity_snapshot_v82_number(
+            value
+        )
+    )
+
+    if number is None:
+        return ""
+
+    # Treat values effectively equal to an integer as whole.
+    if abs(
+        number
+        - round(
+            number
+        )
+    ) < 0.0000005:
+
+        return (
+            f"{number:,.0f}"
+        )
+
+    # Preserve up to three decimal places.
+    text = (
+        f"{number:,.3f}"
+    )
+
+    text = (
+        text
+        .rstrip("0")
+        .rstrip(".")
+    )
+
+    return text
+
+
+# ------------------------------------------------------------
+# Extend V81 snapshot row preparation.
+# ------------------------------------------------------------
+
+_productivity_snapshot_v81_prepare_rows_before_v82 = (
+    _productivity_snapshot_v81_prepare_rows
+)
+
+
+def _productivity_snapshot_v81_prepare_rows(
+    rows,
+):
+
+    prepared = (
+        _productivity_snapshot_v81_prepare_rows_before_v82(
+            rows
+        )
+    )
+
+    final_rows = []
+
+    for original_row in (
+        prepared
+        or []
+    ):
+
+        if not hasattr(
+            original_row,
+            "get",
+        ):
+
+            final_rows.append(
+                original_row
+            )
+
+            continue
+
+        row = dict(
+            original_row
+        )
+
+
+        # ====================================================
+        # EXCAVATOR MATERIAL SUBTOTAL
+        #
+        # Coal / Hards / Softs
+        # ====================================================
+
+        is_material_total = bool(
+            int(
+                row.get(
+                    "productivity_snapshot_material_total_v81"
+                )
+                or 0
+            )
+            or int(
+                row.get(
+                    "productivity_excavator_material_total_v77"
+                )
+                or 0
+            )
+        )
+
+
+        if is_material_total:
+
+            # Keep these values:
+            #
+            # Working Hours
+            # Output BCM
+            # Productivity BCM/Hr
+
+            hours = (
+                _productivity_snapshot_v82_number(
+                    row.get(
+                        "working_hours"
+                    )
+                )
+                or 0.0
+            )
+
+            bcm = (
+                _productivity_snapshot_v82_number(
+                    row.get(
+                        "adjusted_bcm"
+                    )
+                    if row.get(
+                        "adjusted_bcm"
+                    )
+                    not in (
+                        None,
+                        "",
+                    )
+                    else row.get(
+                        "output"
+                    )
+                )
+                or 0.0
+            )
+
+
+            if (
+                hours > 0
+                and bcm > 0
+            ):
+
+                row[
+                    "productivity"
+                ] = round(
+                    bcm / hours,
+                    2,
+                )
+
+
+            # Subtotal is not a haul-detail row.
+            row[
+                "from_area"
+            ] = ""
+
+            row[
+                "to_area"
+            ] = ""
+
+            row[
+                "hauling_distance_m"
+            ] = ""
+
+            row[
+                "productivity_bcm_hd"
+            ] = ""
+
+
+            # Preserve bold/total styling.
+            row[
+                "is_machine_total"
+            ] = 1
+
+            row[
+                "productivity_is_machine_total"
+            ] = 1
+
+            row[
+                "productivity_snapshot_material_total_v82"
+            ] = 1
+
+
+        # ====================================================
+        # EXCAVATOR DETAIL ROW
+        # ====================================================
+
+        is_detail = (
+            int(
+                row.get(
+                    "productivity_excavator_detail_v71"
+                )
+                or 0
+            )
+            == 1
+        )
+
+
+        if is_detail:
+
+            # Same display as current report:
+            #
+            # Label    = blank
+            # Material = Ramp detail
+            row[
+                "label"
+            ] = ""
+
+
+            hours = (
+                _productivity_snapshot_v82_number(
+                    row.get(
+                        "working_hours"
+                    )
+                )
+                or 0.0
+            )
+
+
+            bcm = (
+                _productivity_snapshot_v82_number(
+                    row.get(
+                        "adjusted_bcm"
+                    )
+                    if row.get(
+                        "adjusted_bcm"
+                    )
+                    not in (
+                        None,
+                        "",
+                    )
+                    else row.get(
+                        "output"
+                    )
+                )
+                or 0.0
+            )
+
+
+            if (
+                hours > 0
+                and bcm > 0
+            ):
+
+                row[
+                    "productivity"
+                ] = round(
+                    bcm / hours,
+                    2,
+                )
+
+
+            row[
+                "productivity_snapshot_detail_v82"
+            ] = 1
+
+
+        final_rows.append(
+            row
+        )
+
+
+    return final_rows
+
+
+# END KOSI_PRODUCTIVITY_SNAPSHOT_PRECISION_V82
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_ZERO_DECIMALS_V83
+#
+# DISPLAY / SNAPSHOT FORMATTING ONLY.
+#
+# The underlying report calculations remain unchanged.
+#
+# Snapshot:
+#
+#   Working Hours      -> 0 decimals
+#   Output BCM         -> 0 decimals
+#   Productivity BCM/Hr-> 0 decimals
+#
+# BCM/HD is deliberately NOT changed here.
+#
+# Examples:
+#
+#   2.936      -> 3
+#   122.366    -> 122
+#   41.68      -> 42
+#   95706.731  -> 95,707
+#
+# Material subtotal rows such as:
+#
+#   Coal
+#   Hards
+#   Softs
+#
+# are rendered bold in the saved snapshot.
+# ============================================================
+
+
+def _productivity_snapshot_format_number(
+    value,
+):
+
+    if value in (
+        None,
+        "",
+    ):
+        return ""
+
+    try:
+
+        if isinstance(
+            value,
+            str,
+        ):
+
+            value = (
+                value
+                .replace(",", "")
+                .strip()
+            )
+
+        number = float(
+            value
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+
+        return str(
+            value
+            or ""
+        )
+
+    return (
+        f"{number:,.0f}"
+    )
+
+
+# ------------------------------------------------------------
+# FINAL SNAPSHOT HTML WRAPPER
+#
+# Keep existing snapshot structure and PDF logic.
+# Only make material subtotal rows visually bold.
+# ------------------------------------------------------------
+
+_productivity_snapshot_build_html_before_v83 = (
+    _productivity_snapshot_build_html
+)
+
+
+def _productivity_snapshot_build_html(
+    *args,
+    **kwargs,
+):
+
+    import re
+
+
+    snapshot_html = (
+        _productivity_snapshot_build_html_before_v83(
+            *args,
+            **kwargs,
+        )
+    )
+
+
+    if not isinstance(
+        snapshot_html,
+        str,
+    ):
+
+        return snapshot_html
+
+
+    # --------------------------------------------------------
+    # BOLD MATERIAL SUBTOTAL ROWS
+    #
+    # Matches a table cell containing exactly:
+    #
+    #   Coal
+    #   Hards
+    #   Softs
+    #
+    # It does NOT match:
+    #
+    #   Ramp 2 - 3 2#Coal
+    #   Ramp 1 Overburden
+    #   Topsoil Dump
+    # --------------------------------------------------------
+
+    material_total_pattern = re.compile(
+        r'(<tr\b[^>]*>)(.*?'
+        r'<td\b[^>]*>\s*'
+        r'(?:Coal|Hards|Softs)'
+        r'\s*</td>'
+        r'.*?</tr>)',
+        flags=(
+            re.IGNORECASE
+            | re.DOTALL
+        ),
+    )
+
+
+    def bold_material_total(
+        match,
+    ):
+
+        opening = (
+            match.group(
+                1
+            )
+        )
+
+        remainder = (
+            match.group(
+                2
+            )
+        )
+
+
+        # Existing inline style.
+        if re.search(
+            r'\bstyle\s*=\s*["\']',
+            opening,
+            flags=re.IGNORECASE,
+        ):
+
+            opening = re.sub(
+                r'(\bstyle\s*=\s*["\'])',
+                r'\1font-weight:700;',
+                opening,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+
+        else:
+
+            opening = (
+                opening[:-1]
+                + ' style="font-weight:700;">'
+            )
+
+
+        return (
+            opening
+            + remainder
+        )
+
+
+    snapshot_html = (
+        material_total_pattern.sub(
+            bold_material_total,
+            snapshot_html,
+        )
+    )
+
+
+    return snapshot_html
+
+
+# END KOSI_PRODUCTIVITY_ZERO_DECIMALS_V83
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_SNAPSHOT_BOLD_ONLY_V85
+#
+# FINAL SNAPSHOT BOLD RULE.
+#
+# BOLD:
+#
+#   Excavator
+#   ADT
+#   Dozer
+#
+#   EX01
+#   IS0312
+#   IS0330
+#   machine total rows
+#
+#   Coal
+#   Hards
+#   Softs
+#
+# NORMAL:
+#
+#   Ramp 2 - 3 2#Coal
+#   Ramp 1 - 2 2#Coal
+#   Ramp 1 Overburden
+#   Ramp 3 Overburden
+#   Topsoil Dump
+#
+# This changes snapshot HTML styling ONLY.
+#
+# No calculations changed.
+# No override values changed.
+# V83 zero-decimal formatting remains.
+# ============================================================
+
+
+_productivity_snapshot_build_html_before_v85 = (
+    _productivity_snapshot_build_html
+)
+
+
+def _productivity_snapshot_v85_clean_cell(
+    value,
+):
+
+    import html
+    import re
+
+    text = str(
+        value
+        or ""
+    )
+
+    # Remove HTML tags from cell content.
+    text = re.sub(
+        r"<[^>]+>",
+        "",
+        text,
+        flags=re.DOTALL,
+    )
+
+    text = html.unescape(
+        text
+    )
+
+    return (
+        text
+        .replace("\xa0", " ")
+        .strip()
+    )
+
+
+def _productivity_snapshot_v85_add_class(
+    opening_tag,
+    class_name,
+):
+
+    import re
+
+    opening_tag = str(
+        opening_tag
+        or ""
+    )
+
+    match = re.search(
+        r'\bclass\s*=\s*(["\'])(.*?)\1',
+        opening_tag,
+        flags=(
+            re.IGNORECASE
+            | re.DOTALL
+        ),
+    )
+
+
+    if match:
+
+        existing = (
+            match.group(
+                2
+            )
+            or ""
+        ).strip()
+
+
+        classes = [
+            item
+            for item
+            in existing.split()
+            if item
+            not in (
+                "productivity-v85-bold",
+                "productivity-v85-normal",
+            )
+        ]
+
+
+        classes.append(
+            class_name
+        )
+
+
+        replacement = (
+            'class="'
+            + " ".join(
+                classes
+            )
+            + '"'
+        )
+
+
+        return (
+            opening_tag[
+                :match.start()
+            ]
+            + replacement
+            + opening_tag[
+                match.end():
+            ]
+        )
+
+
+    # No class attribute yet.
+    if opening_tag.endswith(">"):
+
+        return (
+            opening_tag[:-1]
+            + ' class="'
+            + class_name
+            + '">'
+        )
+
+
+    return opening_tag
+
+
+def _productivity_snapshot_v85_fix_row(
+    row_html,
+):
+
+    import re
+
+    row_match = re.match(
+        r'(?P<open><tr\b[^>]*>)'
+        r'(?P<body>.*?)'
+        r'(?P<close></tr>)',
+        row_html,
+        flags=(
+            re.IGNORECASE
+            | re.DOTALL
+        ),
+    )
+
+
+    if not row_match:
+
+        return row_html
+
+
+    opening = (
+        row_match.group(
+            "open"
+        )
+    )
+
+    body = (
+        row_match.group(
+            "body"
+        )
+    )
+
+    closing = (
+        row_match.group(
+            "close"
+        )
+    )
+
+
+    # Only process actual DATA rows.
+    #
+    # Header rows contain TH cells and are left untouched.
+    cells = re.findall(
+        r'<td\b[^>]*>(.*?)</td>',
+        body,
+        flags=(
+            re.IGNORECASE
+            | re.DOTALL
+        ),
+    )
+
+
+    if not cells:
+
+        return row_html
+
+
+    # Snapshot column order:
+    #
+    # 0 Label
+    # 1 Working Hours
+    # 2 Output
+    # 3 Productivity BCM/Hr
+    # 4 Productivity BCM/HD
+    # 5 Material
+    # 6 From Area
+    # 7 To Area
+    # 8 Hauling Distance
+    label = (
+        _productivity_snapshot_v85_clean_cell(
+            cells[0]
+        )
+        if len(cells) > 0
+        else ""
+    )
+
+
+    material = (
+        _productivity_snapshot_v85_clean_cell(
+            cells[5]
+        )
+        if len(cells) > 5
+        else ""
+    )
+
+
+    label_key = (
+        label
+        .strip()
+        .lower()
+    )
+
+
+    material_key = (
+        material
+        .strip()
+        .lower()
+    )
+
+
+    # --------------------------------------------------------
+    # MONTHLY PRODUCTION HEADING
+    #
+    # Preserve the existing heading style.
+    # --------------------------------------------------------
+
+    if label_key.startswith(
+        "monthly production:"
+    ):
+
+        return row_html
+
+
+    # --------------------------------------------------------
+    # CATEGORY TOTAL
+    # --------------------------------------------------------
+
+    is_category = (
+        label_key
+        in (
+            "excavator",
+            "adt",
+            "dozer",
+            "total fleet",
+        )
+        and not material_key
+    )
+
+
+    # --------------------------------------------------------
+    # MATERIAL SUBTOTAL
+    #
+    # Exact match only.
+    #
+    # Therefore:
+    #
+    # Coal                 -> subtotal
+    # Ramp 2 - 3 2#Coal    -> detail
+    # --------------------------------------------------------
+
+    is_material_total = (
+        not label_key
+        and material_key
+        in (
+            "coal",
+            "hards",
+            "softs",
+        )
+    )
+
+
+    # --------------------------------------------------------
+    # MACHINE TOTAL
+    #
+    # A machine row:
+    #
+    #   Label    = EX01 / IS0312 / IS0330
+    #   Material = blank
+    #
+    # Category rows and Monthly Production are excluded above.
+    # --------------------------------------------------------
+
+    is_machine = (
+        bool(
+            label_key
+        )
+        and not material_key
+        and not is_category
+    )
+
+
+    should_bold = (
+        is_category
+        or is_machine
+        or is_material_total
+    )
+
+
+    class_name = (
+        "productivity-v85-bold"
+        if should_bold
+        else "productivity-v85-normal"
+    )
+
+
+    opening = (
+        _productivity_snapshot_v85_add_class(
+            opening,
+            class_name,
+        )
+    )
+
+
+    return (
+        opening
+        + body
+        + closing
+    )
+
+
+def _productivity_snapshot_v85_fix_html(
+    snapshot_html,
+):
+
+    import re
+
+    if not isinstance(
+        snapshot_html,
+        str,
+    ):
+
+        return snapshot_html
+
+
+    # --------------------------------------------------------
+    # Process EACH TR independently.
+    #
+    # This is important:
+    # never allow a Coal/Hards/Softs match to cross into a
+    # previous/next table row.
+    # --------------------------------------------------------
+
+    snapshot_html = re.sub(
+        r'<tr\b[^>]*>.*?</tr>',
+        lambda match:
+            _productivity_snapshot_v85_fix_row(
+                match.group(
+                    0
+                )
+            ),
+        snapshot_html,
+        flags=(
+            re.IGNORECASE
+            | re.DOTALL
+        ),
+    )
+
+
+    # --------------------------------------------------------
+    # Final CSS wins over older inline/font formatting.
+    # --------------------------------------------------------
+
+    css = """
+<style id="productivity-snapshot-v85-style">
+
+tr.productivity-v85-bold,
+tr.productivity-v85-bold td,
+tr.productivity-v85-bold td *,
+tr.productivity-v85-bold span,
+tr.productivity-v85-bold div {
+    font-weight: 700 !important;
+}
+
+tr.productivity-v85-normal,
+tr.productivity-v85-normal td,
+tr.productivity-v85-normal td *,
+tr.productivity-v85-normal span,
+tr.productivity-v85-normal div {
+    font-weight: 400 !important;
+}
+
+</style>
+"""
+
+
+    if (
+        "productivity-snapshot-v85-style"
+        not in snapshot_html
+    ):
+
+        if "</head>" in snapshot_html:
+
+            snapshot_html = (
+                snapshot_html.replace(
+                    "</head>",
+                    css
+                    + "\n</head>",
+                    1,
+                )
+            )
+
+        else:
+
+            snapshot_html = (
+                css
+                + snapshot_html
+            )
+
+
+    return snapshot_html
+
+
+def _productivity_snapshot_build_html(
+    *args,
+    **kwargs,
+):
+
+    snapshot_html = (
+        _productivity_snapshot_build_html_before_v85(
+            *args,
+            **kwargs,
+        )
+    )
+
+
+    return (
+        _productivity_snapshot_v85_fix_html(
+            snapshot_html
+        )
+    )
+
+
+# END KOSI_PRODUCTIVITY_SNAPSHOT_BOLD_ONLY_V85
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_BCM_BASIS_OVERRIDE_V86
+#
+# IMPORTANT:
+#
+# Manual Productivity area captures must NOT cross between:
+#
+#     Actual BCMs
+#     Tallies BCMs
+#
+# Existing Actual BCM overrides remain exactly where they are.
+#
+# Tallies uses its own storage key:
+#
+#     BASIS::Tallies BCMs::<existing row key>
+#
+# Therefore:
+#
+# Actual:
+#     Ramp 1 -> Ramp 2 -> 1000-1500
+#
+# does NOT automatically appear under Tallies.
+#
+# Tallies starts blank and may be captured separately.
+#
+# No BCM / hours / productivity calculation is changed.
+# ============================================================
+
+
+_productivity_execute_before_bcm_basis_override_v86 = execute
+
+_productivity_save_area_before_bcm_basis_override_v86 = (
+    save_productivity_area_override
+)
+
+
+_PRODUCTIVITY_TALLIES_PREFIX_V86 = (
+    "BASIS::Tallies BCMs::"
+)
+
+
+def _productivity_v86_basis(
+    filters,
+):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+    value = str(
+        filters.get(
+            "bcm_basis"
+        )
+        or "Actual BCMs"
+    ).strip()
+
+    if "tall" in value.lower():
+
+        return "Tallies BCMs"
+
+    return "Actual BCMs"
+
+
+def _productivity_v86_tallies_key(
+    row_key,
+):
+
+    row_key = str(
+        row_key
+        or ""
+    ).strip()
+
+    if not row_key:
+
+        return ""
+
+    if row_key.startswith(
+        _PRODUCTIVITY_TALLIES_PREFIX_V86
+    ):
+
+        return row_key
+
+    # Remove any unexpected old BASIS prefix first.
+    if row_key.startswith(
+        "BASIS::"
+    ):
+
+        parts = row_key.split(
+            "::",
+            2,
+        )
+
+        if len(parts) == 3:
+
+            row_key = parts[2]
+
+    return (
+        _PRODUCTIVITY_TALLIES_PREFIX_V86
+        + row_key
+    )
+
+
+def _productivity_v86_number(
+    value,
+):
+
+    if value in (
+        None,
+        "",
+    ):
+
+        return 0.0
+
+    try:
+
+        if isinstance(
+            value,
+            str,
+        ):
+
+            value = (
+                value
+                .replace(",", "")
+                .strip()
+            )
+
+        return float(
+            value
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+
+        return 0.0
+
+
+def _productivity_v86_distance_midpoint(
+    value,
+):
+
+    import re
+
+    text = str(
+        value
+        or ""
+    ).strip()
+
+    if not text:
+
+        return None
+
+    text = (
+        text
+        .replace("–", "-")
+        .replace("—", "-")
+        .replace(",", "")
+    )
+
+    numbers = re.findall(
+        r"\d+(?:\.\d+)?",
+        text,
+    )
+
+    if not numbers:
+
+        return None
+
+    values = [
+        float(number)
+        for number
+        in numbers
+    ]
+
+    if len(values) >= 2:
+
+        return (
+            values[0]
+            + values[1]
+        ) / 2.0
+
+    return values[0]
+
+
+def _productivity_v86_bcm_hd(
+    row,
+):
+
+    distance = str(
+        row.get(
+            "hauling_distance_m"
+        )
+        or ""
+    ).strip()
+
+    midpoint = (
+        _productivity_v86_distance_midpoint(
+            distance
+        )
+    )
+
+    if (
+        midpoint is None
+        or midpoint <= 0
+    ):
+
+        return ""
+
+    bcm = (
+        _productivity_v86_number(
+            row.get(
+                "adjusted_bcm"
+            )
+            if row.get(
+                "adjusted_bcm"
+            )
+            not in (
+                None,
+                "",
+            )
+            else row.get(
+                "output"
+            )
+        )
+    )
+
+    if bcm <= 0:
+
+        return ""
+
+    result = bcm / midpoint
+
+    if result < 1:
+
+        return round(
+            result,
+            3,
+        )
+
+    return round(
+        result,
+        2,
+    )
+
+
+def _productivity_apply_bcm_basis_override_v86(
+    result,
+    filters,
+):
+
+    """
+    Final report pass.
+
+    Actual BCMs:
+        absolutely untouched.
+
+    Tallies BCMs:
+        replace shared Actual override keys with Tallies-only keys.
+
+        If no Tallies-specific override exists:
+            From Area        = blank
+            To Area          = blank
+            Hauling Distance = blank
+            BCM/HD           = blank
+
+        If Tallies-specific override exists:
+            use Tallies values only.
+    """
+
+    if (
+        _productivity_v86_basis(
+            filters
+        )
+        != "Tallies BCMs"
+    ):
+
+        return result
+
+    if not isinstance(
+        result,
+        (tuple, list),
+    ):
+
+        return result
+
+    parts = list(
+        result
+    )
+
+    if len(parts) < 2:
+
+        return result
+
+    rows = [
+        dict(row)
+        if hasattr(
+            row,
+            "get",
+        )
+        else row
+
+        for row in (
+            parts[1]
+            or []
+        )
+    ]
+
+    targets = []
+    tallies_keys = []
+
+
+    # ========================================================
+    # PASS 1
+    #
+    # Give every editable Tallies row its OWN key.
+    # ========================================================
+
+    for row in rows:
+
+        if not hasattr(
+            row,
+            "get",
+        ):
+
+            continue
+
+        editable = (
+            int(
+                row.get(
+                    "productivity_editable"
+                )
+                or 0
+            )
+            == 1
+        )
+
+        old_key = str(
+            row.get(
+                "productivity_edit_key"
+            )
+            or row.get(
+                "row_key"
+            )
+            or ""
+        ).strip()
+
+        if (
+            not editable
+            or not old_key
+        ):
+
+            continue
+
+        tallies_key = (
+            _productivity_v86_tallies_key(
+                old_key
+            )
+        )
+
+        row[
+            "productivity_edit_key"
+        ] = tallies_key
+
+        row[
+            "row_key"
+        ] = tallies_key
+
+        row[
+            "productivity_edit_bcm_basis"
+        ] = "Tallies BCMs"
+
+        targets.append(
+            row
+        )
+
+        tallies_keys.append(
+            tallies_key
+        )
+
+
+    # ========================================================
+    # LOAD TALLIES-SPECIFIC OVERRIDES ONLY
+    # ========================================================
+
+    saved_map = {}
+
+    unique_keys = list(
+        dict.fromkeys(
+            tallies_keys
+        )
+    )
+
+    if (
+        unique_keys
+        and frappe.db.exists(
+            "DocType",
+            "Productivity Area Override",
+        )
+    ):
+
+        saved_rows = frappe.get_all(
+            "Productivity Area Override",
+
+            filters={
+                "row_key": [
+                    "in",
+                    unique_keys,
+                ],
+            },
+
+            fields=[
+                "row_key",
+                "from_area",
+                "to_area",
+                "hauling_distance_m",
+            ],
+
+            limit_page_length=0,
+        )
+
+        saved_map = {
+            str(
+                saved.row_key
+                or ""
+            ).strip():
+                saved
+
+            for saved
+            in saved_rows
+        }
+
+
+    # ========================================================
+    # APPLY ONLY TALLIES DATA
+    # ========================================================
+
+    for row in targets:
+
+        row_key = str(
+            row.get(
+                "productivity_edit_key"
+            )
+            or ""
+        ).strip()
+
+        saved = (
+            saved_map.get(
+                row_key
+            )
+        )
+
+        if not saved:
+
+            # -----------------------------------------------
+            # IMPORTANT:
+            #
+            # NEVER copy Actual capture into Tallies.
+            # Tallies begins completely blank.
+            # -----------------------------------------------
+
+            row[
+                "from_area"
+            ] = ""
+
+            row[
+                "to_area"
+            ] = ""
+
+            row[
+                "hauling_distance_m"
+            ] = ""
+
+            row[
+                "productivity_bcm_hd"
+            ] = ""
+
+            row[
+                "productivity_manual_override"
+            ] = 0
+
+            continue
+
+
+        # -----------------------------------------------
+        # Tallies has its OWN saved values.
+        # -----------------------------------------------
+
+        row[
+            "from_area"
+        ] = str(
+            saved.from_area
+            or ""
+        ).strip()
+
+        row[
+            "to_area"
+        ] = str(
+            saved.to_area
+            or ""
+        ).strip()
+
+        row[
+            "hauling_distance_m"
+        ] = str(
+            saved.hauling_distance_m
+            or ""
+        ).strip()
+
+        row[
+            "productivity_bcm_hd"
+        ] = (
+            _productivity_v86_bcm_hd(
+                row
+            )
+        )
+
+        row[
+            "productivity_manual_override"
+        ] = 1
+
+
+    parts[
+        1
+    ] = rows
+
+    if isinstance(
+        result,
+        tuple,
+    ):
+
+        return tuple(
+            parts
+        )
+
+    return parts
+
+
+def execute(
+    filters=None,
+):
+
+    result = (
+        _productivity_execute_before_bcm_basis_override_v86(
+            filters
+        )
+    )
+
+    return (
+        _productivity_apply_bcm_basis_override_v86(
+            result,
+            filters,
+        )
+    )
+
+
+# ============================================================
+# TALLIES-SPECIFIC SAVE
+# ============================================================
+
+
+@frappe.whitelist()
+def save_productivity_area_override(
+    row_key,
+    site="",
+    start_date="",
+    end_date="",
+    shift="",
+    monthly_production_plan="",
+    category="",
+    machine="",
+    material="",
+    from_area="",
+    to_area="",
+    hauling_distance_m=0,
+):
+
+    submitted_row_key = str(
+        row_key
+        or ""
+    ).strip()
+
+
+    # --------------------------------------------------------
+    # ACTUAL BCMs
+    #
+    # Keep all existing behaviour completely unchanged.
+    # --------------------------------------------------------
+
+    if not submitted_row_key.startswith(
+        _PRODUCTIVITY_TALLIES_PREFIX_V86
+    ):
+
+        return (
+            _productivity_save_area_before_bcm_basis_override_v86(
+                row_key=row_key,
+                site=site,
+                start_date=start_date,
+                end_date=end_date,
+                shift=shift,
+                monthly_production_plan=monthly_production_plan,
+                category=category,
+                machine=machine,
+                material=material,
+                from_area=from_area,
+                to_area=to_area,
+                hauling_distance_m=hauling_distance_m,
+            )
+        )
+
+
+    # --------------------------------------------------------
+    # PERMISSION
+    # --------------------------------------------------------
+
+    if frappe.session.user == "Guest":
+
+        frappe.throw(
+            "Please log in before editing Productivity.",
+            frappe.PermissionError,
+        )
+
+
+    if (
+        "System Manager"
+        not in frappe.get_roles(
+            frappe.session.user
+        )
+        and not frappe.has_permission(
+            "Hourly Production",
+            ptype="write",
+        )
+    ):
+
+        frappe.throw(
+            "You do not have permission to edit "
+            "Productivity area information.",
+            frappe.PermissionError,
+        )
+
+
+    # --------------------------------------------------------
+    # REMOVE ONLY THE TALLIES BASIS PREFIX.
+    #
+    # Inner key is still:
+    #
+    #     VIEW::Summary Per Machine::<base hash>
+    # --------------------------------------------------------
+
+    inner_key = submitted_row_key[
+        len(
+            _PRODUCTIVITY_TALLIES_PREFIX_V86
+        ):
+    ]
+
+
+    submitted_base_key = inner_key
+
+    summary_view = ""
+
+
+    if inner_key.startswith(
+        "VIEW::"
+    ):
+
+        key_parts = inner_key.split(
+            "::",
+            2,
+        )
+
+        if (
+            len(
+                key_parts
+            )
+            != 3
+            or not str(
+                key_parts[
+                    1
+                ]
+                or ""
+            ).strip()
+            or not str(
+                key_parts[
+                    2
+                ]
+                or ""
+            ).strip()
+        ):
+
+            frappe.throw(
+                "Invalid Tallies Productivity row key."
+            )
+
+
+        summary_view = str(
+            key_parts[
+                1
+            ]
+            or ""
+        ).strip()
+
+
+        submitted_base_key = str(
+            key_parts[
+                2
+            ]
+            or ""
+        ).strip()
+
+
+        if summary_view not in (
+            "Hours and Material",
+            "Summary Per Machine",
+        ):
+
+            frappe.throw(
+                "Invalid Productivity report view."
+            )
+
+
+    expected_key = (
+        _productivity_manual_edit_key(
+            site,
+            start_date,
+            end_date,
+            shift,
+            monthly_production_plan,
+            category,
+            machine,
+            material,
+        )
+    )
+
+
+    if submitted_base_key != expected_key:
+
+        frappe.throw(
+            "Productivity row key does not match "
+            "the selected Tallies report row."
+        )
+
+
+    storage_key = submitted_row_key
+
+
+    existing_override_name = frappe.db.get_value(
+        "Productivity Area Override",
+
+        {
+            "row_key":
+                storage_key,
+        },
+
+        "name",
+    )
+
+
+    if existing_override_name:
+
+        doc = frappe.get_doc(
+            "Productivity Area Override",
+            existing_override_name,
+        )
+
+    else:
+
+        doc = frappe.get_doc({
+
+            "doctype":
+                "Productivity Area Override",
+
+            "row_key":
+                storage_key,
+
+            "site":
+                site,
+
+            "start_date":
+                start_date
+                or None,
+
+            "end_date":
+                end_date
+                or None,
+
+            "shift":
+                shift,
+
+            "monthly_production_plan":
+                monthly_production_plan
+                or None,
+
+            "category":
+                category,
+
+            "machine":
+                machine,
+
+            "material":
+                material,
+        })
+
+
+    doc.row_key = storage_key
+
+
+    doc.from_area = str(
+        from_area
+        or ""
+    ).strip()
+
+
+    doc.to_area = str(
+        to_area
+        or ""
+    ).strip()
+
+
+    doc.hauling_distance_m = str(
+        hauling_distance_m
+        or ""
+    ).strip()
+
+
+    if doc.is_new():
+
+        doc.insert(
+            ignore_permissions=True
+        )
+
+    else:
+
+        doc.save(
+            ignore_permissions=True
+        )
+
+
+    return {
+
+        "saved":
+            True,
+
+        "row_key":
+            storage_key,
+
+        "bcm_basis":
+            "Tallies BCMs",
+
+        "from_area":
+            doc.from_area,
+
+        "to_area":
+            doc.to_area,
+
+        "hauling_distance_m":
+            doc.hauling_distance_m,
+    }
+
+
+# END KOSI_PRODUCTIVITY_BCM_BASIS_OVERRIDE_V86
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_ADT_DOZER_MATCH_EXCAVATOR_V87
+#
+# Extend the final Excavator Summary Per Machine design to:
+#
+#     ADT
+#     Dozer
+#
+# FINAL STRUCTURE:
+#
+# CATEGORY
+#     MACHINE
+#         MATERIAL SUBTOTAL
+#             DETAIL
+#             DETAIL
+#
+# EXAMPLE ADT:
+#
+# ADT
+#     ADT01
+#         Coal
+#             Ramp 2 - 3 2#Coal
+#             Ramp 1 - 2 2#Coal
+#         Hards
+#             Ramp 1 Overburden
+#             Ramp 3 Overburden
+#         Softs
+#             Topsoil Dump
+#
+# EXAMPLE DOZER:
+#
+# Dozer
+#     IS0338
+#         1 - Overburden
+#             Midburden Dozing
+#         2 - Midburden
+#             Midburden Dozing
+#
+# RULES:
+#
+# - Excavator is NOT changed.
+# - Machine total remains the machine total.
+# - Material subtotal = sum of its detail rows.
+# - Hours / BCM / BCM-Hr align.
+# - Detail BCM/Hr = BCM / Hours.
+# - BCM/HD = BCM / average haul distance.
+# - Material subtotal area columns are blank.
+# - Detail rows are editable.
+# - Manual Save Override only.
+# - Actual / Tallies saved values stay isolated.
+# - Existing source production records are NOT modified.
+# ============================================================
+
+
+_productivity_execute_before_all_machine_layout_v87 = execute
+
+
+def _productivity_v87_float(
+    value,
+):
+
+    if value in (
+        None,
+        "",
+    ):
+        return 0.0
+
+    try:
+
+        if isinstance(
+            value,
+            str,
+        ):
+
+            value = (
+                value
+                .replace(",", "")
+                .strip()
+            )
+
+        return float(
+            value
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+
+        return 0.0
+
+
+def _productivity_v87_average_hd(
+    value,
+):
+
+    import re
+
+    text = str(
+        value
+        or ""
+    ).strip()
+
+    if not text:
+        return 0.0
+
+    text = (
+        text
+        .replace("–", "-")
+        .replace("—", "-")
+        .replace(",", "")
+    )
+
+    numbers = re.findall(
+        r"\d+(?:\.\d+)?",
+        text,
+    )
+
+    if not numbers:
+        return 0.0
+
+    values = [
+        float(number)
+        for number
+        in numbers
+    ]
+
+    if len(values) >= 2:
+
+        return (
+            values[0]
+            + values[1]
+        ) / 2.0
+
+    return values[0]
+
+
+def _productivity_v87_first_plan(
+    filters,
+):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+    plans = filters.get(
+        "monthly_production_plans"
+    )
+
+    if isinstance(
+        plans,
+        (list, tuple),
+    ):
+
+        if plans:
+
+            return str(
+                plans[0]
+                or ""
+            ).strip()
+
+        return ""
+
+    if isinstance(
+        plans,
+        str,
+    ):
+
+        import json
+
+        text = plans.strip()
+
+        if text.startswith("["):
+
+            try:
+
+                decoded = json.loads(
+                    text
+                )
+
+                if (
+                    isinstance(
+                        decoded,
+                        list,
+                    )
+                    and decoded
+                ):
+
+                    return str(
+                        decoded[0]
+                        or ""
+                    ).strip()
+
+            except Exception:
+
+                pass
+
+        return text
+
+    return str(
+        filters.get(
+            "monthly_production_plan"
+        )
+        or ""
+    ).strip()
+
+
+def _productivity_v87_basis(
+    filters,
+):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+    value = str(
+        filters.get(
+            "bcm_basis"
+        )
+        or "Actual BCMs"
+    ).strip()
+
+    if "tall" in value.lower():
+
+        return "Tallies BCMs"
+
+    return "Actual BCMs"
+
+
+def _productivity_v87_make_detail_key(
+    row,
+    filters,
+    category,
+    machine,
+    parent_material,
+    detail_name,
+):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+
+    site = str(
+        row.get(
+            "productivity_edit_site"
+        )
+        or row.get(
+            "productivity_v55_site"
+        )
+        or filters.get(
+            "site"
+        )
+        or filters.get(
+            "location"
+        )
+        or ""
+    ).strip()
+
+
+    start_date = str(
+        row.get(
+            "productivity_edit_start_date"
+        )
+        or row.get(
+            "productivity_v55_start_date"
+        )
+        or row.get(
+            "monthly_start_date"
+        )
+        or filters.get(
+            "start_date"
+        )
+        or ""
+    ).strip()
+
+
+    end_date = str(
+        row.get(
+            "productivity_edit_end_date"
+        )
+        or row.get(
+            "productivity_v55_end_date"
+        )
+        or row.get(
+            "monthly_end_date"
+        )
+        or filters.get(
+            "end_date"
+        )
+        or ""
+    ).strip()
+
+
+    shift = str(
+        row.get(
+            "productivity_edit_shift"
+        )
+        or row.get(
+            "productivity_v55_shift"
+        )
+        or filters.get(
+            "shift"
+        )
+        or ""
+    ).strip()
+
+
+    plan = str(
+        row.get(
+            "productivity_edit_monthly_plan"
+        )
+        or row.get(
+            "productivity_v55_plan"
+        )
+        or row.get(
+            "monthly_production_plan"
+        )
+        or _productivity_v87_first_plan(
+            filters
+        )
+        or ""
+    ).strip()
+
+
+    save_material = str(
+        row.get(
+            "productivity_v55_save_material"
+        )
+        or (
+            parent_material
+            + " :: "
+            + detail_name
+        )
+    ).strip()
+
+
+    base_key = (
+        _productivity_manual_edit_key(
+            site,
+            start_date,
+            end_date,
+            shift,
+            plan,
+            category,
+            machine,
+            save_material,
+        )
+    )
+
+
+    view = str(
+        filters.get(
+            "summary_view"
+        )
+        or "Summary Per Machine"
+    ).strip()
+
+
+    if (
+        "_productivity_view_scope_key_v8"
+        in globals()
+    ):
+
+        row_key = (
+            _productivity_view_scope_key_v8(
+                view,
+                base_key,
+            )
+        )
+
+    else:
+
+        row_key = (
+            "VIEW::"
+            + view
+            + "::"
+            + base_key
+        )
+
+
+    # Keep Tallies completely independent from Actual.
+    if (
+        _productivity_v87_basis(
+            filters
+        )
+        == "Tallies BCMs"
+    ):
+
+        row_key = (
+            _productivity_v86_tallies_key(
+                row_key
+            )
+        )
+
+
+    return {
+        "row_key":
+            row_key,
+
+        "site":
+            site,
+
+        "start_date":
+            start_date,
+
+        "end_date":
+            end_date,
+
+        "shift":
+            shift,
+
+        "plan":
+            plan,
+
+        "save_material":
+            save_material,
+    }
+
+
+def _productivity_v87_apply(
+    rows,
+    filters,
+):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+
+    if str(
+        filters.get(
+            "summary_view"
+        )
+        or ""
+    ).strip().lower() != "summary per machine":
+
+        return rows
+
+
+    rows = [
+        dict(row)
+        if hasattr(
+            row,
+            "get",
+        )
+        else row
+
+        for row in (
+            rows
+            or []
+        )
+    ]
+
+
+    current_category = ""
+    current_machine = ""
+
+    parent_rows = {}
+    detail_groups = {}
+
+    editable_detail_rows = []
+    editable_keys = []
+
+
+    # ========================================================
+    # PASS 1
+    #
+    # Normalize ADT + Dozer rows to Excavator-style tree.
+    # ========================================================
+
+    for row in rows:
+
+        if not hasattr(
+            row,
+            "get",
+        ):
+
+            continue
+
+
+        label = str(
+            row.get(
+                "label"
+            )
+            or ""
+        ).strip()
+
+
+        material = str(
+            row.get(
+                "material"
+            )
+            or ""
+        ).strip()
+
+
+        # ----------------------------------------------------
+        # MONTH HEADING
+        # ----------------------------------------------------
+
+        if (
+            int(
+                row.get(
+                    "is_monthly_plan_header"
+                )
+                or 0
+            )
+            == 1
+            or label.startswith(
+                "MONTHLY PRODUCTION:"
+            )
+        ):
+
+            current_category = ""
+            current_machine = ""
+
+            continue
+
+
+        # ----------------------------------------------------
+        # CATEGORY
+        # ----------------------------------------------------
+
+        if (
+            label
+            in (
+                "Excavator",
+                "ADT",
+                "Dozer",
+                "Total Fleet",
+            )
+            and not material
+        ):
+
+            current_category = label
+            current_machine = ""
+
+            continue
+
+
+        row_category = str(
+            row.get(
+                "productivity_edit_category"
+            )
+            or row.get(
+                "productivity_summary_category_v34"
+            )
+            or row.get(
+                "productivity_v55_category"
+            )
+            or row.get(
+                "productivity_summary_equipment_category_v47"
+            )
+            or current_category
+            or ""
+        ).strip()
+
+
+        # Excavator stays exactly as it already is.
+        if row_category not in (
+            "ADT",
+            "Dozer",
+        ):
+
+            continue
+
+
+        # ----------------------------------------------------
+        # MACHINE TOTAL
+        # ----------------------------------------------------
+
+        is_machine = bool(
+            int(
+                row.get(
+                    "is_machine_total"
+                )
+                or 0
+            )
+            or (
+                str(
+                    row.get(
+                        "productivity_summary_tree_level_v38"
+                    )
+                    or ""
+                ).strip()
+                == "machine"
+                and label
+                and not material
+            )
+        )
+
+
+        if is_machine:
+
+            current_machine = label
+
+            row[
+                "productivity_all_machine_level_v87"
+            ] = "machine"
+
+            continue
+
+
+        # ----------------------------------------------------
+        # DETAIL ROW
+        #
+        # Existing underlying ADT/Dozer detail rows normally
+        # contain parent machine/material metadata.
+        # ----------------------------------------------------
+
+        detail_machine = str(
+            row.get(
+                "productivity_summary_parent_machine_v34"
+            )
+            or row.get(
+                "productivity_v55_machine"
+            )
+            or ""
+        ).strip()
+
+
+        parent_material = str(
+            row.get(
+                "productivity_summary_parent_material_v34"
+            )
+            or row.get(
+                "productivity_v55_parent_material"
+            )
+            or ""
+        ).strip()
+
+
+        detail_category = str(
+            row.get(
+                "productivity_summary_category_v34"
+            )
+            or row.get(
+                "productivity_v55_category"
+            )
+            or row_category
+            or ""
+        ).strip()
+
+
+        is_detail = bool(
+            detail_category
+            in (
+                "ADT",
+                "Dozer",
+            )
+            and detail_machine
+            and parent_material
+            and (
+                int(
+                    row.get(
+                        "productivity_summary_survey_ref_v34"
+                    )
+                    or 0
+                )
+                == 1
+                or int(
+                    row.get(
+                        "productivity_dozer_detail_v55"
+                    )
+                    or 0
+                )
+                == 1
+            )
+        )
+
+
+        if is_detail:
+
+            detail_name = str(
+                row.get(
+                    "productivity_v55_display_material"
+                )
+                or material
+                or label
+                or ""
+            ).strip()
+
+
+            if not detail_name:
+                continue
+
+
+            current_machine = (
+                detail_machine
+            )
+
+
+            key = (
+                detail_category,
+                detail_machine,
+                parent_material,
+            )
+
+
+            row[
+                "label"
+            ] = ""
+
+
+            row[
+                "material"
+            ] = detail_name
+
+
+            row[
+                "indent"
+            ] = 3
+
+
+            row[
+                "productivity_all_machine_detail_v87"
+            ] = 1
+
+
+            row[
+                "productivity_all_machine_category_v87"
+            ] = detail_category
+
+
+            row[
+                "productivity_all_machine_machine_v87"
+            ] = detail_machine
+
+
+            row[
+                "productivity_all_machine_parent_material_v87"
+            ] = parent_material
+
+
+            row[
+                "productivity_all_machine_detail_name_v87"
+            ] = detail_name
+
+
+            edit = (
+                _productivity_v87_make_detail_key(
+                    row,
+                    filters,
+                    detail_category,
+                    detail_machine,
+                    parent_material,
+                    detail_name,
+                )
+            )
+
+
+            row[
+                "productivity_editable"
+            ] = 1
+
+
+            row[
+                "productivity_edit_key"
+            ] = edit[
+                "row_key"
+            ]
+
+
+            row[
+                "row_key"
+            ] = edit[
+                "row_key"
+            ]
+
+
+            row[
+                "productivity_edit_site"
+            ] = edit[
+                "site"
+            ]
+
+
+            row[
+                "productivity_edit_start_date"
+            ] = edit[
+                "start_date"
+            ]
+
+
+            row[
+                "productivity_edit_end_date"
+            ] = edit[
+                "end_date"
+            ]
+
+
+            row[
+                "productivity_edit_shift"
+            ] = edit[
+                "shift"
+            ]
+
+
+            row[
+                "productivity_edit_monthly_plan"
+            ] = edit[
+                "plan"
+            ]
+
+
+            row[
+                "productivity_edit_category"
+            ] = detail_category
+
+
+            row[
+                "productivity_edit_machine"
+            ] = detail_machine
+
+
+            row[
+                "productivity_edit_material"
+            ] = edit[
+                "save_material"
+            ]
+
+
+            # Detail BCM/Hr.
+            hours = (
+                _productivity_v87_float(
+                    row.get(
+                        "working_hours"
+                    )
+                )
+            )
+
+
+            bcm = (
+                _productivity_v87_float(
+                    row.get(
+                        "output"
+                    )
+                )
+            )
+
+
+            if hours > 0:
+
+                row[
+                    "productivity"
+                ] = round(
+                    bcm / hours,
+                    2,
+                )
+
+            else:
+
+                row[
+                    "productivity"
+                ] = 0
+
+
+            # Detail BCM/HD.
+            average_hd = (
+                _productivity_v87_average_hd(
+                    row.get(
+                        "hauling_distance_m"
+                    )
+                )
+            )
+
+
+            if (
+                average_hd > 0
+                and bcm > 0
+            ):
+
+                row[
+                    "productivity_bcm_hd"
+                ] = round(
+                    bcm / average_hd,
+                    2,
+                )
+
+            else:
+
+                row[
+                    "productivity_bcm_hd"
+                ] = ""
+
+
+            detail_groups.setdefault(
+                key,
+                [],
+            ).append(
+                row
+            )
+
+
+            editable_detail_rows.append(
+                row
+            )
+
+
+            editable_keys.append(
+                edit[
+                    "row_key"
+                ]
+            )
+
+
+            continue
+
+
+        # ----------------------------------------------------
+        # MATERIAL SUBTOTAL
+        #
+        # Existing editable machine/material row becomes the
+        # bold subtotal row.
+        # ----------------------------------------------------
+
+        is_material_total = bool(
+            int(
+                row.get(
+                    "productivity_editable"
+                )
+                or 0
+            )
+            == 1
+            and material
+        )
+
+
+        if is_material_total:
+
+            machine = str(
+                row.get(
+                    "productivity_edit_machine"
+                )
+                or current_machine
+                or label
+                or ""
+            ).strip()
+
+
+            parent = str(
+                row.get(
+                    "productivity_edit_material"
+                )
+                or material
+                or ""
+            ).strip()
+
+
+            if (
+                machine
+                and parent
+            ):
+
+                current_machine = machine
+
+
+                key = (
+                    row_category,
+                    machine,
+                    parent,
+                )
+
+
+                row[
+                    "label"
+                ] = ""
+
+
+                row[
+                    "material"
+                ] = parent
+
+
+                row[
+                    "indent"
+                ] = 2
+
+
+                row[
+                    "productivity_editable"
+                ] = 0
+
+
+                row[
+                    "from_area"
+                ] = ""
+
+
+                row[
+                    "to_area"
+                ] = ""
+
+
+                row[
+                    "hauling_distance_m"
+                ] = ""
+
+
+                row[
+                    "productivity_bcm_hd"
+                ] = ""
+
+
+                row[
+                    "productivity_all_machine_material_total_v87"
+                ] = 1
+
+
+                row[
+                    "productivity_all_machine_category_v87"
+                ] = row_category
+
+
+                row[
+                    "productivity_all_machine_machine_v87"
+                ] = machine
+
+
+                row[
+                    "productivity_all_machine_parent_material_v87"
+                ] = parent
+
+
+                parent_rows[
+                    key
+                ] = row
+
+
+    # ========================================================
+    # PASS 2
+    #
+    # Load the exact saved override for ADT/Dozer detail rows.
+    # ========================================================
+
+    saved_map = {}
+
+
+    unique_keys = [
+        key
+        for key
+        in dict.fromkeys(
+            editable_keys
+        )
+        if key
+    ]
+
+
+    if (
+        unique_keys
+        and frappe.db.exists(
+            "DocType",
+            "Productivity Area Override",
+        )
+    ):
+
+        saved_rows = frappe.get_all(
+            "Productivity Area Override",
+
+            filters={
+                "row_key": [
+                    "in",
+                    unique_keys,
+                ],
+            },
+
+            fields=[
+                "row_key",
+                "from_area",
+                "to_area",
+                "hauling_distance_m",
+            ],
+
+            limit_page_length=0,
+        )
+
+
+        saved_map = {
+            str(
+                saved.row_key
+                or ""
+            ).strip():
+                saved
+
+            for saved
+            in saved_rows
+        }
+
+
+    basis = (
+        _productivity_v87_basis(
+            filters
+        )
+    )
+
+
+    for row in editable_detail_rows:
+
+        row_key = str(
+            row.get(
+                "productivity_edit_key"
+            )
+            or ""
+        ).strip()
+
+
+        saved = (
+            saved_map.get(
+                row_key
+            )
+        )
+
+
+        if saved:
+
+            row[
+                "from_area"
+            ] = str(
+                saved.from_area
+                or ""
+            ).strip()
+
+
+            row[
+                "to_area"
+            ] = str(
+                saved.to_area
+                or ""
+            ).strip()
+
+
+            row[
+                "hauling_distance_m"
+            ] = str(
+                saved.hauling_distance_m
+                or ""
+            ).strip()
+
+
+            row[
+                "productivity_manual_override"
+            ] = 1
+
+
+        elif basis == "Tallies BCMs":
+
+            # Tallies must NEVER inherit Actual captures.
+            row[
+                "from_area"
+            ] = ""
+
+            row[
+                "to_area"
+            ] = ""
+
+            row[
+                "hauling_distance_m"
+            ] = ""
+
+            row[
+                "productivity_manual_override"
+            ] = 0
+
+
+        # Recalculate BCM/HD after applying saved distance.
+        bcm = (
+            _productivity_v87_float(
+                row.get(
+                    "output"
+                )
+            )
+        )
+
+
+        average_hd = (
+            _productivity_v87_average_hd(
+                row.get(
+                    "hauling_distance_m"
+                )
+            )
+        )
+
+
+        if (
+            bcm > 0
+            and average_hd > 0
+        ):
+
+            row[
+                "productivity_bcm_hd"
+            ] = round(
+                bcm / average_hd,
+                2,
+            )
+
+        else:
+
+            row[
+                "productivity_bcm_hd"
+            ] = ""
+
+
+    # ========================================================
+    # PASS 3
+    #
+    # Material subtotal = sum of detail rows.
+    # ========================================================
+
+    for key, details in (
+        detail_groups.items()
+    ):
+
+        parent = (
+            parent_rows.get(
+                key
+            )
+        )
+
+
+        if not parent:
+            continue
+
+
+        total_hours = sum(
+            _productivity_v87_float(
+                row.get(
+                    "working_hours"
+                )
+            )
+            for row
+            in details
+        )
+
+
+        total_bcm = sum(
+            _productivity_v87_float(
+                row.get(
+                    "output"
+                )
+            )
+            for row
+            in details
+        )
+
+
+        if (
+            total_hours <= 0
+            and total_bcm <= 0
+        ):
+
+            continue
+
+
+        parent[
+            "working_hours"
+        ] = total_hours
+
+
+        parent[
+            "output"
+        ] = total_bcm
+
+
+        if (
+            "adjusted_bcm"
+            in parent
+        ):
+
+            parent[
+                "adjusted_bcm"
+            ] = total_bcm
+
+
+        if total_hours > 0:
+
+            parent[
+                "productivity"
+            ] = round(
+                total_bcm
+                / total_hours,
+                2,
+            )
+
+        else:
+
+            parent[
+                "productivity"
+            ] = 0
+
+
+        parent[
+            "productivity_bcm_hd"
+        ] = ""
+
+
+    return rows
+
+
+def _productivity_apply_all_machine_layout_v87(
+    result,
+    filters,
+):
+
+    if not result:
+
+        return result
+
+
+    if not isinstance(
+        result,
+        (tuple, list),
+    ):
+
+        return result
+
+
+    parts = list(
+        result
+    )
+
+
+    if len(parts) < 2:
+
+        return result
+
+
+    parts[
+        1
+    ] = (
+        _productivity_v87_apply(
+            parts[
+                1
+            ],
+            filters,
+        )
+    )
+
+
+    if isinstance(
+        result,
+        tuple,
+    ):
+
+        return tuple(
+            parts
+        )
+
+
+    return parts
+
+
+def execute(
+    filters=None,
+):
+
+    result = (
+        _productivity_execute_before_all_machine_layout_v87(
+            filters
+        )
+    )
+
+
+    return (
+        _productivity_apply_all_machine_layout_v87(
+            result,
+            filters,
+        )
+    )
+
+
+# ============================================================
+# SNAPSHOT V87
+#
+# Make ADT + Dozer material subtotal rows bold and detail rows
+# normal in Productivity Override Snapshot.
+# ============================================================
+
+
+if (
+    "_productivity_snapshot_build_html"
+    in globals()
+):
+
+    _productivity_snapshot_build_html_before_v87 = (
+        _productivity_snapshot_build_html
+    )
+
+
+    def _productivity_v87_snapshot_clean(
+        value,
+    ):
+
+        import html
+        import re
+
+
+        text = str(
+            value
+            or ""
+        )
+
+
+        text = re.sub(
+            r"<[^>]+>",
+            "",
+            text,
+            flags=re.DOTALL,
+        )
+
+
+        return (
+            html.unescape(
+                text
+            )
+            .replace(
+                "\xa0",
+                " "
+            )
+            .strip()
+        )
+
+
+    def _productivity_v87_snapshot_add_class(
+        opening,
+        class_name,
+    ):
+
+        import re
+
+
+        match = re.search(
+            r'\bclass\s*=\s*(["\'])(.*?)\1',
+            opening,
+            flags=(
+                re.IGNORECASE
+                | re.DOTALL
+            ),
+        )
+
+
+        if match:
+
+            classes = [
+                item
+                for item
+                in (
+                    match.group(
+                        2
+                    )
+                    or ""
+                ).split()
+                if item
+                not in (
+                    "productivity-v87-bold",
+                    "productivity-v87-normal",
+                )
+            ]
+
+
+            classes.append(
+                class_name
+            )
+
+
+            replacement = (
+                'class="'
+                + " ".join(
+                    classes
+                )
+                + '"'
+            )
+
+
+            return (
+                opening[
+                    :match.start()
+                ]
+                + replacement
+                + opening[
+                    match.end():
+                ]
+            )
+
+
+        if opening.endswith(
+            ">"
+        ):
+
+            return (
+                opening[:-1]
+                + ' class="'
+                + class_name
+                + '">'
+            )
+
+
+        return opening
+
+
+    def _productivity_v87_snapshot_names(
+        args,
+        kwargs,
+    ):
+
+        subtotal_names = set()
+        detail_names = set()
+
+
+        candidates = list(
+            args
+        )
+
+
+        candidates.extend(
+            kwargs.values()
+        )
+
+
+        for candidate in candidates:
+
+            if not isinstance(
+                candidate,
+                (list, tuple),
+            ):
+
+                continue
+
+
+            for row in candidate:
+
+                if not hasattr(
+                    row,
+                    "get",
+                ):
+
+                    continue
+
+
+                material = str(
+                    row.get(
+                        "material"
+                    )
+                    or ""
+                ).strip()
+
+
+                if not material:
+                    continue
+
+
+                if int(
+                    row.get(
+                        "productivity_all_machine_material_total_v87"
+                    )
+                    or 0
+                ) == 1:
+
+                    subtotal_names.add(
+                        material
+                    )
+
+
+                if int(
+                    row.get(
+                        "productivity_all_machine_detail_v87"
+                    )
+                    or 0
+                ) == 1:
+
+                    detail_names.add(
+                        material
+                    )
+
+
+        return (
+            subtotal_names,
+            detail_names,
+        )
+
+
+    def _productivity_v87_snapshot_fix(
+        snapshot_html,
+        subtotal_names,
+        detail_names,
+    ):
+
+        import re
+
+
+        if not isinstance(
+            snapshot_html,
+            str,
+        ):
+
+            return snapshot_html
+
+
+        def fix_row(
+            match,
+        ):
+
+            row_html = (
+                match.group(
+                    0
+                )
+            )
+
+
+            opening_match = re.match(
+                r"<tr\b[^>]*>",
+                row_html,
+                flags=re.IGNORECASE,
+            )
+
+
+            if not opening_match:
+
+                return row_html
+
+
+            opening = (
+                opening_match.group(
+                    0
+                )
+            )
+
+
+            cells = re.findall(
+                r"<td\b[^>]*>(.*?)</td>",
+                row_html,
+                flags=(
+                    re.IGNORECASE
+                    | re.DOTALL
+                ),
+            )
+
+
+            if len(cells) < 6:
+
+                return row_html
+
+
+            label = (
+                _productivity_v87_snapshot_clean(
+                    cells[0]
+                )
+            )
+
+
+            material = (
+                _productivity_v87_snapshot_clean(
+                    cells[5]
+                )
+            )
+
+
+            if (
+                not label
+                and material
+                in subtotal_names
+            ):
+
+                new_opening = (
+                    _productivity_v87_snapshot_add_class(
+                        opening,
+                        "productivity-v87-bold",
+                    )
+                )
+
+
+                return (
+                    new_opening
+                    + row_html[
+                        len(
+                            opening
+                        ):
+                    ]
+                )
+
+
+            if (
+                not label
+                and material
+                in detail_names
+            ):
+
+                new_opening = (
+                    _productivity_v87_snapshot_add_class(
+                        opening,
+                        "productivity-v87-normal",
+                    )
+                )
+
+
+                return (
+                    new_opening
+                    + row_html[
+                        len(
+                            opening
+                        ):
+                    ]
+                )
+
+
+            return row_html
+
+
+        snapshot_html = re.sub(
+            r"<tr\b[^>]*>.*?</tr>",
+            fix_row,
+            snapshot_html,
+            flags=(
+                re.IGNORECASE
+                | re.DOTALL
+            ),
+        )
+
+
+        css = """
+<style id="productivity-snapshot-v87-style">
+
+tr.productivity-v87-bold,
+tr.productivity-v87-bold td,
+tr.productivity-v87-bold td *,
+tr.productivity-v87-bold span,
+tr.productivity-v87-bold div {
+    font-weight: 700 !important;
+}
+
+tr.productivity-v87-normal,
+tr.productivity-v87-normal td,
+tr.productivity-v87-normal td *,
+tr.productivity-v87-normal span,
+tr.productivity-v87-normal div {
+    font-weight: 400 !important;
+}
+
+</style>
+"""
+
+
+        if (
+            "productivity-snapshot-v87-style"
+            not in snapshot_html
+        ):
+
+            if "</head>" in snapshot_html:
+
+                snapshot_html = (
+                    snapshot_html.replace(
+                        "</head>",
+                        css
+                        + "\n</head>",
+                        1,
+                    )
+                )
+
+            else:
+
+                snapshot_html = (
+                    css
+                    + snapshot_html
+                )
+
+
+        return snapshot_html
+
+
+    def _productivity_snapshot_build_html(
+        *args,
+        **kwargs,
+    ):
+
+        subtotal_names, detail_names = (
+            _productivity_v87_snapshot_names(
+                args,
+                kwargs,
+            )
+        )
+
+
+        snapshot_html = (
+            _productivity_snapshot_build_html_before_v87(
+                *args,
+                **kwargs,
+            )
+        )
+
+
+        return (
+            _productivity_v87_snapshot_fix(
+                snapshot_html,
+                subtotal_names,
+                detail_names,
+            )
+        )
+
+
+# END KOSI_PRODUCTIVITY_ADT_DOZER_MATCH_EXCAVATOR_V87
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_MACHINE_DEDUPE_V88
+#
+# Final safety cleanup for Summary Per Machine.
+#
+# Removes ONLY repeated machine-total rows where:
+#
+#   category is the same
+#   machine name is the same
+#   hours are the same
+#   output/BCM is the same
+#   productivity is the same
+#
+# Example currently found:
+#
+#   ADT / IS536
+#       row 1 = 0 hrs / 0 BCM / 0 BCM-Hr
+#       row 2 = 0 hrs / 0 BCM / 0 BCM-Hr
+#
+# Result:
+#
+#   keep first IS536 machine total
+#   remove second identical IS536 machine total
+#
+# IMPORTANT:
+#
+# - Detail rows are untouched.
+# - Material subtotal rows are untouched.
+# - Different-value machine rows are NOT removed.
+# - Excavator calculations are untouched.
+# - ADT calculations are untouched.
+# - Dozer calculations are untouched.
+# - Save Override is untouched.
+# - Snapshot is untouched.
+# ============================================================
+
+
+_productivity_execute_before_machine_dedupe_v88 = execute
+
+
+def _productivity_v88_float(
+    value,
+):
+
+    if value in (
+        None,
+        "",
+    ):
+        return 0.0
+
+    try:
+
+        if isinstance(
+            value,
+            str,
+        ):
+
+            value = (
+                value
+                .replace(",", "")
+                .strip()
+            )
+
+        return float(
+            value
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+
+        return 0.0
+
+
+def _productivity_v88_same_number(
+    left,
+    right,
+    tolerance=0.000001,
+):
+
+    return (
+        abs(
+            _productivity_v88_float(
+                left
+            )
+            -
+            _productivity_v88_float(
+                right
+            )
+        )
+        <= tolerance
+    )
+
+
+def _productivity_v88_machine_signature(
+    row,
+):
+
+    return {
+        "working_hours":
+            row.get(
+                "working_hours"
+            ),
+
+        "output":
+            (
+                row.get(
+                    "adjusted_bcm"
+                )
+                if row.get(
+                    "adjusted_bcm"
+                )
+                not in (
+                    None,
+                    "",
+                )
+                else row.get(
+                    "output"
+                )
+            ),
+
+        "productivity":
+            row.get(
+                "productivity"
+            ),
+    }
+
+
+def _productivity_v88_same_machine_total(
+    first,
+    second,
+):
+
+    a = (
+        _productivity_v88_machine_signature(
+            first
+        )
+    )
+
+    b = (
+        _productivity_v88_machine_signature(
+            second
+        )
+    )
+
+    return all([
+        _productivity_v88_same_number(
+            a[
+                "working_hours"
+            ],
+            b[
+                "working_hours"
+            ],
+        ),
+
+        _productivity_v88_same_number(
+            a[
+                "output"
+            ],
+            b[
+                "output"
+            ],
+        ),
+
+        _productivity_v88_same_number(
+            a[
+                "productivity"
+            ],
+            b[
+                "productivity"
+            ],
+        ),
+    ])
+
+
+def _productivity_v88_dedupe_machine_totals(
+    rows,
+    filters,
+):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+
+    if str(
+        filters.get(
+            "summary_view"
+        )
+        or ""
+    ).strip().lower() != "summary per machine":
+
+        return rows
+
+
+    cleaned = []
+
+    current_category = ""
+
+    seen_machine_totals = {}
+
+
+    for original_row in (
+        rows
+        or []
+    ):
+
+        if not hasattr(
+            original_row,
+            "get",
+        ):
+
+            cleaned.append(
+                original_row
+            )
+
+            continue
+
+
+        row = original_row
+
+
+        label = str(
+            row.get(
+                "label"
+            )
+            or ""
+        ).strip()
+
+
+        material = str(
+            row.get(
+                "material"
+            )
+            or ""
+        ).strip()
+
+
+        level = str(
+            row.get(
+                "productivity_summary_tree_level_v38"
+            )
+            or ""
+        ).strip()
+
+
+        # ----------------------------------------------------
+        # CATEGORY TRACKING
+        # ----------------------------------------------------
+
+        if (
+            label
+            in (
+                "Excavator",
+                "ADT",
+                "Dozer",
+            )
+            and not material
+        ):
+
+            current_category = label
+
+            cleaned.append(
+                row
+            )
+
+            continue
+
+
+        if label == "Total Fleet":
+
+            current_category = ""
+
+            cleaned.append(
+                row
+            )
+
+            continue
+
+
+        # ----------------------------------------------------
+        # GENUINE MACHINE TOTAL
+        # ----------------------------------------------------
+
+        is_machine_total = bool(
+
+            int(
+                row.get(
+                    "is_machine_total"
+                )
+                or 0
+            )
+
+            or
+
+            int(
+                row.get(
+                    "productivity_is_machine_total"
+                )
+                or 0
+            )
+
+            or
+
+            (
+                level == "machine"
+                and label
+                and not material
+            )
+        )
+
+
+        if (
+            current_category
+            in (
+                "Excavator",
+                "ADT",
+                "Dozer",
+            )
+            and is_machine_total
+            and label
+            and not material
+        ):
+
+            key = (
+                current_category,
+                label,
+            )
+
+
+            previous = (
+                seen_machine_totals.get(
+                    key
+                )
+            )
+
+
+            if previous is None:
+
+                seen_machine_totals[
+                    key
+                ] = row
+
+                cleaned.append(
+                    row
+                )
+
+                continue
+
+
+            # ------------------------------------------------
+            # REMOVE ONLY IF THE TOTALS ARE IDENTICAL.
+            # ------------------------------------------------
+
+            if (
+                _productivity_v88_same_machine_total(
+                    previous,
+                    row,
+                )
+            ):
+
+                # Skip this duplicate row.
+                continue
+
+
+            # ------------------------------------------------
+            # Same machine but different totals:
+            #
+            # DO NOT remove automatically.
+            # Preserve the row for investigation.
+            # ------------------------------------------------
+
+            cleaned.append(
+                row
+            )
+
+            continue
+
+
+        cleaned.append(
+            row
+        )
+
+
+    return cleaned
+
+
+def _productivity_apply_machine_dedupe_v88(
+    result,
+    filters,
+):
+
+    if not result:
+
+        return result
+
+
+    if not isinstance(
+        result,
+        (tuple, list),
+    ):
+
+        return result
+
+
+    parts = list(
+        result
+    )
+
+
+    if len(parts) < 2:
+
+        return result
+
+
+    parts[
+        1
+    ] = (
+        _productivity_v88_dedupe_machine_totals(
+            parts[
+                1
+            ],
+            filters,
+        )
+    )
+
+
+    if isinstance(
+        result,
+        tuple,
+    ):
+
+        return tuple(
+            parts
+        )
+
+
+    return parts
+
+
+def execute(
+    filters=None,
+):
+
+    result = (
+        _productivity_execute_before_machine_dedupe_v88(
+            filters
+        )
+    )
+
+
+    return (
+        _productivity_apply_machine_dedupe_v88(
+            result,
+            filters,
+        )
+    )
+
+
+# END KOSI_PRODUCTIVITY_MACHINE_DEDUPE_V88
