@@ -42487,3 +42487,309 @@ def execute(filters=None):
 
 
 # END KOSI_PRODUCTIVITY_ACTUAL_SUMMARY_ALIGNMENT_V68
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_DOZER_DUPLICATE_CLEANUP_V69
+#
+# Summary Per Machine display cleanup only.
+#
+# Problem:
+# Dozer machine names can appear more than once because:
+#
+# 1. A genuine machine-total row exists.
+# 2. A fallback empty machine row may follow it.
+# 3. Valid material rows also use the machine name as Label.
+#
+# Fix:
+#
+# - Keep the genuine machine-total row.
+# - Remove only empty duplicate fallback machine rows.
+# - Keep valid material rows, but blank their Label so the
+#   machine name appears once and Material remains visible
+#   in the Material column.
+#
+# No BCM / hours / productivity calculations are changed.
+# Applies to Summary Per Machine only.
+# ============================================================
+
+
+_productivity_execute_before_dozer_duplicate_cleanup_v69 = execute
+
+
+def _productivity_v69_is_summary_machine(filters):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+    view = str(
+        filters.get(
+            "summary_view"
+        )
+        or ""
+    ).strip().lower()
+
+    return (
+        view
+        == "summary per machine"
+    )
+
+
+def _productivity_v69_cleanup_dozer_rows(
+    rows,
+):
+
+    cleaned = []
+
+    inside_dozer = False
+    current_machine = ""
+
+
+    for original_row in (
+        rows
+        or []
+    ):
+
+        if not hasattr(
+            original_row,
+            "get",
+        ):
+
+            cleaned.append(
+                original_row
+            )
+
+            continue
+
+
+        row = dict(
+            original_row
+        )
+
+
+        label = str(
+            row.get(
+                "label"
+            )
+            or ""
+        ).strip()
+
+
+        material = str(
+            row.get(
+                "material"
+            )
+            or ""
+        ).strip()
+
+
+        if label == "Dozer":
+
+            inside_dozer = True
+            current_machine = ""
+
+            cleaned.append(
+                row
+            )
+
+            continue
+
+
+        if (
+            inside_dozer
+            and label
+            == "Total Fleet"
+        ):
+
+            inside_dozer = False
+            current_machine = ""
+
+            cleaned.append(
+                row
+            )
+
+            continue
+
+
+        if not inside_dozer:
+
+            cleaned.append(
+                row
+            )
+
+            continue
+
+
+        is_machine_total = bool(
+            row.get(
+                "is_machine_total"
+            )
+            or row.get(
+                "productivity_is_machine_total"
+            )
+        )
+
+
+        if (
+            is_machine_total
+            and label
+        ):
+
+            current_machine = label
+
+            cleaned.append(
+                row
+            )
+
+            continue
+
+
+        # ----------------------------------------------------
+        # REMOVE EMPTY FALLBACK DUPLICATE
+        #
+        # Example:
+        #
+        # IS0318  machine total
+        # IS0318  fallback row, no Material
+        #
+        # The fallback row adds no distinct information.
+        # ----------------------------------------------------
+
+        if (
+            current_machine
+            and label
+            == current_machine
+            and not material
+            and not is_machine_total
+            and (
+                row.get(
+                    "productivity_summary_tree_machine_v38"
+                )
+                or str(
+                    row.get(
+                        "productivity_summary_tree_level_v38"
+                    )
+                    or ""
+                ).strip().lower()
+                == "machine"
+            )
+        ):
+
+            continue
+
+
+        # ----------------------------------------------------
+        # KEEP VALID MATERIAL ROW BUT REMOVE REPEATED MACHINE
+        # NAME FROM LABEL.
+        #
+        # Example before:
+        #
+        # IS0335
+        # IS0335    Material = 2 - Midburden
+        #
+        # After:
+        #
+        # IS0335
+        #            Material = 2 - Midburden
+        # ----------------------------------------------------
+
+        if (
+            current_machine
+            and label
+            == current_machine
+            and material
+            and not is_machine_total
+        ):
+
+            row[
+                "label"
+            ] = ""
+
+            row[
+                "productivity_dozer_duplicate_cleanup_v69"
+            ] = 1
+
+
+        cleaned.append(
+            row
+        )
+
+
+    return cleaned
+
+
+def _productivity_apply_dozer_duplicate_cleanup_v69(
+    result,
+    filters,
+):
+
+    if not (
+        _productivity_v69_is_summary_machine(
+            filters
+        )
+    ):
+
+        return result
+
+
+    if not result:
+
+        return result
+
+
+    parts = list(
+        result
+    )
+
+
+    if len(
+        parts
+    ) < 2:
+
+        return result
+
+
+    parts[
+        1
+    ] = (
+        _productivity_v69_cleanup_dozer_rows(
+            parts[
+                1
+            ]
+        )
+    )
+
+
+    if isinstance(
+        result,
+        tuple,
+    ):
+
+        return tuple(
+            parts
+        )
+
+
+    return parts
+
+
+def execute(filters=None):
+
+    result = (
+        _productivity_execute_before_dozer_duplicate_cleanup_v69(
+            filters
+        )
+    )
+
+
+    return (
+        _productivity_apply_dozer_duplicate_cleanup_v69(
+            result,
+            filters,
+        )
+    )
+
+
+# END KOSI_PRODUCTIVITY_DOZER_DUPLICATE_CLEANUP_V69
