@@ -34,6 +34,9 @@ def get_context(context):
             {
                 "mat_type": row.mat_type or "",
                 "material_type_ref": row.mat_type_ref or "",
+                "from_area": row.from_area or "",
+                "to_area": row.to_area or "",
+                "hauling_dist_range": row.hauling_dist_range or "",
                 "handling_method": row.handling_method or "",
                 "bcm": flt(row.bcm),
                 "rd": flt(row.rd),
@@ -145,14 +148,39 @@ def normalize_surveyed_values(surveyed_values):
     clean_rows = []
 
     for raw in raw_rows or []:
-        mat_type = str(raw.get("mat_type") or "").strip()
-        material_type_ref = str(raw.get("material_type_ref") or "").strip()        
-        handling_method = str(raw.get("handling_method") or "").strip()
+        mat_type = str(
+            raw.get("mat_type") or ""
+        ).strip()
+
+        material_type_ref = str(
+            raw.get("material_type_ref") or ""
+        ).strip()
+
+        from_area = str(
+            raw.get("from_area") or ""
+        ).strip()
+
+        to_area = str(
+            raw.get("to_area") or ""
+        ).strip()
+
+        hauling_dist_range = str(
+            raw.get("hauling_dist_range") or ""
+        ).strip()
+
+        handling_method = str(
+            raw.get("handling_method") or ""
+        ).strip()
+
         bcm_raw = raw.get("bcm")
         rd_raw = raw.get("rd")
 
         has_any_value = any([
             mat_type,
+            material_type_ref,
+            from_area,
+            to_area,
+            hauling_dist_range,
             handling_method,
             str(bcm_raw or "").strip(),
             str(rd_raw or "").strip(),
@@ -161,25 +189,68 @@ def normalize_surveyed_values(surveyed_values):
         if not has_any_value:
             continue
 
+        # ----------------------------------------------------
+        # MANDATORY PORTAL FIELDS
+        # ----------------------------------------------------
+
         if not mat_type:
-            frappe.throw(_("Each Surveyed Values row needs a Material Type."))
+            frappe.throw(
+                _("Each Surveyed Values row needs a Material Type.")
+            )
+
+        if not material_type_ref:
+            frappe.throw(
+                _("Each Surveyed Values row needs a Material Type Ref.")
+            )
+
+        if not from_area:
+            frappe.throw(
+                _("Each Surveyed Values row needs a FROM AREA.")
+            )
+
+        if not to_area:
+            frappe.throw(
+                _("Each Surveyed Values row needs a TO AREA.")
+            )
+
+        if not hauling_dist_range:
+            frappe.throw(
+                _("Each Surveyed Values row needs a HAULING DIST(m).")
+            )
 
         if not handling_method:
-            frappe.throw(_("Each Surveyed Values row needs a Handling Method."))
+            frappe.throw(
+                _("Each Surveyed Values row needs a Handling Method.")
+            )
 
         if bcm_raw in (None, ""):
-            frappe.throw(_("Each Surveyed Values row needs a BCM value."))
+            frappe.throw(
+                _("Each Surveyed Values row needs a BCM value.")
+            )
 
         if rd_raw in (None, ""):
-            frappe.throw(_("Each Surveyed Values row needs an RD value."))
+            frappe.throw(
+                _("Each Surveyed Values row needs an RD value.")
+            )
+
+        # ----------------------------------------------------
+        # EXISTING CALCULATION - UNCHANGED
+        # ----------------------------------------------------
 
         bcm = flt(bcm_raw)
         rd = flt(rd_raw)
-        metric_tonnes = round(bcm * rd, 1)
+
+        metric_tonnes = round(
+            bcm * rd,
+            1,
+        )
 
         clean_rows.append({
             "mat_type": mat_type,
             "mat_type_ref": material_type_ref,
+            "from_area": from_area,
+            "to_area": to_area,
+            "hauling_dist_range": hauling_dist_range,
             "handling_method": handling_method,
             "bcm": bcm,
             "rd": rd,

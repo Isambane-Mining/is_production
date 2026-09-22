@@ -276,18 +276,50 @@
     <div class="survey-card">
       <h3>Surveyed Values</h3>
 
-      <table class="survey-table">
+      <table class="survey-table" style="min-width:1450px;">
         <thead>
-          <tr>
-            <th style="width: 18%;">Material Type</th>
-            <th style="width: 18%;">Material Type Ref</th>
-            <th style="width: 18%;">Handling Method</th>
-            <th style="width: 16%;">BCM</th>
-            <th style="width: 16%;">RD</th>
-            <th style="width: 16%;">Metric Tonnes</th>
-            <th style="width: 8%;">Action</th>
-          </tr>
-        </thead>
+            <tr>
+              <th style="min-width:120px;">
+                Material Type <span style="color:#d9534f;">*</span>
+              </th>
+
+              <th style="min-width:170px;">
+                Material Type Ref <span style="color:#d9534f;">*</span>
+              </th>
+
+              <th style="min-width:130px;">
+                FROM AREA <span style="color:#d9534f;">*</span>
+              </th>
+
+              <th style="min-width:130px;">
+                TO AREA <span style="color:#d9534f;">*</span>
+              </th>
+
+              <th style="min-width:145px;">
+                HAULING DIST(m) <span style="color:#d9534f;">*</span>
+              </th>
+
+              <th style="min-width:150px;">
+                Bank Cubic Meters <span style="color:#d9534f;">*</span>
+              </th>
+
+              <th style="min-width:140px;">
+                Relative Density <span style="color:#d9534f;">*</span>
+              </th>
+
+              <th style="min-width:140px;">
+                Metric Tonnes
+              </th>
+
+              <th style="min-width:175px;">
+                Handling Method <span style="color:#d9534f;">*</span>
+              </th>
+
+              <th style="min-width:90px;">
+                Action
+              </th>
+            </tr>
+          </thead>
         <tbody id="surveyed-values-body"></tbody>
       </table>
 
@@ -298,7 +330,7 @@
       </div>
 
       <div class="survey-note">
-        Metric Tonnes = BCM × RD. Only rows with Material Type = <strong>Coal</strong> count toward Total Surveyed Coal Tons.
+        Metric Tonnes = BCM × RD. Only rows with Material Type = <strong>Coal</strong> count toward Total Surveyed Coal Tons. HAULING DIST(m) accepts ranges such as <strong>0-50</strong>, <strong>50-100</strong>, <strong>100-150</strong>, etc.
       </div>
     </div>
 
@@ -357,37 +389,110 @@ function addSurveyRow(row = {}) {
     : "";
 
   tr.innerHTML = `
-    <td>
-      <select class="form-control mat_type" onchange="recalculateRow(this)">
-        <option value="">Select</option>
-        <option value="Softs" ${row.mat_type === "Softs" ? "selected" : ""}>Softs</option>
-        <option value="Hards" ${row.mat_type === "Hards" ? "selected" : ""}>Hards</option>
-        <option value="Coal" ${row.mat_type === "Coal" ? "selected" : ""}>Coal</option>
-      </select>
-    </td>
-    <td>
-      <input type="text" class="form-control material_type_ref" value="${row.material_type_ref || ""}">
-    </td>    
-    <td>
-      <select class="form-control handling_method" onchange="recalculateRow(this)">
-        <option value="">Select</option>
-        <option value="Truck and Shovel" ${row.handling_method === "Truck and Shovel" ? "selected" : ""}>Truck and Shovel</option>
-        <option value="Dozing" ${row.handling_method === "Dozing" ? "selected" : ""}>Dozing</option>
-      </select>
-    </td>
-    <td>
-      <input type="number" step="0.001" class="form-control bcm" value="${bcm}" oninput="recalculateRow(this)">
-    </td>
-    <td>
-      <input type="number" step="0.001" class="form-control rd" value="${rd}" oninput="recalculateRow(this)">
-    </td>
-    <td>
-      <input type="number" step="0.001" class="form-control metric_tonnes" value="${metricTonnes}" readonly>
-    </td>
-    <td>
-      <button type="button" class="btn btn-danger btn-xs" onclick="removeSurveyRow(this)">Delete</button>
-    </td>
-  `;
+      <td>
+        <select
+          class="form-control mat_type"
+          onchange="recalculateRow(this)"
+          required
+        >
+          <option value="">Select</option>
+          <option value="Softs" ${row.mat_type === "Softs" ? "selected" : ""}>Softs</option>
+          <option value="Hards" ${row.mat_type === "Hards" ? "selected" : ""}>Hards</option>
+          <option value="Coal" ${row.mat_type === "Coal" ? "selected" : ""}>Coal</option>
+        </select>
+      </td>
+
+      <td>
+        <input
+          type="text"
+          class="form-control material_type_ref"
+          value="${row.material_type_ref || ""}"
+          required
+        >
+      </td>
+
+      <td>
+        <input
+          type="text"
+          class="form-control from_area"
+          value="${row.from_area || ""}"
+          required
+        >
+      </td>
+
+      <td>
+        <input
+          type="text"
+          class="form-control to_area"
+          value="${row.to_area || ""}"
+          required
+        >
+      </td>
+
+      <td>
+        <input
+          type="text"
+          class="form-control hauling_dist_range"
+          value="${row.hauling_dist_range || ""}"
+          placeholder="0-50"
+          required
+        >
+      </td>
+
+      <td>
+        <input
+          type="number"
+          step="0.001"
+          class="form-control bcm"
+          value="${bcm}"
+          oninput="recalculateRow(this)"
+          required
+        >
+      </td>
+
+      <td>
+        <input
+          type="number"
+          step="0.001"
+          class="form-control rd"
+          value="${rd}"
+          oninput="recalculateRow(this)"
+          required
+        >
+      </td>
+
+      <td>
+        <input
+          type="number"
+          step="0.001"
+          class="form-control metric_tonnes"
+          value="${metricTonnes}"
+          readonly
+        >
+      </td>
+
+      <td>
+        <select
+          class="form-control handling_method"
+          onchange="recalculateRow(this)"
+          required
+        >
+          <option value="">Select</option>
+          <option value="Truck and Shovel" ${row.handling_method === "Truck and Shovel" ? "selected" : ""}>Truck and Shovel</option>
+          <option value="Dozing" ${row.handling_method === "Dozing" ? "selected" : ""}>Dozing</option>
+        </select>
+      </td>
+
+      <td>
+        <button
+          type="button"
+          class="btn btn-danger btn-xs"
+          onclick="removeSurveyRow(this)"
+        >
+          Delete
+        </button>
+      </td>
+    `;
 
   tbody.appendChild(tr);
   recalculateRow(tr.querySelector(".bcm"));
@@ -446,46 +551,107 @@ function recalculateTotals() {
   document.getElementById("total_surveyed_coal_tons_display").innerText = totalCoal.toFixed(1);
 }
 
-function collectSurveyRows() {
-  const rows = [];
-  let hasError = false;
+  function collectSurveyRows() {
+    const rows = [];
+    let hasError = false;
 
-  document.querySelectorAll("#surveyed-values-body tr").forEach(function(row, index) {
-    const matType = row.querySelector(".mat_type").value;
-    const materialTypeRef = row.querySelector(".material_type_ref").value;
-    const handlingMethod = row.querySelector(".handling_method").value;
-    const bcm = row.querySelector(".bcm").value;
-    const rd = row.querySelector(".rd").value;
-    const metricTonnes = row.querySelector(".metric_tonnes").value;
+    document
+      .querySelectorAll("#surveyed-values-body tr")
+      .forEach(function(row, index) {
 
-    const hasAnyValue = matType || handlingMethod || bcm || rd;
+        const matType =
+          row.querySelector(".mat_type").value;
 
-    if (!hasAnyValue) {
-      return;
+        const materialTypeRef =
+          row
+            .querySelector(".material_type_ref")
+            .value
+            .trim();
+
+        const fromArea =
+          row
+            .querySelector(".from_area")
+            .value
+            .trim();
+
+        const toArea =
+          row
+            .querySelector(".to_area")
+            .value
+            .trim();
+
+        const haulingDistRange =
+          row
+            .querySelector(".hauling_dist_range")
+            .value
+            .trim();
+
+        const bcm =
+          row.querySelector(".bcm").value;
+
+        const rd =
+          row.querySelector(".rd").value;
+
+        const metricTonnes =
+          row.querySelector(".metric_tonnes").value;
+
+        const handlingMethod =
+          row.querySelector(".handling_method").value;
+
+        const hasAnyValue =
+          matType ||
+          materialTypeRef ||
+          fromArea ||
+          toArea ||
+          haulingDistRange ||
+          bcm ||
+          rd ||
+          handlingMethod;
+
+        if (!hasAnyValue) {
+          return;
+        }
+
+        if (
+          !matType ||
+          !materialTypeRef ||
+          !fromArea ||
+          !toArea ||
+          !haulingDistRange ||
+          bcm === "" ||
+          rd === "" ||
+          !handlingMethod
+        ) {
+          frappe.msgprint(
+            "Please complete all required fields in " +
+            "Surveyed Values row " +
+            (index + 1)
+          );
+
+          hasError = true;
+          return;
+        }
+
+        rows.push({
+          mat_type: matType,
+          material_type_ref: materialTypeRef,
+          from_area: fromArea,
+          to_area: toArea,
+          hauling_dist_range: haulingDistRange,
+          bcm: parseFloat(bcm) || 0,
+          rd: parseFloat(rd) || 0,
+          metric_tonnes:
+            parseFloat(metricTonnes) || 0,
+          handling_method: handlingMethod
+        });
+      });
+
+    if (hasError) {
+      return null;
     }
 
-    if (!matType || !handlingMethod || bcm === "" || rd === "") {
-      frappe.msgprint("Please complete all fields in Surveyed Values row " + (index + 1));
-      hasError = true;
-      return;
-    }
-
-    rows.push({
-      mat_type: matType,
-      material_type_ref: materialTypeRef,
-      handling_method: handlingMethod,
-      bcm: parseFloat(bcm) || 0,
-      rd: parseFloat(rd) || 0,
-      metric_tonnes: parseFloat(metricTonnes) || 0
-    });
-  });
-
-  if (hasError) {
-    return null;
+    return rows;
   }
-
-  return rows;
-}
 
 async function uploadSurveyFile() {
   const fileInput = document.getElementById("survey_report_file");
