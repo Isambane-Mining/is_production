@@ -58180,3 +58180,398 @@ def execute(
 
 
 # END KOSI_PRODUCTIVITY_TALLIES_HOURS_AREA_V101
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_TALLIES_PARENT_BCM_V102
+#
+# FIX:
+#
+# V99 Mining Area reconciliation previously used:
+#
+#     adjusted_bcm / output
+#
+# from the material subtotal.
+#
+# In Tallies mode the authoritative material subtotal is:
+#
+#     tallies_bcm
+#
+# Example ADT01:
+#
+#     Coal:
+#         tallies_bcm = 112
+#
+#     Hards:
+#         displayed output = 108
+#         tallies_bcm      = 192
+#
+#     Softs:
+#         displayed output = 73,545
+#         tallies_bcm      = 19,825
+#
+# Correct Tallies:
+#
+#     112 + 192 + 19,825 = 20,129
+#
+# V102:
+#
+# - uses tallies_bcm as material subtotal BCM
+# - updates displayed material subtotal to that Tallies BCM
+# - recalculates material BCM/Hr
+# - splits Tallies BCM by captured Mining Area
+# - preserves material Working Hours
+# - preserves machine total
+# - preserves Total Fleet logic
+# - does not affect Actual BCM mode
+# ============================================================
+
+
+def _productivity_v99_make_area_rows(
+    parent_row,
+    category,
+    machine,
+    material,
+    area_rows,
+):
+
+    parent_hours = (
+        _productivity_v99_number(
+            parent_row.get(
+                "working_hours"
+            )
+        )
+    )
+
+
+    # ========================================================
+    # TALLIES MATERIAL SOURCE
+    # ========================================================
+
+    if parent_row.get(
+        "tallies_bcm"
+    ) not in (
+        None,
+        "",
+    ):
+
+        parent_bcm = (
+            _productivity_v99_number(
+                parent_row.get(
+                    "tallies_bcm"
+                )
+            )
+        )
+
+
+        bcm_source = (
+            "tallies_bcm"
+        )
+
+
+    else:
+
+        parent_bcm = (
+            _productivity_v99_number(
+                parent_row.get(
+                    "adjusted_bcm"
+                )
+                if parent_row.get(
+                    "adjusted_bcm"
+                )
+                not in (
+                    None,
+                    "",
+                )
+                else parent_row.get(
+                    "output"
+                )
+            )
+        )
+
+
+        bcm_source = (
+            "output_fallback"
+        )
+
+
+    source_total = sum(
+        _productivity_v99_number(
+            item.get(
+                "bcm"
+            )
+        )
+        for item
+        in area_rows
+    )
+
+
+    # ========================================================
+    # RAW MINING AREA TOTAL MUST MATCH TALLIES BCM
+    # ========================================================
+
+    if abs(
+        parent_bcm
+        - source_total
+    ) > 0.01:
+
+        frappe.throw(
+            "Tallies Mining Area total does not reconcile for "
+            f"{category} / {machine} / {material}. "
+            f"Tallies subtotal = {parent_bcm:,.3f}, "
+            f"Truck Loads Mining Area total = {source_total:,.3f}, "
+            f"BCM source = {bcm_source}."
+        )
+
+
+    # ========================================================
+    # FIX THE VISIBLE MATERIAL SUBTOTAL
+    # ========================================================
+
+    parent_row[
+        "output"
+    ] = round(
+        parent_bcm,
+        3,
+    )
+
+
+    parent_row[
+        "adjusted_bcm"
+    ] = round(
+        parent_bcm,
+        3,
+    )
+
+
+    parent_row[
+        "tallies_bcm"
+    ] = round(
+        parent_bcm,
+        3,
+    )
+
+
+    parent_row[
+        "productivity"
+    ] = (
+        round(
+            parent_bcm
+            / parent_hours,
+            3,
+        )
+        if parent_hours > 0
+        else 0.0
+    )
+
+
+    parent_row[
+        "productivity_tallies_parent_bcm_v102"
+    ] = 1
+
+
+    parent_row[
+        "productivity_tallies_parent_bcm_source_v102"
+    ] = bcm_source
+
+
+    # ========================================================
+    # BUILD MINING AREA DETAIL ROWS
+    # ========================================================
+
+    created = []
+
+    accumulated_hours = 0.0
+
+
+    for index, source in enumerate(
+        area_rows
+    ):
+
+        bcm = (
+            _productivity_v99_number(
+                source.get(
+                    "bcm"
+                )
+            )
+        )
+
+
+        # ----------------------------------------------------
+        # Keep the existing material Working Hours total.
+        #
+        # Split hours proportional to Tallies BCM.
+        # ----------------------------------------------------
+
+        if (
+            index
+            == len(
+                area_rows
+            )
+            - 1
+        ):
+
+            hours = (
+                parent_hours
+                - accumulated_hours
+            )
+
+
+        else:
+
+            hours = (
+                parent_hours
+                * bcm
+                / source_total
+                if source_total > 0
+                else 0.0
+            )
+
+
+            hours = round(
+                hours,
+                6,
+            )
+
+
+            accumulated_hours += hours
+
+
+        productivity = (
+            bcm
+            / hours
+            if hours > 0
+            else 0.0
+        )
+
+
+        area = str(
+            source.get(
+                "from_area"
+            )
+            or ""
+        ).strip()
+
+
+        detail = {
+
+            "label":
+                "",
+
+            "working_hours":
+                round(
+                    hours,
+                    6,
+                ),
+
+            "output":
+                round(
+                    bcm,
+                    3,
+                ),
+
+            "adjusted_bcm":
+                round(
+                    bcm,
+                    3,
+                ),
+
+            "tallies_bcm":
+                round(
+                    bcm,
+                    3,
+                ),
+
+            "productivity":
+                round(
+                    productivity,
+                    3,
+                ),
+
+            "material":
+                material,
+
+            # USER-CAPTURED MINING AREA
+            "from_area":
+                area,
+
+            # Tallies is not Survey route-driven.
+            "to_area":
+                "",
+
+            "hauling_distance_m":
+                "",
+
+            "productivity_bcm_hd":
+                "",
+
+            "indent":
+                3,
+
+            "is_category_total":
+                0,
+
+            "is_machine_total":
+                0,
+
+            "productivity_is_machine_total":
+                0,
+
+            "productivity_editable":
+                0,
+
+            "productivity_edit_category":
+                category,
+
+            "productivity_tallies_mining_area_v99":
+                1,
+
+            "productivity_tallies_parent_bcm_v102":
+                1,
+
+            "productivity_tallies_parent_machine_v99":
+                machine,
+
+            "productivity_tallies_parent_material_v99":
+                material,
+        }
+
+
+        if category == "Excavator":
+
+            detail[
+                "productivity_excavator_detail_v71"
+            ] = 1
+
+
+            detail[
+                "productivity_excavator_parent_machine_v71"
+            ] = machine
+
+
+            detail[
+                "productivity_excavator_parent_material_v71"
+            ] = material
+
+
+        else:
+
+            detail[
+                "productivity_all_machine_machine_v87"
+            ] = machine
+
+
+            detail[
+                "productivity_all_machine_parent_material_v87"
+            ] = material
+
+
+        created.append(
+            detail
+        )
+
+
+    return created
+
+
+# END KOSI_PRODUCTIVITY_TALLIES_PARENT_BCM_V102
