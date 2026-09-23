@@ -20207,3 +20207,503 @@ if (
 })();
 
 // END KOSI_PRODUCTIVITY_SURVEY_READONLY_ALL_V90
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_COAL_TONNES_DISPLAY_V106
+//
+// FINAL DISPLAY RULE FOR:
+//
+//     output_coal_tonnes
+//
+// BACKEND IS ALREADY CORRECT:
+//
+//     Non-Coal:
+//         output_coal_tonnes = ""
+//
+//     Coal:
+//         output_coal_tonnes = whole-number tonnes
+//
+// Browser display:
+//
+//     Non-Coal -> BLANK
+//     Coal     -> 192 180
+//
+// No decimals.
+// Does not change BCM, Hours, BCM/Hr, BCM/HD or Tallies.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports
+        && frappe.query_reports["Productivity"]
+    );
+
+    if (!report) {
+        return;
+    }
+
+
+    const previous_formatter =
+        report.formatter;
+
+
+    function raw_number(value) {
+
+        if (
+            value === null
+            || value === undefined
+            || value === ""
+        ) {
+            return null;
+        }
+
+        const parsed = Number(
+            String(value)
+                .replace(/,/g, "")
+                .replace(/\s/g, "")
+                .trim()
+        );
+
+        return Number.isFinite(parsed)
+            ? parsed
+            : null;
+    }
+
+
+    function format_whole_number(value) {
+
+        const number =
+            raw_number(value);
+
+        if (number === null) {
+            return "";
+        }
+
+        const rounded =
+            Math.round(number);
+
+
+        // Prefer Frappe's formatter when available.
+        if (
+            typeof frappe !== "undefined"
+            && frappe.utils
+            && typeof frappe.utils.format_number === "function"
+        ) {
+
+            try {
+
+                return frappe.utils.format_number(
+                    rounded,
+                    null,
+                    0
+                );
+
+            } catch (error) {
+                // Fall through to browser locale formatting.
+            }
+        }
+
+
+        // South African locale normally uses grouped thousands
+        // and no decimal places.
+        try {
+
+            return rounded.toLocaleString(
+                "en-ZA",
+                {
+                    minimumFractionDigits: 0,
+                    maximumFractionDigits: 0,
+                }
+            );
+
+        } catch (error) {
+
+            return String(
+                rounded
+            );
+        }
+    }
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        const fieldname = (
+            column
+            && column.fieldname
+        )
+            ? String(
+                column.fieldname
+            )
+            : "";
+
+
+        // ====================================================
+        // COAL TONNES - FINAL OVERRIDE
+        // ====================================================
+
+        if (
+            fieldname
+            === "output_coal_tonnes"
+        ) {
+
+            const raw = (
+                data
+                ? data.output_coal_tonnes
+                : null
+            );
+
+
+            // Non-Coal rows are blank in the backend.
+            // Do NOT allow Float formatting to turn blank into
+            // 0.000.
+            if (
+                raw === null
+                || raw === undefined
+                || raw === ""
+            ) {
+                return "";
+            }
+
+
+            // Coal rows:
+            // whole-number tonnes, no .000.
+            return format_whole_number(
+                raw
+            );
+        }
+
+
+        // ====================================================
+        // EVERYTHING ELSE REMAINS EXACTLY AS BEFORE
+        // ====================================================
+
+        if (
+            typeof previous_formatter
+            === "function"
+        ) {
+
+            return previous_formatter.call(
+                this,
+                value,
+                row,
+                column,
+                data,
+                default_formatter
+            );
+        }
+
+
+        return default_formatter(
+            value,
+            row,
+            column,
+            data
+        );
+    };
+
+})();
+
+// END KOSI_PRODUCTIVITY_COAL_TONNES_DISPLAY_V106
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_BOLD_COAL_TONNES_TOTAL_V108
+//
+// ONLY:
+//     Bold the Coal TOTAL in:
+//         Output Actual (Coal Tonnes)
+//
+// KEEP NORMAL:
+//     2COAL detail rows
+//
+// No calculation changes.
+// No column changes.
+// No layout changes.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports
+        && frappe.query_reports["Productivity"]
+    );
+
+    if (!report) {
+        return;
+    }
+
+
+    const previous_formatter =
+        report.formatter;
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        let formatted_value;
+
+
+        if (
+            typeof previous_formatter
+            === "function"
+        ) {
+
+            formatted_value =
+                previous_formatter.call(
+                    this,
+                    value,
+                    row,
+                    column,
+                    data,
+                    default_formatter
+                );
+
+        } else {
+
+            formatted_value =
+                default_formatter(
+                    value,
+                    row,
+                    column,
+                    data
+                );
+        }
+
+
+        if (
+            !data
+            || !column
+            || column.fieldname
+                !== "output_coal_tonnes"
+        ) {
+
+            return formatted_value;
+        }
+
+
+        const label = String(
+            data.label
+            || ""
+        ).trim();
+
+
+        const material = String(
+            data.material
+            || ""
+        ).trim();
+
+
+        // ====================================================
+        // COAL SUBTOTAL/TOTAL ROW
+        //
+        // Hours and Material:
+        //     label = Coal
+        //
+        // Summary Per Machine:
+        //     material = Coal
+        // ====================================================
+
+        const is_coal_total = (
+            label === "Coal"
+            || material === "Coal"
+        );
+
+
+        if (!is_coal_total) {
+            return formatted_value;
+        }
+
+
+        // Keep blank values blank.
+        if (
+            formatted_value === null
+            || formatted_value === undefined
+            || String(
+                formatted_value
+            ).trim() === ""
+        ) {
+
+            return "";
+        }
+
+
+        return (
+            '<span style="font-weight:700;">'
+            + formatted_value
+            + '</span>'
+        );
+    };
+
+})();
+
+// END KOSI_PRODUCTIVITY_BOLD_COAL_TONNES_TOTAL_V108
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_RECONCILED_HOURS_DISPLAY_V110
+//
+// DISPLAY ONLY.
+//
+// Backend:
+//     working_hours stays precise.
+//
+// Display:
+//     productivity_display_working_hours_v110
+//
+// This formatter feeds the reconciled integer into the
+// EXISTING formatter chain so all existing:
+//
+//     bold totals
+//     indentation
+//     formatting
+//
+// remain unchanged.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports
+        && frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+
+    if (!report) {
+
+        return;
+    }
+
+
+    const previous_formatter =
+        report.formatter;
+
+
+    report.formatter =
+        function (
+            value,
+            row,
+            column,
+            data,
+            default_formatter
+        ) {
+
+
+            if (
+                data
+                && column
+                && String(
+                    column.fieldname
+                    || ""
+                ).trim()
+                === "working_hours"
+
+                && data[
+                    "productivity_display_working_hours_v110"
+                ]
+                !== undefined
+
+                && data[
+                    "productivity_display_working_hours_v110"
+                ]
+                !== null
+
+                && data[
+                    "productivity_display_working_hours_v110"
+                ]
+                !== ""
+            ) {
+
+                const display_value =
+                    Number(
+                        data[
+                            "productivity_display_working_hours_v110"
+                        ]
+                    );
+
+
+                const display_data =
+                    Object.assign(
+                        {},
+                        data,
+                        {
+                            working_hours:
+                                display_value,
+                        }
+                    );
+
+
+                if (
+                    typeof previous_formatter
+                    === "function"
+                ) {
+
+                    return (
+                        previous_formatter.call(
+                            this,
+                            display_value,
+                            row,
+                            column,
+                            display_data,
+                            default_formatter
+                        )
+                    );
+                }
+
+
+                return (
+                    default_formatter(
+                        display_value,
+                        row,
+                        column,
+                        display_data
+                    )
+                );
+            }
+
+
+            if (
+                typeof previous_formatter
+                === "function"
+            ) {
+
+                return (
+                    previous_formatter.call(
+                        this,
+                        value,
+                        row,
+                        column,
+                        data,
+                        default_formatter
+                    )
+                );
+            }
+
+
+            return (
+                default_formatter(
+                    value,
+                    row,
+                    column,
+                    data
+                )
+            );
+        };
+
+})();
+
+// END KOSI_PRODUCTIVITY_RECONCILED_HOURS_DISPLAY_V110
