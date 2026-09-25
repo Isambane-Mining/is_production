@@ -1045,7 +1045,97 @@ function open_productivity_print_preview(
             }
         }
 
-    </style>
+
+
+        /* ============================================================
+           KOSI_PRODUCTIVITY_DOWNLOAD_IMAGE_CLARITY_V116
+           Make preview + downloaded image clearer and bolder.
+           ============================================================ */
+
+        body {
+            font-family: Arial, Helvetica, sans-serif !important;
+            font-size: 14px !important;
+            line-height: 1.35 !important;
+            color: #111111 !important;
+            -webkit-font-smoothing: antialiased;
+            text-rendering: optimizeLegibility;
+        }
+
+        .print-actions button {
+            font-weight: 700 !important;
+        }
+
+        h1, h2, h3, h4, h5, h6,
+        .page-title,
+        .report-title,
+        .summary-title {
+            color: #000000 !important;
+            font-weight: 700 !important;
+        }
+
+        table {
+            width: 100% !important;
+            border-collapse: collapse !important;
+        }
+
+        th {
+            font-size: 13px !important;
+            font-weight: 700 !important;
+            color: #000000 !important;
+            background: #f2f2f2 !important;
+            border: 1px solid #bdbdbd !important;
+            padding: 6px 6px !important;
+            white-space: nowrap !important;
+        }
+
+        td {
+            font-size: 13px !important;
+            font-weight: 600 !important;
+            color: #111111 !important;
+            border: 1px solid #d3d3d3 !important;
+            padding: 5px 6px !important;
+            vertical-align: middle !important;
+        }
+
+        b, strong {
+            font-weight: 700 !important;
+            color: #000000 !important;
+        }
+
+        .text-muted,
+        .small,
+        .text-small {
+            color: #444444 !important;
+            font-weight: 600 !important;
+        }
+
+        .metric-value,
+        .summary-value,
+        .number,
+        .value {
+            font-weight: 700 !important;
+            color: #000000 !important;
+        }
+
+        .filters-row *,
+        .filter-box,
+        .summary-box,
+        .metric-box,
+        .report-filter-chip {
+            font-weight: 700 !important;
+            color: #111111 !important;
+            border-color: #c2c2c2 !important;
+        }
+
+        .print-preview-wrapper,
+        .report-table-wrapper,
+        .table-wrapper {
+            overflow: visible !important;
+        }
+
+        /* END KOSI_PRODUCTIVITY_DOWNLOAD_IMAGE_CLARITY_V116 */
+
+</style>
 
 </head>
 
@@ -1060,6 +1150,11 @@ function open_productivity_print_preview(
         >
             🖨 Print / Save as PDF
         </button>
+        <button
+            type="button"
+            id="productivity-download-image-btn"
+            onclick="downloadProductivityReportImage()"
+        >Download Image</button>
 
         <button
             type="button"
@@ -1069,7 +1164,7 @@ function open_productivity_print_preview(
         </button>
 
         <span class="prod-print-help">
-            You can also take a screenshot from this clean preview.
+            Print / Save as PDF or use Download Image to save the full report as PNG.
         </span>
 
     </div>
@@ -1101,6 +1196,841 @@ function open_productivity_print_preview(
     <div class="prod-print-footer">
         Isambane Mining - Productivity Report
     </div>
+
+
+<script>
+// ============================================================
+// KOSI_PRODUCTIVITY_DOWNLOAD_IMAGE_V115
+// ============================================================
+
+function productivityLoadHtml2Canvas() {
+
+    return new Promise(function(resolve, reject) {
+
+        if (window.html2canvas) {
+            resolve();
+            return;
+        }
+
+        var existing = document.getElementById(
+            "productivity-html2canvas-v115"
+        );
+
+        if (existing) {
+
+            existing.addEventListener(
+                "load",
+                resolve,
+                { once: true }
+            );
+
+            existing.addEventListener(
+                "error",
+                reject,
+                { once: true }
+            );
+
+            return;
+        }
+
+
+        var script = document.createElement(
+            "script"
+        );
+
+        script.id = (
+            "productivity-html2canvas-v115"
+        );
+
+
+        var assetPath = (
+            "/assets/is_production/"
+            + "node_modules/html2canvas/"
+            + "dist/html2canvas.min.js"
+        );
+
+
+        try {
+
+            if (
+                window.opener
+                && window.opener.location
+                && window.opener.location.origin
+            ) {
+
+                assetPath = (
+                    window.opener.location.origin
+                    + assetPath
+                );
+            }
+
+        } catch (error) {
+            // Same-origin fallback uses /assets path.
+        }
+
+
+        script.src = assetPath;
+
+        script.onload = function() {
+            resolve();
+        };
+
+        script.onerror = function() {
+            reject(
+                new Error(
+                    "Could not load html2canvas."
+                )
+            );
+        };
+
+        document.head.appendChild(
+            script
+        );
+    });
+}
+
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_DOWNLOAD_IMAGE_CROP_V117
+//
+// Download ONLY the clean Productivity report.
+//
+// - Excludes preview toolbar
+// - Excludes Preparing Image button
+// - Excludes Print / Close buttons
+// - Removes unnecessary blank page area
+// - Uses natural report width/height
+// - Stronger text and borders
+// - 3x PNG capture resolution
+// ============================================================
+
+
+function buildProductivityImageCapture() {
+
+    var existing = document.getElementById(
+        "productivity-download-capture"
+    );
+
+
+    if (existing) {
+        existing.remove();
+    }
+
+
+    var sourceTable = document.querySelector(
+        "table"
+    );
+
+
+    var sourceWidth = 0;
+
+
+    if (sourceTable) {
+
+        sourceWidth = Math.ceil(
+            Math.max(
+                sourceTable.scrollWidth || 0,
+                sourceTable.getBoundingClientRect().width || 0
+            )
+        );
+    }
+
+
+    sourceWidth = Math.max(
+        sourceWidth,
+        1800
+    );
+
+
+    var capture = document.createElement(
+        "div"
+    );
+
+
+    capture.id = (
+        "productivity-download-capture"
+    );
+
+
+    capture.style.position = "fixed";
+    capture.style.left = "-100000px";
+    capture.style.top = "0";
+    capture.style.zIndex = "-1000";
+
+    capture.style.boxSizing = "border-box";
+
+    capture.style.background = "#ffffff";
+
+    capture.style.color = "#111111";
+
+    capture.style.margin = "0";
+
+    capture.style.padding = "18px 20px";
+
+    capture.style.width = (
+        sourceWidth
+        + 40
+        + "px"
+    );
+
+    capture.style.minHeight = "0";
+
+    capture.style.height = "auto";
+
+    capture.style.fontFamily = (
+        "Arial, Helvetica, sans-serif"
+    );
+
+
+    // --------------------------------------------------------
+    // Add clean export-specific styles.
+    // --------------------------------------------------------
+
+    var exportStyle = document.createElement(
+        "style"
+    );
+
+
+    exportStyle.textContent = [
+        "#productivity-download-capture {",
+        "  background: #ffffff !important;",
+        "  color: #111111 !important;",
+        "  font-family: Arial, Helvetica, sans-serif !important;",
+        "  font-size: 14px !important;",
+        "  line-height: 1.25 !important;",
+        "}",
+
+        "#productivity-download-capture .print-actions {",
+        "  display: none !important;",
+        "}",
+
+        "#productivity-download-capture button {",
+        "  display: none !important;",
+        "}",
+
+        "#productivity-download-capture h1,",
+        "#productivity-download-capture h2,",
+        "#productivity-download-capture h3,",
+        "#productivity-download-capture h4,",
+        "#productivity-download-capture h5,",
+        "#productivity-download-capture h6 {",
+        "  color: #000000 !important;",
+        "  font-weight: 700 !important;",
+        "}",
+
+        "#productivity-download-capture table {",
+        "  width: 100% !important;",
+        "  border-collapse: collapse !important;",
+        "  table-layout: auto !important;",
+        "  background: #ffffff !important;",
+        "  margin: 0 !important;",
+        "}",
+
+        "#productivity-download-capture th {",
+        "  font-size: 14px !important;",
+        "  font-weight: 700 !important;",
+        "  color: #000000 !important;",
+        "  background: #eeeeee !important;",
+        "  border: 1px solid #999999 !important;",
+        "  padding: 7px 8px !important;",
+        "  line-height: 1.2 !important;",
+        "  white-space: nowrap !important;",
+        "  text-align: left !important;",
+        "}",
+
+        "#productivity-download-capture td {",
+        "  font-size: 13px !important;",
+        "  font-weight: 600 !important;",
+        "  color: #111111 !important;",
+        "  background: #ffffff !important;",
+        "  border: 1px solid #b8b8b8 !important;",
+        "  padding: 6px 8px !important;",
+        "  line-height: 1.2 !important;",
+        "  white-space: nowrap !important;",
+        "}",
+
+        "#productivity-download-capture strong,",
+        "#productivity-download-capture b {",
+        "  font-weight: 700 !important;",
+        "  color: #000000 !important;",
+        "}",
+
+        "#productivity-download-capture [class*='filter'] {",
+        "  color: #111111 !important;",
+        "  font-weight: 700 !important;",
+        "}",
+
+        "#productivity-download-capture .text-muted {",
+        "  color: #444444 !important;",
+        "}",
+
+        "#productivity-download-capture * {",
+        "  text-rendering: geometricPrecision;",
+        "  -webkit-font-smoothing: antialiased;",
+        "}",
+
+        ""
+    ].join("\n");
+
+
+    capture.appendChild(
+        exportStyle
+    );
+
+
+    // --------------------------------------------------------
+    // Clone the preview body but SKIP the toolbar and scripts.
+    // --------------------------------------------------------
+
+    Array.prototype.forEach.call(
+        document.body.children,
+        function(node) {
+
+            if (!node) {
+                return;
+            }
+
+
+            if (
+                node.tagName
+                && node.tagName.toUpperCase() === "SCRIPT"
+            ) {
+                return;
+            }
+
+
+            if (
+                node.classList
+                && node.classList.contains(
+                    "print-actions"
+                )
+            ) {
+                return;
+            }
+
+
+            if (
+                node.id
+                === "productivity-download-capture"
+            ) {
+                return;
+            }
+
+
+            var clone = node.cloneNode(
+                true
+            );
+
+
+            // Remove toolbar/buttons if nested.
+            clone.querySelectorAll(
+                ".print-actions, script"
+            ).forEach(
+                function(element) {
+                    element.remove();
+                }
+            );
+
+
+            clone.querySelectorAll(
+                "button"
+            ).forEach(
+                function(element) {
+                    element.remove();
+                }
+            );
+
+
+            clone.style.minHeight = "0";
+
+            clone.style.height = "auto";
+
+
+            capture.appendChild(
+                clone
+            );
+        }
+    );
+
+
+    document.body.appendChild(
+        capture
+    );
+
+
+    // --------------------------------------------------------
+    // Remove large minimum heights that make blank white areas.
+    // Only work inside the cloned export content.
+    // --------------------------------------------------------
+
+    Array.prototype.forEach.call(
+        capture.children,
+        function(element) {
+
+            if (
+                !element
+                || !element.style
+            ) {
+                return;
+            }
+
+
+            element.style.minHeight = "0";
+
+            if (
+                element.style.height
+                && element.style.height.indexOf(
+                    "vh"
+                ) !== -1
+            ) {
+                element.style.height = "auto";
+            }
+        }
+    );
+
+
+    // --------------------------------------------------------
+    // Ensure table is strong and readable.
+    // --------------------------------------------------------
+
+    capture.querySelectorAll(
+        "th"
+    ).forEach(
+        function(element) {
+
+            element.style.setProperty(
+                "font-weight",
+                "700",
+                "important"
+            );
+
+            element.style.setProperty(
+                "color",
+                "#000000",
+                "important"
+            );
+
+            element.style.setProperty(
+                "font-size",
+                "14px",
+                "important"
+            );
+        }
+    );
+
+
+    capture.querySelectorAll(
+        "td"
+    ).forEach(
+        function(element) {
+
+            element.style.setProperty(
+                "font-weight",
+                "600",
+                "important"
+            );
+
+            element.style.setProperty(
+                "color",
+                "#111111",
+                "important"
+            );
+
+            element.style.setProperty(
+                "font-size",
+                "13px",
+                "important"
+            );
+        }
+    );
+
+
+    return capture;
+}
+
+
+async function downloadProductivityReportImage() {
+
+    var button = document.getElementById(
+        "productivity-download-image-btn"
+    );
+
+
+    var originalButtonText = (
+        button
+        ? button.textContent
+        : "Download Image"
+    );
+
+
+    var capture = null;
+
+
+    try {
+
+        if (button) {
+
+            button.disabled = true;
+
+            button.textContent = (
+                "Preparing Image..."
+            );
+        }
+
+
+        await productivityLoadHtml2Canvas();
+
+
+        if (!window.html2canvas) {
+
+            throw new Error(
+                "html2canvas is unavailable."
+            );
+        }
+
+
+        capture = (
+            buildProductivityImageCapture()
+        );
+
+
+        // Give Chrome a moment to finish layout.
+        await new Promise(
+            function(resolve) {
+
+                window.requestAnimationFrame(
+                    function() {
+
+                        window.requestAnimationFrame(
+                            resolve
+                        );
+                    }
+                );
+            }
+        );
+
+
+        var captureWidth = Math.ceil(
+            capture.scrollWidth
+        );
+
+
+        var captureHeight = Math.ceil(
+            capture.scrollHeight
+        );
+
+
+        if (
+            captureWidth <= 0
+            || captureHeight <= 0
+        ) {
+
+            throw new Error(
+                "Invalid report capture size."
+            );
+        }
+
+
+        console.log(
+            "Productivity image size:",
+            captureWidth,
+            "x",
+            captureHeight
+        );
+
+
+        var canvas = (
+            await window.html2canvas(
+                capture,
+                {
+                    backgroundColor:
+                        "#ffffff",
+
+                    scale:
+                        3,
+
+                    useCORS:
+                        true,
+
+                    allowTaint:
+                        false,
+
+                    logging:
+                        false,
+
+                    width:
+                        captureWidth,
+
+                    height:
+                        captureHeight,
+
+                    windowWidth:
+                        captureWidth,
+
+                    windowHeight:
+                        captureHeight,
+
+                    scrollX:
+                        0,
+
+                    scrollY:
+                        0
+                }
+            )
+        );
+
+
+        var now = new Date();
+
+
+        var datePart = (
+            now.getFullYear()
+            + "-"
+            + String(
+                now.getMonth() + 1
+            ).padStart(
+                2,
+                "0"
+            )
+            + "-"
+            + String(
+                now.getDate()
+            ).padStart(
+                2,
+                "0"
+            )
+        );
+
+
+        var timePart = (
+            String(
+                now.getHours()
+            ).padStart(
+                2,
+                "0"
+            )
+            + "-"
+            + String(
+                now.getMinutes()
+            ).padStart(
+                2,
+                "0"
+            )
+        );
+
+
+        var filename = (
+            "Productivity Report - "
+            + datePart
+            + " "
+            + timePart
+            + ".png"
+        );
+
+
+        var link = (
+            document.createElement(
+                "a"
+            )
+        );
+
+
+        link.download = (
+            filename
+        );
+
+
+        link.href = (
+            canvas.toDataURL(
+                "image/png"
+            )
+        );
+
+
+        document.body.appendChild(
+            link
+        );
+
+
+        link.click();
+
+
+        link.remove();
+
+
+    } catch (error) {
+
+        console.error(
+            "Productivity Download Image failed:",
+            error
+        );
+
+
+        alert(
+            "Could not create the Productivity image. "
+            + "Please check the browser console."
+        );
+
+
+    } finally {
+
+        if (capture) {
+            capture.remove();
+        }
+
+
+        if (button) {
+
+            button.disabled = false;
+
+            button.textContent = (
+                originalButtonText
+            );
+        }
+    }
+}
+
+
+
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_DIRECT_DOWNLOAD_V118
+//
+// Main Download Image button:
+//
+//   1. Opens existing clean report internally
+//   2. Automatically creates full-page PNG
+//   3. Starts browser download
+//   4. Closes clean preview automatically
+//
+// The user does NOT need to press a second button.
+// ============================================================
+
+
+window.addEventListener(
+    "load",
+    function () {
+
+        var directDownload = false;
+
+
+        try {
+
+            directDownload = !!(
+                window.opener
+                &&
+                window.opener.__productivity_direct_download_v118
+            );
+
+
+            if (
+                directDownload
+                &&
+                window.opener
+            ) {
+
+                window.opener.__productivity_direct_download_v118 = false;
+            }
+
+        } catch (error) {
+
+            directDownload = false;
+        }
+
+
+        if (!directDownload) {
+            return;
+        }
+
+
+        // Keep the preview toolbar out of sight while
+        // the automatic image is being prepared.
+        var toolbar = document.querySelector(
+            ".print-actions"
+        );
+
+
+        if (toolbar) {
+            toolbar.style.display = "none";
+        }
+
+
+        try {
+
+            if (
+                window.opener
+                &&
+                window.opener.focus
+            ) {
+
+                window.opener.focus();
+            }
+
+        } catch (error) {
+            // No action required.
+        }
+
+
+        setTimeout(
+            async function () {
+
+                try {
+
+                    await downloadProductivityReportImage();
+
+
+                    // Give Chrome enough time to start the
+                    // PNG download before closing this page.
+                    setTimeout(
+                        function () {
+
+                            try {
+                                window.close();
+                            } catch (error) {
+                                // Browser may prevent closing.
+                            }
+
+                        },
+                        1200
+                    );
+
+
+                } catch (error) {
+
+                    console.error(
+                        "Automatic Productivity image download failed:",
+                        error
+                    );
+
+
+                    if (toolbar) {
+                        toolbar.style.display = "";
+                    }
+
+
+                    alert(
+                        "Could not automatically download "
+                        + "the Productivity image."
+                    );
+                }
+
+            },
+            350
+        );
+    }
+);
+
+
+// END KOSI_PRODUCTIVITY_DIRECT_DOWNLOAD_V118
+
+
+// END KOSI_PRODUCTIVITY_DOWNLOAD_IMAGE_CROP_V117
+
+
+// END KOSI_PRODUCTIVITY_DOWNLOAD_IMAGE_V115
+</script>
 
 </body>
 
@@ -1141,9 +2071,13 @@ function add_productivity_print_button(
     const button = (
         report.page.add_inner_button(
             __(
-                "🖨 Print / Screenshot"
+                "🖨 Download Image"
             ),
             function () {
+
+                // KOSI_PRODUCTIVITY_DIRECT_DOWNLOAD_V118
+                window.__productivity_direct_download_v118 = true;
+
 
                 open_productivity_print_preview(
                     report
@@ -2826,7 +3760,7 @@ function productivity_inline_escape(
                     'height:28px;' +
                     'padding:3px 6px;' +
                     'font-size:12px;' +
-                '">' 
+                '">'
             );
         }
 
@@ -20707,3 +21641,1012 @@ if (
 })();
 
 // END KOSI_PRODUCTIVITY_RECONCILED_HOURS_DISPLAY_V110
+
+
+// ============================================================
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_DIRECT_IMAGE_V120
+//
+// Main Productivity button:
+//     Download Image
+//
+// Behaviour:
+//     - intercept existing clean-preview generation
+//     - do NOT open visible about:blank page
+//     - collect generated preview HTML
+//     - render it in same-origin off-screen iframe
+//     - remove preview controls
+//     - download clear full report as PNG
+//
+// Existing V117 visual formatting remains available.
+// ============================================================
+
+
+(function install_productivity_direct_image_v120() {
+
+    if (
+        window.__productivity_direct_image_v120_installed
+    ) {
+        return;
+    }
+
+
+    window.__productivity_direct_image_v120_installed = true;
+
+
+    function normalize_productivity_download_label(
+        value
+    ) {
+
+        return String(
+            value
+            || ""
+        )
+            .replace(
+                /\s+/g,
+                " "
+            )
+            .trim();
+    }
+
+
+    function productivity_v120_filename() {
+
+        var now = new Date();
+
+
+        var datePart = (
+            now.getFullYear()
+            + "-"
+            + String(
+                now.getMonth() + 1
+            ).padStart(2, "0")
+            + "-"
+            + String(
+                now.getDate()
+            ).padStart(2, "0")
+        );
+
+
+        var timePart = (
+            String(
+                now.getHours()
+            ).padStart(2, "0")
+            + "-"
+            + String(
+                now.getMinutes()
+            ).padStart(2, "0")
+        );
+
+
+        return (
+            "Productivity Report - "
+            + datePart
+            + " "
+            + timePart
+            + ".png"
+        );
+    }
+
+
+    function productivity_v120_load_html2canvas(
+        frameWindow
+    ) {
+
+        return new Promise(
+            function (
+                resolve,
+                reject
+            ) {
+
+                if (
+                    frameWindow
+                    && frameWindow.html2canvas
+                ) {
+
+                    resolve(
+                        frameWindow.html2canvas
+                    );
+
+                    return;
+                }
+
+
+                var doc = frameWindow.document;
+
+
+                var script = doc.createElement(
+                    "script"
+                );
+
+
+                script.id = (
+                    "productivity-html2canvas-v120"
+                );
+
+
+                script.src = (
+                    window.location.origin
+                    + "/assets/is_production/"
+                    + "node_modules/html2canvas/"
+                    + "dist/html2canvas.min.js"
+                );
+
+
+                script.onload = function () {
+
+                    if (
+                        frameWindow.html2canvas
+                    ) {
+
+                        resolve(
+                            frameWindow.html2canvas
+                        );
+
+                        return;
+                    }
+
+
+                    reject(
+                        new Error(
+                            "html2canvas loaded but is unavailable."
+                        )
+                    );
+                };
+
+
+                script.onerror = function () {
+
+                    reject(
+                        new Error(
+                            "Could not load html2canvas."
+                        )
+                    );
+                };
+
+
+                doc.head.appendChild(
+                    script
+                );
+            }
+        );
+    }
+
+
+    function productivity_v120_prepare_document(
+        frameWindow
+    ) {
+
+        var doc = frameWindow.document;
+
+
+        if (
+            !doc
+            || !doc.body
+        ) {
+
+            throw new Error(
+                "Productivity preview body is unavailable."
+            );
+        }
+
+
+        // Remove preview toolbar completely.
+        doc.querySelectorAll(
+            ".print-actions"
+        ).forEach(
+            function (
+                element
+            ) {
+
+                element.remove();
+            }
+        );
+
+
+        // Remove any leftover action buttons from preview.
+        doc.querySelectorAll(
+            "#productivity-download-image-btn"
+        ).forEach(
+            function (
+                element
+            ) {
+
+                element.remove();
+            }
+        );
+
+
+        doc.documentElement.style.setProperty(
+            "height",
+            "auto",
+            "important"
+        );
+
+        doc.documentElement.style.setProperty(
+            "min-height",
+            "0",
+            "important"
+        );
+
+
+        doc.body.style.setProperty(
+            "height",
+            "auto",
+            "important"
+        );
+
+        doc.body.style.setProperty(
+            "min-height",
+            "0",
+            "important"
+        );
+
+        doc.body.style.setProperty(
+            "margin",
+            "0",
+            "important"
+        );
+
+        doc.body.style.setProperty(
+            "padding",
+            "18px",
+            "important"
+        );
+
+        doc.body.style.setProperty(
+            "background",
+            "#ffffff",
+            "important"
+        );
+
+
+        var style = doc.createElement(
+            "style"
+        );
+
+
+        style.id = (
+            "productivity-direct-image-style-v120"
+        );
+
+
+        style.textContent = [
+            "html, body {",
+            "  width: auto !important;",
+            "  height: auto !important;",
+            "  min-height: 0 !important;",
+            "  background: #ffffff !important;",
+            "  color: #111111 !important;",
+            "  font-family: Arial, Helvetica, sans-serif !important;",
+            "}",
+
+            ".print-actions {",
+            "  display: none !important;",
+            "}",
+
+            "table {",
+            "  border-collapse: collapse !important;",
+            "  background: #ffffff !important;",
+            "}",
+
+            "th {",
+            "  font-size: 14px !important;",
+            "  font-weight: 700 !important;",
+            "  color: #000000 !important;",
+            "  background: #eeeeee !important;",
+            "  border: 1px solid #8f8f8f !important;",
+            "  padding: 7px 8px !important;",
+            "  white-space: nowrap !important;",
+            "}",
+
+            "td {",
+            "  font-size: 13px !important;",
+            "  font-weight: 600 !important;",
+            "  color: #111111 !important;",
+            "  border: 1px solid #b5b5b5 !important;",
+            "  padding: 6px 8px !important;",
+            "  white-space: nowrap !important;",
+            "}",
+
+            "strong, b {",
+            "  font-weight: 700 !important;",
+            "  color: #000000 !important;",
+            "}",
+
+            ""
+        ].join(
+            "\n"
+        );
+
+
+        doc.head.appendChild(
+            style
+        );
+    }
+
+
+    function productivity_v120_get_size(
+        frameWindow
+    ) {
+
+        var doc = frameWindow.document;
+
+        var body = doc.body;
+
+        var html = doc.documentElement;
+
+
+        var width = Math.ceil(
+            Math.max(
+                body.scrollWidth || 0,
+                body.offsetWidth || 0,
+                html.scrollWidth || 0,
+                html.offsetWidth || 0
+            )
+        );
+
+
+        var height = Math.ceil(
+            Math.max(
+                body.scrollHeight || 0,
+                body.offsetHeight || 0,
+                html.scrollHeight || 0,
+                html.offsetHeight || 0
+            )
+        );
+
+
+        var table = doc.querySelector(
+            "table"
+        );
+
+
+        if (table) {
+
+            width = Math.max(
+                width,
+                Math.ceil(
+                    table.scrollWidth
+                    + 36
+                )
+            );
+
+
+            height = Math.max(
+                height,
+                Math.ceil(
+                    table.getBoundingClientRect().bottom
+                    + 36
+                )
+            );
+        }
+
+
+        return {
+            width:
+                Math.max(
+                    width,
+                    1800
+                ),
+
+            height:
+                Math.max(
+                    height,
+                    400
+                )
+        };
+    }
+
+
+
+    // ========================================================
+    // KOSI_PRODUCTIVITY_REMOVE_EXPORT_TOOLBAR_V121
+    //
+    // Remove the clean-preview action bar BEFORE html2canvas
+    // receives the document.
+    //
+    // This removes:
+    //   Print / Save as PDF
+    //   Download Image
+    //   Close
+    //   preview helper text
+    // ========================================================
+
+    function productivity_v121_strip_export_toolbar(
+        previewHtml
+    ) {
+
+        var html = String(
+            previewHtml
+            || ""
+        );
+
+
+        // Remove complete preview action toolbar.
+        html = html.replace(
+            /<div\b[^>]*class=["'][^"']*\bprint-actions\b[^"']*["'][^>]*>[\s\S]*?<\/div>/gi,
+            ""
+        );
+
+
+        // Extra safety: remove helper text if it somehow
+        // exists outside the action toolbar.
+        html = html.replace(
+            /<span\b[^>]*class=["'][^"']*\bprint-help\b[^"']*["'][^>]*>[\s\S]*?<\/span>/gi,
+            ""
+        );
+
+
+        return html;
+    }
+
+
+    // END KOSI_PRODUCTIVITY_REMOVE_EXPORT_TOOLBAR_V121
+
+
+    async function productivity_v120_download_html(
+        previewHtml,
+        mainButton,
+        originalButtonHtml
+    ) {
+
+        var iframe = document.createElement(
+            "iframe"
+        );
+
+
+        iframe.style.position = "fixed";
+        iframe.style.left = "-12000px";
+        iframe.style.top = "0";
+        iframe.style.width = "2200px";
+        iframe.style.height = "1400px";
+        iframe.style.border = "0";
+        iframe.style.pointerEvents = "none";
+        iframe.style.zIndex = "-99999";
+        iframe.style.background = "#ffffff";
+
+
+        document.body.appendChild(
+            iframe
+        );
+
+
+        try {
+
+            await new Promise(
+                function (
+                    resolve,
+                    reject
+                ) {
+
+                    var timeout = setTimeout(
+                        function () {
+
+                            reject(
+                                new Error(
+                                    "Productivity preview timed out."
+                                )
+                            );
+                        },
+                        10000
+                    );
+
+
+                    iframe.onload = function () {
+
+                        clearTimeout(
+                            timeout
+                        );
+
+                        resolve();
+                    };
+
+
+                    iframe.srcdoc = (
+                        productivity_v121_strip_export_toolbar(
+                            previewHtml
+                        )
+                    );
+                }
+            );
+
+
+            var frameWindow = iframe.contentWindow;
+
+
+            if (
+                !frameWindow
+                || !frameWindow.document
+                || !frameWindow.document.body
+            ) {
+
+                throw new Error(
+                    "Productivity image frame is unavailable."
+                );
+            }
+
+
+            productivity_v120_prepare_document(
+                frameWindow
+            );
+
+
+            if (
+                frameWindow.document.fonts
+                && frameWindow.document.fonts.ready
+            ) {
+
+                try {
+
+                    await Promise.race([
+                        frameWindow.document.fonts.ready,
+
+                        new Promise(
+                            function (
+                                resolve
+                            ) {
+
+                                setTimeout(
+                                    resolve,
+                                    1000
+                                );
+                            }
+                        )
+                    ]);
+
+                } catch (
+                    error
+                ) {
+                    // Continue.
+                }
+            }
+
+
+            var html2canvas = (
+                await productivity_v120_load_html2canvas(
+                    frameWindow
+                )
+            );
+
+
+            await new Promise(
+                function (
+                    resolve
+                ) {
+
+                    setTimeout(
+                        resolve,
+                        300
+                    );
+                }
+            );
+
+
+            var size = (
+                productivity_v120_get_size(
+                    frameWindow
+                )
+            );
+
+
+            iframe.style.width = (
+                size.width
+                + "px"
+            );
+
+            iframe.style.height = (
+                size.height
+                + "px"
+            );
+
+
+            await new Promise(
+                function (
+                    resolve
+                ) {
+
+                    frameWindow.requestAnimationFrame(
+                        function () {
+
+                            frameWindow.requestAnimationFrame(
+                                resolve
+                            );
+                        }
+                    );
+                }
+            );
+
+
+            size = (
+                productivity_v120_get_size(
+                    frameWindow
+                )
+            );
+
+
+            var canvas = await html2canvas(
+                frameWindow.document.body,
+                {
+                    backgroundColor:
+                        "#ffffff",
+
+                    scale:
+                        3,
+
+                    useCORS:
+                        true,
+
+                    allowTaint:
+                        false,
+
+                    logging:
+                        false,
+
+                    width:
+                        size.width,
+
+                    height:
+                        size.height,
+
+                    windowWidth:
+                        size.width,
+
+                    windowHeight:
+                        size.height,
+
+                    scrollX:
+                        0,
+
+                    scrollY:
+                        0
+                }
+            );
+
+
+            var link = document.createElement(
+                "a"
+            );
+
+
+            link.download = (
+                productivity_v120_filename()
+            );
+
+
+            link.href = canvas.toDataURL(
+                "image/png"
+            );
+
+
+            document.body.appendChild(
+                link
+            );
+
+
+            link.click();
+
+            link.remove();
+
+
+            frappe.show_alert({
+                message:
+                    __(
+                        "Productivity image downloaded."
+                    ),
+
+                indicator:
+                    "green"
+            });
+
+
+        } catch (
+            error
+        ) {
+
+            console.error(
+                "Productivity V120 download failed:",
+                error
+            );
+
+
+            frappe.msgprint({
+                title:
+                    __(
+                        "Download Image"
+                    ),
+
+                indicator:
+                    "red",
+
+                message:
+                    __(
+                        "Could not create the Productivity image."
+                    )
+            });
+
+
+        } finally {
+
+            iframe.remove();
+
+
+            if (mainButton) {
+
+                mainButton.disabled = false;
+
+                mainButton.innerHTML = (
+                    originalButtonHtml
+                );
+            }
+        }
+    }
+
+
+    document.addEventListener(
+        "click",
+        function (
+            event
+        ) {
+
+            var target = event.target;
+
+
+            if (
+                !target
+                || !target.closest
+            ) {
+                return;
+            }
+
+
+            var button = target.closest(
+                "button, a, .btn"
+            );
+
+
+            if (!button) {
+                return;
+            }
+
+
+            var label = (
+                normalize_productivity_download_label(
+                    button.textContent
+                )
+            );
+
+
+            if (
+                label !== "Download Image"
+                && label !== "🖨 Download Image"
+            ) {
+                return;
+            }
+
+
+            var originalButtonHtml = (
+                button.innerHTML
+            );
+
+
+            button.disabled = true;
+
+            button.textContent = (
+                "Preparing Image..."
+            );
+
+
+            var originalOpen = window.open;
+
+            var intercepted = false;
+
+
+            window.open = function (
+                url,
+                targetName,
+                features
+            ) {
+
+                if (intercepted) {
+
+                    return originalOpen.call(
+                        window,
+                        url,
+                        targetName,
+                        features
+                    );
+                }
+
+
+                intercepted = true;
+
+                window.open = originalOpen;
+
+
+                // Disable older V118 auto-preview behaviour.
+                try {
+
+                    window.__productivity_direct_download_v118 = false;
+
+                } catch (
+                    error
+                ) {
+                    // Ignore.
+                }
+
+
+                var htmlBuffer = "";
+
+                var closed = false;
+
+
+                var fakeDocument = {
+
+                    open:
+                        function () {
+
+                            htmlBuffer = "";
+
+                            return fakeDocument;
+                        },
+
+
+                    write:
+                        function (
+                            value
+                        ) {
+
+                            htmlBuffer += String(
+                                value == null
+                                    ? ""
+                                    : value
+                            );
+                        },
+
+
+                    writeln:
+                        function (
+                            value
+                        ) {
+
+                            htmlBuffer += (
+                                String(
+                                    value == null
+                                        ? ""
+                                        : value
+                                )
+                                + "\n"
+                            );
+                        },
+
+
+                    close:
+                        function () {
+
+                            if (closed) {
+                                return;
+                            }
+
+
+                            closed = true;
+
+
+                            Promise.resolve()
+                                .then(
+                                    function () {
+
+                                        if (
+                                            !htmlBuffer
+                                            || htmlBuffer.length < 100
+                                        ) {
+
+                                            throw new Error(
+                                                "Productivity preview HTML is empty."
+                                            );
+                                        }
+
+
+                                        return (
+                                            productivity_v120_download_html(
+                                                htmlBuffer,
+                                                button,
+                                                originalButtonHtml
+                                            )
+                                        );
+                                    }
+                                )
+                                .catch(
+                                    function (
+                                        error
+                                    ) {
+
+                                        console.error(
+                                            "Productivity V120 preparation failed:",
+                                            error
+                                        );
+
+
+                                        button.disabled = false;
+
+                                        button.innerHTML = (
+                                            originalButtonHtml
+                                        );
+
+
+                                        frappe.msgprint({
+                                            title:
+                                                __(
+                                                    "Download Image"
+                                                ),
+
+                                            indicator:
+                                                "red",
+
+                                            message:
+                                                __(
+                                                    "Could not prepare the Productivity image."
+                                                )
+                                        });
+                                    }
+                                );
+                        }
+                };
+
+
+                return {
+                    document:
+                        fakeDocument,
+
+                    focus:
+                        function () {
+                            // No visible preview.
+                        },
+
+                    close:
+                        function () {
+                            // No visible preview.
+                        },
+
+                    print:
+                        function () {
+                            // Printing not required.
+                        },
+
+                    closed:
+                        false
+                };
+            };
+
+
+            // Restore window.open if original Productivity
+            // handler unexpectedly never opens its preview.
+            setTimeout(
+                function () {
+
+                    if (
+                        window.open !== originalOpen
+                    ) {
+
+                        window.open = originalOpen;
+
+
+                        button.disabled = false;
+
+                        button.innerHTML = (
+                            originalButtonHtml
+                        );
+                    }
+
+                },
+                2500
+            );
+        },
+        true
+    );
+})();
+
+
+// END KOSI_PRODUCTIVITY_DIRECT_IMAGE_V120

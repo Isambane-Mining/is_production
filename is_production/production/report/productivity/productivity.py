@@ -63839,3 +63839,795 @@ def execute(filters=None):
 
 
 # END KOSI_PRODUCTIVITY_HOURS_MATERIAL_SELECTED_ASSET_V113
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_TALLIES_PRESENTATION_PARITY_V114A
+#
+# PURPOSE
+# ------------------------------------------------------------
+#
+# Give TALLIES BCMs the same final report PRESENTATION and
+# behaviour as ACTUAL BCMs without replacing Tallies detail
+# rows with Survey detail rows.
+#
+# Preserve Tallies:
+#
+#     BCM values
+#     Working Hours
+#     Machine hierarchy
+#     Material hierarchy
+#     Mining-area detail rows
+#     From Area
+#     To Area
+#     Hauling Distance
+#     Productivity BCM/Hr
+#
+# Add / align:
+#
+#     Output Tallies (BCM)
+#     Output Tallies (Coal Tonnes)
+#     Coal Tonnes immediately after BCM
+#     same column order as Actual
+#     BCM/HD calculated from Tallies BCM when distance exists
+#
+# Applies to:
+#
+#     Hours and Material
+#     Summary Per Machine
+#
+#     Excavator
+#     ADT
+#     Dozer
+#
+#     selected asset
+#     asset blank
+#
+# IMPORTANT:
+#
+# Tallies detail structure is intentionally allowed to differ
+# from Actual because Tallies uses its own mining-area source.
+# ============================================================
+
+
+_productivity_execute_before_tallies_presentation_v114a = execute
+
+
+def _productivity_v114a_text(value):
+
+    return str(
+        value
+        or ""
+    ).strip()
+
+
+def _productivity_v114a_number(value):
+
+    try:
+
+        if value in (
+            None,
+            "",
+        ):
+            return 0.0
+
+
+        if isinstance(
+            value,
+            str,
+        ):
+
+            value = (
+                value
+                .replace(",", "")
+                .replace(" ", "")
+                .strip()
+            )
+
+
+        return float(
+            value
+            or 0
+        )
+
+
+    except Exception:
+
+        return 0.0
+
+
+def _productivity_v114a_target(filters):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+
+    return (
+        _productivity_v114a_text(
+            filters.get(
+                "bcm_basis"
+            )
+        )
+        == "Tallies BCMs"
+
+        and
+
+        _productivity_v114a_text(
+            filters.get(
+                "summary_view"
+            )
+        )
+        in (
+            "Hours and Material",
+            "Summary Per Machine",
+        )
+    )
+
+
+def _productivity_v114a_actual_filters(
+    filters,
+    remove_asset=False,
+):
+
+    output = dict(
+        frappe._dict(
+            filters
+            or {}
+        )
+    )
+
+
+    output[
+        "bcm_basis"
+    ] = "Actual BCMs"
+
+
+    if remove_asset:
+
+        for key in list(
+            output.keys()
+        ):
+
+            key_text = str(
+                key
+                or ""
+            ).casefold()
+
+
+            if not (
+                "asset"
+                in key_text
+
+                or
+
+                "fleet"
+                in key_text
+            ):
+
+                continue
+
+
+            if (
+                "category"
+                in key_text
+
+                or
+
+                "ownership"
+                in key_text
+            ):
+
+                continue
+
+
+            output.pop(
+                key,
+                None,
+            )
+
+
+    return output
+
+
+def _productivity_v114a_is_coal(
+    row,
+):
+
+    if not hasattr(
+        row,
+        "get",
+    ):
+
+        return False
+
+
+    fields = (
+        "label",
+        "material",
+        "parent_material",
+        "productivity_all_machine_parent_material_v87",
+        "productivity_summary_parent_material_v34",
+        "productivity_summary_area_parent_material_v51",
+        "productivity_tallies_parent_material_v99",
+    )
+
+
+    for fieldname in fields:
+
+        text = (
+            _productivity_v114a_text(
+                row.get(
+                    fieldname
+                )
+            )
+            .casefold()
+        )
+
+
+        if not text:
+
+            continue
+
+
+        if (
+            text == "coal"
+
+            or
+
+            "coal" in text
+        ):
+
+            return True
+
+
+    return False
+
+
+def _productivity_v114a_density(
+    rows,
+):
+
+    candidates = []
+
+
+    for row in (
+        rows
+        or []
+    ):
+
+        if not (
+            hasattr(
+                row,
+                "get",
+            )
+
+            and
+
+            _productivity_v114a_is_coal(
+                row
+            )
+        ):
+
+            continue
+
+
+        bcm = (
+            _productivity_v114a_number(
+                row.get(
+                    "output"
+                )
+            )
+        )
+
+
+        tonnes = (
+            _productivity_v114a_number(
+                row.get(
+                    "output_coal_tonnes"
+                )
+            )
+        )
+
+
+        if (
+            bcm <= 0
+
+            or
+
+            tonnes <= 0
+        ):
+
+            continue
+
+
+        candidates.append(
+            (
+                bcm,
+                tonnes / bcm,
+            )
+        )
+
+
+    if not candidates:
+
+        return 0.0
+
+
+    # Largest Coal row avoids deriving density from tiny,
+    # rounded detail rows.
+    candidates.sort(
+        key=lambda item: item[0],
+        reverse=True,
+    )
+
+
+    return float(
+        candidates[
+            0
+        ][
+            1
+        ]
+    )
+
+
+def _productivity_v114a_average_hd(
+    value,
+):
+
+    import re
+
+
+    text = (
+        _productivity_v114a_text(
+            value
+        )
+        .replace("–", "-")
+        .replace("—", "-")
+    )
+
+
+    if not text:
+
+        return 0.0
+
+
+    values = re.findall(
+        r"\d+(?:\.\d+)?",
+        text,
+    )
+
+
+    if not values:
+
+        return 0.0
+
+
+    numbers = [
+        float(
+            value
+        )
+
+        for value
+        in values
+    ]
+
+
+    if len(
+        numbers
+    ) >= 2:
+
+        return (
+            numbers[
+                0
+            ]
+            + numbers[
+                1
+            ]
+        ) / 2.0
+
+
+    return numbers[
+        0
+    ]
+
+
+def _productivity_v114a_columns(
+    actual_columns,
+):
+
+    output = []
+
+
+    for original in (
+        actual_columns
+        or []
+    ):
+
+        if not hasattr(
+            original,
+            "get",
+        ):
+
+            output.append(
+                original
+            )
+
+            continue
+
+
+        column = dict(
+            original
+        )
+
+
+        fieldname = (
+            _productivity_v114a_text(
+                column.get(
+                    "fieldname"
+                )
+            )
+        )
+
+
+        if fieldname == "output":
+
+            column[
+                "label"
+            ] = "Output Tallies (BCM)"
+
+
+        elif fieldname == "output_coal_tonnes":
+
+            column[
+                "label"
+            ] = (
+                "Output Tallies "
+                "(Coal Tonnes)"
+            )
+
+
+            column[
+                "precision"
+            ] = 0
+
+
+        output.append(
+            column
+        )
+
+
+    return output
+
+
+def _productivity_v114a_rows(
+    rows,
+    coal_density,
+):
+
+    output = []
+
+
+    for original in (
+        rows
+        or []
+    ):
+
+        if not hasattr(
+            original,
+            "get",
+        ):
+
+            output.append(
+                original
+            )
+
+            continue
+
+
+        row = dict(
+            original
+        )
+
+
+        bcm = (
+            _productivity_v114a_number(
+                row.get(
+                    "output"
+                )
+            )
+        )
+
+
+        # ====================================================
+        # COAL TONNES
+        # ====================================================
+
+        if (
+            _productivity_v114a_is_coal(
+                row
+            )
+
+            and
+
+            bcm > 0
+
+            and
+
+            coal_density > 0
+        ):
+
+            row[
+                "output_coal_tonnes"
+            ] = int(
+                round(
+                    bcm
+                    * coal_density
+                )
+            )
+
+
+        else:
+
+            row[
+                "output_coal_tonnes"
+            ] = ""
+
+
+        # ====================================================
+        # BCM / HD
+        #
+        # Only where Tallies itself already has a distance.
+        # Do NOT import Survey distance into Tallies.
+        # ====================================================
+
+        average_hd = (
+            _productivity_v114a_average_hd(
+                row.get(
+                    "hauling_distance_m"
+                )
+            )
+        )
+
+
+        if (
+            bcm > 0
+
+            and
+
+            average_hd > 0
+        ):
+
+            row[
+                "productivity_bcm_hd"
+            ] = round(
+                bcm
+                / average_hd,
+                2,
+            )
+
+
+        row[
+            "productivity_tallies_presentation_v114a"
+        ] = 1
+
+
+        output.append(
+            row
+        )
+
+
+    return output
+
+
+def execute(filters=None):
+
+    # ========================================================
+    # ACTUAL BCMs:
+    # Completely untouched.
+    # ========================================================
+
+    if not _productivity_v114a_target(
+        filters
+    ):
+
+        return (
+            _productivity_execute_before_tallies_presentation_v114a(
+                filters
+            )
+        )
+
+
+    # ========================================================
+    # EXISTING TALLIES RESULT
+    # ========================================================
+
+    tallies_result = (
+        _productivity_execute_before_tallies_presentation_v114a(
+            filters
+        )
+    )
+
+
+    if not isinstance(
+        tallies_result,
+        (
+            list,
+            tuple,
+        ),
+    ):
+
+        return tallies_result
+
+
+    if len(
+        tallies_result
+    ) < 2:
+
+        return tallies_result
+
+
+    # ========================================================
+    # ACTUAL RESULT
+    #
+    # Used only for:
+    #
+    #   column order
+    #   Coal density
+    #
+    # Actual rows/BCM are NOT copied into Tallies.
+    # ========================================================
+
+    actual_filters = (
+        _productivity_v114a_actual_filters(
+            filters
+        )
+    )
+
+
+    actual_result = (
+        _productivity_execute_before_tallies_presentation_v114a(
+            actual_filters
+        )
+    )
+
+
+    actual_rows = (
+        list(
+            actual_result[
+                1
+            ]
+            or []
+        )
+
+        if (
+            isinstance(
+                actual_result,
+                (
+                    list,
+                    tuple,
+                ),
+            )
+
+            and
+
+            len(
+                actual_result
+            ) >= 2
+        )
+
+        else []
+    )
+
+
+    coal_density = (
+        _productivity_v114a_density(
+            actual_rows
+        )
+    )
+
+
+    # Selected machine might not have Coal.
+    # Fall back to same report without Asset filter.
+    if coal_density <= 0:
+
+        full_actual_filters = (
+            _productivity_v114a_actual_filters(
+                filters,
+                remove_asset=True,
+            )
+        )
+
+
+        full_actual_result = (
+            _productivity_execute_before_tallies_presentation_v114a(
+                full_actual_filters
+            )
+        )
+
+
+        if (
+            isinstance(
+                full_actual_result,
+                (
+                    list,
+                    tuple,
+                ),
+            )
+
+            and
+
+            len(
+                full_actual_result
+            ) >= 2
+        ):
+
+            coal_density = (
+                _productivity_v114a_density(
+                    full_actual_result[
+                        1
+                    ]
+                )
+            )
+
+
+    parts = list(
+        tallies_result
+    )
+
+
+    # Same column order as Actual.
+    if (
+        isinstance(
+            actual_result,
+            (
+                list,
+                tuple,
+            ),
+        )
+
+        and
+
+        len(
+            actual_result
+        ) >= 1
+    ):
+
+        parts[
+            0
+        ] = (
+            _productivity_v114a_columns(
+                actual_result[
+                    0
+                ]
+            )
+        )
+
+
+    parts[
+        1
+    ] = (
+        _productivity_v114a_rows(
+            parts[
+                1
+            ],
+            coal_density,
+        )
+    )
+
+
+    if isinstance(
+        tallies_result,
+        tuple,
+    ):
+
+        return tuple(
+            parts
+        )
+
+
+    return parts
+
+
+# END KOSI_PRODUCTIVITY_TALLIES_PRESENTATION_PARITY_V114A
