@@ -61,6 +61,33 @@ DEFAULT_MACHINE_SCOPE = "Include Swing/Spare"
 DEFAULT_AU_TARGET_FILTER = "85% A & U"
 DEFAULT_ASSET_OWNERSHIP = "Isambane & Excavo Assets"
 
+SITE_DATE_FIELDS = {
+    "Klipfontein": (
+        "klipfontein_from_date",
+        "klipfontein_to_date",
+    ),
+    "Gwab": (
+        "gwab_from_date",
+        "gwab_to_date",
+    ),
+    "Kriel Rehabilitation": (
+        "kriel_rehabilitation_from_date",
+        "kriel_rehabilitation_to_date",
+    ),
+    "Bankfontein": (
+        "bankfontein_from_date",
+        "bankfontein_to_date",
+    ),
+    "Uitgevallen": (
+        "uitgevallen_from_date",
+        "uitgevallen_to_date",
+    ),
+    "Koppie": (
+        "koppie_from_date",
+        "koppie_to_date",
+    ),
+}
+
 AVAILABILITY_TARGET = 85.0
 UTILISATION_TARGET = 80.0
 
@@ -90,16 +117,10 @@ def execute(filters=None):
     columns = get_columns()
     filters = frappe._dict(filters or {})
 
-    if (
-        not filters.get("start_date")
-        or not filters.get("end_date")
-        or not filters.get("site")
-    ):
+    if not filters.get("site"):
         return columns, []
 
     (
-        start_date,
-        end_date,
         sites,
         summary_type,
         machine_scope,
@@ -125,6 +146,8 @@ def execute(filters=None):
         data.append(
             {
                 "site": payload["site"],
+                "start_date": payload["start_date"],
+                "end_date": payload["end_date"],
                 "period": payload["period_label"],
                 "summary_type": availability.get("summary_type"),
                 "machine_scope": availability.get("machine_scope"),
@@ -399,8 +422,6 @@ def get_report_payload(
     filters = frappe._dict(filters or {})
 
     (
-        start_date,
-        end_date,
         sites,
         summary_type,
         machine_scope,
@@ -409,7 +430,17 @@ def get_report_payload(
 
     site = site_override or sites[0]
 
-    monthly_plan = get_monthly_plan(site, end_date)
+    start_date, end_date = (
+        get_site_date_range(
+            filters,
+            site,
+        )
+    )
+
+    monthly_plan = get_monthly_plan(
+        site,
+        end_date,
+    )
     if not monthly_plan:
         frappe.throw(
             _("No Monthly Production Planning record was found for {0} on {1}.").format(
@@ -863,10 +894,63 @@ def parse_site_filter(value):
     return sites
 
 
+def get_site_date_range(
+    filters,
+    site,
+):
+    fields = SITE_DATE_FIELDS.get(site)
+
+    if not fields:
+        frappe.throw(
+            _(
+                "No HOD date filters are configured for {0}."
+            ).format(
+                frappe.bold(site)
+            )
+        )
+
+    from_field, to_field = fields
+
+    start_date = filters.get(from_field)
+    end_date = filters.get(to_field)
+
+    if not start_date:
+        frappe.throw(
+            _(
+                "From Date is required for {0}."
+            ).format(
+                frappe.bold(site)
+            )
+        )
+
+    if not end_date:
+        frappe.throw(
+            _(
+                "To Date is required for {0}."
+            ).format(
+                frappe.bold(site)
+            )
+        )
+
+    start_date = getdate(start_date)
+    end_date = getdate(end_date)
+
+    if start_date > end_date:
+        frappe.throw(
+            _(
+                "From Date cannot be after To Date for {0}."
+            ).format(
+                frappe.bold(site)
+            )
+        )
+
+    return start_date, end_date
+
+
 def validate_filters(filters):
-    start_date = filters.get("start_date")
-    end_date = filters.get("end_date")
-    sites = parse_site_filter(filters.get("site"))
+    sites = parse_site_filter(
+        filters.get("site")
+    )
 
     summary_type = (
         filters.get("summary_type")
@@ -883,55 +967,57 @@ def validate_filters(filters):
         or DEFAULT_AU_TARGET_FILTER
     ).strip()
 
-    if not start_date:
-        frappe.throw(_("Start Date is required."))
-
-    if not end_date:
-        frappe.throw(_("End Date is required."))
-
     if not sites:
-        frappe.throw(_("At least one Site is required."))
-
-    start_date = getdate(start_date)
-    end_date = getdate(end_date)
-
-    if start_date > end_date:
         frappe.throw(
-            _("Start Date cannot be after End Date.")
+            _("At least one Site is required.")
         )
 
     for site in sites:
-        if not frappe.db.exists("Location", site):
+        if not frappe.db.exists(
+            "Location",
+            site,
+        ):
             frappe.throw(
-                _("Location {0} does not exist.").format(
+                _(
+                    "Location {0} does not exist."
+                ).format(
                     frappe.bold(site)
                 )
             )
 
+        get_site_date_range(
+            filters,
+            site,
+        )
+
     if summary_type not in SUMMARY_TYPES:
         frappe.throw(
-            _("Summary Type must be one of: {0}.").format(
+            _(
+                "Summary Type must be one of: {0}."
+            ).format(
                 ", ".join(SUMMARY_TYPES)
             )
         )
 
     if machine_scope not in MACHINE_SCOPES:
         frappe.throw(
-            _("Machine Scope must be one of: {0}.").format(
+            _(
+                "Machine Scope must be one of: {0}."
+            ).format(
                 ", ".join(MACHINE_SCOPES)
             )
         )
 
     if au_target_filter not in AU_TARGET_FILTERS:
         frappe.throw(
-            _("A & U Target must be one of: {0}.").format(
+            _(
+                "A & U Target must be one of: {0}."
+            ).format(
                 ", ".join(AU_TARGET_FILTERS)
             )
         )
 
     return (
-        start_date,
-        end_date,
         sites,
         summary_type,
         machine_scope,
@@ -2681,10 +2767,15 @@ def download_captured_presentation(
         str(site or "Sites"),
     ).strip("_")
 
-    filename = (
-        f"HOD_Presentation_{safe_site}_"
-        f"{start_date}_to_{end_date}.pptx"
-    )
+    if start_date and end_date:
+        filename = (
+            f"HOD_Presentation_{safe_site}_"
+            f"{start_date}_to_{end_date}.pptx"
+        )
+    else:
+        filename = (
+            f"HOD_Presentation_{safe_site}.pptx"
+        )
 
     return {
         "filename": filename,
