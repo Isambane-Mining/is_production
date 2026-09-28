@@ -272,6 +272,163 @@ function normaliseHodSites(value) {
 
 
 
+const HOD_SITE_COMPLEXES = [
+    {
+        name: "Middelburg Complex",
+        sites: [
+            "Klipfontein",
+            "Gwab",
+            "Kriel Rehabilitation",
+            "Bankfontein"
+        ]
+    },
+    {
+        name: "Ermelo Complex",
+        sites: [
+            "Uitgevallen",
+            "Koppie"
+        ]
+    }
+];
+
+
+function hodGetComplexName(site) {
+    const siteName = String(site || "").trim();
+
+    const complex = HOD_SITE_COMPLEXES.find(item =>
+        item.sites.includes(siteName)
+    );
+
+    return complex ? complex.name : "Other Sites";
+}
+
+
+function hodOrderRowsByComplex(rows) {
+    const order = [];
+
+    HOD_SITE_COMPLEXES.forEach(complex => {
+        complex.sites.forEach(site => {
+            const row = rows.find(
+                candidate => candidate.site === site
+            );
+
+            if (row) {
+                order.push(row);
+            }
+        });
+    });
+
+    rows.forEach(row => {
+        if (!order.includes(row)) {
+            order.push(row);
+        }
+    });
+
+    return order;
+}
+
+
+function hodRenderProductionComplexGroups(rows) {
+    const groups = [];
+
+    HOD_SITE_COMPLEXES.forEach(complex => {
+        const complexRows = rows.filter(row =>
+            complex.sites.includes(row.site)
+        );
+
+        if (!complexRows.length) {
+            return;
+        }
+
+        groups.push(`
+            <div class="hod-browser-complex-group">
+                <div class="hod-browser-complex-title">
+                    ${hodEscape(complex.name)}
+                </div>
+
+                <div class="hod-browser-site-grid">
+                    ${complexRows
+                        .map(row => hodRenderSiteCard(row))
+                        .join("")}
+                </div>
+            </div>
+        `);
+    });
+
+    const knownSites = HOD_SITE_COMPLEXES
+        .flatMap(complex => complex.sites);
+
+    const otherRows = rows.filter(
+        row => !knownSites.includes(row.site)
+    );
+
+    if (otherRows.length) {
+        groups.push(`
+            <div class="hod-browser-complex-group">
+                <div class="hod-browser-complex-title">
+                    Other Sites
+                </div>
+
+                <div class="hod-browser-site-grid">
+                    ${otherRows
+                        .map(row => hodRenderSiteCard(row))
+                        .join("")}
+                </div>
+            </div>
+        `);
+    }
+
+    return groups.join("");
+}
+
+
+function hodRenderAvailabilityComplexGroups(rows) {
+    const groups = [];
+
+    HOD_SITE_COMPLEXES.forEach(complex => {
+        const complexRows = rows.filter(row =>
+            complex.sites.includes(row.site)
+        );
+
+        if (!complexRows.length) {
+            return;
+        }
+
+        groups.push(`
+            <div class="hod-browser-complex-group">
+                <div class="hod-browser-complex-title">
+                    ${hodEscape(complex.name)}
+                </div>
+
+                <div class="hod-browser-au-site-stack">
+                    ${complexRows
+                        .map(row => {
+                            const index = rows.indexOf(row);
+
+                            return `
+                                <div
+                                    class="hod-browser-au-site"
+                                    data-site-index="${index}"
+                                    data-site-name="${hodEscape(row.site)}"
+                                >
+                                    <div class="hod-browser-au-loading">
+                                        Loading Availability &amp; Utilisation
+                                        for ${hodEscape(row.site)}...
+                                    </div>
+                                </div>
+                            `;
+                        })
+                        .join("")}
+                </div>
+            </div>
+        `);
+    });
+
+    return groups.join("");
+}
+
+
+
 async function downloadHodPresentation(report) {
     const getFilterValue = fieldname => {
         if (
@@ -288,7 +445,22 @@ async function downloadHodPresentation(report) {
 
     const selectedSites = normaliseHodSites(
         getFilterValue("site")
-    );
+    ).sort((left, right) => {
+        const orderedSites = HOD_SITE_COMPLEXES
+            .flatMap(complex => complex.sites);
+
+        const leftIndex = orderedSites.indexOf(left);
+        const rightIndex = orderedSites.indexOf(right);
+
+        if (leftIndex === -1 && rightIndex === -1) {
+            return left.localeCompare(right);
+        }
+
+        if (leftIndex === -1) return 1;
+        if (rightIndex === -1) return -1;
+
+        return leftIndex - rightIndex;
+    });
 
     const startDate = getFilterValue("start_date");
     const endDate = getFilterValue("end_date");
@@ -387,8 +559,12 @@ async function downloadHodPresentation(report) {
             index += 1
         ) {
             const siteName =
+                auSites[index].dataset.siteName ||
                 selectedSites[index] ||
                 `Site ${index + 1}`;
+
+            const complexName =
+                hodGetComplexName(siteName);
 
             const auPanel =
                 auSites[index].querySelector(
@@ -401,6 +577,8 @@ async function downloadHodPresentation(report) {
             ) {
                 capturedSlides.push({
                     title:
+                        complexName +
+                        " - " +
                         categorySection.title +
                         " - " +
                         siteName,
@@ -423,6 +601,8 @@ async function downloadHodPresentation(report) {
             ) {
                 capturedSlides.push({
                     title:
+                        complexName +
+                        " - " +
                         categorySection.category +
                         " Hours Based Performance - " +
                         siteName,
@@ -889,13 +1069,15 @@ function renderHodPresentationLayout(report) {
             ? report.raw_data.result
             : [];
 
-    const rows = (
-        rawRows.length
-            ? rawRows
-            : Array.isArray(report.data)
-                ? report.data
-                : []
-    ).filter(row => row && row.site);
+    const rows = hodOrderRowsByComplex(
+        (
+            rawRows.length
+                ? rawRows
+                : Array.isArray(report.data)
+                    ? report.data
+                    : []
+        ).filter(row => row && row.site)
+    );
 
     report.page.main
         .find(".hod-presentation-layout")
@@ -929,21 +1111,8 @@ function renderHodPresentationLayout(report) {
             .slice(2)
     ].join("-");
 
-    const availabilitySlots = rows
-        .map((row, index) => {
-            return `
-                <div
-                    class="hod-browser-au-site"
-                    data-site-index="${index}"
-                >
-                    <div class="hod-browser-au-loading">
-                        Loading Availability &amp; Utilisation
-                        for ${hodEscape(row.site)}...
-                    </div>
-                </div>
-            `;
-        })
-        .join("");
+    const availabilitySlots =
+        hodRenderAvailabilityComplexGroups(rows);
 
     const layout = $(`
         <div
@@ -997,10 +1166,8 @@ function renderHodPresentationLayout(report) {
                     </div>
                 </div>
 
-                <div class="hod-browser-site-grid">
-                    ${rows
-                        .map(row => hodRenderSiteCard(row))
-                        .join("")}
+                <div class="hod-browser-complex-list">
+                    ${hodRenderProductionComplexGroups(rows)}
                 </div>
             </section>
 
@@ -1027,7 +1194,7 @@ function renderHodPresentationLayout(report) {
                     </div>
                 </div>
 
-                <div class="hod-browser-au-site-stack">
+                <div class="hod-browser-complex-list">
                     ${availabilitySlots}
                 </div>
             </section>
@@ -1908,6 +2075,30 @@ function injectHodPresentationStyles() {
 
         .hod-browser-muted {
             color: #64748b !important;
+        }
+
+        .hod-browser-complex-list {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+        }
+
+        .hod-browser-complex-group {
+            min-width: 0;
+        }
+
+        .hod-browser-complex-title {
+            background: #111827;
+            color: #ffffff;
+            border-left: 5px solid #e03124;
+            padding: 9px 12px;
+            margin: 2px 0 10px;
+            border-radius: 5px;
+            font-size: 15px;
+            line-height: 1.2;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
         }
 
         .hod-browser-site-grid {

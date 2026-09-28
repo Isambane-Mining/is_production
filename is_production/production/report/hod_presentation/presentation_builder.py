@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import binascii
 from io import BytesIO
-from pathlib import Path
 from typing import BinaryIO
 
 from pptx import Presentation
@@ -21,10 +20,6 @@ BLACK = "050505"
 WHITE = "FFFFFF"
 MUTED = "AAB4C3"
 RED = "E03124"
-
-ISAMBANE_LOGO_PATH = Path(__file__).with_name(
-    "isambane_logo.png"
-)
 
 
 def build_hod_presentation(
@@ -189,16 +184,6 @@ def _add_image_fitted(
 
 
 
-def _add_slide_logo(slide) -> None:
-    if ISAMBANE_LOGO_PATH.exists():
-        slide.shapes.add_picture(
-            str(ISAMBANE_LOGO_PATH),
-            Inches(0.18),
-            Inches(0.82),
-            width=Inches(2.15),
-        )
-
-
 def _add_slide_heading(slide, title: str) -> None:
     banner = slide.shapes.add_shape(
         MSO_SHAPE.RECTANGLE,
@@ -241,7 +226,6 @@ def _blank_slide(prs: Presentation):
     fill = slide.background.fill
     fill.solid()
     fill.fore_color.rgb = _rgb(BLACK)
-    _add_slide_logo(slide)
     return slide
 
 
