@@ -48,7 +48,8 @@ def _create_hod_presentation() -> Presentation:
     for slide_id in list(
         prs.slides._sldIdLst
     ):
-        relationship_id = slide_id.rId
+        relationship_id =
+            slide_id.rId
 
         prs.part.drop_rel(
             relationship_id
