@@ -188,6 +188,17 @@ def _add_image_fitted(
     )
 
 
+
+def _add_slide_logo(slide) -> None:
+    if ISAMBANE_LOGO_PATH.exists():
+        slide.shapes.add_picture(
+            str(ISAMBANE_LOGO_PATH),
+            Inches(0.18),
+            Inches(0.82),
+            width=Inches(2.15),
+        )
+
+
 def _add_slide_heading(slide, title: str) -> None:
     banner = slide.shapes.add_shape(
         MSO_SHAPE.RECTANGLE,
@@ -211,20 +222,12 @@ def _add_slide_heading(slide, title: str) -> None:
     accent.fill.fore_color.rgb = _rgb(RED)
     accent.line.fill.background()
 
-    if ISAMBANE_LOGO_PATH.exists():
-        slide.shapes.add_picture(
-            str(ISAMBANE_LOGO_PATH),
-            Inches(0.12),
-            Inches(0.07),
-            width=Inches(1.75),
-        )
-
     _add_text(
         slide,
         title,
-        1.95,
+        0.35,
         0.08,
-        11.03,
+        12.63,
         0.48,
         20,
         WHITE,
@@ -238,6 +241,7 @@ def _blank_slide(prs: Presentation):
     fill = slide.background.fill
     fill.solid()
     fill.fore_color.rgb = _rgb(BLACK)
+    _add_slide_logo(slide)
     return slide
 
 
