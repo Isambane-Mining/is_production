@@ -391,6 +391,32 @@ def get_columns():
     ]
 
 
+def get_latest_hod_monthly_plan(site, date):
+    """Return the most recently modified matching MPP for HOD."""
+    if not site or not date:
+        return None
+
+    rows = frappe.get_all(
+        "Monthly Production Planning",
+        filters={
+            "location": site,
+            "prod_month_start_date": ["<=", date],
+            "prod_month_end_date": [">=", date],
+        },
+        fields=["name"],
+        order_by="modified desc",
+        limit_page_length=1,
+    )
+
+    if not rows:
+        return None
+
+    return frappe.get_doc(
+        "Monthly Production Planning",
+        rows[0]["name"],
+    )
+
+
 def get_report_payload(
     filters,
     include_au_detail=True,
@@ -408,7 +434,7 @@ def get_report_payload(
 
     site = site_override or sites[0]
 
-    monthly_plan = get_monthly_plan(
+    monthly_plan = get_latest_hod_monthly_plan(
         site,
         end_date,
     )
