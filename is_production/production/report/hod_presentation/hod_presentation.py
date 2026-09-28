@@ -91,14 +91,12 @@ def execute(filters=None):
     filters = frappe._dict(filters or {})
 
     if (
-        not filters.get("start_date")
-        or not filters.get("end_date")
+        not filters.get("end_date")
         or not filters.get("site")
     ):
         return columns, []
 
     (
-        start_date,
         end_date,
         sites,
         summary_type,
@@ -125,6 +123,8 @@ def execute(filters=None):
         data.append(
             {
                 "site": payload["site"],
+                "start_date": payload["start_date"],
+                "end_date": payload["end_date"],
                 "period": payload["period_label"],
                 "summary_type": availability.get("summary_type"),
                 "machine_scope": availability.get("machine_scope"),
@@ -399,7 +399,6 @@ def get_report_payload(
     filters = frappe._dict(filters or {})
 
     (
-        start_date,
         end_date,
         sites,
         summary_type,
@@ -409,7 +408,10 @@ def get_report_payload(
 
     site = site_override or sites[0]
 
-    monthly_plan = get_monthly_plan(site, end_date)
+    monthly_plan = get_monthly_plan(
+        site,
+        end_date,
+    )
     if not monthly_plan:
         frappe.throw(
             _("No Monthly Production Planning record was found for {0} on {1}.").format(
@@ -417,8 +419,14 @@ def get_report_payload(
             )
         )
 
-    plan_start = getdate(monthly_plan.prod_month_start_date)
-    plan_end = getdate(monthly_plan.prod_month_end_date)
+    plan_start = getdate(
+        monthly_plan.prod_month_start_date
+    )
+    plan_end = getdate(
+        monthly_plan.prod_month_end_date
+    )
+
+    start_date = plan_start
 
     if end_date < plan_start or end_date > plan_end:
         frappe.throw(
@@ -864,7 +872,6 @@ def parse_site_filter(value):
 
 
 def validate_filters(filters):
-    start_date = filters.get("start_date")
     end_date = filters.get("end_date")
     sites = parse_site_filter(filters.get("site"))
 
@@ -883,22 +890,13 @@ def validate_filters(filters):
         or DEFAULT_AU_TARGET_FILTER
     ).strip()
 
-    if not start_date:
-        frappe.throw(_("Start Date is required."))
-
     if not end_date:
         frappe.throw(_("End Date is required."))
 
     if not sites:
         frappe.throw(_("At least one Site is required."))
 
-    start_date = getdate(start_date)
     end_date = getdate(end_date)
-
-    if start_date > end_date:
-        frappe.throw(
-            _("Start Date cannot be after End Date.")
-        )
 
     for site in sites:
         if not frappe.db.exists("Location", site):
@@ -930,7 +928,6 @@ def validate_filters(filters):
         )
 
     return (
-        start_date,
         end_date,
         sites,
         summary_type,
@@ -2681,10 +2678,16 @@ def download_captured_presentation(
         str(site or "Sites"),
     ).strip("_")
 
-    filename = (
-        f"HOD_Presentation_{safe_site}_"
-        f"{start_date}_to_{end_date}.pptx"
-    )
+    if start_date:
+        filename = (
+            f"HOD_Presentation_{safe_site}_"
+            f"{start_date}_to_{end_date}.pptx"
+        )
+    else:
+        filename = (
+            f"HOD_Presentation_{safe_site}_"
+            f"to_{end_date}.pptx"
+        )
 
     return {
         "filename": filename,

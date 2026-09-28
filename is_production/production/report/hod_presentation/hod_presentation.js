@@ -1,23 +1,57 @@
-const hodPresentationMonthStart = (() => {
-    const today = frappe.datetime.get_today();
-    return `${today.slice(0, 7)}-01`;
-})();
+function hodGetPreviousSunday(value) {
+    const parts = String(value || "")
+        .split("-")
+        .map(Number);
+
+    if (parts.length !== 3) {
+        return value;
+    }
+
+    const date = new Date(
+        parts[0],
+        parts[1] - 1,
+        parts[2]
+    );
+
+    const weekday = date.getDay();
+
+    const daysBack =
+        weekday === 0
+            ? 7
+            : weekday;
+
+    date.setDate(
+        date.getDate() - daysBack
+    );
+
+    const year = date.getFullYear();
+
+    const month = String(
+        date.getMonth() + 1
+    ).padStart(2, "0");
+
+    const day = String(
+        date.getDate()
+    ).padStart(2, "0");
+
+    return `${year}-${month}-${day}`;
+}
+
+
+const hodPresentationPreviousSunday =
+    hodGetPreviousSunday(
+        frappe.datetime.get_today()
+    );
+
 
 frappe.query_reports["HOD Presentation"] = {
     filters: [
-        {
-            fieldname: "start_date",
-            label: __("Start Date"),
-            fieldtype: "Date",
-            reqd: 1,
-            default: hodPresentationMonthStart
-        },
         {
             fieldname: "end_date",
             label: __("End Date"),
             fieldtype: "Date",
             reqd: 1,
-            default: frappe.datetime.get_today()
+            default: hodPresentationPreviousSunday
         },
         {
             fieldname: "site",
@@ -410,6 +444,7 @@ function hodRenderAvailabilityComplexGroups(rows) {
                                     class="hod-browser-au-site"
                                     data-site-index="${index}"
                                     data-site-name="${hodEscape(row.site)}"
+                                    data-site-period="${hodEscape(row.period)}"
                                 >
                                     <div class="hod-browser-au-loading">
                                         Loading Availability &amp; Utilisation
@@ -462,11 +497,9 @@ async function downloadHodPresentation(report) {
         return leftIndex - rightIndex;
     });
 
-    const startDate = getFilterValue("start_date");
     const endDate = getFilterValue("end_date");
 
     if (
-        !startDate ||
         !endDate ||
         !selectedSites.length
     ) {
@@ -474,19 +507,7 @@ async function downloadHodPresentation(report) {
             title: __("Missing Filters"),
             indicator: "orange",
             message: __(
-                "Complete all required filters before downloading."
-            )
-        });
-
-        return;
-    }
-
-    if (startDate > endDate) {
-        frappe.msgprint({
-            title: __("Invalid Date Range"),
-            indicator: "red",
-            message: __(
-                "Start Date cannot be after End Date."
+                "Select at least one site and an End Date."
             )
         });
 
@@ -566,6 +587,10 @@ async function downloadHodPresentation(report) {
             const complexName =
                 hodGetComplexName(siteName);
 
+            const sitePeriod =
+                auSites[index].dataset.sitePeriod ||
+                "";
+
             const auPanel =
                 auSites[index].querySelector(
                     '.daily-dashboard-tab-panel[data-panel="au"]'
@@ -581,7 +606,12 @@ async function downloadHodPresentation(report) {
                         " - " +
                         categorySection.title +
                         " - " +
-                        siteName,
+                        siteName +
+                        (
+                            sitePeriod
+                                ? " | " + sitePeriod
+                                : ""
+                        ),
                     image_data:
                         await captureHodCategorySection(
                             categorySection.element,
@@ -605,7 +635,12 @@ async function downloadHodPresentation(report) {
                         " - " +
                         categorySection.category +
                         " Hours Based Performance - " +
-                        siteName,
+                        siteName +
+                        (
+                            sitePeriod
+                                ? " | " + sitePeriod
+                                : ""
+                        ),
                     image_data:
                         await captureHodCategorySection(
                             categorySection.element,
@@ -632,10 +667,9 @@ async function downloadHodPresentation(report) {
                 captured_slides:
                     JSON.stringify(capturedSlides),
                 site: selectedSites.join(" / "),
-                start_date: startDate,
                 end_date: endDate,
                 period_label:
-                    `${startDate} to ${endDate}`
+                    `Reporting to ${endDate}`
             },
             freeze: false
         });
@@ -1312,12 +1346,6 @@ async function loadHodAvailabilityDashboards(
         "get_availability_dashboard_html";
 
     const commonArgs = {
-        start_date: getFilterValue(
-            "start_date"
-        ),
-        end_date: getFilterValue(
-            "end_date"
-        ),
         summary_type: getFilterValue(
             "summary_type"
         ),
@@ -1348,7 +1376,9 @@ async function loadHodAvailabilityDashboards(
                         method,
                         args: {
                             ...commonArgs,
-                            site: row.site
+                            site: row.site,
+                            start_date: row.start_date,
+                            end_date: row.end_date
                         },
                         freeze: false
                     });
@@ -1393,6 +1423,15 @@ async function loadHodAvailabilityDashboards(
                 $dashboard.prepend(`
                     <div class="hod-browser-dashboard-site-name">
                         ${hodEscape(row.site)}
+                        <div style="
+                            margin-top:4px;
+                            font-size:10px;
+                            font-weight:700;
+                            opacity:0.82;
+                            text-transform:none;
+                        ">
+                            ${hodEscape(row.period)}
+                        </div>
                     </div>
                 `);
 
@@ -1481,6 +1520,10 @@ function hodRenderSiteCard(row) {
         <article class="hod-browser-site-card">
             <div class="hod-browser-site-header">
                 ${hodEscape(row.site)}
+            </div>
+
+            <div class="hod-browser-site-period">
+                ${hodEscape(row.period)}
             </div>
 
             <div class="hod-browser-variance-box ${forecastClass}">
@@ -2131,6 +2174,14 @@ function injectHodPresentationStyles() {
             border-radius: 6px;
             padding: 9px 12px;
             margin-bottom: 10px;
+        }
+
+        .hod-browser-site-period {
+            margin: -2px 0 9px;
+            color: #64748b;
+            font-size: 10px;
+            font-weight: 800;
+            text-align: center;
         }
 
         .hod-browser-site-footer {
