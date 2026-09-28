@@ -464,6 +464,187 @@ function hodRenderAvailabilityComplexGroups(rows) {
 
 
 
+function hodChunkItems(items, chunkSize) {
+    const chunks = [];
+
+    for (let index = 0; index < items.length; index += chunkSize) {
+        chunks.push(items.slice(index, index + chunkSize));
+    }
+
+    return chunks;
+}
+
+
+async function captureHodProductionComplexSlides(productionSection) {
+    if (!productionSection) {
+        return [];
+    }
+
+    const slides = [];
+
+    const sourceHeader = productionSection.querySelector(
+        ".hod-browser-section-header"
+    );
+
+    const sourceRibbon = productionSection.querySelector(
+        ".hod-browser-filter-ribbon"
+    );
+
+    const complexGroups = Array.from(
+        productionSection.querySelectorAll(
+            ".hod-browser-complex-group"
+        )
+    );
+
+    for (const complexGroup of complexGroups) {
+        const complexTitle = (
+            complexGroup.querySelector(
+                ".hod-browser-complex-title"
+            )?.textContent || "Production Summary"
+        ).trim();
+
+        const siteCards = Array.from(
+            complexGroup.querySelectorAll(
+                ".hod-browser-site-card"
+            )
+        );
+
+        const chunks = hodChunkItems(siteCards, 4);
+
+        for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
+            const cards = chunks[chunkIndex];
+
+            if (!cards.length) {
+                continue;
+            }
+
+            const tempSection = document.createElement("section");
+            tempSection.className = productionSection.className;
+            tempSection.style.position = "absolute";
+            tempSection.style.left = "-15000px";
+            tempSection.style.top = "0";
+            tempSection.style.width = "1180px";
+            tempSection.style.maxWidth = "1180px";
+            tempSection.style.background = "#f7f8fa";
+            tempSection.style.overflow = "visible";
+
+            if (sourceHeader) {
+                const header = sourceHeader.cloneNode(true);
+
+                const title = header.querySelector(
+                    ".hod-browser-section-title"
+                );
+                if (title) {
+                    title.textContent =
+                        "HOD Production Summary - " + complexTitle;
+                }
+
+                const subtitle = header.querySelector(
+                    ".hod-browser-section-subtitle"
+                );
+                if (subtitle) {
+                    subtitle.textContent =
+                        cards.length <= 4
+                            ? "Maximum 4 sites per slide"
+                            : subtitle.textContent;
+                }
+
+                const badge = header.querySelector(
+                    ".hod-browser-section-badge"
+                );
+                if (badge) {
+                    const chunkLabel =
+                        chunks.length > 1
+                            ? ` | Slide ${chunkIndex + 1} of ${chunks.length}`
+                            : "";
+                    badge.textContent =
+                        `${cards.length} Site${cards.length === 1 ? "" : "s"}` +
+                        chunkLabel;
+                }
+
+                tempSection.appendChild(header);
+            }
+
+            if (sourceRibbon) {
+                tempSection.appendChild(
+                    sourceRibbon.cloneNode(true)
+                );
+            }
+
+            const complexList = document.createElement("div");
+            complexList.className = "hod-browser-complex-list";
+
+            const group = document.createElement("div");
+            group.className = "hod-browser-complex-group";
+
+            const heading = document.createElement("div");
+            heading.className = "hod-browser-complex-title";
+            heading.textContent = complexTitle;
+
+            const grid = document.createElement("div");
+            grid.className = "hod-browser-site-grid";
+            grid.style.gridTemplateColumns = "repeat(2, minmax(0, 1fr))";
+            grid.style.gap = "14px";
+
+            cards.forEach(card => {
+                grid.appendChild(card.cloneNode(true));
+            });
+
+            group.appendChild(heading);
+            group.appendChild(grid);
+            complexList.appendChild(group);
+            tempSection.appendChild(complexList);
+
+            document.body.appendChild(tempSection);
+
+            try {
+                await new Promise(resolve => {
+                    window.requestAnimationFrame(() => {
+                        window.requestAnimationFrame(resolve);
+                    });
+                });
+
+                const siteNames = cards
+                    .map(card => (
+                        card.querySelector(
+                            ".hod-browser-site-header"
+                        )?.textContent || ""
+                    ).trim())
+                    .filter(Boolean);
+
+                const slideSuffix =
+                    chunks.length > 1
+                        ? ` (${chunkIndex + 1}/${chunks.length})`
+                        : "";
+
+                slides.push({
+                    title:
+                        "HOD Production Summary - " +
+                        complexTitle +
+                        slideSuffix +
+                        (siteNames.length
+                            ? " - " + siteNames.join(" / ")
+                            : ""),
+                    image_data: await captureHodSection(
+                        tempSection,
+                        {
+                            quality: 0.92,
+                            pixelRatio: 1,
+                            width: 1180
+                        }
+                    )
+                });
+            } finally {
+                tempSection.remove();
+            }
+        }
+    }
+
+    return slides;
+}
+
+
+
 async function downloadHodPresentation(report) {
     const getFilterValue = fieldname => {
         if (
@@ -560,14 +741,12 @@ async function downloadHodPresentation(report) {
             );
 
         if (productionSection) {
-            capturedSlides.push({
-                title:
-                    "HOD Production Summary - " +
-                    selectedSites.join(" / "),
-                image_data: await captureHodSection(
+            const productionSlides =
+                await captureHodProductionComplexSlides(
                     productionSection
-                )
-            });
+                );
+
+            capturedSlides.push(...productionSlides);
         }
 
         const auSites = layout.querySelectorAll(
