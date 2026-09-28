@@ -473,13 +473,13 @@ def get_report_payload(
         production_hours
     )
 
-    actual_bcm = flt(
-        production.get("actual_bcm")
+    truck_shovel_bcm = flt(
+        production.get("truck_shovel_bcm")
     )
 
     average_bcm_h = (
         round(
-            actual_bcm / total_hours,
+            truck_shovel_bcm / total_hours,
             1,
         )
         if total_hours
@@ -514,6 +514,58 @@ def get_report_payload(
         "availability": availability,
         "generated_by": get_fullname(frappe.session.user) or frappe.session.user,
         "generated_at": generated_at.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+def get_filtered_bcm_summary(
+    site,
+    start_date,
+    end_date,
+):
+    """
+    Return Truck & Shovel, Dozing and total Actual BCM
+    for the selected production-date range.
+    """
+    if not site or not start_date or not end_date:
+        return {
+            "truck_shovel_bcm": 0.0,
+            "dozing_bcm": 0.0,
+            "actual_bcm": 0.0,
+        }
+
+    rows = frappe.db.sql(
+        """
+        SELECT
+            COALESCE(SUM(total_ts_bcm), 0)
+                AS truck_shovel_bcm,
+            COALESCE(SUM(total_dozing_bcm), 0)
+                AS dozing_bcm
+        FROM `tabHourly Production`
+        WHERE location = %s
+          AND prod_date BETWEEN %s AND %s
+          AND docstatus < 2
+        """,
+        (site, start_date, end_date),
+        as_dict=True,
+    )
+
+    row = rows[0] if rows else {}
+
+    truck_shovel_bcm = flt(
+        row.get("truck_shovel_bcm")
+    )
+
+    dozing_bcm = flt(
+        row.get("dozing_bcm")
+    )
+
+    return {
+        "truck_shovel_bcm": truck_shovel_bcm,
+        "dozing_bcm": dozing_bcm,
+        "actual_bcm": (
+            truck_shovel_bcm
+            + dozing_bcm
+        ),
     }
 
 
@@ -578,12 +630,32 @@ def build_filtered_production_row(
         )
     )
 
+    selected_bcms = get_filtered_bcm_summary(
+        site,
+        selected_start,
+        selected_end,
+    )
+
+    selected_truck_shovel_bcm = flt(
+        selected_bcms.get("truck_shovel_bcm")
+    )
+
+    selected_dozing_bcm = flt(
+        selected_bcms.get("dozing_bcm")
+    )
+
     selected_actual_bcm = flt(
-        monthly_plan.month_actual_bcm
+        selected_bcms.get("actual_bcm")
+    )
+
+    month_to_date_bcms = get_filtered_bcm_summary(
+        site,
+        plan_start,
+        selected_end,
     )
 
     month_to_date_actual_bcm = flt(
-        monthly_plan.month_actual_bcm
+        month_to_date_bcms.get("actual_bcm")
     )
 
     selected_actual_coal = flt(
@@ -701,6 +773,14 @@ def build_filtered_production_row(
         ),
         "actual_bcm": round(
             selected_actual_bcm,
+            0,
+        ),
+        "truck_shovel_bcm": round(
+            selected_truck_shovel_bcm,
+            0,
+        ),
+        "dozing_bcm": round(
+            selected_dozing_bcm,
             0,
         ),
         "actual_coal_tons": round(
