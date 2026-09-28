@@ -72,7 +72,8 @@
   "mtd_bcm_hour",
   "month_forecated_bcm",
   "tab_4_tab",
-  "hp_report"
+  "hp_report",
+  "raven_report_type"
  ],
  "fields": [
   {
@@ -417,7 +418,7 @@
    "options": "Geo_mat_total_bcm"
   },
   {
-   "default": "Both Shift Summary",
+   "default": "Hourly Production Report",
    "fieldname": "raven_report_type",
    "fieldtype": "Select",
    "label": "Raven Report Type",
@@ -496,13 +497,14 @@
    "description": "This information will be helpful for the Production Manager.",
    "fieldname": "adt_distance",
    "fieldtype": "Float",
+   "hidden": 1,
    "label": "ADT Distance"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-06-11 13:38:30.028172",
+ "modified": "2026-09-28 14:22:10.858943",
  "modified_by": "Administrator",
  "module": "Production",
  "name": "Hourly Production",

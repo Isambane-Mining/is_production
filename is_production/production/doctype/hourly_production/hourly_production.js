@@ -2550,3 +2550,7 @@ frappe.ui.form.on('Dozer Production', {
     }
 });
 
+
+// ============================================================
+// Hauling Distance Meter - mandatory per assigned excavator
+// ============================================================

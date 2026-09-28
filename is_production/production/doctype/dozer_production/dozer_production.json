@@ -1,5 +1,6 @@
 {
  "actions": [],
+ "allow_bulk_edit": 1,
  "allow_rename": 1,
  "creation": "2024-12-17 17:17:23.322864",
  "doctype": "DocType",
@@ -10,6 +11,7 @@
   "dozer_plant_no",
   "item_name",
   "dozer_geo_mat_layer",
+  "dozer_hauling_distance_meter",
   "mining_areas_dozer_child",
   "dozer_service",
   "bcm_hour"
@@ -80,13 +82,19 @@
    "fieldtype": "Data",
    "label": "Plant No",
    "read_only": 1
+  },
+  {
+   "fieldname": "dozer_hauling_distance_meter",
+   "fieldtype": "Link",
+   "label": "Hauling Distance Meter",
+   "options": "Hauling Distance Meter"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-02-09 09:54:34.288318",
+ "modified": "2026-09-28 14:14:45.745536",
  "modified_by": "Administrator",
  "module": "Production",
  "name": "Dozer Production",

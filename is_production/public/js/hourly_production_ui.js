@@ -298,6 +298,9 @@ is_production.ui.HourlyProductionUI = class {
             const stopHours = hoursTruck.exc_stop_hours || '';
             const totalHours = hoursTruck.exc_total_hours || '';
 
+            const haulingTruck = trucks.find(t => t.exc_hauling_distance_meter) || {};
+            const haulingDistance = haulingTruck.exc_hauling_distance_meter || '';
+
             assignedHtml += `
                 <div class="excavator-block" data-excavator-name="${excavator}">
                     <div class="excavator-header">
@@ -314,29 +317,38 @@ is_production.ui.HourlyProductionUI = class {
                         </div>
 
                         <div class="excavator-hours-row" style="display:flex; gap:8px; align-items:end; flex-wrap:wrap; margin-left:10px;">
-                            <div style="min-width:90px;">
-                                <label style="font-size:11px; margin-bottom:2px;">Start Hours</label>
-                                <input type="number" class="form-control exc-hour-input exc-start-hours"
-                                       data-excavator-name="${excavator}"
-                                       value="${startHours}"
-                                       style="height:28px; padding:2px 6px;">
-                            </div>
+                            <!-- Hour fields remain in DOM for existing logic,
+                                 but are hidden from the user. -->
+                            <input type="hidden"
+                                   class="exc-hour-input exc-start-hours"
+                                   data-excavator-name="${excavator}"
+                                   value="${startHours}">
 
-                            <div style="min-width:90px;">
-                                <label style="font-size:11px; margin-bottom:2px;">Stop Hours</label>
-                                <input type="number" class="form-control exc-hour-input exc-stop-hours"
-                                       data-excavator-name="${excavator}"
-                                       value="${stopHours}"
-                                       style="height:28px; padding:2px 6px;">
-                            </div>
+                            <input type="hidden"
+                                   class="exc-hour-input exc-stop-hours"
+                                   data-excavator-name="${excavator}"
+                                   value="${stopHours}">
 
-                            <div style="min-width:90px;">
-                                <label style="font-size:11px; margin-bottom:2px;">Total Hours</label>
-                                <input type="number" class="form-control exc-total-hours"
+                            <input type="hidden"
+                                   class="exc-total-hours"
+                                   data-excavator-name="${excavator}"
+                                   value="${totalHours}">
+
+                            <div style="min-width:180px;">
+                                <label style="font-size:11px; margin-bottom:2px;">
+                                    Hauling Distance Meter
+                                    <span style="color:#e03636;">*</span>
+                                </label>
+                                <input type="text"
+                                       class="form-control exc-hauling-distance"
                                        data-excavator-name="${excavator}"
-                                       value="${totalHours}"
-                                       readonly
-                                       style="height:28px; padding:2px 6px; background:#f5f5f5;">
+                                       data-current-value="${haulingDistance}"
+                                       value="${haulingDistance}"
+                                       list="hauling-distance-master-options"
+                                       autocomplete="off"
+                                       placeholder=""
+                                       required
+                                       style="height:28px; padding:2px 6px;">
                             </div>
                         </div>
                     </div>
@@ -417,6 +429,7 @@ is_production.ui.HourlyProductionUI = class {
 
     dozerNames.forEach(dozerName => {
         const dozerData = this.frm.doc.dozer_production?.find(d => d.asset_name === dozerName) || {};
+        const haulingDistance = dozerData.dozer_hauling_distance_meter || '';
 
         // Kriel Rehabilitation fixed BCM rates must also be applied
         // when an existing dozer row is first rendered.
@@ -486,6 +499,22 @@ is_production.ui.HourlyProductionUI = class {
                             ${dozerData.dozer_geo_mat_layer ? `<option value="${dozerData.dozer_geo_mat_layer}" selected>${dozerData.dozer_geo_mat_layer}</option>` : ''}
                         </select>
                     </div>
+
+                    <div class="dozer-field">
+                        <label>
+                            Hauling Distance Meter
+                            <span style="color:#e03636;">*</span>
+                        </label>
+
+                        <input type="text"
+                               class="form-control dozer-hauling-distance"
+                               data-dozer-name="${dozerName}"
+                               data-current-value="${haulingDistance}"
+                               value="${haulingDistance}"
+                               list="dozer-hauling-distance-master-options"
+                               autocomplete="off"
+                               placeholder="">
+                    </div>
                 </div>
             </div>
         `;
@@ -497,6 +526,94 @@ is_production.ui.HourlyProductionUI = class {
     `;
 
     this.frm.fields_dict.dnd_html_excavator_ui.$wrapper.find('.dozer-ui-section').html(dozersHtml);
+
+    const wrapper = this.frm.fields_dict.dnd_html_excavator_ui.$wrapper;
+
+    frappe.db.get_list('Hauling Distance Meter', {
+        fields: [
+            'name',
+            'hauling_distance',
+            'from_distance',
+            'to_distance'
+        ],
+        filters: {
+            is_active: 1
+        },
+        order_by: 'to_distance asc, from_distance asc',
+        limit: 1000
+    }).then(rows => {
+
+        wrapper.find('#dozer-hauling-distance-master-options').remove();
+
+        const datalist = $(
+            '<datalist id="dozer-hauling-distance-master-options"></datalist>'
+        );
+
+        rows.forEach(row => {
+            const value = row.hauling_distance || row.name;
+
+            datalist.append(
+                $('<option></option>').attr('value', value)
+            );
+        });
+
+        wrapper.append(datalist);
+
+    }).catch(error => {
+        console.error(
+            'Unable to load Dozer Hauling Distance options:',
+            error
+        );
+    });
+
+    $(document).off(
+        'change.dozer_hauling_distance input.dozer_hauling_distance',
+        '.dozer-hauling-distance'
+    );
+
+    $(document).on(
+        'change.dozer_hauling_distance input.dozer_hauling_distance',
+        '.dozer-hauling-distance',
+        (event) => {
+
+            const input = $(event.currentTarget);
+
+            const dozerName = input.data('dozer-name');
+
+            const haulingDistance = String(
+                input.val() || ''
+            ).trim();
+
+            if (haulingDistance) {
+                input.css('border-color', '');
+            } else {
+                input.css('border-color', '#e03636');
+            }
+
+            const row = (this.frm.doc.dozer_production || []).find(
+                d => d.asset_name === dozerName
+            );
+
+            if (!row) {
+                return;
+            }
+
+            row.dozer_hauling_distance_meter = haulingDistance;
+
+            frappe.model.set_value(
+                row.doctype,
+                row.name,
+                'dozer_hauling_distance_meter',
+                haulingDistance
+            );
+
+            this.frm.dirty = true;
+            this.frm.doc.__unsaved = 1;
+
+            this.frm.refresh_field('dozer_production');
+            this.frm.toolbar.refresh();
+        }
+    );
 
     // Rebind UI event handlers
     this.setupDozerEvents();
@@ -880,6 +997,108 @@ is_production.ui.HourlyProductionUI = class {
 
             me.updateExcavatorHours(excavatorName, start, stop, total);
         });
+
+        // ----------------------------------------------------
+        // Hauling Distance Meter
+        // ----------------------------------------------------
+        $(document).off(
+            'change.excavator_hauling_distance input.excavator_hauling_distance',
+            '.exc-hauling-distance'
+        );
+
+        $(document).on(
+            'change.excavator_hauling_distance input.excavator_hauling_distance',
+            '.exc-hauling-distance',
+            function() {
+                const excavatorName = $(this).data('excavator-name');
+                const haulingDistance = String($(this).val() || '').trim();
+
+                if (haulingDistance) {
+                    $(this).removeClass('mandatory-error');
+                    $(this).css('border-color', '');
+                } else {
+                    $(this).addClass('mandatory-error');
+                    $(this).css('border-color', '#e03636');
+                }
+
+                me.updateExcavatorHaulingDistance(
+                    excavatorName,
+                    haulingDistance
+                );
+            }
+        );
+
+        // Populate all Hauling Distance selectors from master.
+        frappe.db.get_list('Hauling Distance Meter', {
+            fields: [
+                'name',
+                'hauling_distance',
+                'from_distance',
+                'to_distance',
+                'range_type'
+            ],
+            filters: {
+                is_active: 1
+            },
+            order_by: 'to_distance asc, from_distance asc',
+            limit: 1000
+        }).then(rows => {
+            const wrapper = me.frm.fields_dict.dnd_html_excavator_ui.$wrapper;
+
+            // One shared datalist for all excavator Hauling Distance fields.
+            wrapper.find('#hauling-distance-master-options').remove();
+
+            const datalist = $('<datalist id="hauling-distance-master-options"></datalist>');
+
+            rows.forEach(row => {
+                const value = row.hauling_distance || row.name;
+
+                datalist.append(
+                    $('<option></option>').attr('value', value)
+                );
+            });
+
+            wrapper.append(datalist);
+
+            // Restore current saved value when the UI is rendered.
+            wrapper.find('.exc-hauling-distance').each(function() {
+                const input = $(this);
+                const currentValue = String(
+                    input.attr('data-current-value') || ''
+                );
+
+                input.val(currentValue);
+            });
+        }).catch(error => {
+            console.error(
+                'Unable to load Hauling Distance Meter options:',
+                error
+            );
+        });
+    }
+
+    updateExcavatorHaulingDistance(excavatorName, haulingDistance) {
+        if (!excavatorName) return;
+
+        const rows = (this.frm.doc.truck_loads || []).filter(
+            row => row.asset_name_shoval === excavatorName
+        );
+
+        rows.forEach(row => {
+            row.exc_hauling_distance_meter = haulingDistance || '';
+
+            frappe.model.set_value(
+                row.doctype,
+                row.name,
+                'exc_hauling_distance_meter',
+                haulingDistance || ''
+            );
+        });
+
+        this.frm.dirty = true;
+        this.frm.doc.__unsaved = 1;
+        this.frm.refresh_field('truck_loads');
+        this.frm.toolbar.refresh();
     }
 
     updateExcavatorHours(excavatorName, start, stop, total) {
