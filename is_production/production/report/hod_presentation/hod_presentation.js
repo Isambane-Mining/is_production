@@ -1,23 +1,57 @@
-const hodPresentationMonthStart = (() => {
-    const today = frappe.datetime.get_today();
-    return `${today.slice(0, 7)}-01`;
-})();
+function hodGetPreviousSunday(value) {
+    const parts = String(value || "")
+        .split("-")
+        .map(Number);
+
+    if (parts.length !== 3) {
+        return value;
+    }
+
+    const date = new Date(
+        parts[0],
+        parts[1] - 1,
+        parts[2]
+    );
+
+    const weekday = date.getDay();
+
+    const daysBack =
+        weekday === 0
+            ? 7
+            : weekday;
+
+    date.setDate(
+        date.getDate() - daysBack
+    );
+
+    const year = date.getFullYear();
+
+    const month = String(
+        date.getMonth() + 1
+    ).padStart(2, "0");
+
+    const day = String(
+        date.getDate()
+    ).padStart(2, "0");
+
+    return `${year}-${month}-${day}`;
+}
+
+
+const hodPresentationPreviousSunday =
+    hodGetPreviousSunday(
+        frappe.datetime.get_today()
+    );
+
 
 frappe.query_reports["HOD Presentation"] = {
     filters: [
-        {
-            fieldname: "start_date",
-            label: __("Start Date"),
-            fieldtype: "Date",
-            reqd: 1,
-            default: hodPresentationMonthStart
-        },
         {
             fieldname: "end_date",
             label: __("End Date"),
             fieldtype: "Date",
             reqd: 1,
-            default: frappe.datetime.get_today()
+            default: hodPresentationPreviousSunday
         },
         {
             fieldname: "site",
@@ -272,6 +306,374 @@ function normaliseHodSites(value) {
 
 
 
+const HOD_SITE_COMPLEXES = [
+    {
+        name: "Middelburg Complex",
+        sites: [
+            "Klipfontein",
+            "Gwab",
+            "Kriel Rehabilitation",
+            "Bankfontein"
+        ]
+    },
+    {
+        name: "Ermelo Complex",
+        sites: [
+            "Uitgevallen",
+            "Koppie"
+        ]
+    }
+];
+
+
+function hodGetComplexName(site) {
+    const siteName = String(site || "").trim();
+
+    const complex = HOD_SITE_COMPLEXES.find(item =>
+        item.sites.includes(siteName)
+    );
+
+    return complex ? complex.name : "Other Sites";
+}
+
+
+function hodOrderRowsByComplex(rows) {
+    const order = [];
+
+    HOD_SITE_COMPLEXES.forEach(complex => {
+        complex.sites.forEach(site => {
+            const row = rows.find(
+                candidate => candidate.site === site
+            );
+
+            if (row) {
+                order.push(row);
+            }
+        });
+    });
+
+    rows.forEach(row => {
+        if (!order.includes(row)) {
+            order.push(row);
+        }
+    });
+
+    return order;
+}
+
+
+function hodRenderProductionComplexGroups(rows) {
+    const groups = [];
+
+    HOD_SITE_COMPLEXES.forEach(complex => {
+        const complexRows = rows.filter(row =>
+            complex.sites.includes(row.site)
+        );
+
+        if (!complexRows.length) {
+            return;
+        }
+
+        groups.push(`
+            <div class="hod-browser-complex-group">
+                <div class="hod-browser-complex-title">
+                    ${hodEscape(complex.name)}
+                </div>
+
+                <div class="hod-browser-site-grid">
+                    ${complexRows
+                        .map(row => hodRenderSiteCard(row))
+                        .join("")}
+                </div>
+            </div>
+        `);
+    });
+
+    const knownSites = HOD_SITE_COMPLEXES
+        .flatMap(complex => complex.sites);
+
+    const otherRows = rows.filter(
+        row => !knownSites.includes(row.site)
+    );
+
+    if (otherRows.length) {
+        groups.push(`
+            <div class="hod-browser-complex-group">
+                <div class="hod-browser-complex-title">
+                    Other Sites
+                </div>
+
+                <div class="hod-browser-site-grid">
+                    ${otherRows
+                        .map(row => hodRenderSiteCard(row))
+                        .join("")}
+                </div>
+            </div>
+        `);
+    }
+
+    return groups.join("");
+}
+
+
+function hodRenderAvailabilityComplexGroups(rows) {
+    const groups = [];
+
+    HOD_SITE_COMPLEXES.forEach(complex => {
+        const complexRows = rows.filter(row =>
+            complex.sites.includes(row.site)
+        );
+
+        if (!complexRows.length) {
+            return;
+        }
+
+        groups.push(`
+            <div class="hod-browser-complex-group">
+                <div class="hod-browser-complex-title">
+                    ${hodEscape(complex.name)}
+                </div>
+
+                <div class="hod-browser-au-site-stack">
+                    ${complexRows
+                        .map(row => {
+                            const index = rows.indexOf(row);
+
+                            return `
+                                <div
+                                    class="hod-browser-au-site"
+                                    data-site-index="${index}"
+                                    data-site-name="${hodEscape(row.site)}"
+                                    data-site-period="${hodEscape(row.period)}"
+                                >
+                                    <div class="hod-browser-au-loading">
+                                        Loading Availability &amp; Utilisation
+                                        for ${hodEscape(row.site)}...
+                                    </div>
+                                </div>
+                            `;
+                        })
+                        .join("")}
+                </div>
+            </div>
+        `);
+    });
+
+    return groups.join("");
+}
+
+
+
+function hodChunkProductionCards(cards, size = 4) {
+    const chunks = [];
+
+    for (
+        let index = 0;
+        index < cards.length;
+        index += size
+    ) {
+        chunks.push(
+            cards.slice(
+                index,
+                index + size
+            )
+        );
+    }
+
+    return chunks;
+}
+
+
+async function captureHodProductionSlides(
+    productionSection
+) {
+    const slides = [];
+
+    if (!productionSection) {
+        return slides;
+    }
+
+    const complexGroups = Array.from(
+        productionSection.querySelectorAll(
+            ".hod-browser-complex-group"
+        )
+    );
+
+    const sectionBadge =
+        productionSection.querySelector(
+            ".hod-browser-section-badge"
+        );
+
+    const originalBadgeText =
+        sectionBadge?.textContent || "";
+
+    for (const activeGroup of complexGroups) {
+        const complexTitle = (
+            activeGroup.querySelector(
+                ".hod-browser-complex-title"
+            )?.textContent ||
+            "Production Summary"
+        ).trim();
+
+        const cards = Array.from(
+            activeGroup.querySelectorAll(
+                ".hod-browser-site-card"
+            )
+        );
+
+        const chunks =
+            hodChunkProductionCards(
+                cards,
+                4
+            );
+
+        for (
+            let chunkIndex = 0;
+            chunkIndex < chunks.length;
+            chunkIndex += 1
+        ) {
+            const visibleCards =
+                chunks[chunkIndex];
+
+            const originalGroupStyles =
+                complexGroups.map(group => ({
+                    group,
+                    display:
+                        group.style.display
+                }));
+
+            const originalCardStyles =
+                cards.map(card => ({
+                    card,
+                    display:
+                        card.style.display
+                }));
+
+            const grid =
+                activeGroup.querySelector(
+                    ".hod-browser-site-grid"
+                );
+
+            const originalGridColumns =
+                grid?.style.gridTemplateColumns ||
+                "";
+
+            const originalGridWidth =
+                grid?.style.width || "";
+
+            try {
+                complexGroups.forEach(group => {
+                    group.style.display =
+                        group === activeGroup
+                            ? ""
+                            : "none";
+                });
+
+                cards.forEach(card => {
+                    card.style.display =
+                        visibleCards.includes(card)
+                            ? ""
+                            : "none";
+                });
+
+                if (grid) {
+                    grid.style.gridTemplateColumns =
+                        "repeat(2, minmax(0, 1fr))";
+
+                    grid.style.width =
+                        "100%";
+                }
+
+                if (sectionBadge) {
+                    sectionBadge.textContent =
+                        `${visibleCards.length} ` +
+                        `Site${visibleCards.length === 1 ? "" : "s"}`;
+                }
+
+                await new Promise(resolve => {
+                    window.requestAnimationFrame(
+                        () => {
+                            window.requestAnimationFrame(
+                                resolve
+                            );
+                        }
+                    );
+                });
+
+                const siteNames =
+                    visibleCards
+                        .map(card => (
+                            card.querySelector(
+                                ".hod-browser-site-header"
+                            )?.textContent ||
+                            ""
+                        ).trim())
+                        .filter(Boolean);
+
+                const chunkLabel =
+                    chunks.length > 1
+                        ? ` (${chunkIndex + 1}/${chunks.length})`
+                        : "";
+
+                slides.push({
+                    title:
+                        "HOD Production Summary - " +
+                        complexTitle +
+                        chunkLabel +
+                        (
+                            siteNames.length
+                                ? " - " +
+                                  siteNames.join(
+                                      " / "
+                                  )
+                                : ""
+                        ),
+
+                    image_data:
+                        await captureHodSection(
+                            productionSection,
+                            {
+                                quality: 0.92,
+                                pixelRatio: 0.9
+                            }
+                        )
+                });
+            } finally {
+                originalGroupStyles.forEach(
+                    ({ group, display }) => {
+                        group.style.display =
+                            display;
+                    }
+                );
+
+                originalCardStyles.forEach(
+                    ({ card, display }) => {
+                        card.style.display =
+                            display;
+                    }
+                );
+
+                if (grid) {
+                    grid.style.gridTemplateColumns =
+                        originalGridColumns;
+
+                    grid.style.width =
+                        originalGridWidth;
+                }
+
+                if (sectionBadge) {
+                    sectionBadge.textContent =
+                        originalBadgeText;
+                }
+            }
+        }
+    }
+
+    return slides;
+}
+
+
+
 async function downloadHodPresentation(report) {
     const getFilterValue = fieldname => {
         if (
@@ -288,13 +690,26 @@ async function downloadHodPresentation(report) {
 
     const selectedSites = normaliseHodSites(
         getFilterValue("site")
-    );
+    ).sort((left, right) => {
+        const orderedSites = HOD_SITE_COMPLEXES
+            .flatMap(complex => complex.sites);
 
-    const startDate = getFilterValue("start_date");
+        const leftIndex = orderedSites.indexOf(left);
+        const rightIndex = orderedSites.indexOf(right);
+
+        if (leftIndex === -1 && rightIndex === -1) {
+            return left.localeCompare(right);
+        }
+
+        if (leftIndex === -1) return 1;
+        if (rightIndex === -1) return -1;
+
+        return leftIndex - rightIndex;
+    });
+
     const endDate = getFilterValue("end_date");
 
     if (
-        !startDate ||
         !endDate ||
         !selectedSites.length
     ) {
@@ -302,19 +717,7 @@ async function downloadHodPresentation(report) {
             title: __("Missing Filters"),
             indicator: "orange",
             message: __(
-                "Complete all required filters before downloading."
-            )
-        });
-
-        return;
-    }
-
-    if (startDate > endDate) {
-        frappe.msgprint({
-            title: __("Invalid Date Range"),
-            indicator: "red",
-            message: __(
-                "Start Date cannot be after End Date."
+                "Select at least one site and an End Date."
             )
         });
 
@@ -367,14 +770,14 @@ async function downloadHodPresentation(report) {
             );
 
         if (productionSection) {
-            capturedSlides.push({
-                title:
-                    "HOD Production Summary - " +
-                    selectedSites.join(" / "),
-                image_data: await captureHodSection(
+            const productionSlides =
+                await captureHodProductionSlides(
                     productionSection
-                )
-            });
+                );
+
+            capturedSlides.push(
+                ...productionSlides
+            );
         }
 
         const auSites = layout.querySelectorAll(
@@ -387,8 +790,16 @@ async function downloadHodPresentation(report) {
             index += 1
         ) {
             const siteName =
+                auSites[index].dataset.siteName ||
                 selectedSites[index] ||
                 `Site ${index + 1}`;
+
+            const complexName =
+                hodGetComplexName(siteName);
+
+            const sitePeriod =
+                auSites[index].dataset.sitePeriod ||
+                "";
 
             const auPanel =
                 auSites[index].querySelector(
@@ -401,9 +812,16 @@ async function downloadHodPresentation(report) {
             ) {
                 capturedSlides.push({
                     title:
+                        complexName +
+                        " - " +
                         categorySection.title +
                         " - " +
-                        siteName,
+                        siteName +
+                        (
+                            sitePeriod
+                                ? " | " + sitePeriod
+                                : ""
+                        ),
                     image_data:
                         await captureHodCategorySection(
                             categorySection.element,
@@ -423,9 +841,16 @@ async function downloadHodPresentation(report) {
             ) {
                 capturedSlides.push({
                     title:
+                        complexName +
+                        " - " +
                         categorySection.category +
                         " Hours Based Performance - " +
-                        siteName,
+                        siteName +
+                        (
+                            sitePeriod
+                                ? " | " + sitePeriod
+                                : ""
+                        ),
                     image_data:
                         await captureHodCategorySection(
                             categorySection.element,
@@ -452,10 +877,9 @@ async function downloadHodPresentation(report) {
                 captured_slides:
                     JSON.stringify(capturedSlides),
                 site: selectedSites.join(" / "),
-                start_date: startDate,
                 end_date: endDate,
                 period_label:
-                    `${startDate} to ${endDate}`
+                    `Reporting to ${endDate}`
             },
             freeze: false
         });
@@ -889,13 +1313,15 @@ function renderHodPresentationLayout(report) {
             ? report.raw_data.result
             : [];
 
-    const rows = (
-        rawRows.length
-            ? rawRows
-            : Array.isArray(report.data)
-                ? report.data
-                : []
-    ).filter(row => row && row.site);
+    const rows = hodOrderRowsByComplex(
+        (
+            rawRows.length
+                ? rawRows
+                : Array.isArray(report.data)
+                    ? report.data
+                    : []
+        ).filter(row => row && row.site)
+    );
 
     report.page.main
         .find(".hod-presentation-layout")
@@ -929,21 +1355,8 @@ function renderHodPresentationLayout(report) {
             .slice(2)
     ].join("-");
 
-    const availabilitySlots = rows
-        .map((row, index) => {
-            return `
-                <div
-                    class="hod-browser-au-site"
-                    data-site-index="${index}"
-                >
-                    <div class="hod-browser-au-loading">
-                        Loading Availability &amp; Utilisation
-                        for ${hodEscape(row.site)}...
-                    </div>
-                </div>
-            `;
-        })
-        .join("");
+    const availabilitySlots =
+        hodRenderAvailabilityComplexGroups(rows);
 
     const layout = $(`
         <div
@@ -997,10 +1410,8 @@ function renderHodPresentationLayout(report) {
                     </div>
                 </div>
 
-                <div class="hod-browser-site-grid">
-                    ${rows
-                        .map(row => hodRenderSiteCard(row))
-                        .join("")}
+                <div class="hod-browser-complex-list">
+                    ${hodRenderProductionComplexGroups(rows)}
                 </div>
             </section>
 
@@ -1027,7 +1438,7 @@ function renderHodPresentationLayout(report) {
                     </div>
                 </div>
 
-                <div class="hod-browser-au-site-stack">
+                <div class="hod-browser-complex-list">
                     ${availabilitySlots}
                 </div>
             </section>
@@ -1145,12 +1556,6 @@ async function loadHodAvailabilityDashboards(
         "get_availability_dashboard_html";
 
     const commonArgs = {
-        start_date: getFilterValue(
-            "start_date"
-        ),
-        end_date: getFilterValue(
-            "end_date"
-        ),
         summary_type: getFilterValue(
             "summary_type"
         ),
@@ -1181,7 +1586,9 @@ async function loadHodAvailabilityDashboards(
                         method,
                         args: {
                             ...commonArgs,
-                            site: row.site
+                            site: row.site,
+                            start_date: row.start_date,
+                            end_date: row.end_date
                         },
                         freeze: false
                     });
@@ -1226,6 +1633,15 @@ async function loadHodAvailabilityDashboards(
                 $dashboard.prepend(`
                     <div class="hod-browser-dashboard-site-name">
                         ${hodEscape(row.site)}
+                        <div style="
+                            margin-top:4px;
+                            font-size:10px;
+                            font-weight:700;
+                            opacity:0.82;
+                            text-transform:none;
+                        ">
+                            ${hodEscape(row.period)}
+                        </div>
                     </div>
                 `);
 
@@ -1314,6 +1730,10 @@ function hodRenderSiteCard(row) {
         <article class="hod-browser-site-card">
             <div class="hod-browser-site-header">
                 ${hodEscape(row.site)}
+            </div>
+
+            <div class="hod-browser-site-period">
+                ${hodEscape(row.period)}
             </div>
 
             <div class="hod-browser-variance-box ${forecastClass}">
@@ -1910,6 +2330,30 @@ function injectHodPresentationStyles() {
             color: #64748b !important;
         }
 
+        .hod-browser-complex-list {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+        }
+
+        .hod-browser-complex-group {
+            min-width: 0;
+        }
+
+        .hod-browser-complex-title {
+            background: #111827;
+            color: #ffffff;
+            border-left: 5px solid #e03124;
+            padding: 9px 12px;
+            margin: 2px 0 10px;
+            border-radius: 5px;
+            font-size: 15px;
+            line-height: 1.2;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+        }
+
         .hod-browser-site-grid {
             display: grid;
             grid-template-columns: repeat(
@@ -1940,6 +2384,14 @@ function injectHodPresentationStyles() {
             border-radius: 6px;
             padding: 9px 12px;
             margin-bottom: 10px;
+        }
+
+        .hod-browser-site-period {
+            margin: -2px 0 9px;
+            color: #64748b;
+            font-size: 10px;
+            font-weight: 800;
+            text-align: center;
         }
 
         .hod-browser-site-footer {

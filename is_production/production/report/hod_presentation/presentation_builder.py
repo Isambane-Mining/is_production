@@ -183,6 +183,7 @@ def _add_image_fitted(
     )
 
 
+
 def _add_slide_heading(slide, title: str) -> None:
     banner = slide.shapes.add_shape(
         MSO_SHAPE.RECTANGLE,

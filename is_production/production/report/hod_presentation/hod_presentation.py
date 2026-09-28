@@ -91,14 +91,12 @@ def execute(filters=None):
     filters = frappe._dict(filters or {})
 
     if (
-        not filters.get("start_date")
-        or not filters.get("end_date")
+        not filters.get("end_date")
         or not filters.get("site")
     ):
         return columns, []
 
     (
-        start_date,
         end_date,
         sites,
         summary_type,
@@ -125,6 +123,8 @@ def execute(filters=None):
         data.append(
             {
                 "site": payload["site"],
+                "start_date": payload["start_date"],
+                "end_date": payload["end_date"],
                 "period": payload["period_label"],
                 "summary_type": availability.get("summary_type"),
                 "machine_scope": availability.get("machine_scope"),
@@ -391,6 +391,32 @@ def get_columns():
     ]
 
 
+def get_latest_hod_monthly_plan(site, date):
+    """Return the most recently modified matching MPP for HOD."""
+    if not site or not date:
+        return None
+
+    rows = frappe.get_all(
+        "Monthly Production Planning",
+        filters={
+            "location": site,
+            "prod_month_start_date": ["<=", date],
+            "prod_month_end_date": [">=", date],
+        },
+        fields=["name"],
+        order_by="modified desc",
+        limit_page_length=1,
+    )
+
+    if not rows:
+        return None
+
+    return frappe.get_doc(
+        "Monthly Production Planning",
+        rows[0]["name"],
+    )
+
+
 def get_report_payload(
     filters,
     include_au_detail=True,
@@ -399,7 +425,6 @@ def get_report_payload(
     filters = frappe._dict(filters or {})
 
     (
-        start_date,
         end_date,
         sites,
         summary_type,
@@ -409,7 +434,10 @@ def get_report_payload(
 
     site = site_override or sites[0]
 
-    monthly_plan = get_monthly_plan(site, end_date)
+    monthly_plan = get_latest_hod_monthly_plan(
+        site,
+        end_date,
+    )
     if not monthly_plan:
         frappe.throw(
             _("No Monthly Production Planning record was found for {0} on {1}.").format(
@@ -417,8 +445,14 @@ def get_report_payload(
             )
         )
 
-    plan_start = getdate(monthly_plan.prod_month_start_date)
-    plan_end = getdate(monthly_plan.prod_month_end_date)
+    plan_start = getdate(
+        monthly_plan.prod_month_start_date
+    )
+    plan_end = getdate(
+        monthly_plan.prod_month_end_date
+    )
+
+    start_date = plan_start
 
     if end_date < plan_start or end_date > plan_end:
         frappe.throw(
@@ -473,13 +507,13 @@ def get_report_payload(
         production_hours
     )
 
-    actual_bcm = flt(
-        production.get("actual_bcm")
+    truck_shovel_bcm = flt(
+        production.get("truck_shovel_bcm")
     )
 
     average_bcm_h = (
         round(
-            actual_bcm / total_hours,
+            truck_shovel_bcm / total_hours,
             1,
         )
         if total_hours
@@ -514,6 +548,58 @@ def get_report_payload(
         "availability": availability,
         "generated_by": get_fullname(frappe.session.user) or frappe.session.user,
         "generated_at": generated_at.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+def get_filtered_bcm_summary(
+    site,
+    start_date,
+    end_date,
+):
+    """
+    Return Truck & Shovel, Dozing and total Actual BCM
+    for the selected production-date range.
+    """
+    if not site or not start_date or not end_date:
+        return {
+            "truck_shovel_bcm": 0.0,
+            "dozing_bcm": 0.0,
+            "actual_bcm": 0.0,
+        }
+
+    rows = frappe.db.sql(
+        """
+        SELECT
+            COALESCE(SUM(total_ts_bcm), 0)
+                AS truck_shovel_bcm,
+            COALESCE(SUM(total_dozing_bcm), 0)
+                AS dozing_bcm
+        FROM `tabHourly Production`
+        WHERE location = %s
+          AND prod_date BETWEEN %s AND %s
+          AND docstatus < 2
+        """,
+        (site, start_date, end_date),
+        as_dict=True,
+    )
+
+    row = rows[0] if rows else {}
+
+    truck_shovel_bcm = flt(
+        row.get("truck_shovel_bcm")
+    )
+
+    dozing_bcm = flt(
+        row.get("dozing_bcm")
+    )
+
+    return {
+        "truck_shovel_bcm": truck_shovel_bcm,
+        "dozing_bcm": dozing_bcm,
+        "actual_bcm": (
+            truck_shovel_bcm
+            + dozing_bcm
+        ),
     }
 
 
@@ -578,12 +664,32 @@ def build_filtered_production_row(
         )
     )
 
+    selected_bcms = get_filtered_bcm_summary(
+        site,
+        selected_start,
+        selected_end,
+    )
+
+    selected_truck_shovel_bcm = flt(
+        selected_bcms.get("truck_shovel_bcm")
+    )
+
+    selected_dozing_bcm = flt(
+        selected_bcms.get("dozing_bcm")
+    )
+
     selected_actual_bcm = flt(
-        monthly_plan.month_actual_bcm
+        selected_bcms.get("actual_bcm")
+    )
+
+    month_to_date_bcms = get_filtered_bcm_summary(
+        site,
+        plan_start,
+        selected_end,
     )
 
     month_to_date_actual_bcm = flt(
-        monthly_plan.month_actual_bcm
+        month_to_date_bcms.get("actual_bcm")
     )
 
     selected_actual_coal = flt(
@@ -703,6 +809,14 @@ def build_filtered_production_row(
             selected_actual_bcm,
             0,
         ),
+        "truck_shovel_bcm": round(
+            selected_truck_shovel_bcm,
+            0,
+        ),
+        "dozing_bcm": round(
+            selected_dozing_bcm,
+            0,
+        ),
         "actual_coal_tons": round(
             selected_actual_coal,
             0,
@@ -784,7 +898,6 @@ def parse_site_filter(value):
 
 
 def validate_filters(filters):
-    start_date = filters.get("start_date")
     end_date = filters.get("end_date")
     sites = parse_site_filter(filters.get("site"))
 
@@ -803,22 +916,13 @@ def validate_filters(filters):
         or DEFAULT_AU_TARGET_FILTER
     ).strip()
 
-    if not start_date:
-        frappe.throw(_("Start Date is required."))
-
     if not end_date:
         frappe.throw(_("End Date is required."))
 
     if not sites:
         frappe.throw(_("At least one Site is required."))
 
-    start_date = getdate(start_date)
     end_date = getdate(end_date)
-
-    if start_date > end_date:
-        frappe.throw(
-            _("Start Date cannot be after End Date.")
-        )
 
     for site in sites:
         if not frappe.db.exists("Location", site):
@@ -850,7 +954,6 @@ def validate_filters(filters):
         )
 
     return (
-        start_date,
         end_date,
         sites,
         summary_type,
@@ -2601,10 +2704,16 @@ def download_captured_presentation(
         str(site or "Sites"),
     ).strip("_")
 
-    filename = (
-        f"HOD_Presentation_{safe_site}_"
-        f"{start_date}_to_{end_date}.pptx"
-    )
+    if start_date:
+        filename = (
+            f"HOD_Presentation_{safe_site}_"
+            f"{start_date}_to_{end_date}.pptx"
+        )
+    else:
+        filename = (
+            f"HOD_Presentation_{safe_site}_"
+            f"to_{end_date}.pptx"
+        )
 
     return {
         "filename": filename,
