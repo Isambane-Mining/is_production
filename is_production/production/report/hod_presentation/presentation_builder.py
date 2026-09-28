@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 from io import BytesIO
+from pathlib import Path
 from typing import BinaryIO
 
 from pptx import Presentation
@@ -20,6 +21,45 @@ BLACK = "050505"
 WHITE = "FFFFFF"
 MUTED = "AAB4C3"
 RED = "E03124"
+
+HOD_TEMPLATE_PATH = Path(__file__).with_name(
+    "Rakesh.pptx"
+)
+
+
+def _create_hod_presentation() -> Presentation:
+    """
+    Load the approved Rakesh PowerPoint template while preserving
+    its slide master, logos, theme and layouts.
+
+    Existing Rakesh content slides are removed before the HOD
+    presentation slides are generated.
+    """
+    if not HOD_TEMPLATE_PATH.exists():
+        raise FileNotFoundError(
+            "HOD PowerPoint template was not found: "
+            + str(HOD_TEMPLATE_PATH)
+        )
+
+    prs = Presentation(
+        str(HOD_TEMPLATE_PATH)
+    )
+
+    for slide_id in list(
+        prs.slides._sldIdLst
+    ):
+        relationship_id =
+            slide_id.rId
+
+        prs.part.drop_rel(
+            relationship_id
+        )
+
+        prs.slides._sldIdLst.remove(
+            slide_id
+        )
+
+    return prs
 
 
 def build_hod_presentation(
@@ -52,7 +92,7 @@ def build_hod_presentation(
     PowerPoint shapes.
     """
 
-    prs = Presentation()
+    prs = _create_hod_presentation()
     prs.slide_width = Inches(SLIDE_WIDTH)
     prs.slide_height = Inches(SLIDE_HEIGHT)
 
@@ -96,8 +136,10 @@ def build_hod_presentation(
             _add_image_fitted(
                 slide,
                 image_bytes,
-                top_inches=0.72,
-                height_inches=6.68,
+                left_inches=0.35,
+                top_inches=1.00,
+                width_inches=12.64,
+                height_inches=6.00,
             )
 
         if not prs.slides:
@@ -141,10 +183,14 @@ def _add_image_fitted(
     slide,
     image_bytes: bytes,
     *,
+    left_inches: float = 0.0,
     top_inches: float = 0.0,
+    width_inches: float = SLIDE_WIDTH,
     height_inches: float = SLIDE_HEIGHT,
 ) -> None:
-    image_stream = BytesIO(image_bytes)
+    image_stream = BytesIO(
+        image_bytes
+    )
 
     picture = slide.shapes.add_picture(
         image_stream,
@@ -152,80 +198,129 @@ def _add_image_fitted(
         0,
     )
 
-    slide_w = Inches(SLIDE_WIDTH)
-    slide_h = Inches(height_inches)
-    top_offset = Inches(top_inches)
+    area_w = Inches(
+        width_inches
+    )
+
+    area_h = Inches(
+        height_inches
+    )
+
+    left_offset = Inches(
+        left_inches
+    )
+
+    top_offset = Inches(
+        top_inches
+    )
 
     image_w = picture.width
     image_h = picture.height
 
     if not image_w or not image_h:
-        picture.left = 0
+        picture.left = left_offset
         picture.top = top_offset
-        picture.width = slide_w
-        picture.height = slide_h
+        picture.width = area_w
+        picture.height = area_h
         return
 
     scale = min(
-        slide_w / image_w,
-        slide_h / image_h,
+        area_w / image_w,
+        area_h / image_h,
     )
 
-    fitted_w = int(image_w * scale)
-    fitted_h = int(image_h * scale)
+    fitted_w = int(
+        image_w * scale
+    )
+
+    fitted_h = int(
+        image_h * scale
+    )
 
     picture.width = fitted_w
     picture.height = fitted_h
-    picture.left = int((slide_w - fitted_w) / 2)
+
+    picture.left = (
+        left_offset
+        + int(
+            (
+                area_w
+                - fitted_w
+            )
+            / 2
+        )
+    )
+
     picture.top = (
         top_offset
-        + int((slide_h - fitted_h) / 2)
+        + int(
+            (
+                area_h
+                - fitted_h
+            )
+            / 2
+        )
     )
 
 
-
-def _add_slide_heading(slide, title: str) -> None:
-    banner = slide.shapes.add_shape(
-        MSO_SHAPE.RECTANGLE,
-        0,
-        0,
-        Inches(SLIDE_WIDTH),
-        Inches(0.68),
-    )
-    banner.fill.solid()
-    banner.fill.fore_color.rgb = _rgb("0F1F53")
-    banner.line.fill.background()
-
-    accent = slide.shapes.add_shape(
-        MSO_SHAPE.RECTANGLE,
-        0,
-        Inches(0.64),
-        Inches(SLIDE_WIDTH),
-        Inches(0.04),
-    )
-    accent.fill.solid()
-    accent.fill.fore_color.rgb = _rgb(RED)
-    accent.line.fill.background()
-
+def _add_slide_heading(
+    slide,
+    title: str,
+) -> None:
     _add_text(
         slide,
         title,
-        0.35,
-        0.08,
-        12.63,
-        0.48,
-        20,
+        2.55,
+        0.12,
+        8.20,
+        0.52,
+        16,
         WHITE,
         bold=True,
         align=PP_ALIGN.CENTER,
     )
 
 
-def _blank_slide(prs: Presentation):
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    fill = slide.background.fill
-    fill.solid()
-    fill.fore_color.rgb = _rgb(BLACK)
+def _blank_slide(
+    prs: Presentation,
+):
+    blank_layout = None
+
+    for layout in prs.slide_layouts:
+        if (
+            str(layout.name or "")
+            .strip()
+            .lower()
+            == "blank"
+        ):
+            blank_layout = layout
+            break
+
+    if blank_layout is None:
+        blank_layout = (
+            prs.slide_layouts[0]
+        )
+
+    slide = prs.slides.add_slide(
+        blank_layout
+    )
+
+    canvas = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE,
+        Inches(0.22),
+        Inches(0.90),
+        Inches(12.90),
+        Inches(6.27),
+    )
+
+    canvas.fill.solid()
+
+    canvas.fill.fore_color.rgb = (
+        _rgb(WHITE)
+    )
+
+    canvas.line.fill.background()
+
     return slide
 
 
