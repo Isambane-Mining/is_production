@@ -23,35 +23,35 @@ is_production.ui.HourlyProductionUI = class {
         this.setupEvents();
         this.loadUI();
         this.isInitialized = true;
-        
+
         // Store reference on the form to prevent multiple instances
         this.frm._hourlyProductionUI = this;
     }
 
     cleanup() {
         console.log('Cleaning up existing UI');
-        
+
         // Remove existing DOM elements
         const container = this.frm.fields_dict.dnd_html_excavator_ui.$wrapper[0];
         if (container) {
             container.innerHTML = '';
         }
-        
+
         // Remove namespaced event listeners
         if (this.eventNamespace) {
             $(document).off(`.${this.eventNamespace}`);
         }
-        
+
         // Clear drag and drop event listeners
         document.removeEventListener('dragend', this.stopAutoScroll);
-        
+
         this.isInitialized = false;
     }
 
     setupEvents() {
         const me = this;
         const ns = this.eventNamespace;
-        
+
         // Use namespaced events to prevent conflicts
         $(document).on(`change.${ns}`, '.truck-loads', function(e) {
             const rowName = this.getAttribute('data-row-name');
@@ -74,13 +74,13 @@ is_production.ui.HourlyProductionUI = class {
         $(document).on(`click.${ns}`, '.btn-remove-truck', function(e) {
             e.preventDefault();
             e.stopPropagation();
-            
+
             // Prevent multiple clicks
             if ($(this).hasClass('processing')) {
                 return;
             }
             $(this).addClass('processing');
-            
+
             const rowName = this.getAttribute('data-row-name');
             const truckData = me.frm.doc.truck_loads.find(r => r.name === rowName);
             if (!truckData) {
@@ -125,28 +125,28 @@ is_production.ui.HourlyProductionUI = class {
                 // Move to unassigned section
                 const truckEl = document.querySelector(`.truck-block[data-row-name="${rowName}"]`);
                 const unassigned = document.querySelector('#unassigned-trucks');
-                
+
                 if (truckEl && newCardEl && unassigned) {
                     // Remove placeholder if it exists
                     const placeholder = unassigned.querySelector('.placeholder-empty');
                     if (placeholder) {
                         placeholder.remove();
                     }
-                    
+
                     // Replace the truck element
                     truckEl.replaceWith(newCardEl);
-                    
+
                     // Move to unassigned container
                     unassigned.appendChild(newCardEl);
                 }
 
                 // Re-setup drag and drop for the new element
                 me.setupDragAndDrop();
-                
+
                 // Refresh the child table and toolbar
                 me.frm.refresh_field('truck_loads');
                 me.frm.toolbar.refresh();
-                
+
             }).catch((error) => {
                 console.error('Error removing truck:', error);
                 $(this).removeClass('processing');
@@ -174,27 +174,27 @@ is_production.ui.HourlyProductionUI = class {
         $(document).on(`change.${ns}`, '.excavator-area', function() {
             const excavatorName = $(this).data('excavator-name');
             const area = $(this).val();
-            
+
             // Update all trucks in this excavator block
             const container = $(this).closest('.excavator-block').find('.truck-container');
             container.find('.truck-block').each(function() {
                 const rowName = $(this).data('row-name');
                 me.updateTruckArea(rowName, area);
             });
-            
+
             me.updateExcavatorDefaultArea(excavatorName, area);
         });
     }
-    
+
     async loadUI() {
         // Prevent multiple loads
         if (this.isLoading) {
             console.log('UI already loading, skipping');
             return;
         }
-        
+
         this.isLoading = true;
-        
+
         // Clear existing UI
         this.frm.fields_dict.dnd_html_excavator_ui.$wrapper.empty();
 
@@ -215,7 +215,7 @@ is_production.ui.HourlyProductionUI = class {
             ]);
 
             // Create container
-            const container = $(` 
+            const container = $(`
                 <div class="equipment-ui-container">
                     <div class="excavator-ui-section"></div>
                     <div class="dozer-ui-section"></div>
@@ -226,7 +226,7 @@ is_production.ui.HourlyProductionUI = class {
             // Load both UIs
             this.loadExcavatorUI(allExcavators, allTrucks);
             this.loadDozersUI(allDozers);
-            
+
         } catch (error) {
             console.error('Error loading UI:', error);
         } finally {
@@ -241,12 +241,12 @@ is_production.ui.HourlyProductionUI = class {
             console.log('Returning existing UI instance');
             return frm._hourlyProductionUI;
         }
-        
+
         // Clean up any existing instance
         if (frm._hourlyProductionUI) {
             frm._hourlyProductionUI.cleanup();
         }
-        
+
         // Create new instance
         console.log('Creating new UI instance');
         return new is_production.ui.HourlyProductionUI(frm);
@@ -254,14 +254,14 @@ is_production.ui.HourlyProductionUI = class {
 
     loadExcavatorUI(excavators, trucks) {
         const miningAreas = this.getMiningAreas();
-        const areaOptions = miningAreas.map(area => 
+        const areaOptions = miningAreas.map(area =>
             `<option value="${area}">${area}</option>`
         ).join('');
 
         // Create a map of trucks by excavator
         const trucksByExcavator = {};
         const unassignedTrucks = [];
-        
+
         // Initialize with all excavators
         excavators.forEach(excavator => {
             trucksByExcavator[excavator] = [];
@@ -281,7 +281,7 @@ is_production.ui.HourlyProductionUI = class {
         excavators.forEach(excavator => {
             const trucks = trucksByExcavator[excavator] || [];
             let currentArea = '';
-            
+
             // Try to find an area from assigned trucks
             if (trucks.length > 0) {
                 const truckWithArea = trucks.find(t => t.mining_areas_trucks);
@@ -320,7 +320,7 @@ is_production.ui.HourlyProductionUI = class {
                         <h4>${excavator}</h4>
                         <div class="excavator-area-selector">
                             <label>Primary Area:</label>
-                            <select class="form-control excavator-area" 
+                            <select class="form-control excavator-area"
                                     data-excavator-name="${excavator}">
                                 <option value="">Select Area</option>
                                 ${areaOptions}
@@ -328,20 +328,19 @@ is_production.ui.HourlyProductionUI = class {
                             </select>
                         </div>
 
-                            <div style="margin-top:6px;">
-                                <label style="font-size:11px; margin-bottom:2px;">
+                            <div class="exc-to-area-field">
+                                <label class="exc-compact-label">
                                     To Area:
                                 </label>
                                 <input type="text"
-                                       class="form-control exc-to-area"
+                                       class="form-control exc-to-area exc-compact-control"
                                        data-excavator-name="${excavator}"
                                        value="${toArea}"
                                        autocomplete="off"
-                                       placeholder=""
-                                       style="height:28px; padding:2px 6px;">
+                                       placeholder="">
                             </div>
 
-                        <div class="excavator-hours-row" style="display:flex; gap:8px; align-items:end; flex-wrap:wrap; margin-left:10px;">
+                        <div class="excavator-hours-row">
                             <!-- Hour fields remain in DOM for existing logic,
                                  but are hidden from the user. -->
                             <input type="hidden"
@@ -359,41 +358,38 @@ is_production.ui.HourlyProductionUI = class {
                                    data-excavator-name="${excavator}"
                                    value="${totalHours}">
 
-                            <div style="flex:1 1 150px; min-width:150px;">
-                                <label style="font-size:11px; margin-bottom:2px;">
+                            <div class="exc-hauling-distance-field">
+                                <label class="exc-compact-label">
                                     Hauling Distance Meter
                                 </label>
                                 <input type="text"
-                                       class="form-control exc-hauling-distance"
+                                       class="form-control exc-hauling-distance exc-compact-control"
                                        data-excavator-name="${excavator}"
                                        data-current-value="${haulingDistance}"
                                        value="${haulingDistance}"
                                        list="hauling-distance-master-options"
                                        autocomplete="off"
-                                       placeholder=""
-                                       style="height:28px; padding:2px 6px;">
+                                       placeholder="">
                             </div>
 
-                            <div style="flex:0 0 120px; min-width:120px;">
-                                <label style="font-size:11px; margin-bottom:2px;">
+                            <div class="exc-load-time-field">
+                                <label class="exc-compact-label">
                                     Start Load Time
                                 </label>
                                 <input type="text"
-                                       class="form-control exc-start-load-time exc-load-time-input"
+                                       class="form-control exc-start-load-time exc-load-time-input exc-compact-control"
                                        data-excavator-name="${excavator}"
-                                       value="${startLoadTime}"
-                                       style="height:28px; padding:2px 6px;">
+                                       value="${startLoadTime}">
                             </div>
 
-                            <div style="flex:0 0 120px; min-width:120px;">
-                                <label style="font-size:11px; margin-bottom:2px;">
+                            <div class="exc-load-time-field">
+                                <label class="exc-compact-label">
                                     End Load Time
                                 </label>
                                 <input type="text"
-                                       class="form-control exc-end-load-time exc-load-time-input"
+                                       class="form-control exc-end-load-time exc-load-time-input exc-compact-control"
                                        data-excavator-name="${excavator}"
-                                       value="${endLoadTime}"
-                                       style="height:28px; padding:2px 6px;">
+                                       value="${endLoadTime}">
                             </div>
                         </div>
                     </div>
@@ -465,48 +461,7 @@ is_production.ui.HourlyProductionUI = class {
     ).join('');
 
     let dozersHtml = `
-        <style>
-            /* KOSI_DOZER_STRAIGHT_COLUMNS_V1 */
 
-            .dozer-ui-section .dozer-fields-row {
-                display: grid !important;
-                grid-template-columns: repeat(6, minmax(0, 1fr)) !important;
-                gap: 8px !important;
-                align-items: end !important;
-                width: 100% !important;
-            }
-
-            .dozer-ui-section .dozer-field {
-                width: 100% !important;
-                min-width: 0 !important;
-                margin: 0 !important;
-            }
-
-            .dozer-ui-section .dozer-field label {
-                display: block !important;
-                white-space: nowrap !important;
-                margin-bottom: 5px !important;
-                line-height: 1.2 !important;
-            }
-
-            .dozer-ui-section .dozer-field .form-control {
-                width: 100% !important;
-                min-width: 0 !important;
-                box-sizing: border-box !important;
-            }
-
-            @media (max-width: 900px) {
-                .dozer-ui-section .dozer-fields-row {
-                    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
-                }
-            }
-
-            @media (max-width: 520px) {
-                .dozer-ui-section .dozer-fields-row {
-                    grid-template-columns: 1fr !important;
-                }
-            }
-        </style>
 
         <div class="dozer-section">
             <h3 class="dozer-section-title">
@@ -602,7 +557,7 @@ is_production.ui.HourlyProductionUI = class {
                     <div class="dozer-field">
                         <label>
                             Hauling Distance Meter
-                            <span style="color:#e03636;">*</span>
+                            <span class="production-required-marker">*</span>
                         </label>
 
                         <input type="text"
@@ -783,8 +738,8 @@ is_production.ui.HourlyProductionUI = class {
     createTruckCard(truck) {
     const isAssigned = !!truck.asset_name_shoval;
     console.log('Creating truck card for:', truck.asset_name_truck, 'isAssigned:', isAssigned, 'excavator:', truck.asset_name_shoval);
-    
-    const geoOptions = this.frm.truck_geo_options_str ? 
+
+    const geoOptions = this.frm.truck_geo_options_str ?
         this.frm.truck_geo_options_str.split('\n').filter(Boolean) : [];
 
     let optionsHtml = geoOptions.map(option => {
@@ -793,18 +748,18 @@ is_production.ui.HourlyProductionUI = class {
     }).join('');
 
     let areaHtml = '';
-   
+
     return `
-        <div class="truck-block" 
-             data-truck-name="${truck.asset_name_truck}" 
+        <div class="truck-block"
+             data-truck-name="${truck.asset_name_truck}"
              data-row-name="${truck.name}"
              draggable="true">
-             
+
             <div class="truck-header">
                 <img src="/assets/is_production/images/mining-truck.png" class="truck-icon">
                 <div class="truck-name">${truck.asset_name_truck}</div>
                 ${isAssigned ? `
-                    <button type="button" class="btn-remove-truck" 
+                    <button type="button" class="btn-remove-truck"
                             title="Move to Unassigned" data-row-name="${truck.name}">
                         ✖
                     </button>
@@ -815,13 +770,13 @@ is_production.ui.HourlyProductionUI = class {
                 <div class="truck-fields-row">
                     <div class="truck-field">
                         <label>Loads</label>
-                        <input type="number" 
-                               class="form-control truck-loads" 
-                               value="${truck.loads || 0}" 
+                        <input type="number"
+                               class="form-control truck-loads"
+                               value="${truck.loads || 0}"
                                data-row-name="${truck.name}"
                                min="0" step="0.1">
                     </div>
-                    
+
                     <div class="truck-field">
                         <label>Geo Layer</label>
                         <select class="form-control truck-geo-layer" data-row-name="${truck.name}">
@@ -829,7 +784,7 @@ is_production.ui.HourlyProductionUI = class {
                             ${optionsHtml}
                         </select>
                     </div>
-                    
+
                     ${areaHtml}
                 </div>
             ` : ''}
@@ -905,29 +860,29 @@ is_production.ui.HourlyProductionUI = class {
     });
 }
 
-   
+
 
     setupDragAndDrop() {
     console.log('Setting up drag and drop');
     const truckBlocks = document.querySelectorAll('.truck-block');
     const containers = document.querySelectorAll('.truck-container');
-    
+
     // Auto-scroll variables
     let scrollInterval = null;
     const scrollSpeed = 10; // pixels per interval
     const scrollZone = 50; // pixels from edge to trigger scrolling
-    
+
     // Auto-scroll function
     const autoScroll = (e) => {
         const viewportHeight = window.innerHeight;
         const mouseY = e.clientY;
-        
+
         // Clear existing interval
         if (scrollInterval) {
             clearInterval(scrollInterval);
             scrollInterval = null;
         }
-        
+
         // Check if we're in the scroll zones
         if (mouseY < scrollZone) {
             // Scroll up
@@ -941,7 +896,7 @@ is_production.ui.HourlyProductionUI = class {
             }, 16); // ~60fps
         }
     };
-    
+
     // Stop auto-scroll function
     const stopAutoScroll = () => {
         if (scrollInterval) {
@@ -967,7 +922,7 @@ is_production.ui.HourlyProductionUI = class {
         truck.addEventListener('dragend', async (e) => {
     truck.classList.remove('dragging');
     stopAutoScroll(); // Stop scrolling when drag ends
-    
+
     const rowName = truck.getAttribute('data-row-name');
     const rowData = this.frm.doc.truck_loads.find(r => r.name === rowName);
     if (!rowData) return;
@@ -975,7 +930,7 @@ is_production.ui.HourlyProductionUI = class {
     const newContainer = truck.parentElement.closest('.excavator-block');
     const newExcavator = newContainer?.querySelector('h4')?.textContent || null;
     const isNowUnassigned = newExcavator === 'Unassigned Trucks';
-    
+
     // Save current values before changing
     const currentMatType = rowData.mat_type;
     const currentGeoLayer = rowData.geo_mat_layer_truck;
@@ -989,14 +944,14 @@ is_production.ui.HourlyProductionUI = class {
         rowData.asset_name_shoval = null;
         rowData.loads = 0;
         rowData.mining_areas_trucks = null;
-        
+
         // Then update the server
         await Promise.all([
             frappe.model.set_value(rowData.doctype, rowData.name, 'asset_name_shoval', null),
             frappe.model.set_value(rowData.doctype, rowData.name, 'loads', 0),
             frappe.model.set_value(rowData.doctype, rowData.name, 'mining_areas_trucks', null)
         ]);
-        
+
         // Restore preserved values
         rowData.mat_type = currentMatType;
         rowData.geo_mat_layer_truck = currentGeoLayer;
@@ -1016,7 +971,7 @@ is_production.ui.HourlyProductionUI = class {
         if (excavatorArea) {
             rowData.mining_areas_trucks = excavatorArea;
         }
-        
+
         // Then update the server
         await Promise.all([
             frappe.model.set_value(rowData.doctype, rowData.name, 'asset_name_shoval', newExcavator),
@@ -1026,7 +981,7 @@ is_production.ui.HourlyProductionUI = class {
 
     // Refresh the child table to show changes
     this.frm.refresh_field('truck_loads');
-    
+
     // Update the toolbar to show save button
     this.frm.toolbar.refresh();
 
@@ -1053,24 +1008,24 @@ is_production.ui.HourlyProductionUI = class {
     containers.forEach(container => {
         container.addEventListener('dragover', e => {
             e.preventDefault();
-            
+
             // Continue auto-scrolling during dragover
             autoScroll(e);
-            
+
             const dragging = document.querySelector('.dragging');
             if (dragging && !container.contains(dragging)) {
                 container.appendChild(dragging);
             }
         });
-        
+
         container.addEventListener('dragleave', () => {
             // Don't stop scrolling on dragleave as it fires frequently
             // Only stop on dragend
         });
-        
+
         container.style.minHeight = '40px';
     });
-    
+
     // Add global dragend listener to ensure scrolling stops
     document.addEventListener('dragend', stopAutoScroll);
 }
@@ -1083,7 +1038,7 @@ is_production.ui.HourlyProductionUI = class {
         if (fieldname === 'dozer_geo_mat_layer' && this.frm.geoMaterialMap && this.frm.geoMaterialMap[value]) {
             frappe.model.set_value(row.doctype, row.name, 'mat_type', this.frm.geoMaterialMap[value]);
         }
-        
+
         // Add this new logic for service type changes
         if (fieldname === 'dozer_service') {
             this.handleDozerServiceChange(row);
@@ -1104,18 +1059,18 @@ is_production.ui.HourlyProductionUI = class {
 
     setupAreaSelectors() {
         const me = this;
-        
+
         $(document).on('change', '.excavator-area', function() {
             const excavatorName = $(this).data('excavator-name');
             const area = $(this).val();
-            
+
             // Update all trucks in this excavator block
             const container = $(this).closest('.excavator-block').find('.truck-container');
             container.find('.truck-block').each(function() {
                 const rowName = $(this).data('row-name');
                 me.updateTruckArea(rowName, area);
             });
-            
+
             me.updateExcavatorDefaultArea(excavatorName, area);
         });
 
@@ -1300,40 +1255,7 @@ is_production.ui.HourlyProductionUI = class {
         // ----------------------------------------------------
         if (!document.getElementById('exc-load-time-blank-style')) {
             $('head').append(`
-                <style id="exc-load-time-blank-style">
-                    .exc-load-time-blank::-webkit-datetime-edit {
-                        color: transparent;
-                    }
 
-                    .exc-load-time-blank::-webkit-datetime-edit-fields-wrapper {
-                        color: transparent;
-                    }
-
-                    .exc-load-time-blank::-webkit-datetime-edit-hour-field,
-                    .exc-load-time-blank::-webkit-datetime-edit-minute-field,
-                    .exc-load-time-blank::-webkit-datetime-edit-second-field,
-                    .exc-load-time-blank::-webkit-datetime-edit-text {
-                        color: transparent;
-                    }
-
-                    .exc-load-time-blank:focus::-webkit-datetime-edit,
-                    .exc-load-time-blank:focus::-webkit-datetime-edit-fields-wrapper,
-                    .exc-load-time-blank:focus::-webkit-datetime-edit-hour-field,
-                    .exc-load-time-blank:focus::-webkit-datetime-edit-minute-field,
-                    .exc-load-time-blank:focus::-webkit-datetime-edit-second-field,
-                    .exc-load-time-blank:focus::-webkit-datetime-edit-text {
-                        color: inherit;
-                    }
-
-                    .exc-load-time-blank::-webkit-calendar-picker-indicator {
-                        opacity: 1;
-                        cursor: pointer;
-                    }
-
-                    .exc-load-time-input {
-                        cursor: pointer;
-                    }
-                </style>
             `);
         }
 
@@ -1354,76 +1276,7 @@ is_production.ui.HourlyProductionUI = class {
 
         if (!document.getElementById('exc-slider-time-picker-style')) {
             $('head').append(`
-                <style id="exc-slider-time-picker-style">
 
-                    .exc-load-time-input {
-                        cursor: pointer;
-                        background: var(--control-bg, #fff) !important;
-                    }
-
-                    .exc-slider-time-picker {
-                        position: fixed;
-                        z-index: 99999;
-                        width: 210px;
-                        background: #fff;
-                        border: 1px solid #d8d8d8;
-                        border-radius: 10px;
-                        box-shadow: 0 4px 14px rgba(0,0,0,0.16);
-                        overflow: hidden;
-                        padding-top: 7px;
-                    }
-
-                    .exc-slider-time-display {
-                        font-size: 13px;
-                        padding: 2px 12px 5px 12px;
-                        color: #444;
-                        font-variant-numeric: tabular-nums;
-                    }
-
-                    .exc-slider-row {
-                        display: flex;
-                        align-items: center;
-                        height: 22px;
-                        padding: 0 12px;
-                    }
-
-                    .exc-slider-row input[type="range"] {
-                        width: 100%;
-                        height: 14px;
-                        margin: 0;
-                        cursor: pointer;
-                    }
-
-                    .exc-slider-now {
-                        margin-top: 5px;
-                        border-top: 1px solid #e5e5e5;
-                        text-align: center;
-                        padding: 8px 0;
-                        cursor: pointer;
-                        font-size: 13px;
-                        color: #444;
-                        background: #fff;
-                    }
-
-                    .exc-slider-now:hover {
-                        background: #f5f5f5;
-                    }
-
-                    .exc-slider-clear {
-                        border-top: 1px solid #e5e5e5;
-                        text-align: center;
-                        padding: 8px 0;
-                        cursor: pointer;
-                        font-size: 13px;
-                        color: #444;
-                        background: #fff;
-                    }
-
-                    .exc-slider-clear:hover {
-                        background: #f5f5f5;
-                    }
-
-                </style>
             `);
         }
 
@@ -1975,14 +1828,14 @@ is_production.ui.HourlyProductionUI = class {
         if (row) {
             // Update the local data immediately
             row.mining_areas_trucks = area;
-            
+
             // Mark the document as dirty
             this.frm.dirty = true;
             this.frm.doc.__unsaved = 1;
-            
+
             // Use frappe.model.set_value to properly register the change
             frappe.model.set_value(row.doctype, row.name, 'mining_areas_trucks', area);
-            
+
             // Update UI immediately
             const truckBlock = $(`.truck-block[data-row-name="${rowName}"]`);
             if (truckBlock.length) {
@@ -1992,10 +1845,10 @@ is_production.ui.HourlyProductionUI = class {
                     truckBlock.find('.truck-fields').append(areaHtml);
                 }
             }
-            
+
             // Refresh the child table field to show changes
             this.frm.refresh_field('truck_loads');
-            
+
             // Update the toolbar to show save button
             this.frm.toolbar.refresh();
         }
@@ -2003,21 +1856,21 @@ is_production.ui.HourlyProductionUI = class {
 
     updateExcavatorDefaultArea(excavatorName, area) {
         console.log(`Excavator ${excavatorName} primary area set to ${area}`);
-        
+
         // Mark the document as dirty when excavator area changes
         this.frm.dirty = true;
         this.frm.doc.__unsaved = 1;
-        
+
         // Update the toolbar to show save button
         this.frm.toolbar.refresh();
-        
+
         // Can be extended to store default areas if needed
     }
 
     updateExcavatorAssignments() {
         console.log('Updating excavator assignments');
         const assignments = {};
-        
+
         document.querySelectorAll('.excavator-block').forEach(block => {
             const excavatorName = block.querySelector('h4').textContent;
             if (excavatorName !== 'Unassigned Trucks') {
@@ -2036,7 +1889,7 @@ is_production.ui.HourlyProductionUI = class {
                 frappe.model.set_value(row.doctype, row.name, 'asset_name_shoval', null);
             }
         });
-        
+
         this.frm.refresh_field('truck_loads');
     }
 
@@ -2045,29 +1898,29 @@ is_production.ui.HourlyProductionUI = class {
         if (row) {
             // Update the local data immediately
             row[fieldname] = value;
-            
+
             // Mark the document as dirty
             this.frm.dirty = true;
             this.frm.doc.__unsaved = 1;
-            
+
             // Use frappe.model.set_value to properly register the change
             frappe.model.set_value(row.doctype, row.name, fieldname, value);
-            
+
             // Handle geo layer material mapping
             if (fieldname === 'geo_mat_layer_truck' && this.frm.geoMaterialMap && this.frm.geoMaterialMap[value]) {
                 const matType = this.frm.geoMaterialMap[value];
                 row.mat_type = matType;
                 frappe.model.set_value(row.doctype, row.name, 'mat_type', matType);
             }
-            
+
             // Calculate BCMS if loads changed
             if (fieldname === 'loads') {
                 this.calculateBCMS(row.doctype, row.name);
             }
-            
+
             // Refresh the child table field to show changes
             this.frm.refresh_field('truck_loads');
-            
+
             // Update the toolbar to show save button
             this.frm.toolbar.refresh();
         }
@@ -2079,11 +1932,11 @@ updateDozerField(dozerName, fieldname, value) {
         if (row) {
             // Update the local data immediately
             row[fieldname] = value;
-            
+
             // Mark the document as dirty
             this.frm.dirty = true;
             this.frm.doc.__unsaved = 1;
-            
+
             // Use frappe.model.set_value to properly register the change
             frappe.model.set_value(row.doctype, row.name, fieldname, value);
 
@@ -2093,15 +1946,15 @@ updateDozerField(dozerName, fieldname, value) {
                 row.mat_type = matType;
                 frappe.model.set_value(row.doctype, row.name, 'mat_type', matType);
             }
-            
+
             // Handle service type changes
             if (fieldname === 'dozer_service') {
                 this.handleDozerServiceChange(row);
             }
-            
+
             // Refresh the child table field to show changes
             this.frm.refresh_field('dozer_production');
-            
+
             // Update the toolbar to show save button
             this.frm.toolbar.refresh();
         }
@@ -2113,17 +1966,17 @@ calculateBCMS(doctype, name) {
         const loads = parseFloat(row.loads) || 0;
         const tf = parseFloat(row.tub_factor) || 0;
         const bcms = (!isNaN(loads) && !isNaN(tf)) ? loads * tf : 0;
-        
+
         // Update local data
         row.bcms = bcms;
-        
+
         // Mark document as dirty
         this.frm.dirty = true;
         this.frm.doc.__unsaved = 1;
-        
+
         // Use frappe.model.set_value to register the change
         frappe.model.set_value(doctype, name, 'bcms', bcms);
-        
+
         // Refresh the field
         this.frm.refresh_field('truck_loads');
         this.frm.toolbar.refresh();
@@ -2138,10 +1991,10 @@ calculateBCMS(doctype, name) {
     if (container) {
         container.innerHTML = '';
     }
-    
+
     // Clear any jQuery event handlers
     $(document).off('.hourlyProductionUI');
-    
+
     // Clear any other references
     this.container = null;
     // Add any other cleanup needed for your specific UI
@@ -2203,7 +2056,7 @@ async handleDozerServiceChange(row) {
 }
 
 
-    
+
 
      calculateBCMS(doctype, name) {
         const row = this.frm.doc.truck_loads.find(r => r.name === name);
@@ -2211,17 +2064,17 @@ async handleDozerServiceChange(row) {
             const loads = parseFloat(row.loads) || 0;
             const tf = parseFloat(row.tub_factor) || 0;
             const bcms = (!isNaN(loads) && !isNaN(tf)) ? loads * tf : 0;
-            
+
             // Update local data
             row.bcms = bcms;
-            
+
             // Mark document as dirty
             this.frm.dirty = true;
             this.frm.doc.__unsaved = 1;
-            
+
             // Use frappe.model.set_value to register the change
             frappe.model.set_value(doctype, name, 'bcms', bcms);
-            
+
             // Refresh the field
             this.frm.refresh_field('truck_loads');
             this.frm.toolbar.refresh();
