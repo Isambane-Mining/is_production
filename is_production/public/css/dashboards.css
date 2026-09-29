@@ -1109,3 +1109,186 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* =========================================================
+   Hourly Production UI
+   Moved from hourly_production_ui.js
+   ========================================================= */
+
+/* KOSI_DOZER_STRAIGHT_COLUMNS_V1 */
+
+            .dozer-ui-section .dozer-fields-row {
+                display: grid !important;
+                grid-template-columns: repeat(6, minmax(0, 1fr)) !important;
+                gap: 8px !important;
+                align-items: end !important;
+                width: 100% !important;
+            }
+
+            .dozer-ui-section .dozer-field {
+                width: 100% !important;
+                min-width: 0 !important;
+                margin: 0 !important;
+            }
+
+            .dozer-ui-section .dozer-field label {
+                display: block !important;
+                white-space: nowrap !important;
+                margin-bottom: 5px !important;
+                line-height: 1.2 !important;
+            }
+
+            .dozer-ui-section .dozer-field .form-control {
+                width: 100% !important;
+                min-width: 0 !important;
+                box-sizing: border-box !important;
+            }
+
+            @media (max-width: 900px) {
+                .dozer-ui-section .dozer-fields-row {
+                    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+                }
+            }
+
+            @media (max-width: 520px) {
+                .dozer-ui-section .dozer-fields-row {
+                    grid-template-columns: 1fr !important;
+                }
+            }
+
+.exc-load-time-blank::-webkit-datetime-edit {
+                        color: transparent;
+                    }
+
+                    .exc-load-time-blank::-webkit-datetime-edit-fields-wrapper {
+                        color: transparent;
+                    }
+
+                    .exc-load-time-blank::-webkit-datetime-edit-hour-field,
+                    .exc-load-time-blank::-webkit-datetime-edit-minute-field,
+                    .exc-load-time-blank::-webkit-datetime-edit-second-field,
+                    .exc-load-time-blank::-webkit-datetime-edit-text {
+                        color: transparent;
+                    }
+
+                    .exc-load-time-blank:focus::-webkit-datetime-edit,
+                    .exc-load-time-blank:focus::-webkit-datetime-edit-fields-wrapper,
+                    .exc-load-time-blank:focus::-webkit-datetime-edit-hour-field,
+                    .exc-load-time-blank:focus::-webkit-datetime-edit-minute-field,
+                    .exc-load-time-blank:focus::-webkit-datetime-edit-second-field,
+                    .exc-load-time-blank:focus::-webkit-datetime-edit-text {
+                        color: inherit;
+                    }
+
+                    .exc-load-time-blank::-webkit-calendar-picker-indicator {
+                        opacity: 1;
+                        cursor: pointer;
+                    }
+
+                    .exc-load-time-input {
+                        cursor: pointer;
+                    }
+
+.exc-load-time-input {
+                        cursor: pointer;
+                        background: var(--control-bg, #fff) !important;
+                    }
+
+                    .exc-slider-time-picker {
+                        position: fixed;
+                        z-index: 99999;
+                        width: 210px;
+                        background: #fff;
+                        border: 1px solid #d8d8d8;
+                        border-radius: 10px;
+                        box-shadow: 0 4px 14px rgba(0,0,0,0.16);
+                        overflow: hidden;
+                        padding-top: 7px;
+                    }
+
+                    .exc-slider-time-display {
+                        font-size: 13px;
+                        padding: 2px 12px 5px 12px;
+                        color: #444;
+                        font-variant-numeric: tabular-nums;
+                    }
+
+                    .exc-slider-row {
+                        display: flex;
+                        align-items: center;
+                        height: 22px;
+                        padding: 0 12px;
+                    }
+
+                    .exc-slider-row input[type="range"] {
+                        width: 100%;
+                        height: 14px;
+                        margin: 0;
+                        cursor: pointer;
+                    }
+
+                    .exc-slider-now {
+                        margin-top: 5px;
+                        border-top: 1px solid #e5e5e5;
+                        text-align: center;
+                        padding: 8px 0;
+                        cursor: pointer;
+                        font-size: 13px;
+                        color: #444;
+                        background: #fff;
+                    }
+
+                    .exc-slider-now:hover {
+                        background: #f5f5f5;
+                    }
+
+                    .exc-slider-clear {
+                        border-top: 1px solid #e5e5e5;
+                        text-align: center;
+                        padding: 8px 0;
+                        cursor: pointer;
+                        font-size: 13px;
+                        color: #444;
+                        background: #fff;
+                    }
+
+                    .exc-slider-clear:hover {
+                        background: #f5f5f5;
+                    }
+
+/* Hourly Production form layout */
+.exc-to-area-field {
+  margin-top: 6px;
+}
+
+.exc-compact-label {
+  font-size: 11px;
+  margin-bottom: 2px;
+}
+
+.exc-compact-control {
+  height: 28px;
+  padding: 2px 6px;
+}
+
+.excavator-hours-row {
+  display: flex;
+  gap: 8px;
+  align-items: end;
+  flex-wrap: wrap;
+  margin-left: 10px;
+}
+
+.exc-hauling-distance-field {
+  flex: 1 1 150px;
+  min-width: 150px;
+}
+
+.exc-load-time-field {
+  flex: 0 0 120px;
+  min-width: 120px;
+}
+
+.production-required-marker {
+  color: #e03636;
+}
