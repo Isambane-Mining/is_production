@@ -1,5 +1,6 @@
 {
  "actions": [],
+ "allow_bulk_edit": 1,
  "allow_rename": 1,
  "creation": "2024-10-14 19:38:13.937943",
  "doctype": "DocType",
@@ -18,7 +19,11 @@
   "tub_factor_doc_link",
   "tub_factor",
   "bcms",
-  "mining_areas_trucks"
+  "mining_areas_trucks",
+  "exc_hauling_distance_meter",
+  "exc_to_area",
+  "exc_start_load_time",
+  "exc_end_load_time"
  ],
  "fields": [
   {
@@ -131,13 +136,34 @@
    "fieldtype": "Data",
    "label": "Truck Plant No",
    "read_only": 1
+  },
+  {
+   "fieldname": "exc_hauling_distance_meter",
+   "fieldtype": "Link",
+   "label": "Hauling Distance Meter",
+   "options": "Hauling Distance Meter"
+  },
+  {
+   "fieldname": "exc_to_area",
+   "fieldtype": "Data",
+   "label": "To Area"
+  },
+  {
+   "fieldname": "exc_start_load_time",
+   "fieldtype": "Time",
+   "label": "Start Load Time"
+  },
+  {
+   "fieldname": "exc_end_load_time",
+   "fieldtype": "Time",
+   "label": "End Load Time"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-02-09 09:53:08.803264",
+ "modified": "2026-09-28 16:17:58.978799",
  "modified_by": "Administrator",
  "module": "Production",
  "name": "Truck Loads",

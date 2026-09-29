@@ -1179,10 +1179,12 @@ frappe.ui.form.on('Hourly Production', {
 
     location(frm) {
     fetch_monthly_production_plan(frm);
-    if (frm.is_new() || !frm.doc.truck_loads || frm.doc.truck_loads.length === 0) {
-        populate_truck_loads_and_lookup(frm);
-    }
-    
+
+    // Truck Loads are deliberately NOT populated here.
+    // location() can fire before the production hour is fully known.
+    // The table is built from shift_num_hour() once hour_sort_key
+    // and the previous-hour lookup context are available.
+
     if (frm.is_new() || !frm.doc.dozer_production || frm.doc.dozer_production.length === 0) {
         populate_dozer_production_table(frm);
     }
@@ -1276,9 +1278,10 @@ frappe.ui.form.on('Hourly Production', {
         // Only populate if new doc or no data exists
         if (frm.is_new() || !frm.doc.truck_loads || frm.doc.truck_loads.length === 0) {
             populate_truck_loads_and_lookup(frm).then(() => {
-                if (!uiInitialized) {
-                    initializeOrRefreshUI(frm);
-                }
+                // Truck Loads are now fully populated with the
+                // previous-hour setup. Always rebuild the custom
+                // Excavator UI from the final child-row values.
+                initializeOrRefreshUI(frm);
             });
         } 
         // Just initialize UI for existing docs with data
@@ -1486,33 +1489,86 @@ month_prod_planning(frm) {
 // ——————————————————————
 
 
+
 function populate_truck_loads_and_lookup(frm) {
-    return new Promise((resolve) => {
-        if (!frm.doc.location) return resolve();
+    if (!frm.doc.location) {
+        return Promise.resolve();
+    }
 
-        const has_user_truck_setup = (frm.doc.truck_loads || []).some(row => {
-            return (
-                (parseFloat(row.loads || 0) > 0) ||
-                row.asset_name_shoval ||
-                row.geo_mat_layer_truck
-            );
-        });
+    // --------------------------------------------------------
+    // One population operation per form/hour.
+    // Prevent location/shift events from running this in
+    // parallel and rebuilding the table underneath the UI.
+    // --------------------------------------------------------
+    const populationKey = [
+        frm.doc.location || '',
+        frm.doc.prod_date || '',
+        frm.doc.hour_sort_key || '',
+        frm.doc.shift_num_hour || ''
+    ].join('|');
 
-        if (has_user_truck_setup) {
-            console.log("Truck loads already have user setup. Skipping rebuild.");
-            return resolve();
-        }
+    if (
+        frm.__truck_loads_population_key === populationKey &&
+        (frm.doc.truck_loads || []).length
+    ) {
+        console.log(
+            'Truck Loads already populated for:',
+            populationKey
+        );
 
-        // First, try to get previous hour assignments AND mining areas
-        get_previous_hour_excavator_assignments(frm).then(prevAssignments => {
-            console.log('Previous hour assignments found:', prevAssignments);
+        return Promise.resolve();
+    }
 
-            // 1) Fetch trucks (need BOTH PK name and Plant No asset_name)
+    if (frm.__truck_loads_population_promise) {
+        console.log(
+            'Truck Loads population already running.'
+        );
+
+        return frm.__truck_loads_population_promise;
+    }
+
+    const call = (method, args) => {
+        return new Promise((resolve, reject) => {
             frappe.call({
-                method: 'frappe.client.get_list',
-                args: {
+                method: method,
+                args: args,
+                callback: r => resolve(r.message),
+                error: reject
+            });
+        });
+    };
+
+    frm.__truck_loads_population_promise = (async () => {
+
+        try {
+            console.log(
+                'Building Truck Loads once for:',
+                populationKey
+            );
+
+            // ------------------------------------------------
+            // 1. Get previous-hour assignments FIRST.
+            // ------------------------------------------------
+            const prevAssignments =
+                await get_previous_hour_excavator_assignments(frm);
+
+            console.log(
+                'Previous-hour assignments:',
+                prevAssignments
+            );
+
+            // ------------------------------------------------
+            // 2. Get all trucks for this location.
+            // ------------------------------------------------
+            const trucks = await call(
+                'frappe.client.get_list',
+                {
                     doctype: 'Asset',
-                    fields: ['name', 'asset_name', 'item_name'],
+                    fields: [
+                        'name',
+                        'asset_name',
+                        'item_name'
+                    ],
                     filters: [
                         ['location', '=', frm.doc.location],
                         ['asset_category', 'in', ['ADT', 'RIGID']],
@@ -1520,149 +1576,269 @@ function populate_truck_loads_and_lookup(frm) {
                     ],
                     order_by: 'asset_name asc',
                     limit_page_length: 500
-                },
-                callback: r => {
-                    const trucks = (r.message || []);
-                    const truckMaps = build_asset_maps(trucks);
+                }
+            ) || [];
 
-                    // 2) Fetch excavators for normalization (MPP/previous-hour may store Plant No)
-                    frappe.call({
-                        method: 'frappe.client.get_list',
-                        args: {
-                            doctype: 'Asset',
-                            fields: ['name', 'asset_name'],
-                            filters: [
-                                ['location', '=', frm.doc.location],
-                                ['asset_category', '=', 'Excavator'],
-                                ['docstatus', '=', 1]
-                            ],
-                            order_by: 'asset_name asc',
-                            limit_page_length: 500
-                        },
-                        callback: r2 => {
-                            const excavators = (r2.message || []);
-                            const excavMaps = build_asset_maps(excavators);
+            // ------------------------------------------------
+            // 3. Get excavators so previous-hour / MPP values
+            //    can be normalized to Asset.name.
+            // ------------------------------------------------
+            const excavators = await call(
+                'frappe.client.get_list',
+                {
+                    doctype: 'Asset',
+                    fields: [
+                        'name',
+                        'asset_name'
+                    ],
+                    filters: [
+                        ['location', '=', frm.doc.location],
+                        ['asset_category', '=', 'Excavator'],
+                        ['docstatus', '=', 1]
+                    ],
+                    order_by: 'asset_name asc',
+                    limit_page_length: 500
+                }
+            ) || [];
 
-                            frm.clear_table('truck_loads');
+            const truckMaps = build_asset_maps(trucks);
+            const excavMaps = build_asset_maps(excavators);
 
-                            // Default mining area ONLY if we're NOT using previous hour data
-                            let defaultArea = '';
-                            if (!prevAssignments && frm.doc.mining_areas_options && frm.doc.mining_areas_options.length === 1) {
-                                defaultArea = frm.doc.mining_areas_options[0].mining_areas;
-                            }
+            const normalizeExcavator = value => {
+                if (!value) {
+                    return '';
+                }
 
-                            // Create truck load rows
-                            trucks.forEach(asset => {
-                                const row = frm.add_child('truck_loads');
+                if (excavMaps.byName[value]) {
+                    return value;
+                }
 
-                                // ✅ Link must store Asset.name
-                                frappe.model.set_value(row.doctype, row.name, 'asset_name_truck', asset.name);
+                if (excavMaps.byCode[value]) {
+                    return excavMaps.byCode[value].name;
+                }
 
-                                // ✅ Plant No display (Data) if you added it
-                                if (row.truck_plant_no !== undefined) {
-                                    frappe.model.set_value(row.doctype, row.name, 'truck_plant_no', asset.asset_name || '');
-                                }
+                return value;
+            };
 
-                                frappe.model.set_value(row.doctype, row.name, 'item_name', asset.item_name || '');
+            // ------------------------------------------------
+            // 4. Start with ONE clean table.
+            // ------------------------------------------------
+            frm.clear_table('truck_loads');
 
-                                if (defaultArea) {
-                                    frappe.model.set_value(row.doctype, row.name, 'mining_areas_trucks', defaultArea);
-                                }
-                            });
+            let defaultArea = '';
 
-                            const set_excavator_link = (loadRow, excavVal) => {
-                                if (!excavVal) return;
+            if (
+                !prevAssignments &&
+                frm.doc.mining_areas_options &&
+                frm.doc.mining_areas_options.length === 1
+            ) {
+                defaultArea =
+                    frm.doc.mining_areas_options[0].mining_areas || '';
+            }
 
-                                // excavVal may be Asset.name OR Plant No
-                                let excavName = null;
-                                if (excavMaps.byName[excavVal]) {
-                                    excavName = excavVal;
-                                } else if (excavMaps.byCode[excavVal]) {
-                                    excavName = excavMaps.byCode[excavVal].name;
-                                } else {
-                                    // last resort: set raw value (server-side normalize will catch if possible)
-                                    excavName = excavVal;
-                                }
+            // ------------------------------------------------
+            // 5. Create each truck row ONCE.
+            //
+            // Register previous-hour setup with Frappe's child
+            // model so every carried field is persisted.
+            // ------------------------------------------------
+            const previousHourUpdates = [];
 
-                                frappe.model.set_value(loadRow.doctype, loadRow.name, 'asset_name_shoval', excavName);
+            const setChildValue = (row, fieldname, value) => {
+                row[fieldname] = value;
 
-                                const excavAsset = excavMaps.byName[excavName];
-                                if (excavAsset && loadRow.excavator_plant_no !== undefined) {
-                                    frappe.model.set_value(loadRow.doctype, loadRow.name, 'excavator_plant_no', excavAsset.asset_name || '');
-                                }
-                            };
+                previousHourUpdates.push(
+                    Promise.resolve(
+                        frappe.model.set_value(
+                            row.doctype,
+                            row.name,
+                            fieldname,
+                            value
+                        )
+                    )
+                );
+            };
 
-                            // Apply excavator assignments + mining areas (priority: previous hour, then MPP)
-                            if (prevAssignments) {
-                                console.log('Applying previous hour assignments with mining areas');
+            trucks.forEach(asset => {
 
-                                (frm.doc.truck_loads || []).forEach(loadRow => {
-                                    const truckName = loadRow.asset_name_truck;
-                                    const truckCode =
-                                        loadRow.truck_plant_no ||
-                                        (truckMaps.byName[truckName] ? truckMaps.byName[truckName].asset_name : null);
+                const row = frm.add_child('truck_loads');
 
-                                    const prevData =
-                                        (truckName && prevAssignments[truckName]) ||
-                                        (truckCode && prevAssignments[truckCode]);
+                row.asset_name_truck = asset.name;
+                row.truck_plant_no = asset.asset_name || '';
+                row.item_name = asset.item_name || '';
 
-                                    if (!prevData) return;
+                const truckName = asset.name;
+                const truckCode = asset.asset_name;
 
-                                    if (prevData.excavator) set_excavator_link(loadRow, prevData.excavator);
+                const prev =
+                    prevAssignments
+                        ? (
+                            prevAssignments[truckName] ||
+                            prevAssignments[truckCode]
+                        )
+                        : null;
 
-                                    if (prevData.mining_area) {
-                                        frappe.model.set_value(loadRow.doctype, loadRow.name, 'mining_areas_trucks', prevData.mining_area);
-                                    }
+                if (prev) {
 
-                                    if (prevData.geo_layer) {
-                                        frappe.model.set_value(loadRow.doctype, loadRow.name, 'geo_mat_layer_truck', prevData.geo_layer);
-                                    }
+                    row.asset_name_shoval =
+                        normalizeExcavator(
+                            prev.excavator
+                        );
 
-                                    if (prevData.mat_type) {
-                                        frappe.model.set_value(loadRow.doctype, loadRow.name, 'mat_type', prevData.mat_type);
-                                    }
+                    const excavator =
+                        excavMaps.byName[row.asset_name_shoval];
 
-                                    frappe.model.set_value(loadRow.doctype, loadRow.name, 'loads', 0);
-                                    frappe.model.set_value(loadRow.doctype, loadRow.name, 'bcms', 0);
-                                });
-                            } else if (frm.mppAssignments) {
-                                console.log('Applying MPP assignments (no mining areas)');
+                    if (excavator) {
+                        row.excavator_plant_no =
+                            excavator.asset_name || '';
+                    }
 
-                                (frm.doc.truck_loads || []).forEach(loadRow => {
-                                    const truckName = loadRow.asset_name_truck;
-                                    const truckCode =
-                                        loadRow.truck_plant_no ||
-                                        (truckMaps.byName[truckName] ? truckMaps.byName[truckName].asset_name : null);
+                    setChildValue(
+                        row,
+                        'mining_areas_trucks',
+                        prev.mining_area || ''
+                    );
 
-                                    const excavVal =
-                                        (truckName && frm.mppAssignments[truckName]) ||
-                                        (truckCode && frm.mppAssignments[truckCode]);
+                    setChildValue(
+                        row,
+                        'exc_to_area',
+                        prev.to_area || ''
+                    );
 
-                                    if (!excavVal) return;
+                    setChildValue(
+                        row,
+                        'exc_hauling_distance_meter',
+                        prev.hauling_distance || ''
+                    );
 
-                                    set_excavator_link(loadRow, excavVal);
-                                });
-                            }
+                    setChildValue(
+                        row,
+                        'exc_start_load_time',
+                        prev.start_load_time || ''
+                    );
 
-                            frm.refresh_field('truck_loads');
-                            update_mining_area_trucks_options(frm);
-                            resolve();
-                        },
-                        error: () => {
-                            // even if excavators fail, show trucks
-                            frm.refresh_field('truck_loads');
-                            update_mining_area_trucks_options(frm);
-                            resolve();
+                    setChildValue(
+                        row,
+                        'exc_end_load_time',
+                        prev.end_load_time || ''
+                    );
+
+                    setChildValue(
+                        row,
+                        'geo_mat_layer_truck',
+                        prev.geo_layer || ''
+                    );
+
+                    setChildValue(
+                        row,
+                        'mat_type',
+                        prev.mat_type || ''
+                    );
+
+                } else if (frm.mppAssignments) {
+
+                    // ----------------------------------------
+                    // No previous-hour setup for this truck.
+                    // MPP remains the fallback.
+                    // ----------------------------------------
+                    const mppExcavator =
+                        frm.mppAssignments[truckName] ||
+                        frm.mppAssignments[truckCode];
+
+                    if (mppExcavator) {
+                        row.asset_name_shoval =
+                            normalizeExcavator(
+                                mppExcavator
+                            );
+
+                        const excavator =
+                            excavMaps.byName[
+                                row.asset_name_shoval
+                            ];
+
+                        if (excavator) {
+                            row.excavator_plant_no =
+                                excavator.asset_name || '';
                         }
-                    });
-                },
-                error: () => resolve()
+                    }
+
+                    if (defaultArea) {
+                        row.mining_areas_trucks =
+                            defaultArea;
+                    }
+
+                } else if (defaultArea) {
+
+                    row.mining_areas_trucks =
+                        defaultArea;
+                }
+
+                // --------------------------------------------
+                // NEVER carry production quantity forward.
+                // --------------------------------------------
+                setChildValue(
+                    row,
+                    'loads',
+                    0
+                );
+
+                setChildValue(
+                    row,
+                    'bcms',
+                    0
+                );
             });
-        }).catch(error => {
-            console.error('Error in populate_truck_loads_and_lookup:', error);
-            resolve();
-        });
-    });
+
+            // Wait for Frappe to register every child-row value
+            // before refreshing the grid/custom UI.
+            await Promise.all(previousHourUpdates);
+
+            // ------------------------------------------------
+            // 6. Refresh only after every value is registered
+            //    on every child row.
+            // ------------------------------------------------
+            frm.refresh_field('truck_loads');
+
+            update_mining_area_trucks_options(frm);
+            updateTruckGeoMaterialOptions(frm);
+
+            frm.__truck_loads_population_key =
+                populationKey;
+
+            frm.dirty();
+
+            console.log(
+                'FINAL Truck Loads after build:',
+                (frm.doc.truck_loads || []).map(row => ({
+                    truck: row.asset_name_truck,
+                    excavator: row.asset_name_shoval,
+                    primary_area:
+                        row.mining_areas_trucks,
+                    to_area:
+                        row.exc_to_area,
+                    hauling_distance:
+                        row.exc_hauling_distance_meter,
+                    start_load_time:
+                        row.exc_start_load_time,
+                    end_load_time:
+                        row.exc_end_load_time,
+                    geo_layer:
+                        row.geo_mat_layer_truck,
+                    material:
+                        row.mat_type,
+                    loads:
+                        row.loads,
+                    bcms:
+                        row.bcms
+                }))
+            );
+
+        } finally {
+            frm.__truck_loads_population_promise = null;
+        }
+    })();
+
+    return frm.__truck_loads_population_promise;
 }
 
 function calculate_day_total(frm) {
@@ -2550,3 +2726,7 @@ frappe.ui.form.on('Dozer Production', {
     }
 });
 
+
+// ============================================================
+// Hauling Distance Meter - mandatory per assigned excavator
+// ============================================================

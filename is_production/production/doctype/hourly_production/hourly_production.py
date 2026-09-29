@@ -1766,7 +1766,8 @@ def get_user_whatsapp_number(user):
 def get_previous_hour_defaults(location, prod_date, current_hour_sort_key=None, current_name=None):
     """
     Return the latest previous Hourly Production record for same site/date.
-    Copies setup only: truck excavator, mining area, geo layer, mat type, shift start/end.
+    Copies setup only: truck/excavator assignment, areas, geo/material layer,
+    hauling distance, load times and shift start/end.
     Does not copy loads or BCMs.
     """
     if not location or not prod_date:
@@ -1823,6 +1824,24 @@ def get_previous_hour_defaults(location, prod_date, current_hour_sort_key=None, 
             "mining_area": row.mining_areas_trucks or None,
             "geo_layer": row.geo_mat_layer_truck or None,
             "mat_type": row.mat_type or None,
+
+            # Excavator setup carried forward to next hour.
+            "to_area": getattr(row, "exc_to_area", None) or None,
+            "hauling_distance": getattr(
+                row,
+                "exc_hauling_distance_meter",
+                None
+            ) or None,
+            "start_load_time": getattr(
+                row,
+                "exc_start_load_time",
+                None
+            ) or None,
+            "end_load_time": getattr(
+                row,
+                "exc_end_load_time",
+                None
+            ) or None,
         }
 
     return {
