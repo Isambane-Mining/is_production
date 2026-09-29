@@ -644,10 +644,6 @@ def build_filtered_production_row(
         monthly_plan.num_prod_days
     )
 
-    forecast = flt(
-        monthly_plan.month_forecated_bcm
-    )
-
     selected_worked_days = (
         get_completed_production_days(
             monthly_plan.name,
@@ -746,12 +742,14 @@ def build_filtered_production_row(
 
     remaining_volume = (
         monthly_target
-        - month_to_date_actual_bcm
+        - selected_actual_bcm
     )
 
     daily_required = (
         remaining_volume
-        / max(days_left, 1)
+        / days_left
+        if days_left
+        else 0
     )
 
     daily_achieved = (
@@ -759,6 +757,14 @@ def build_filtered_production_row(
         / selected_worked_days
         if selected_worked_days
         else 0
+    )
+
+    forecast = (
+        selected_actual_bcm
+        + (
+            daily_achieved
+            * days_left
+        )
     )
 
     strip_ratio = (
