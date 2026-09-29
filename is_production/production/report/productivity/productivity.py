@@ -16607,28 +16607,105 @@ def _productivity_full_section_v15(
 
 def _productivity_latest_survey_v15(
     site,
-    plan_name,
+    plan_name=None,
     cutoff_date=None,
+    start_date=None,
 ):
-    if (
-        not site
-        or not plan_name
-    ):
+    """
+    Generic Survey selector.
+
+    MODE 1:
+        site + monthly production plan
+
+    MODE 2:
+        site + start/end date range
+
+    Only submitted Surveys are used.
+    """
+
+    site = str(
+        site
+        or ""
+    ).strip()
+
+    plan_name = str(
+        plan_name
+        or ""
+    ).strip()
+
+    if not site:
         return None
 
     survey_filters = {
-        "location": site,
-        "docstatus": 1,
-        "monthly_production_plan_ref":
-            plan_name,
+        "location":
+            site,
+
+        "docstatus":
+            1,
     }
 
-    if cutoff_date:
+    if plan_name:
+
+        survey_filters[
+            "monthly_production_plan_ref"
+        ] = plan_name
+
+    start_value = (
+        _productivity_date_v15(
+            start_date
+        )
+        if start_date
+        else None
+    )
+
+    end_value = (
+        _productivity_date_v15(
+            cutoff_date
+        )
+        if cutoff_date
+        else None
+    )
+
+    if (
+        start_value
+        and end_value
+    ):
+
+        if start_value > end_value:
+            (
+                start_value,
+                end_value,
+            ) = (
+                end_value,
+                start_value,
+            )
+
+        survey_filters[
+            "last_production_shift_start_date"
+        ] = [
+            "between",
+            [
+                start_value,
+                end_value,
+            ],
+        ]
+
+    elif start_value:
+
+        survey_filters[
+            "last_production_shift_start_date"
+        ] = [
+            ">=",
+            start_value,
+        ]
+
+    elif end_value:
+
         survey_filters[
             "last_production_shift_start_date"
         ] = [
             "<=",
-            cutoff_date,
+            end_value,
         ]
 
     surveys = frappe.get_all(
@@ -16636,6 +16713,8 @@ def _productivity_latest_survey_v15(
         filters=survey_filters,
         fields=[
             "name",
+            "location",
+            "monthly_production_plan_ref",
             "last_production_shift_start_date",
             "survey_datetime",
             "total_ts_bcm",
@@ -16648,13 +16727,15 @@ def _productivity_latest_survey_v15(
             "survey_datetime desc, "
             "modified desc"
         ),
-        limit=1,
+        limit_page_length=1,
     )
 
     if not surveys:
         return None
 
-    survey_info = surveys[0]
+    survey_info = (
+        surveys[0]
+    )
 
     doc = frappe.get_doc(
         "Survey",
@@ -16679,6 +16760,7 @@ def _productivity_latest_survey_v15(
         )
         or []
     ):
+
         handling = (
             _productivity_re_v15.sub(
                 r"[^a-z]",
@@ -16711,21 +16793,33 @@ def _productivity_latest_survey_v15(
             )
         )
 
-        # Handles both:
-        #   Truck and Shovel
-        #   Truckand Shovel
         if (
             handling
             == "truckandshovel"
         ):
-            ts[material] += bcm
 
-        elif handling == "dozing":
-            dozing[material] += bcm
+            ts[
+                material
+            ] += bcm
+
+        elif (
+            handling
+            == "dozing"
+        ):
+
+            dozing[
+                material
+            ] += bcm
 
     return {
         "name":
             survey_info.name,
+
+        "location":
+            survey_info.location,
+
+        "monthly_production_plan_ref":
+            survey_info.monthly_production_plan_ref,
 
         "last_production_shift_start_date":
             survey_info.last_production_shift_start_date,
@@ -16734,23 +16828,35 @@ def _productivity_latest_survey_v15(
             survey_info.survey_datetime,
 
         "Excavator":
-            dict(ts),
+            dict(
+                ts
+            ),
 
         "ADT":
-            dict(ts),
+            dict(
+                ts
+            ),
 
         "Dozer":
-            dict(dozing),
+            dict(
+                dozing
+            ),
 
         "total_ts_bcm":
-            sum(ts.values()),
+            sum(
+                ts.values()
+            ),
 
         "total_dozing_bcm":
-            sum(dozing.values()),
+            sum(
+                dozing.values()
+            ),
 
         "total_surveyed_bcm":
             (
-                sum(ts.values())
+                sum(
+                    ts.values()
+                )
                 + sum(
                     dozing.values()
                 )
@@ -16960,6 +17066,31 @@ def _productivity_align_category_v15(
     target_map,
     machine_view=False,
 ):
+    """
+    Align report material rows to the exact Survey materials.
+
+    Important:
+    If Survey contains a positive material that the report does
+    not currently contain, a zero-target report material group
+    is relabelled to the missing Survey material.
+
+    Example:
+
+        Report before:
+            Hards = 0
+            Coal
+
+        Survey:
+            Softs
+            Coal
+
+        Report after:
+            Softs
+            Coal
+
+    This logic is generic for every site.
+    """
+
     target_map = dict(
         target_map
         or {}
@@ -16973,77 +17104,271 @@ def _productivity_align_category_v15(
 
     material_indices = []
 
-    # ----------------------------------------
-    # Find material rows
-    # ----------------------------------------
-    for index in indices:
-        row = rows[index]
 
-        if row.get(
-            "is_category_total"
-        ):
-            continue
+    def rebuild_groups():
 
-        if row.get(
-            "is_total_fleet"
-        ):
-            continue
+        groups.clear()
 
-        if row.get(
-            "productivity_is_machine_total"
-        ):
-            continue
+        material_indices[:] = []
 
-        material = str(
-            row.get(
-                "material"
-            )
-            or ""
-        ).strip()
+        for index in indices:
 
-        if not material:
-            continue
+            row = rows[
+                index
+            ]
 
-        # KOSI_PRODUCTIVITY_SURVEY_MACHINE_KEY_FIX_V16
-        # KOSI_PRODUCTIVITY_SURVEY_MACHINE_LABEL_FIX_V17
-        #
-        # Summary Per Machine material rows identify the machine
-        # through label in the current report structure.
-        # Keep support for machine / asset_name as well.
-        if machine_view:
-            machine_name = str(
-                row.get("machine")
-                or row.get("asset_name")
-                or row.get("label")
+            if row.get(
+                "is_category_total"
+            ):
+                continue
+
+            if row.get(
+                "is_total_fleet"
+            ):
+                continue
+
+            if row.get(
+                "productivity_is_machine_total"
+            ):
+                continue
+
+            material = str(
+                row.get(
+                    "material"
+                )
                 or ""
             ).strip()
 
-            if not machine_name:
-                continue
-
-        key = (
-            _productivity_material_v15(
-                material,
+            label = str(
                 row.get(
                     "label"
-                ),
+                )
+                or ""
+            ).strip()
+
+            if not material:
+
+                if label in (
+                    "Coal",
+                    "Hards",
+                    "Softs",
+                ):
+
+                    material = label
+
+                else:
+                    continue
+
+            if machine_view:
+
+                machine_name = str(
+                    row.get(
+                        "machine"
+                    )
+                    or row.get(
+                        "asset_name"
+                    )
+                    or row.get(
+                        "label"
+                    )
+                    or ""
+                ).strip()
+
+                if not machine_name:
+                    continue
+
+            key = (
+                _productivity_material_v15(
+                    material,
+                    label,
+                )
+            )
+
+            groups[
+                key
+            ].append(
+                index
+            )
+
+            material_indices.append(
+                index
+            )
+
+
+    rebuild_groups()
+
+
+    # ========================================================
+    # GENERIC MISSING SURVEY MATERIAL RECONCILIATION
+    # ========================================================
+
+    positive_targets = [
+        material
+
+        for material, value
+        in target_map.items()
+
+        if (
+            _productivity_float_v15(
+                value
+            )
+            > 0
+        )
+    ]
+
+
+    missing_targets = [
+        material
+
+        for material
+        in positive_targets
+
+        if material not in groups
+    ]
+
+
+    zero_target_groups = [
+        material
+
+        for material
+        in list(
+            groups.keys()
+        )
+
+        if (
+            _productivity_float_v15(
+                target_map.get(
+                    material,
+                    0
+                )
+            )
+            <= 0
+        )
+    ]
+
+
+    metadata_fields = (
+        "productivity_summary_parent_material_v34",
+        "productivity_summary_area_parent_material_v51",
+        "productivity_all_machine_parent_material_v87",
+        "productivity_excavator_parent_material_v71",
+        "productivity_v55_parent_material",
+        "productivity_parent_material_v21",
+        "productivity_edit_material",
+    )
+
+
+    for missing_material in (
+        missing_targets
+    ):
+
+        if not zero_target_groups:
+            break
+
+        old_material = (
+            zero_target_groups.pop(
+                0
             )
         )
 
-        groups[
-            key
-        ].append(
-            index
+        old_group = list(
+            groups.get(
+                old_material
+            )
+            or []
         )
 
-        material_indices.append(
-            index
-        )
+        if not old_group:
+            continue
 
-    # ----------------------------------------
-    # Align each material to Survey
-    # ----------------------------------------
-    for material, group in groups.items():
+
+        for index in old_group:
+
+            row = rows[
+                index
+            ]
+
+            current_label = str(
+                row.get(
+                    "label"
+                )
+                or ""
+            ).strip()
+
+            current_material = str(
+                row.get(
+                    "material"
+                )
+                or ""
+            ).strip()
+
+
+            # Material/subtotal label.
+            if (
+                current_label
+                == old_material
+            ):
+
+                row[
+                    "label"
+                ] = missing_material
+
+
+            # Material field.
+            if (
+                current_material
+                or current_label
+                == old_material
+            ):
+
+                row[
+                    "material"
+                ] = missing_material
+
+
+            # Existing internal parent metadata.
+            for fieldname in (
+                metadata_fields
+            ):
+
+                value = str(
+                    row.get(
+                        fieldname
+                    )
+                    or ""
+                ).strip()
+
+                if (
+                    value
+                    == old_material
+                ):
+
+                    row[
+                        fieldname
+                    ] = missing_material
+
+
+            row[
+                "productivity_survey_material_relabel_v114b"
+            ] = (
+                old_material
+                + " -> "
+                + missing_material
+            )
+
+
+    # Rebuild after relabelling.
+    rebuild_groups()
+
+
+    # ========================================================
+    # ALIGN EACH EXISTING MATERIAL GROUP TO SURVEY
+    # ========================================================
+
+    for material, group in (
+        groups.items()
+    ):
+
         target = (
             _productivity_float_v15(
                 target_map.get(
@@ -17056,11 +17381,15 @@ def _productivity_align_category_v15(
         current_values = [
             max(
                 _productivity_output_v15(
-                    rows[index]
+                    rows[
+                        index
+                    ]
                 ),
                 0.0,
             )
-            for index in group
+
+            for index
+            in group
         ]
 
         current_total = sum(
@@ -17070,27 +17399,32 @@ def _productivity_align_category_v15(
         new_values = []
 
         if target <= 0:
+
             new_values = [
                 0.0
                 for _ in group
             ]
 
         elif current_total > 0:
+
             allocated = 0.0
 
             for position, current in enumerate(
                 current_values
             ):
+
                 if (
                     position
                     == len(group) - 1
                 ):
+
                     new_value = (
                         target
                         - allocated
                     )
 
                 else:
+
                     new_value = (
                         target
                         * current
@@ -17106,43 +17440,53 @@ def _productivity_align_category_v15(
                 )
 
         else:
+
             new_values = [
                 0.0
                 for _ in group
             ]
 
             if group:
-                new_values[0] = (
-                    target
-                )
+
+                new_values[
+                    0
+                ] = target
+
 
         for index, new_value in zip(
             group,
             new_values,
         ):
+
             _productivity_set_output_v15(
-                rows[index],
+                rows[
+                    index
+                ],
                 new_value,
                 category,
             )
 
-    # ----------------------------------------
-    # Machine totals in Summary Per Machine
-    # ----------------------------------------
+
+    # ========================================================
+    # MACHINE TOTALS - SUMMARY PER MACHINE
+    # ========================================================
+
     if machine_view:
+
         machine_totals = (
             _productivity_defaultdict_v15(
                 float
             )
         )
 
-        for index in material_indices:
-            row = rows[index]
+        for index in (
+            material_indices
+        ):
 
-            # KOSI_PRODUCTIVITY_SURVEY_MACHINE_TOTAL_FIX_V18
-            #
-            # Summary Per Machine material rows currently use
-            # label as the machine identifier.
+            row = rows[
+                index
+            ]
+
             machine = str(
                 row.get(
                     "machine"
@@ -17167,8 +17511,12 @@ def _productivity_align_category_v15(
                 )
             )
 
+
         for index in indices:
-            row = rows[index]
+
+            row = rows[
+                index
+            ]
 
             if not row.get(
                 "productivity_is_machine_total"
@@ -17188,7 +17536,11 @@ def _productivity_align_category_v15(
                 or ""
             ).strip()
 
-            if machine in machine_totals:
+            if (
+                machine
+                in machine_totals
+            ):
+
                 _productivity_set_output_v15(
                     row,
                     machine_totals[
@@ -17197,22 +17549,27 @@ def _productivity_align_category_v15(
                     category,
                 )
 
-    # ----------------------------------------
-    # Category total
-    # ----------------------------------------
+
+    # ========================================================
+    # CATEGORY TOTAL
+    # ========================================================
+
     target_total = sum(
         _productivity_float_v15(
             value
         )
-        for value in (
-            target_map.values()
-        )
+
+        for value
+        in target_map.values()
     )
 
     category_total_indices = []
 
     for index in indices:
-        row = rows[index]
+
+        row = rows[
+            index
+        ]
 
         label = str(
             row.get(
@@ -17238,18 +17595,24 @@ def _productivity_align_category_v15(
                 )
             )
         ):
+
             category_total_indices.append(
                 index
             )
 
+
     for index in (
         category_total_indices
     ):
+
         _productivity_set_output_v15(
-            rows[index],
+            rows[
+                index
+            ],
             target_total,
             category,
         )
+
 
     return {
         "output":
@@ -17264,11 +17627,23 @@ def _productivity_apply_survey_v15(
     result,
     filters,
 ):
+    """
+    Generic Actual BCM Survey control.
+
+    Priority:
+
+    1. Site + selected Monthly Production Planning
+    2. Site + Start Date + End Date
+
+    Tallies are not changed.
+    """
+
     if not result:
         return result
 
     filters = frappe._dict(
-        filters or {}
+        filters
+        or {}
     )
 
     bcm_basis = str(
@@ -17278,17 +17653,18 @@ def _productivity_apply_survey_v15(
         or ""
     ).strip().lower()
 
-    # Tallies remain completely untouched.
     if not bcm_basis.startswith(
         "actual"
     ):
         return result
+
 
     plans = (
         _productivity_selected_plans_v15(
             filters
         )
     )
+
 
     site = str(
         filters.get(
@@ -17300,35 +17676,79 @@ def _productivity_apply_survey_v15(
         or ""
     ).strip()
 
-    if (
-        not plans
-        or not site
-    ):
+
+    filter_start = (
+        _productivity_date_v15(
+            filters.get(
+                "start_date"
+            )
+        )
+    )
+
+
+    filter_end = (
+        _productivity_date_v15(
+            filters.get(
+                "end_date"
+            )
+        )
+    )
+
+
+    if not site:
         return result
+
+
+    # No MPP selected:
+    # both dates are required.
+    date_mode = (
+        not plans
+    )
+
+
+    if (
+        date_mode
+        and (
+            not filter_start
+            or not filter_end
+        )
+    ):
+
+        return result
+
 
     parts = list(
         result
     )
 
-    if len(parts) < 2:
+    if len(
+        parts
+    ) < 2:
+
         return result
 
+
     rows = list(
-        parts[1]
+        parts[
+            1
+        ]
         or []
     )
 
     if not rows:
         return result
 
-    # ----------------------------------------
-    # Build monthly sections
-    # ----------------------------------------
+
+    # ========================================================
+    # BUILD REPORT SECTIONS
+    # ========================================================
+
     header_positions = []
 
     for index, row in enumerate(
         rows
     ):
+
         label = str(
             row.get(
                 "label"
@@ -17344,16 +17764,21 @@ def _productivity_apply_survey_v15(
                 "MONTHLY PRODUCTION:"
             )
         ):
+
             header_positions.append(
                 index
             )
 
+
     sections = []
 
+
     if header_positions:
+
         for position, start_index in enumerate(
             header_positions
         ):
+
             end_index = (
                 header_positions[
                     position + 1
@@ -17364,8 +17789,11 @@ def _productivity_apply_survey_v15(
                         header_positions
                     )
                 )
-                else len(rows)
+                else len(
+                    rows
+                )
             )
+
 
             sections.append(
                 (
@@ -17388,28 +17816,40 @@ def _productivity_apply_survey_v15(
             )
 
     else:
+
         sections.append(
             (
                 0,
                 list(
                     range(
-                        len(rows)
+                        len(
+                            rows
+                        )
                     )
                 ),
                 "",
             )
         )
 
+
     summary_accumulator = {
         "Excavator": {
-            "output": 0.0,
-            "hours": 0.0,
+            "output":
+                0.0,
+
+            "hours":
+                0.0,
         },
+
         "Dozer": {
-            "output": 0.0,
-            "hours": 0.0,
+            "output":
+                0.0,
+
+            "hours":
+                0.0,
         },
     }
+
 
     summary_view = str(
         filters.get(
@@ -17418,10 +17858,12 @@ def _productivity_apply_survey_v15(
         or ""
     ).strip().lower()
 
+
     machine_view = (
         "summary per machine"
         in summary_view
     )
+
 
     for (
         section_index,
@@ -17429,62 +17871,185 @@ def _productivity_apply_survey_v15(
         header_label,
     ) in sections:
 
+
         section_start, section_end = (
             _productivity_header_range_v15(
                 header_label
             )
         )
 
-        plan_name = (
-            _productivity_plan_for_section_v15(
-                header_label,
-                plans,
-                section_index,
-            )
-        )
 
-        if not plan_name:
-            continue
+        # ====================================================
+        # MODE 1:
+        # SITE + MONTHLY PRODUCTION PLANNING
+        # ====================================================
 
-        # Do not use cumulative MTD Survey values for a
-        # deliberately partial monthly section.
-        if not (
-            _productivity_full_section_v15(
-                filters,
-                section_start,
-                section_end,
-            )
-        ):
-            continue
+        if plans:
 
-        cutoff = (
-            _productivity_effective_end_v15(
-                filters,
-                plan_name,
-                section_end,
+            plan_name = (
+                _productivity_plan_for_section_v15(
+                    header_label,
+                    plans,
+                    section_index,
+                )
             )
-        )
 
-        survey = (
-            _productivity_latest_survey_v15(
-                site,
-                plan_name,
-                cutoff,
+            if not plan_name:
+                continue
+
+
+            cutoff = (
+                _productivity_plan_end_v15(
+                    plan_name
+                )
+                or section_end
+                or filter_end
             )
-        )
+
+
+            survey = (
+                _productivity_latest_survey_v15(
+                    site,
+                    plan_name,
+                    cutoff,
+                    None,
+                )
+            )
+
+
+            scope_mode = "MPP"
+
+            scope_start = (
+                section_start
+                or filter_start
+            )
+
+            scope_end = cutoff
+
+
+        # ====================================================
+        # MODE 2:
+        # SITE + MANUAL START/END DATE
+        # ====================================================
+
+        else:
+
+            plan_name = None
+
+
+            scope_start = (
+                filter_start
+            )
+
+            scope_end = (
+                filter_end
+            )
+
+
+            if (
+                section_start
+                and (
+                    not scope_start
+                    or section_start
+                    > scope_start
+                )
+            ):
+
+                scope_start = (
+                    section_start
+                )
+
+
+            if (
+                section_end
+                and (
+                    not scope_end
+                    or section_end
+                    < scope_end
+                )
+            ):
+
+                scope_end = (
+                    section_end
+                )
+
+
+            if (
+                scope_start
+                and scope_end
+                and scope_start
+                > scope_end
+            ):
+
+                continue
+
+
+            survey = (
+                _productivity_latest_survey_v15(
+                    site,
+                    None,
+                    scope_end,
+                    scope_start,
+                )
+            )
+
+
+            scope_mode = "DATE"
+
 
         if not survey:
             continue
 
-        # Store invisible diagnostic metadata on header.
+
+        # ====================================================
+        # DIAGNOSTIC SOURCE METADATA
+        # ====================================================
+
         if indices:
-            rows[
-                indices[0]
-            ][
+
+            header = rows[
+                indices[
+                    0
+                ]
+            ]
+
+            header[
                 "productivity_survey_source"
             ] = survey[
                 "name"
             ]
+
+            header[
+                "productivity_survey_scope_v114b"
+            ] = scope_mode
+
+            header[
+                "productivity_survey_scope_start_v114b"
+            ] = str(
+                scope_start
+                or ""
+            )
+
+            header[
+                "productivity_survey_scope_end_v114b"
+            ] = str(
+                scope_end
+                or ""
+            )
+
+            header[
+                "productivity_survey_plan_v114b"
+            ] = str(
+                survey.get(
+                    "monthly_production_plan_ref"
+                )
+                or ""
+            )
+
+
+        # ====================================================
+        # CATEGORY MAPPING
+        # ====================================================
 
         category_lookup = (
             _productivity_section_categories_v15(
@@ -17493,13 +18058,21 @@ def _productivity_apply_survey_v15(
             )
         )
 
+
         category_indices = {
-            "Excavator": [],
-            "ADT": [],
-            "Dozer": [],
+            "Excavator":
+                [],
+
+            "ADT":
+                [],
+
+            "Dozer":
+                [],
         }
 
+
         for index in indices:
+
             category = (
                 category_lookup.get(
                     index
@@ -17509,19 +18082,23 @@ def _productivity_apply_survey_v15(
             if category in (
                 category_indices
             ):
+
                 category_indices[
                     category
                 ].append(
                     index
                 )
 
+
         category_results = {}
+
 
         for category in (
             "Excavator",
             "ADT",
             "Dozer",
         ):
+
             category_results[
                 category
             ] = (
@@ -17539,10 +18116,13 @@ def _productivity_apply_survey_v15(
                 )
             )
 
-        # ------------------------------------
-        # Total Fleet = Excavator + Dozer
-        # ADT is duplicate haul output.
-        # ------------------------------------
+
+        # ====================================================
+        # TOTAL FLEET
+        # Excavator + Dozer.
+        # ADT duplicates Truck/Shovel output.
+        # ====================================================
+
         fleet_output = (
             category_results[
                 "Excavator"
@@ -17556,8 +18136,12 @@ def _productivity_apply_survey_v15(
             ]
         )
 
+
         for index in indices:
-            row = rows[index]
+
+            row = rows[
+                index
+            ]
 
             label = str(
                 row.get(
@@ -17573,19 +18157,23 @@ def _productivity_apply_survey_v15(
                 or label.lower()
                 == "total fleet"
             ):
+
                 _productivity_set_output_v15(
                     row,
                     fleet_output,
                     None,
                 )
 
-        # ------------------------------------
-        # Summary cards
-        # ------------------------------------
+
+        # ====================================================
+        # SUMMARY CARDS
+        # ====================================================
+
         for category in (
             "Excavator",
             "Dozer",
         ):
+
             total_indices = (
                 category_results[
                     category
@@ -17597,9 +18185,13 @@ def _productivity_apply_survey_v15(
             if not total_indices:
                 continue
 
+
             row = rows[
-                total_indices[0]
+                total_indices[
+                    0
+                ]
             ]
+
 
             summary_accumulator[
                 category
@@ -17610,6 +18202,7 @@ def _productivity_apply_survey_v15(
                     row
                 )
             )
+
 
             summary_accumulator[
                 category
@@ -17623,18 +18216,28 @@ def _productivity_apply_survey_v15(
                 )
             )
 
-    parts[1] = rows
 
-    # Update report summary cards so they follow the
-    # Survey-aligned category totals.
+    parts[
+        1
+    ] = rows
+
+
     if (
-        len(parts) > 4
+        len(
+            parts
+        ) > 4
         and isinstance(
-            parts[4],
+            parts[
+                4
+            ],
             list,
         )
     ):
-        for item in parts[4]:
+
+        for item in parts[
+            4
+        ]:
+
             label = str(
                 item.get(
                     "label"
@@ -17642,10 +18245,12 @@ def _productivity_apply_survey_v15(
                 or ""
             ).lower()
 
+
             if (
                 "truck + shovel productivity"
                 in label
             ):
+
                 values = (
                     summary_accumulator[
                         "Excavator"
@@ -17655,6 +18260,7 @@ def _productivity_apply_survey_v15(
                 if values[
                     "hours"
                 ] > 0:
+
                     item[
                         "value"
                     ] = str(
@@ -17670,10 +18276,12 @@ def _productivity_apply_survey_v15(
                         )
                     )
 
+
             elif (
                 "dozing productivity"
                 in label
             ):
+
                 values = (
                     summary_accumulator[
                         "Dozer"
@@ -17683,6 +18291,7 @@ def _productivity_apply_survey_v15(
                 if values[
                     "hours"
                 ] > 0:
+
                     item[
                         "value"
                     ] = str(
@@ -17698,13 +18307,16 @@ def _productivity_apply_survey_v15(
                         )
                     )
 
+
     if isinstance(
         result,
         tuple,
     ):
+
         return tuple(
             parts
         )
+
 
     return parts
 
@@ -17725,6 +18337,11 @@ def execute(filters=None):
 
 
 # END KOSI_PRODUCTIVITY_SURVEY_ACTUAL_V15
+# KOSI_PRODUCTIVITY_GENERIC_SITE_SURVEY_V114B
+# Generic Site + MPP OR Site + Date Survey control.
+# No site name is hard-coded.
+# END KOSI_PRODUCTIVITY_GENERIC_SITE_SURVEY_V114B
+
 
 
 # ============================================================
@@ -24140,7 +24757,173 @@ def _productivity_apply_summary_coal_tons_v33(
     # Makes manual addition exactly equal visible machine total.
     # ========================================================
 
+    # ========================================================
+    # KOSI_PRODUCTIVITY_V33_MATERIAL_INTEGER_RECONCILIATION_V115
+    #
+    # IMPORTANT:
+    #
+    # V15 Survey BCM allocations are exact fractional values.
+    #
+    # Previously V33 rounded each MACHINE independently.
+    # Example:
+    #
+    #     Survey Dozer = 30,797 BCM
+    #
+    #     independent machine rounding = 30,795 BCM
+    #
+    # This caused:
+    #
+    #     Machine totals != Survey
+    #     Category total != Survey
+    #     Total Fleet != Survey
+    #
+    # Correct rule:
+    #
+    # Round across:
+    #
+    #     Section
+    #       -> Category
+    #          -> Material
+    #             -> Machine allocations
+    #
+    # Therefore every visible material total remains exactly
+    # reconciled to the Survey material total.
+    #
+    # Machine totals are then calculated from those reconciled
+    # material values.
+    #
+    # This is generic:
+    #
+    #     Excavator
+    #     ADT
+    #     Dozer
+    #
+    # and is not site-specific.
+    # ========================================================
+
+    visible_bcm_by_row_v115 = {}
+
+    material_groups_v115 = {}
+
+
+    for info in annotated:
+
+        row = info[
+            "row"
+        ]
+
+        if not hasattr(
+            row,
+            "get",
+        ):
+
+            continue
+
+
+        label = str(
+            row.get(
+                "label"
+            )
+            or ""
+        ).strip()
+
+
+        material = str(
+            row.get(
+                "material"
+            )
+            or ""
+        ).strip()
+
+
+        category = info[
+            "category"
+        ]
+
+
+        if not (
+            category
+            and label
+            and material
+        ):
+
+            continue
+
+
+        canonical_material = (
+            _productivity_material_v15(
+                material,
+                material,
+            )
+        )
+
+
+        material_key = (
+            info[
+                "section"
+            ],
+            category,
+            canonical_material,
+        )
+
+
+        material_groups_v115.setdefault(
+            material_key,
+            [],
+        ).append(
+            row
+        )
+
+
+    # --------------------------------------------------------
+    # Reconcile each Survey material across all machines.
+    #
+    # _productivity_v33_visible_integers already uses a
+    # largest-remainder allocation, therefore the resulting
+    # integers always add back exactly to the rounded Survey
+    # material BCM.
+    # --------------------------------------------------------
+
+    for (
+        material_key,
+        material_children
+    ) in material_groups_v115.items():
+
+        exact_material_outputs = [
+            _productivity_v33_num(
+                child.get(
+                    "output"
+                )
+            )
+            for child
+            in material_children
+        ]
+
+
+        visible_material_outputs = (
+            _productivity_v33_visible_integers(
+                exact_material_outputs
+            )
+        )
+
+
+        for (
+            child,
+            visible_output
+        ) in zip(
+            material_children,
+            visible_material_outputs,
+        ):
+
+            visible_bcm_by_row_v115[
+                id(
+                    child
+                )
+            ] = visible_output
+
+
     machine_values = {}
+
 
     for key, children in groups.items():
 
@@ -24153,11 +24936,47 @@ def _productivity_apply_summary_coal_tons_v33(
             for child in children
         ]
 
-        visible_outputs = (
-            _productivity_v33_visible_integers(
-                exact_outputs
+        # V115:
+        #
+        # Use category/material-balanced visible BCM values.
+        #
+        # This means machine totals may absorb the necessary
+        # +/- 1 BCM display residual, while:
+        #
+        #     Survey material totals remain exact
+        #     Category totals remain exact
+        #     Total Fleet remains exact
+        #
+        # Fallback retains the previous machine allocation only
+        # if a valid material row somehow did not enter the V115
+        # material map.
+
+        if all(
+            id(
+                child
             )
-        )
+            in visible_bcm_by_row_v115
+            for child
+            in children
+        ):
+
+            visible_outputs = [
+                visible_bcm_by_row_v115[
+                    id(
+                        child
+                    )
+                ]
+                for child
+                in children
+            ]
+
+        else:
+
+            visible_outputs = (
+                _productivity_v33_visible_integers(
+                    exact_outputs
+                )
+            )
 
         coal_tons_total = 0.0
         hours_total = 0.0
@@ -58246,20 +59065,50 @@ def _productivity_v99_make_area_rows(
 
     # ========================================================
     # TALLIES MATERIAL SOURCE
+    #
+    # Truck Loads Mining Area rows are the direct Tallies
+    # source.
+    #
+    # Normally the earlier pipeline already places tallies_bcm
+    # on the material subtotal row.
+    #
+    # Some valid machine/material combinations can reach V99
+    # without that metadata even though raw Truck Load Tallies
+    # exist.
+    #
+    # In that case ONLY, rebuild the missing Tallies subtotal
+    # from the direct Mining Area source.
+    #
+    # If tallies_bcm already exists, retain the normal V102
+    # reconciliation safety check.
     # ========================================================
 
-    if parent_row.get(
-        "tallies_bcm"
-    ) not in (
+    source_total = sum(
+        _productivity_v99_number(
+            item.get(
+                "bcm"
+            )
+        )
+        for item
+        in area_rows
+    )
+
+
+    tallies_value = (
+        parent_row.get(
+            "tallies_bcm"
+        )
+    )
+
+
+    if tallies_value not in (
         None,
         "",
     ):
 
         parent_bcm = (
             _productivity_v99_number(
-                parent_row.get(
-                    "tallies_bcm"
-                )
+                tallies_value
             )
         )
 
@@ -58269,8 +59118,24 @@ def _productivity_v99_make_area_rows(
         )
 
 
+    elif source_total > 0:
+
+        # Missing Tallies metadata, but direct Truck Loads
+        # contain valid BCM for this machine/material.
+        parent_bcm = (
+            source_total
+        )
+
+
+        bcm_source = (
+            "truck_loads_mining_area_fallback"
+        )
+
+
     else:
 
+        # Preserve the previous safety behaviour where there
+        # is no usable direct Truck Load source.
         parent_bcm = (
             _productivity_v99_number(
                 parent_row.get(
@@ -58293,17 +59158,6 @@ def _productivity_v99_make_area_rows(
         bcm_source = (
             "output_fallback"
         )
-
-
-    source_total = sum(
-        _productivity_v99_number(
-            item.get(
-                "bcm"
-            )
-        )
-        for item
-        in area_rows
-    )
 
 
     # ========================================================
@@ -64631,3 +65485,6980 @@ def execute(filters=None):
 
 
 # END KOSI_PRODUCTIVITY_TALLIES_PRESENTATION_PARITY_V114A
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_TALLIES_CATEGORY_ROLLUP_V114C
+#
+# PURPOSE
+# ------------------------------------------------------------
+#
+# Final safety reconciliation for:
+#
+#     Tallies BCMs
+#     Summary Per Machine
+#
+# Proven Uitgevallen August example:
+#
+#     Raw Truck + Shovel       = 60,860 BCM
+#     Final material rows      = 60,860 BCM
+#     Final machine totals     = 60,860 BCM
+#     Excavator category row   = 60,472 BCM   <- stale
+#
+# The detailed Tallies data is already correct.
+#
+# Therefore this layer ONLY rebuilds category headers from the
+# final machine-total rows.
+#
+# Rules:
+#
+#     Excavator total = sum final Excavator machine totals
+#     ADT total       = sum final ADT machine totals
+#     Dozer total     = sum final Dozer machine totals
+#
+#     Total Fleet     = Excavator + Dozer
+#
+# ADT is deliberately excluded from Total Fleet because ADT
+# duplicates Truck + Shovel production.
+#
+# No material BCM is changed.
+# No machine BCM is changed.
+# No Truck Load data is changed.
+# No Survey data is changed.
+# Actual BCMs are untouched.
+# Hours and Material is untouched.
+# ============================================================
+
+
+_productivity_execute_before_tallies_category_rollup_v114c = execute
+
+
+def _productivity_v114c_number(value):
+
+    try:
+
+        if value in (
+            None,
+            "",
+        ):
+            return 0.0
+
+        if isinstance(
+            value,
+            str,
+        ):
+
+            value = (
+                value
+                .replace(",", "")
+                .replace(" ", "")
+                .strip()
+            )
+
+        return float(
+            value
+            or 0
+        )
+
+    except Exception:
+
+        return 0.0
+
+
+def _productivity_v114c_indent(row):
+
+    try:
+
+        return int(
+            float(
+                row.get(
+                    "indent"
+                )
+                or 0
+            )
+        )
+
+    except Exception:
+
+        return 0
+
+
+def _productivity_v114c_is_machine_total(row):
+
+    if not hasattr(
+        row,
+        "get",
+    ):
+
+        return False
+
+    for fieldname in (
+        "productivity_is_machine_total",
+        "is_machine_total",
+    ):
+
+        try:
+
+            if int(
+                float(
+                    row.get(
+                        fieldname
+                    )
+                    or 0
+                )
+            ) == 1:
+
+                return True
+
+        except Exception:
+
+            pass
+
+    label = str(
+        row.get(
+            "label"
+        )
+        or ""
+    ).strip()
+
+    material = str(
+        row.get(
+            "material"
+        )
+        or ""
+    ).strip()
+
+    return (
+        _productivity_v114c_indent(
+            row
+        ) == 1
+        and bool(label)
+        and not material
+    )
+
+
+def _productivity_v114c_set_output(
+    row,
+    value,
+):
+
+    value = round(
+        _productivity_v114c_number(
+            value
+        ),
+        3,
+    )
+
+    row[
+        "output"
+    ] = value
+
+    if (
+        "tallies_bcm"
+        in row
+    ):
+
+        row[
+            "tallies_bcm"
+        ] = value
+
+    if (
+        "adjusted_bcm"
+        in row
+    ):
+
+        row[
+            "adjusted_bcm"
+        ] = value
+
+    hours = (
+        _productivity_v114c_number(
+            row.get(
+                "working_hours"
+            )
+        )
+    )
+
+    row[
+        "productivity"
+    ] = (
+        round(
+            value / hours,
+            3,
+        )
+        if hours > 0
+        else 0.0
+    )
+
+    row[
+        "productivity_tallies_category_rollup_v114c"
+    ] = 1
+
+
+def _productivity_v114c_apply(
+    result,
+    filters,
+):
+
+    if not result:
+        return result
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+    bcm_basis = str(
+        filters.get(
+            "bcm_basis"
+        )
+        or ""
+    ).strip()
+
+    summary_view = str(
+        filters.get(
+            "summary_view"
+        )
+        or ""
+    ).strip()
+
+    if (
+        bcm_basis
+        != "Tallies BCMs"
+    ):
+
+        return result
+
+    if (
+        summary_view
+        != "Summary Per Machine"
+    ):
+
+        return result
+
+    parts = list(
+        result
+    )
+
+    if len(
+        parts
+    ) < 2:
+
+        return result
+
+    rows = list(
+        parts[
+            1
+        ]
+        or []
+    )
+
+    if not rows:
+        return result
+
+    # --------------------------------------------------------
+    # Split result into independent Monthly Production
+    # sections. If there is no monthly header, treat the
+    # entire result as one section.
+    # --------------------------------------------------------
+
+    header_indexes = []
+
+    for index, row in enumerate(
+        rows
+    ):
+
+        if not hasattr(
+            row,
+            "get",
+        ):
+
+            continue
+
+        label = str(
+            row.get(
+                "label"
+            )
+            or ""
+        ).strip()
+
+        if (
+            row.get(
+                "is_monthly_plan_header"
+            )
+            or label.upper().startswith(
+                "MONTHLY PRODUCTION:"
+            )
+        ):
+
+            header_indexes.append(
+                index
+            )
+
+    sections = []
+
+    if header_indexes:
+
+        for position, start in enumerate(
+            header_indexes
+        ):
+
+            end = (
+                header_indexes[
+                    position + 1
+                ]
+                if (
+                    position + 1
+                    < len(
+                        header_indexes
+                    )
+                )
+                else len(
+                    rows
+                )
+            )
+
+            sections.append(
+                (
+                    start,
+                    end,
+                )
+            )
+
+    else:
+
+        sections.append(
+            (
+                0,
+                len(
+                    rows
+                ),
+            )
+        )
+
+    # --------------------------------------------------------
+    # Reconcile each section independently.
+    # --------------------------------------------------------
+
+    for start, end in sections:
+
+        category_rows = {}
+
+        category_machine_totals = {
+            "Excavator": 0.0,
+            "ADT": 0.0,
+            "Dozer": 0.0,
+        }
+
+        current_category = None
+
+        total_fleet_rows = []
+
+        for index in range(
+            start,
+            end,
+        ):
+
+            row = rows[
+                index
+            ]
+
+            if not hasattr(
+                row,
+                "get",
+            ):
+
+                continue
+
+            label = str(
+                row.get(
+                    "label"
+                )
+                or ""
+            ).strip()
+
+            material = str(
+                row.get(
+                    "material"
+                )
+                or ""
+            ).strip()
+
+            row_indent = (
+                _productivity_v114c_indent(
+                    row
+                )
+            )
+
+            if (
+                label
+                in (
+                    "Excavator",
+                    "ADT",
+                    "Dozer",
+                )
+                and row_indent == 0
+                and not material
+            ):
+
+                current_category = (
+                    label
+                )
+
+                category_rows[
+                    label
+                ] = row
+
+                continue
+
+            if (
+                label
+                == "Total Fleet"
+                and not material
+            ):
+
+                total_fleet_rows.append(
+                    row
+                )
+
+                continue
+
+            if (
+                current_category
+                not in category_machine_totals
+            ):
+
+                continue
+
+            if not (
+                _productivity_v114c_is_machine_total(
+                    row
+                )
+            ):
+
+                continue
+
+            category_machine_totals[
+                current_category
+            ] += (
+                _productivity_v114c_number(
+                    row.get(
+                        "output"
+                    )
+                )
+            )
+
+        # ----------------------------------------------------
+        # Category rows
+        # ----------------------------------------------------
+
+        for category in (
+            "Excavator",
+            "ADT",
+            "Dozer",
+        ):
+
+            row = (
+                category_rows.get(
+                    category
+                )
+            )
+
+            if row is None:
+                continue
+
+            _productivity_v114c_set_output(
+                row,
+                category_machine_totals[
+                    category
+                ],
+            )
+
+        # ----------------------------------------------------
+        # Total Fleet
+        #
+        # Truck + Shovel is represented once by Excavator.
+        # ADT must not be added again.
+        # ----------------------------------------------------
+
+        fleet_total = (
+            category_machine_totals[
+                "Excavator"
+            ]
+            + category_machine_totals[
+                "Dozer"
+            ]
+        )
+
+        for row in (
+            total_fleet_rows
+        ):
+
+            _productivity_v114c_set_output(
+                row,
+                fleet_total,
+            )
+
+    parts[
+        1
+    ] = rows
+
+    if isinstance(
+        result,
+        tuple,
+    ):
+
+        return tuple(
+            parts
+        )
+
+    return parts
+
+
+def execute(filters=None):
+
+    result = (
+        _productivity_execute_before_tallies_category_rollup_v114c(
+            filters
+        )
+    )
+
+    return (
+        _productivity_v114c_apply(
+            result,
+            filters,
+        )
+    )
+
+
+# END KOSI_PRODUCTIVITY_TALLIES_CATEGORY_ROLLUP_V114C
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_TALLIES_ACTUAL_LAYOUT_V117
+#
+# Tallies BCMs
+# Summary Per Machine
+#
+# PURPOSE:
+#
+# Make Tallies use the SAME visible hierarchy/template as
+# Actual BCMs while preserving Tallies BCM values.
+#
+# Actual:
+#
+#   Category
+#     Machine
+#       Material
+#         Survey detail / route
+#
+# Tallies V117:
+#
+#   Category
+#     Machine
+#       Material
+#         same Actual Survey detail / route
+#
+# IMPORTANT:
+#
+# - Category remains.
+# - Machine remains.
+# - Material subtotal remains.
+# - Tallies machine/material/category BCM stays Tallies BCM.
+# - Actual detail rows are presentation templates only.
+# - Tallies material BCM is allocated across those template
+#   rows proportionally to Actual detail BCM.
+# - Working hours are reconciled back to Tallies material
+#   working hours.
+# - Coal tonnes are reconciled back to Tallies Coal tonnes.
+# - Actual BCM report is untouched.
+# - If no Actual Survey template exists for a material, the
+#   original Tallies mining-area rows remain unchanged.
+# - Multi-MPP sections remain isolated.
+# ============================================================
+
+
+_productivity_execute_before_tallies_actual_layout_v117 = execute
+
+
+def _productivity_v117_text(value):
+
+    return str(
+        value
+        or ""
+    ).strip()
+
+
+def _productivity_v117_number(value):
+
+    try:
+
+        if value in (
+            None,
+            "",
+        ):
+            return 0.0
+
+        if isinstance(
+            value,
+            str,
+        ):
+            value = (
+                value
+                .replace(",", "")
+                .strip()
+            )
+
+        return float(
+            value
+            or 0
+        )
+
+    except Exception:
+
+        return 0.0
+
+
+def _productivity_v117_indent(row):
+
+    try:
+
+        return int(
+            float(
+                row.get(
+                    "indent"
+                )
+                or 0
+            )
+        )
+
+    except Exception:
+
+        return 0
+
+
+def _productivity_v117_target(filters):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+    return (
+        _productivity_v117_text(
+            filters.get(
+                "bcm_basis"
+            )
+        )
+        == "Tallies BCMs"
+
+        and
+
+        _productivity_v117_text(
+            filters.get(
+                "summary_view"
+            )
+        )
+        == "Summary Per Machine"
+    )
+
+
+def _productivity_v117_plan_header(row):
+
+    if not hasattr(
+        row,
+        "get",
+    ):
+        return False
+
+    label = (
+        _productivity_v117_text(
+            row.get(
+                "label"
+            )
+        )
+    )
+
+    try:
+
+        marker = int(
+            float(
+                row.get(
+                    "is_monthly_plan_header"
+                )
+                or 0
+            )
+        )
+
+    except Exception:
+
+        marker = 0
+
+    return (
+        marker == 1
+        or label.startswith(
+            "MONTHLY PRODUCTION:"
+        )
+    )
+
+
+def _productivity_v117_category(row):
+
+    if not hasattr(
+        row,
+        "get",
+    ):
+        return ""
+
+    label = (
+        _productivity_v117_text(
+            row.get(
+                "label"
+            )
+        )
+    )
+
+    material = (
+        _productivity_v117_text(
+            row.get(
+                "material"
+            )
+        )
+    )
+
+    if (
+        label
+        in (
+            "Excavator",
+            "ADT",
+            "Dozer",
+        )
+        and not material
+        and _productivity_v117_indent(
+            row
+        ) == 0
+    ):
+        return label
+
+    return ""
+
+
+def _productivity_v117_total_fleet(row):
+
+    if not hasattr(
+        row,
+        "get",
+    ):
+        return False
+
+    return (
+        _productivity_v117_text(
+            row.get(
+                "label"
+            )
+        )
+        == "Total Fleet"
+
+        and
+
+        not _productivity_v117_text(
+            row.get(
+                "material"
+            )
+        )
+    )
+
+
+def _productivity_v117_machine(row):
+
+    if not hasattr(
+        row,
+        "get",
+    ):
+        return ""
+
+    label = (
+        _productivity_v117_text(
+            row.get(
+                "label"
+            )
+        )
+    )
+
+    material = (
+        _productivity_v117_text(
+            row.get(
+                "material"
+            )
+        )
+    )
+
+    if (
+        not label
+        or material
+        or label
+        in (
+            "Excavator",
+            "ADT",
+            "Dozer",
+            "Total Fleet",
+        )
+    ):
+        return ""
+
+    for fieldname in (
+        "productivity_is_machine_total",
+        "is_machine_total",
+    ):
+
+        try:
+
+            if int(
+                float(
+                    row.get(
+                        fieldname
+                    )
+                    or 0
+                )
+            ) == 1:
+
+                return label
+
+        except Exception:
+
+            pass
+
+    if (
+        _productivity_v117_indent(
+            row
+        ) == 1
+    ):
+        return label
+
+    return ""
+
+
+def _productivity_v117_material(row):
+
+    if not hasattr(
+        row,
+        "get",
+    ):
+        return ""
+
+    if (
+        _productivity_v117_indent(
+            row
+        ) != 2
+    ):
+        return ""
+
+    raw = (
+        _productivity_v117_text(
+            row.get(
+                "material"
+            )
+        )
+    )
+
+    if not raw:
+
+        return ""
+
+    canonical = (
+        _productivity_material_v15(
+            raw,
+            raw,
+        )
+    )
+
+    if canonical in (
+        "Coal",
+        "Hards",
+        "Softs",
+    ):
+        return canonical
+
+    return ""
+
+
+def _productivity_v117_detail_output(row):
+
+    if not hasattr(
+        row,
+        "get",
+    ):
+        return 0.0
+
+    if row.get(
+        "adjusted_bcm"
+    ) not in (
+        None,
+        "",
+    ):
+
+        return (
+            _productivity_v117_number(
+                row.get(
+                    "adjusted_bcm"
+                )
+            )
+        )
+
+    return (
+        _productivity_v117_number(
+            row.get(
+                "output"
+            )
+        )
+    )
+
+
+def _productivity_v117_tallies_output(row):
+
+    if not hasattr(
+        row,
+        "get",
+    ):
+        return 0.0
+
+    if row.get(
+        "tallies_bcm"
+    ) not in (
+        None,
+        "",
+    ):
+
+        return (
+            _productivity_v117_number(
+                row.get(
+                    "tallies_bcm"
+                )
+            )
+        )
+
+    if row.get(
+        "adjusted_bcm"
+    ) not in (
+        None,
+        "",
+    ):
+
+        return (
+            _productivity_v117_number(
+                row.get(
+                    "adjusted_bcm"
+                )
+            )
+        )
+
+    return (
+        _productivity_v117_number(
+            row.get(
+                "output"
+            )
+        )
+    )
+
+
+def _productivity_v117_coal_tonnes(row):
+
+    if not hasattr(
+        row,
+        "get",
+    ):
+        return 0.0
+
+    for fieldname in (
+        "output_coal_tonnes",
+        "coal_tons",
+    ):
+
+        value = row.get(
+            fieldname
+        )
+
+        if value not in (
+            None,
+            "",
+        ):
+
+            return (
+                _productivity_v117_number(
+                    value
+                )
+            )
+
+    return 0.0
+
+
+def _productivity_v117_allocate(
+    total,
+    weights,
+    precision=0,
+):
+
+    total = (
+        _productivity_v117_number(
+            total
+        )
+    )
+
+    weights = [
+        max(
+            0.0,
+            _productivity_v117_number(
+                value
+            ),
+        )
+        for value in (
+            weights
+            or []
+        )
+    ]
+
+    if not weights:
+        return []
+
+    if total <= 0:
+        return [
+            0
+            for _value in weights
+        ]
+
+    weight_total = sum(
+        weights
+    )
+
+    if weight_total <= 0:
+
+        weights = [
+            1.0
+            for _value in weights
+        ]
+
+        weight_total = float(
+            len(
+                weights
+            )
+        )
+
+    factor = (
+        10
+        ** int(
+            precision
+        )
+    )
+
+    target_units = int(
+        round(
+            total
+            * factor
+        )
+    )
+
+    exact_units = [
+        target_units
+        * (
+            weight
+            / weight_total
+        )
+        for weight in weights
+    ]
+
+    result_units = [
+        int(
+            value
+        )
+        for value in exact_units
+    ]
+
+    remaining = (
+        target_units
+        - sum(
+            result_units
+        )
+    )
+
+    fractions = [
+        (
+            exact_units[
+                index
+            ]
+            - result_units[
+                index
+            ],
+            index,
+        )
+        for index in range(
+            len(
+                result_units
+            )
+        )
+    ]
+
+    fractions.sort(
+        key=lambda item: (
+            item[
+                0
+            ],
+            -item[
+                1
+            ],
+        ),
+        reverse=True,
+    )
+
+    for _fraction, index in fractions:
+
+        if remaining <= 0:
+            break
+
+        result_units[
+            index
+        ] += 1
+
+        remaining -= 1
+
+    if (
+        remaining > 0
+        and result_units
+    ):
+
+        result_units[
+            -1
+        ] += remaining
+
+    output = [
+        units
+        / factor
+        for units in result_units
+    ]
+
+    if precision == 0:
+
+        output = [
+            int(
+                round(
+                    value
+                )
+            )
+            for value in output
+        ]
+
+    return output
+
+
+def _productivity_v117_average_hd(value):
+
+    helper = globals().get(
+        "_productivity_v89_average_distance"
+    )
+
+    if callable(
+        helper
+    ):
+
+        try:
+
+            return (
+                _productivity_v117_number(
+                    helper(
+                        value
+                    )
+                )
+            )
+
+        except Exception:
+
+            pass
+
+    import re
+
+    numbers = [
+        float(
+            item
+        )
+        for item in re.findall(
+            r"\d+(?:\.\d+)?",
+            _productivity_v117_text(
+                value
+            ),
+        )
+    ]
+
+    if not numbers:
+        return 0.0
+
+    if len(
+        numbers
+    ) >= 2:
+
+        return (
+            numbers[
+                0
+            ]
+            + numbers[
+                1
+            ]
+        ) / 2.0
+
+    return numbers[
+        0
+    ]
+
+
+def _productivity_v117_actual_templates(
+    actual_rows,
+):
+
+    templates = {}
+
+    section = 0
+    category = ""
+    machine = ""
+    current_key = None
+
+    for original in (
+        actual_rows
+        or []
+    ):
+
+        if not hasattr(
+            original,
+            "get",
+        ):
+            continue
+
+        row = dict(
+            original
+        )
+
+        if _productivity_v117_plan_header(
+            row
+        ):
+
+            section += 1
+            category = ""
+            machine = ""
+            current_key = None
+            continue
+
+        found_category = (
+            _productivity_v117_category(
+                row
+            )
+        )
+
+        if found_category:
+
+            category = (
+                found_category
+            )
+
+            machine = ""
+            current_key = None
+
+            continue
+
+        if _productivity_v117_total_fleet(
+            row
+        ):
+
+            category = ""
+            machine = ""
+            current_key = None
+            continue
+
+        found_machine = (
+            _productivity_v117_machine(
+                row
+            )
+        )
+
+        if (
+            category
+            and found_machine
+        ):
+
+            machine = (
+                found_machine
+            )
+
+            current_key = None
+            continue
+
+        found_material = (
+            _productivity_v117_material(
+                row
+            )
+        )
+
+        if (
+            category
+            and machine
+            and found_material
+        ):
+
+            current_key = (
+                section,
+                category,
+                machine,
+                found_material,
+            )
+
+            templates[
+                current_key
+            ] = {
+                "parent":
+                    row,
+
+                "details":
+                    [],
+            }
+
+            continue
+
+        if (
+            current_key
+            and
+            _productivity_v117_indent(
+                row
+            ) >= 3
+        ):
+
+            templates[
+                current_key
+            ][
+                "details"
+            ].append(
+                row
+            )
+
+            continue
+
+        if (
+            _productivity_v117_indent(
+                row
+            ) <= 2
+        ):
+
+            current_key = None
+
+    return templates
+
+
+def _productivity_v117_precision(value):
+
+    number = (
+        _productivity_v117_number(
+            value
+        )
+    )
+
+    if abs(
+        number
+        - round(
+            number
+        )
+    ) <= 0.000001:
+
+        return 0
+
+    return 3
+
+
+def _productivity_v117_build_details(
+    tallies_parent,
+    actual_details,
+):
+
+    if not actual_details:
+        return []
+
+    total_bcm = (
+        _productivity_v117_tallies_output(
+            tallies_parent
+        )
+    )
+
+    total_hours = (
+        _productivity_v117_number(
+            tallies_parent.get(
+                "working_hours"
+            )
+        )
+    )
+
+    total_coal_tonnes = (
+        _productivity_v117_coal_tonnes(
+            tallies_parent
+        )
+    )
+
+    output_weights = [
+        _productivity_v117_detail_output(
+            row
+        )
+        for row in actual_details
+    ]
+
+    hour_weights = [
+        _productivity_v117_number(
+            row.get(
+                "working_hours"
+            )
+        )
+        for row in actual_details
+    ]
+
+    if sum(
+        hour_weights
+    ) <= 0:
+
+        hour_weights = list(
+            output_weights
+        )
+
+    tonne_weights = [
+        _productivity_v117_coal_tonnes(
+            row
+        )
+        for row in actual_details
+    ]
+
+    if sum(
+        tonne_weights
+    ) <= 0:
+
+        tonne_weights = list(
+            output_weights
+        )
+
+    bcm_values = (
+        _productivity_v117_allocate(
+            total_bcm,
+            output_weights,
+            _productivity_v117_precision(
+                total_bcm
+            ),
+        )
+    )
+
+    hour_values = (
+        _productivity_v117_allocate(
+            total_hours,
+            hour_weights,
+            3,
+        )
+    )
+
+    tonne_values = (
+        _productivity_v117_allocate(
+            total_coal_tonnes,
+            tonne_weights,
+            _productivity_v117_precision(
+                total_coal_tonnes
+            ),
+        )
+        if total_coal_tonnes > 0
+        else [
+            0
+            for _row in actual_details
+        ]
+    )
+
+    output = []
+
+    for (
+        template,
+        bcm,
+        hours,
+        coal_tonnes
+    ) in zip(
+        actual_details,
+        bcm_values,
+        hour_values,
+        tonne_values,
+    ):
+
+        row = dict(
+            template
+        )
+
+        row[
+            "output"
+        ] = bcm
+
+        row[
+            "adjusted_bcm"
+        ] = bcm
+
+        row[
+            "tallies_bcm"
+        ] = bcm
+
+        row[
+            "working_hours"
+        ] = hours
+
+        row[
+            "productivity"
+        ] = (
+            round(
+                bcm
+                / hours,
+                0,
+            )
+            if hours > 0
+            else 0
+        )
+
+        if coal_tonnes > 0:
+
+            row[
+                "output_coal_tonnes"
+            ] = coal_tonnes
+
+            row[
+                "coal_tons"
+            ] = coal_tonnes
+
+        else:
+
+            row[
+                "output_coal_tonnes"
+            ] = ""
+
+            row[
+                "coal_tons"
+            ] = ""
+
+        average_hd = (
+            _productivity_v117_average_hd(
+                row.get(
+                    "hauling_distance_m"
+                )
+            )
+        )
+
+        row[
+            "productivity_bcm_hd"
+        ] = (
+            round(
+                bcm
+                / average_hd,
+                2,
+            )
+            if (
+                bcm > 0
+                and average_hd > 0
+            )
+            else ""
+        )
+
+        # Tallies detail generated from Actual structure.
+        # Do not allow Survey-edit behavior from this display.
+        row[
+            "productivity_editable"
+        ] = 0
+
+        row[
+            "productivity_tallies_actual_layout_v117"
+        ] = 1
+
+        row[
+            "productivity_tallies_actual_template_v117"
+        ] = 1
+
+        output.append(
+            row
+        )
+
+    return output
+
+
+def _productivity_apply_tallies_actual_layout_v117(
+    tallies_result,
+    actual_result,
+    filters,
+):
+
+    if not tallies_result:
+
+        return tallies_result
+
+    if not _productivity_v117_target(
+        filters
+    ):
+
+        return tallies_result
+
+    if not actual_result:
+
+        return tallies_result
+
+    tallies_parts = list(
+        tallies_result
+    )
+
+    actual_parts = list(
+        actual_result
+    )
+
+    if (
+        len(
+            tallies_parts
+        ) < 2
+        or len(
+            actual_parts
+        ) < 2
+    ):
+
+        return tallies_result
+
+    tallies_rows = list(
+        tallies_parts[
+            1
+        ]
+        or []
+    )
+
+    actual_rows = list(
+        actual_parts[
+            1
+        ]
+        or []
+    )
+
+    templates = (
+        _productivity_v117_actual_templates(
+            actual_rows
+        )
+    )
+
+    # No Actual Survey hierarchy available.
+    # Keep original Tallies presentation unchanged.
+    if not templates:
+
+        return tallies_result
+
+    output = []
+
+    section = 0
+    category = ""
+    machine = ""
+
+    index = 0
+
+    while index < len(
+        tallies_rows
+    ):
+
+        original = (
+            tallies_rows[
+                index
+            ]
+        )
+
+        if not hasattr(
+            original,
+            "get",
+        ):
+
+            output.append(
+                original
+            )
+
+            index += 1
+            continue
+
+        row = dict(
+            original
+        )
+
+        if _productivity_v117_plan_header(
+            row
+        ):
+
+            section += 1
+            category = ""
+            machine = ""
+
+            output.append(
+                row
+            )
+
+            index += 1
+            continue
+
+        found_category = (
+            _productivity_v117_category(
+                row
+            )
+        )
+
+        if found_category:
+
+            category = (
+                found_category
+            )
+
+            machine = ""
+
+            output.append(
+                row
+            )
+
+            index += 1
+            continue
+
+        if _productivity_v117_total_fleet(
+            row
+        ):
+
+            category = ""
+            machine = ""
+
+            output.append(
+                row
+            )
+
+            index += 1
+            continue
+
+        found_machine = (
+            _productivity_v117_machine(
+                row
+            )
+        )
+
+        if (
+            category
+            and found_machine
+        ):
+
+            machine = (
+                found_machine
+            )
+
+            output.append(
+                row
+            )
+
+            index += 1
+            continue
+
+        found_material = (
+            _productivity_v117_material(
+                row
+            )
+        )
+
+        if not (
+            category
+            and machine
+            and found_material
+        ):
+
+            output.append(
+                row
+            )
+
+            index += 1
+            continue
+
+        key = (
+            section,
+            category,
+            machine,
+            found_material,
+        )
+
+        template = (
+            templates.get(
+                key
+            )
+        )
+
+        # Find the end of this Tallies material subtree.
+        end = (
+            index + 1
+        )
+
+        while end < len(
+            tallies_rows
+        ):
+
+            candidate = (
+                tallies_rows[
+                    end
+                ]
+            )
+
+            if not hasattr(
+                candidate,
+                "get",
+            ):
+                end += 1
+                continue
+
+            if (
+                _productivity_v117_plan_header(
+                    candidate
+                )
+                or
+                _productivity_v117_category(
+                    candidate
+                )
+                or
+                _productivity_v117_total_fleet(
+                    candidate
+                )
+                or
+                _productivity_v117_machine(
+                    candidate
+                )
+                or
+                _productivity_v117_material(
+                    candidate
+                )
+            ):
+
+                break
+
+            end += 1
+
+        # Always keep the real Tallies material parent.
+        parent = dict(
+            row
+        )
+
+        parent[
+            "productivity_tallies_actual_layout_v117"
+        ] = 1
+
+        output.append(
+            parent
+        )
+
+        if (
+            template
+            and template.get(
+                "details"
+            )
+        ):
+
+            generated = (
+                _productivity_v117_build_details(
+                    parent,
+                    template[
+                        "details"
+                    ],
+                )
+            )
+
+            output.extend(
+                generated
+            )
+
+        else:
+
+            # No matching Actual template:
+            # preserve existing Tallies Mining Area children.
+            output.extend(
+                tallies_rows[
+                    index + 1:
+                    end
+                ]
+            )
+
+        index = end
+
+    tallies_parts[
+        1
+    ] = output
+
+    if isinstance(
+        tallies_result,
+        tuple,
+    ):
+
+        return tuple(
+            tallies_parts
+        )
+
+    return tallies_parts
+
+
+def execute(filters=None):
+
+    tallies_result = (
+        _productivity_execute_before_tallies_actual_layout_v117(
+            filters
+        )
+    )
+
+    if not _productivity_v117_target(
+        filters
+    ):
+
+        return tallies_result
+
+    actual_filters = dict(
+        frappe._dict(
+            filters
+            or {}
+        )
+    )
+
+    actual_filters[
+        "bcm_basis"
+    ] = "Actual BCMs"
+
+    actual_result = (
+        _productivity_execute_before_tallies_actual_layout_v117(
+            frappe._dict(
+                actual_filters
+            )
+        )
+    )
+
+    return (
+        _productivity_apply_tallies_actual_layout_v117(
+            tallies_result,
+            actual_result,
+            filters,
+        )
+    )
+
+
+# END KOSI_PRODUCTIVITY_TALLIES_ACTUAL_LAYOUT_V117
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_TALLIES_SELECTED_ASSET_LAYOUT_V117B
+#
+# Extension to V117.
+#
+# Problem:
+#
+# When a specific Asset is selected, the existing selected-asset
+# presentation removes the Category row:
+#
+#     MONTHLY PRODUCTION
+#       EX016
+#         Coal
+#           ...
+#
+# rather than:
+#
+#     Excavator
+#       EX016
+#         Coal
+#
+# V117 originally used the Category heading to establish context,
+# therefore the selected-asset result retained the old Tallies
+# Mining Area detail rows.
+#
+# Fix:
+#
+# - Keep selected Tallies machine exactly as filtered.
+# - Load Actual display templates with Asset filter removed.
+# - Locate only the selected machine's Actual material template.
+# - Keep Tallies machine/material/category BCM values.
+# - Replace only the material detail rows.
+# - Preserve Actual-style Material / From Area / To Area / HD.
+# - No other machine is introduced.
+#
+# Applies only to:
+#
+#     Tallies BCMs
+#     Summary Per Machine
+#     Asset selected
+#
+# ============================================================
+
+
+_productivity_execute_before_tallies_selected_asset_layout_v117b = execute
+
+
+def _productivity_v117b_selected_asset(filters):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+
+    value = filters.get(
+        "asset"
+    )
+
+
+    if isinstance(
+        value,
+        (list, tuple, set),
+    ):
+
+        values = [
+            str(
+                item
+                or ""
+            ).strip()
+            for item in value
+            if str(
+                item
+                or ""
+            ).strip()
+        ]
+
+
+        if len(
+            values
+        ) == 1:
+
+            return values[
+                0
+            ]
+
+
+        return ""
+
+
+    return str(
+        value
+        or ""
+    ).strip()
+
+
+def _productivity_v117b_target(filters):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+
+    return (
+        _productivity_v117_text(
+            filters.get(
+                "bcm_basis"
+            )
+        )
+        == "Tallies BCMs"
+
+        and
+
+        _productivity_v117_text(
+            filters.get(
+                "summary_view"
+            )
+        )
+        == "Summary Per Machine"
+
+        and
+
+        bool(
+            _productivity_v117b_selected_asset(
+                filters
+            )
+        )
+    )
+
+
+def _productivity_v117b_actual_filters(filters):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+
+    helper = globals().get(
+        "_productivity_v114a_actual_filters"
+    )
+
+
+    if callable(
+        helper
+    ):
+
+        try:
+
+            output = helper(
+                filters,
+                remove_asset=True,
+            )
+
+
+            output = frappe._dict(
+                output
+                or {}
+            )
+
+
+            output[
+                "bcm_basis"
+            ] = "Actual BCMs"
+
+
+            return output
+
+        except Exception:
+
+            pass
+
+
+    output = dict(
+        filters
+    )
+
+
+    output[
+        "bcm_basis"
+    ] = "Actual BCMs"
+
+
+    for key in list(
+        output.keys()
+    ):
+
+        if "asset" in str(
+            key
+            or ""
+        ).casefold():
+
+            output.pop(
+                key,
+                None,
+            )
+
+
+    return frappe._dict(
+        output
+    )
+
+
+def _productivity_v117b_template(
+    templates,
+    section,
+    machine,
+    material,
+):
+
+    exact = []
+
+
+    for key, value in (
+        templates.items()
+    ):
+
+        if not isinstance(
+            key,
+            tuple,
+        ):
+
+            continue
+
+
+        if len(
+            key
+        ) < 4:
+
+            continue
+
+
+        (
+            key_section,
+            key_category,
+            key_machine,
+            key_material,
+        ) = key[
+            :4
+        ]
+
+
+        if (
+            int(
+                key_section
+            )
+            != int(
+                section
+            )
+        ):
+
+            continue
+
+
+        if str(
+            key_machine
+            or ""
+        ).strip() != str(
+            machine
+            or ""
+        ).strip():
+
+            continue
+
+
+        if str(
+            key_material
+            or ""
+        ).strip() != str(
+            material
+            or ""
+        ).strip():
+
+            continue
+
+
+        exact.append(
+            (
+                key_category,
+                value,
+            )
+        )
+
+
+    if not exact:
+
+        return None
+
+
+    # An Asset should belong to one Productivity category.
+    # If multiple candidates somehow exist, choose the first
+    # template with actual detail rows.
+
+    for _category, value in exact:
+
+        if (
+            value
+            and value.get(
+                "details"
+            )
+        ):
+
+            return value
+
+
+    return exact[
+        0
+    ][
+        1
+    ]
+
+
+def _productivity_v117b_is_material_parent(
+    row,
+    machine_indent,
+):
+
+    if not hasattr(
+        row,
+        "get",
+    ):
+
+        return ""
+
+
+    if (
+        int(
+            row.get(
+                "productivity_tallies_mining_area_v99"
+            )
+            or 0
+        )
+        == 1
+    ):
+
+        return ""
+
+
+    raw = str(
+        row.get(
+            "material"
+        )
+        or ""
+    ).strip()
+
+
+    if not raw:
+
+        return ""
+
+
+    canonical = (
+        _productivity_material_v15(
+            raw,
+            raw,
+        )
+    )
+
+
+    if canonical not in (
+        "Coal",
+        "Hards",
+        "Softs",
+    ):
+
+        return ""
+
+
+    row_indent = (
+        _productivity_v117_indent(
+            row
+        )
+    )
+
+
+    if row_indent != (
+        machine_indent + 1
+    ):
+
+        return ""
+
+
+    return canonical
+
+
+def _productivity_v117b_apply(
+    result,
+    actual_result,
+    filters,
+):
+
+    if not result:
+
+        return result
+
+
+    if not _productivity_v117b_target(
+        filters
+    ):
+
+        return result
+
+
+    if not actual_result:
+
+        return result
+
+
+    parts = list(
+        result
+    )
+
+
+    actual_parts = list(
+        actual_result
+    )
+
+
+    if (
+        len(
+            parts
+        ) < 2
+        or len(
+            actual_parts
+        ) < 2
+    ):
+
+        return result
+
+
+    rows = list(
+        parts[
+            1
+        ]
+        or []
+    )
+
+
+    actual_rows = list(
+        actual_parts[
+            1
+        ]
+        or []
+    )
+
+
+    templates = (
+        _productivity_v117_actual_templates(
+            actual_rows
+        )
+    )
+
+
+    if not templates:
+
+        return result
+
+
+    selected_asset = (
+        _productivity_v117b_selected_asset(
+            filters
+        )
+    )
+
+
+    output = []
+
+    section = 0
+
+    selected_machine_active = False
+    selected_machine_indent = 0
+
+    index = 0
+
+
+    while index < len(
+        rows
+    ):
+
+        original = rows[
+            index
+        ]
+
+
+        if not hasattr(
+            original,
+            "get",
+        ):
+
+            output.append(
+                original
+            )
+
+            index += 1
+
+            continue
+
+
+        row = dict(
+            original
+        )
+
+
+        if _productivity_v117_plan_header(
+            row
+        ):
+
+            section += 1
+
+            selected_machine_active = False
+
+            output.append(
+                row
+            )
+
+            index += 1
+
+            continue
+
+
+        label = str(
+            row.get(
+                "label"
+            )
+            or ""
+        ).strip()
+
+
+        material_text = str(
+            row.get(
+                "material"
+            )
+            or ""
+        ).strip()
+
+
+        # ----------------------------------------------------
+        # Selected asset machine row.
+        # ----------------------------------------------------
+
+        if (
+            label == selected_asset
+            and not material_text
+        ):
+
+            selected_machine_active = True
+
+            selected_machine_indent = (
+                _productivity_v117_indent(
+                    row
+                )
+            )
+
+
+            output.append(
+                row
+            )
+
+            index += 1
+
+            continue
+
+
+        # No selected machine context yet.
+        if not selected_machine_active:
+
+            output.append(
+                row
+            )
+
+            index += 1
+
+            continue
+
+
+        material = (
+            _productivity_v117b_is_material_parent(
+                row,
+                selected_machine_indent,
+            )
+        )
+
+
+        if not material:
+
+            output.append(
+                row
+            )
+
+            index += 1
+
+            continue
+
+
+        parent_indent = (
+            _productivity_v117_indent(
+                row
+            )
+        )
+
+
+        # ----------------------------------------------------
+        # Find end of this Tallies material subtree.
+        # ----------------------------------------------------
+
+        end = (
+            index + 1
+        )
+
+
+        while end < len(
+            rows
+        ):
+
+            candidate = rows[
+                end
+            ]
+
+
+            if not hasattr(
+                candidate,
+                "get",
+            ):
+
+                end += 1
+                continue
+
+
+            candidate_label = str(
+                candidate.get(
+                    "label"
+                )
+                or ""
+            ).strip()
+
+
+            candidate_material = str(
+                candidate.get(
+                    "material"
+                )
+                or ""
+            ).strip()
+
+
+            candidate_indent = (
+                _productivity_v117_indent(
+                    candidate
+                )
+            )
+
+
+            if _productivity_v117_plan_header(
+                candidate
+            ):
+
+                break
+
+
+            if (
+                candidate_label
+                and not candidate_material
+                and candidate_indent
+                <= selected_machine_indent
+            ):
+
+                break
+
+
+            next_material = (
+                _productivity_v117b_is_material_parent(
+                    candidate,
+                    selected_machine_indent,
+                )
+            )
+
+
+            if next_material:
+
+                break
+
+
+            end += 1
+
+
+        template = (
+            _productivity_v117b_template(
+                templates,
+                section,
+                selected_asset,
+                material,
+            )
+        )
+
+
+        # Always keep the genuine Tallies material subtotal.
+        parent = dict(
+            row
+        )
+
+
+        parent[
+            "productivity_tallies_selected_asset_layout_v117b"
+        ] = 1
+
+
+        output.append(
+            parent
+        )
+
+
+        if (
+            template
+            and template.get(
+                "details"
+            )
+        ):
+
+            generated = (
+                _productivity_v117_build_details(
+                    parent,
+                    template[
+                        "details"
+                    ],
+                )
+            )
+
+
+            for detail in generated:
+
+                detail = dict(
+                    detail
+                )
+
+
+                # Selected Asset presentation is one level
+                # shallower because the Category heading is
+                # deliberately hidden.
+
+                detail[
+                    "indent"
+                ] = (
+                    parent_indent + 1
+                )
+
+
+                detail[
+                    "productivity_tallies_selected_asset_layout_v117b"
+                ] = 1
+
+
+                output.append(
+                    detail
+                )
+
+
+        else:
+
+            # No matching Actual template.
+            # Preserve original Tallies area details.
+
+            output.extend(
+                rows[
+                    index + 1:
+                    end
+                ]
+            )
+
+
+        index = end
+
+
+    parts[
+        1
+    ] = output
+
+
+    if isinstance(
+        result,
+        tuple,
+    ):
+
+        return tuple(
+            parts
+        )
+
+
+    return parts
+
+
+def execute(filters=None):
+
+    result = (
+        _productivity_execute_before_tallies_selected_asset_layout_v117b(
+            filters
+        )
+    )
+
+
+    if not _productivity_v117b_target(
+        filters
+    ):
+
+        return result
+
+
+    actual_filters = (
+        _productivity_v117b_actual_filters(
+            filters
+        )
+    )
+
+
+    # Use pre-V117 execution for the Actual template.
+    # We want the complete Actual hierarchy, not another
+    # Tallies transformation.
+
+    actual_result = (
+        _productivity_execute_before_tallies_actual_layout_v117(
+            actual_filters
+        )
+    )
+
+
+    return (
+        _productivity_v117b_apply(
+            result,
+            actual_result,
+            filters,
+        )
+    )
+
+
+# END KOSI_PRODUCTIVITY_TALLIES_SELECTED_ASSET_LAYOUT_V117B
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_TALLIES_HOURLY_ROUTE_V118
+#
+# Tallies BCMs / Summary Per Machine
+#
+# Route source MUST come from Hourly Production.
+#
+# EXCAVATOR:
+#
+#   Machine:
+#       Truck Loads.asset_name_shoval
+#
+#   From Area:
+#       Truck Loads.mining_areas_trucks
+#
+#   To Area:
+#       Truck Loads.exc_to_area
+#
+#   Hauling Distance:
+#       Truck Loads.exc_hauling_distance_meter
+#
+#   BCM weighting:
+#       Truck Loads.bcms
+#
+#
+# DOZER:
+#
+#   Machine:
+#       Dozer Production.asset_name
+#
+#   From Area:
+#       Dozer Production.mining_areas_dozer_child
+#
+#   To Area:
+#       Dozer Production.area_to
+#
+#   Hauling Distance:
+#       Dozer Production.dozer_hauling_distance_meter
+#
+#   BCM weighting:
+#       Dozer Production.bcm_hour
+#
+#
+# IMPORTANT:
+#
+# - Applies ONLY to Tallies BCMs.
+# - Summary Per Machine only.
+# - Works with Asset blank.
+# - Works with one selected Asset.
+# - Actual BCMs remains completely untouched.
+# - Tallies BCM totals remain untouched.
+# - Only route fields and BCM/HD are updated.
+# - The Actual-style hierarchy created by V117/V117B remains.
+# ============================================================
+
+
+_productivity_execute_before_tallies_hourly_route_v118 = execute
+
+
+def _productivity_v118_text(value):
+
+    return str(
+        value
+        or ""
+    ).strip()
+
+
+def _productivity_v118_number(value):
+
+    try:
+
+        if value in (
+            None,
+            "",
+        ):
+
+            return 0.0
+
+
+        if isinstance(
+            value,
+            str,
+        ):
+
+            value = (
+                value
+                .replace(",", "")
+                .strip()
+            )
+
+
+        return float(
+            value
+            or 0
+        )
+
+    except Exception:
+
+        return 0.0
+
+
+def _productivity_v118_indent(row):
+
+    try:
+
+        return int(
+            float(
+                row.get(
+                    "indent"
+                )
+                or 0
+            )
+        )
+
+    except Exception:
+
+        return 0
+
+
+def _productivity_v118_target(filters):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+
+    return (
+        _productivity_v118_text(
+            filters.get(
+                "bcm_basis"
+            )
+        )
+        == "Tallies BCMs"
+
+        and
+
+        _productivity_v118_text(
+            filters.get(
+                "summary_view"
+            )
+        )
+        == "Summary Per Machine"
+    )
+
+
+def _productivity_v118_material(value):
+
+    raw = (
+        _productivity_v118_text(
+            value
+        )
+    )
+
+
+    if not raw:
+
+        return ""
+
+
+    try:
+
+        canonical = (
+            _productivity_material_v15(
+                raw,
+                raw,
+            )
+        )
+
+
+        if canonical in (
+            "Coal",
+            "Hards",
+            "Softs",
+        ):
+
+            return canonical
+
+    except Exception:
+
+        pass
+
+
+    lower = raw.casefold()
+
+
+    if "coal" in lower:
+
+        return "Coal"
+
+
+    if any(
+        text in lower
+        for text in (
+            "hard",
+            "overburden",
+            "midburden",
+        )
+    ):
+
+        return "Hards"
+
+
+    if any(
+        text in lower
+        for text in (
+            "soft",
+            "topsoil",
+        )
+    ):
+
+        return "Softs"
+
+
+    return ""
+
+
+def _productivity_v118_conditions(filters):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+
+    start_date = (
+        filters.get(
+            "start_date"
+        )
+        or filters.get(
+            "from_date"
+        )
+    )
+
+
+    end_date = (
+        filters.get(
+            "end_date"
+        )
+        or filters.get(
+            "to_date"
+        )
+    )
+
+
+    site = (
+        filters.get(
+            "site"
+        )
+        or filters.get(
+            "location"
+        )
+    )
+
+
+    shift = (
+        filters.get(
+            "shift"
+        )
+    )
+
+
+    if not (
+        start_date
+        and end_date
+        and site
+    ):
+
+        return None, None
+
+
+    values = {
+        "start_date":
+            start_date,
+
+        "end_date":
+            end_date,
+
+        "site":
+            site,
+    }
+
+
+    conditions = [
+        (
+            "hp.prod_date BETWEEN "
+            "%(start_date)s AND %(end_date)s"
+        ),
+
+        "hp.location = %(site)s",
+
+        "hp.docstatus < 2",
+    ]
+
+
+    if shift:
+
+        values[
+            "shift"
+        ] = shift
+
+
+        conditions.append(
+            "hp.shift = %(shift)s"
+        )
+
+
+    return (
+        conditions,
+        values,
+    )
+
+
+def _productivity_v118_excavator_routes(
+    filters,
+):
+
+    conditions, values = (
+        _productivity_v118_conditions(
+            filters
+        )
+    )
+
+
+    if not conditions:
+
+        return []
+
+
+    sql = f"""
+        SELECT
+            hp.prod_date,
+            hp.shift,
+
+            tl.asset_name_shoval AS machine,
+
+            tl.mat_type AS raw_material,
+
+            tl.mining_areas_trucks AS from_area,
+
+            tl.exc_to_area AS to_area,
+
+            tl.exc_hauling_distance_meter
+                AS hauling_distance,
+
+            SUM(
+                COALESCE(
+                    tl.bcms,
+                    0
+                )
+            ) AS weight
+
+        FROM `tabTruck Loads` tl
+
+        INNER JOIN `tabHourly Production` hp
+            ON hp.name = tl.parent
+
+        WHERE
+            {" AND ".join(conditions)}
+
+            AND COALESCE(
+                tl.asset_name_shoval,
+                ''
+            ) != ''
+
+        GROUP BY
+            hp.prod_date,
+            hp.shift,
+            tl.asset_name_shoval,
+            tl.mat_type,
+            tl.mining_areas_trucks,
+            tl.exc_to_area,
+            tl.exc_hauling_distance_meter
+
+        ORDER BY
+            hp.prod_date,
+            hp.shift,
+            tl.asset_name_shoval,
+            tl.mat_type,
+            tl.mining_areas_trucks,
+            tl.exc_to_area
+    """
+
+
+    rows = frappe.db.sql(
+        sql,
+        values,
+        as_dict=True,
+    )
+
+
+    output = []
+
+
+    for row in rows:
+
+        material = (
+            _productivity_v118_material(
+                row.get(
+                    "raw_material"
+                )
+            )
+        )
+
+
+        if not material:
+
+            continue
+
+
+        output.append({
+            "source":
+                "Excavator",
+
+            "date":
+                row.get(
+                    "prod_date"
+                ),
+
+            "shift":
+                row.get(
+                    "shift"
+                ),
+
+            "machine":
+                _productivity_v118_text(
+                    row.get(
+                        "machine"
+                    )
+                ),
+
+            "material":
+                material,
+
+            "from_area":
+                _productivity_v118_text(
+                    row.get(
+                        "from_area"
+                    )
+                ),
+
+            "to_area":
+                _productivity_v118_text(
+                    row.get(
+                        "to_area"
+                    )
+                ),
+
+            "hauling_distance":
+                _productivity_v118_text(
+                    row.get(
+                        "hauling_distance"
+                    )
+                ),
+
+            "weight":
+                _productivity_v118_number(
+                    row.get(
+                        "weight"
+                    )
+                ),
+        })
+
+
+    return output
+
+
+def _productivity_v118_dozer_routes(
+    filters,
+):
+
+    conditions, values = (
+        _productivity_v118_conditions(
+            filters
+        )
+    )
+
+
+    if not conditions:
+
+        return []
+
+
+    sql = f"""
+        SELECT
+            hp.prod_date,
+            hp.shift,
+
+            dp.asset_name AS machine,
+
+            dp.dozer_geo_mat_layer AS raw_material,
+
+            dp.mining_areas_dozer_child AS from_area,
+
+            dp.area_to AS to_area,
+
+            dp.dozer_hauling_distance_meter
+                AS hauling_distance,
+
+            SUM(
+                COALESCE(
+                    dp.bcm_hour,
+                    0
+                )
+            ) AS weight
+
+        FROM `tabDozer Production` dp
+
+        INNER JOIN `tabHourly Production` hp
+            ON hp.name = dp.parent
+
+        WHERE
+            {" AND ".join(conditions)}
+
+            AND COALESCE(
+                dp.asset_name,
+                ''
+            ) != ''
+
+        GROUP BY
+            hp.prod_date,
+            hp.shift,
+            dp.asset_name,
+            dp.dozer_geo_mat_layer,
+            dp.mining_areas_dozer_child,
+            dp.area_to,
+            dp.dozer_hauling_distance_meter
+
+        ORDER BY
+            hp.prod_date,
+            hp.shift,
+            dp.asset_name,
+            dp.dozer_geo_mat_layer,
+            dp.mining_areas_dozer_child,
+            dp.area_to
+    """
+
+
+    rows = frappe.db.sql(
+        sql,
+        values,
+        as_dict=True,
+    )
+
+
+    output = []
+
+
+    for row in rows:
+
+        material = (
+            _productivity_v118_material(
+                row.get(
+                    "raw_material"
+                )
+            )
+        )
+
+
+        if not material:
+
+            continue
+
+
+        output.append({
+            "source":
+                "Dozer",
+
+            "date":
+                row.get(
+                    "prod_date"
+                ),
+
+            "shift":
+                row.get(
+                    "shift"
+                ),
+
+            "machine":
+                _productivity_v118_text(
+                    row.get(
+                        "machine"
+                    )
+                ),
+
+            "material":
+                material,
+
+            "from_area":
+                _productivity_v118_text(
+                    row.get(
+                        "from_area"
+                    )
+                ),
+
+            "to_area":
+                _productivity_v118_text(
+                    row.get(
+                        "to_area"
+                    )
+                ),
+
+            "hauling_distance":
+                _productivity_v118_text(
+                    row.get(
+                        "hauling_distance"
+                    )
+                ),
+
+            "weight":
+                _productivity_v118_number(
+                    row.get(
+                        "weight"
+                    )
+                ),
+        })
+
+
+    return output
+
+
+def _productivity_v118_date_in_scope(
+    route,
+    start_date,
+    end_date,
+):
+
+    date = route.get(
+        "date"
+    )
+
+
+    if not date:
+
+        return True
+
+
+    try:
+
+        date = frappe.utils.getdate(
+            date
+        )
+
+
+        if start_date:
+
+            if date < frappe.utils.getdate(
+                start_date
+            ):
+
+                return False
+
+
+        if end_date:
+
+            if date > frappe.utils.getdate(
+                end_date
+            ):
+
+                return False
+
+
+    except Exception:
+
+        return True
+
+
+    return True
+
+
+def _productivity_v118_unique(
+    values,
+):
+
+    output = []
+
+
+    for value in values:
+
+        value = (
+            _productivity_v118_text(
+                value
+            )
+        )
+
+
+        if not value:
+
+            continue
+
+
+        if value not in output:
+
+            output.append(
+                value
+            )
+
+
+    return output
+
+
+def _productivity_v118_join(values):
+
+    return " / ".join(
+        _productivity_v118_unique(
+            values
+        )
+    )
+
+
+def _productivity_v118_distance_midpoint(
+    value,
+):
+
+    helper = globals().get(
+        "_productivity_v117_average_hd"
+    )
+
+
+    if callable(
+        helper
+    ):
+
+        try:
+
+            return (
+                _productivity_v118_number(
+                    helper(
+                        value
+                    )
+                )
+            )
+
+        except Exception:
+
+            pass
+
+
+    import re
+
+
+    numbers = [
+        float(
+            number
+        )
+        for number in re.findall(
+            r"\d+(?:\.\d+)?",
+            _productivity_v118_text(
+                value
+            ),
+        )
+    ]
+
+
+    if not numbers:
+
+        return 0.0
+
+
+    if len(
+        numbers
+    ) >= 2:
+
+        return (
+            numbers[
+                0
+            ]
+            + numbers[
+                1
+            ]
+        ) / 2.0
+
+
+    return numbers[
+        0
+    ]
+
+
+def _productivity_v118_weighted_distance(
+    routes,
+):
+
+    values = []
+
+
+    for route in routes:
+
+        distance = (
+            _productivity_v118_distance_midpoint(
+                route.get(
+                    "hauling_distance"
+                )
+            )
+        )
+
+
+        if distance <= 0:
+
+            continue
+
+
+        weight = max(
+            0.0,
+            _productivity_v118_number(
+                route.get(
+                    "weight"
+                )
+            ),
+        )
+
+
+        values.append(
+            (
+                distance,
+                weight,
+            )
+        )
+
+
+    if not values:
+
+        return 0.0
+
+
+    total_weight = sum(
+        weight
+        for _distance, weight
+        in values
+    )
+
+
+    if total_weight > 0:
+
+        return (
+            sum(
+                distance * weight
+                for distance, weight
+                in values
+            )
+            / total_weight
+        )
+
+
+    return (
+        sum(
+            distance
+            for distance, _weight
+            in values
+        )
+        / len(
+            values
+        )
+    )
+
+
+def _productivity_v118_route_matches(
+    routes,
+    machine,
+    material,
+    from_area,
+    start_date,
+    end_date,
+):
+
+    machine = (
+        _productivity_v118_text(
+            machine
+        )
+    )
+
+
+    material = (
+        _productivity_v118_material(
+            material
+        )
+        or _productivity_v118_text(
+            material
+        )
+    )
+
+
+    from_area = (
+        _productivity_v118_text(
+            from_area
+        )
+    )
+
+
+    base = [
+        route
+        for route in routes
+        if (
+            route.get(
+                "machine"
+            )
+            == machine
+
+            and
+
+            route.get(
+                "material"
+            )
+            == material
+
+            and
+
+            _productivity_v118_date_in_scope(
+                route,
+                start_date,
+                end_date,
+            )
+        )
+    ]
+
+
+    if not base:
+
+        return []
+
+
+    # Best match:
+    # same machine + material + From Area.
+
+    if from_area:
+
+        exact = [
+            route
+            for route in base
+            if route.get(
+                "from_area"
+            )
+            == from_area
+        ]
+
+
+        if exact:
+
+            return exact
+
+
+    # If this machine/material has only one captured
+    # From Area, it is unambiguous.
+
+    unique_from = (
+        _productivity_v118_unique(
+            route.get(
+                "from_area"
+            )
+            for route in base
+        )
+    )
+
+
+    if len(
+        unique_from
+    ) <= 1:
+
+        return base
+
+
+    # Ambiguous:
+    # do not silently attach the wrong route.
+
+    return []
+
+
+def _productivity_v118_direct_machine(
+    row,
+):
+
+    for fieldname in (
+        "productivity_tallies_parent_machine_v99",
+        "productivity_all_machine_machine_v87",
+        "productivity_excavator_parent_machine_v71",
+        "productivity_summary_parent_machine_v34",
+        "machine",
+        "asset_name",
+    ):
+
+        value = (
+            _productivity_v118_text(
+                row.get(
+                    fieldname
+                )
+            )
+        )
+
+
+        if value:
+
+            return value
+
+
+    return ""
+
+
+def _productivity_v118_direct_material(
+    row,
+):
+
+    for fieldname in (
+        "productivity_tallies_parent_material_v99",
+        "productivity_all_machine_parent_material_v87",
+        "productivity_excavator_parent_material_v71",
+        "productivity_summary_parent_material_v34",
+        "parent_material",
+    ):
+
+        value = (
+            _productivity_v118_material(
+                row.get(
+                    fieldname
+                )
+            )
+        )
+
+
+        if value:
+
+            return value
+
+
+    return ""
+
+
+def _productivity_apply_tallies_hourly_route_v118(
+    result,
+    filters,
+):
+
+    if not result:
+
+        return result
+
+
+    if not _productivity_v118_target(
+        filters
+    ):
+
+        return result
+
+
+    parts = list(
+        result
+    )
+
+
+    if len(
+        parts
+    ) < 2:
+
+        return result
+
+
+    rows = [
+        dict(
+            row
+        )
+        if hasattr(
+            row,
+            "get",
+        )
+        else row
+        for row in (
+            parts[
+                1
+            ]
+            or []
+        )
+    ]
+
+
+    routes = (
+        _productivity_v118_excavator_routes(
+            filters
+        )
+        + _productivity_v118_dozer_routes(
+            filters
+        )
+    )
+
+
+    if not routes:
+
+        return result
+
+
+    selected_asset = (
+        _productivity_v118_text(
+            frappe._dict(
+                filters
+                or {}
+            ).get(
+                "asset"
+            )
+        )
+    )
+
+
+    current_machine = ""
+    current_material = ""
+
+    machine_indent = None
+    material_indent = None
+
+
+    for row in rows:
+
+        if not hasattr(
+            row,
+            "get",
+        ):
+
+            continue
+
+
+        label = (
+            _productivity_v118_text(
+                row.get(
+                    "label"
+                )
+            )
+        )
+
+
+        raw_material = (
+            _productivity_v118_text(
+                row.get(
+                    "material"
+                )
+            )
+        )
+
+
+        indent = (
+            _productivity_v118_indent(
+                row
+            )
+        )
+
+
+        # ----------------------------------------------------
+        # MACHINE CONTEXT
+        # ----------------------------------------------------
+
+        direct_machine = (
+            _productivity_v118_direct_machine(
+                row
+            )
+        )
+
+
+        is_machine_total = False
+
+
+        for fieldname in (
+            "productivity_is_machine_total",
+            "is_machine_total",
+        ):
+
+            try:
+
+                if int(
+                    float(
+                        row.get(
+                            fieldname
+                        )
+                        or 0
+                    )
+                ) == 1:
+
+                    is_machine_total = True
+
+            except Exception:
+
+                pass
+
+
+        if (
+            selected_asset
+            and label == selected_asset
+            and not raw_material
+        ):
+
+            current_machine = label
+            current_material = ""
+
+            machine_indent = indent
+            material_indent = None
+
+            continue
+
+
+        if (
+            is_machine_total
+            and label
+            and not raw_material
+        ):
+
+            current_machine = label
+            current_material = ""
+
+            machine_indent = indent
+            material_indent = None
+
+            continue
+
+
+        if (
+            direct_machine
+            and not current_machine
+        ):
+
+            current_machine = (
+                direct_machine
+            )
+
+
+        # ----------------------------------------------------
+        # MATERIAL PARENT CONTEXT
+        # ----------------------------------------------------
+
+        canonical_material = (
+            _productivity_v118_material(
+                raw_material
+            )
+        )
+
+
+        # ====================================================
+        # KOSI_PRODUCTIVITY_TALLIES_HOURLY_DETAIL_FIX_V118C
+        #
+        # A Material parent is identified by TREE DEPTH only:
+        #
+        #     Machine
+        #       Material Parent
+        #         Detail
+        #
+        # V118 previously treated any V117/V117B generated row
+        # whose visible material happened to be "Softs",
+        # "Hards" or "Coal" as another parent row.
+        #
+        # That caused generated detail rows such as:
+        #
+        #     Softs
+        #     Hards
+        #
+        # to have Hourly From / To / Hauling Distance cleared
+        # before route enrichment.
+        #
+        # Correct rule:
+        #
+        #     Material Parent indent = Machine indent + 1
+        #
+        # Generated detail rows are one level deeper and must
+        # proceed to Hourly route matching below.
+        # ====================================================
+
+        if (
+            current_machine
+            and canonical_material
+            and machine_indent is not None
+            and indent
+            == machine_indent + 1
+        ):
+
+            current_material = (
+                canonical_material
+            )
+
+            material_indent = indent
+
+            # Parent rows do not carry one single route.
+            row[
+                "from_area"
+            ] = ""
+
+            row[
+                "to_area"
+            ] = ""
+
+            row[
+                "hauling_distance_m"
+            ] = ""
+
+            row[
+                "productivity_bcm_hd"
+            ] = ""
+
+            continue
+
+
+        direct_material = (
+            _productivity_v118_direct_material(
+                row
+            )
+        )
+
+
+        machine = (
+            direct_machine
+            or current_machine
+        )
+
+
+        material = (
+            direct_material
+            or current_material
+        )
+
+
+        if not (
+            machine
+            and material
+        ):
+
+            continue
+
+
+        # ----------------------------------------------------
+        # Only enrich DETAIL rows.
+        #
+        # This includes:
+        #
+        # - original Tallies Mining Area rows
+        # - V117 Actual-style Tallies detail rows
+        # - V117B selected-asset detail rows
+        # ----------------------------------------------------
+
+        is_detail = False
+
+
+        try:
+
+            if int(
+                float(
+                    row.get(
+                        "productivity_tallies_mining_area_v99"
+                    )
+                    or 0
+                )
+            ) == 1:
+
+                is_detail = True
+
+        except Exception:
+
+            pass
+
+
+        if row.get(
+            "productivity_tallies_actual_template_v117"
+        ):
+
+            is_detail = True
+
+
+        if row.get(
+            "productivity_tallies_selected_asset_layout_v117b"
+        ):
+
+            if (
+                material_indent is not None
+                and indent
+                > material_indent
+            ):
+
+                is_detail = True
+
+
+        if not is_detail:
+
+            continue
+
+
+        start_date = (
+            row.get(
+                "monthly_start_date"
+            )
+            or frappe._dict(
+                filters
+                or {}
+            ).get(
+                "start_date"
+            )
+        )
+
+
+        end_date = (
+            row.get(
+                "monthly_end_date"
+            )
+            or frappe._dict(
+                filters
+                or {}
+            ).get(
+                "end_date"
+            )
+        )
+
+
+        current_from = (
+            _productivity_v118_text(
+                row.get(
+                    "from_area"
+                )
+            )
+        )
+
+
+        matches = (
+            _productivity_v118_route_matches(
+                routes,
+                machine,
+                material,
+                current_from,
+                start_date,
+                end_date,
+            )
+        )
+
+
+        # Remove Survey route values from Tallies.
+        # If no Hourly match exists, leave route blank rather
+        # than showing Survey route information.
+
+        row[
+            "from_area"
+        ] = ""
+
+        row[
+            "to_area"
+        ] = ""
+
+        row[
+            "hauling_distance_m"
+        ] = ""
+
+        row[
+            "productivity_bcm_hd"
+        ] = ""
+
+
+        if not matches:
+
+            continue
+
+
+        from_values = (
+            _productivity_v118_unique(
+                match.get(
+                    "from_area"
+                )
+                for match in matches
+            )
+        )
+
+
+        to_values = (
+            _productivity_v118_unique(
+                match.get(
+                    "to_area"
+                )
+                for match in matches
+            )
+        )
+
+
+        distance_values = (
+            _productivity_v118_unique(
+                match.get(
+                    "hauling_distance"
+                )
+                for match in matches
+            )
+        )
+
+
+        row[
+            "from_area"
+        ] = _productivity_v118_join(
+            from_values
+        )
+
+
+        row[
+            "to_area"
+        ] = _productivity_v118_join(
+            to_values
+        )
+
+
+        row[
+            "hauling_distance_m"
+        ] = _productivity_v118_join(
+            distance_values
+        )
+
+
+        average_distance = (
+            _productivity_v118_weighted_distance(
+                matches
+            )
+        )
+
+
+        bcm = (
+            _productivity_v118_number(
+                row.get(
+                    "output"
+                )
+            )
+        )
+
+
+        if (
+            bcm > 0
+            and average_distance > 0
+        ):
+
+            row[
+                "productivity_bcm_hd"
+            ] = round(
+                bcm
+                / average_distance,
+                2,
+            )
+
+
+        row[
+            "productivity_tallies_hourly_route_v118"
+        ] = 1
+
+
+    parts[
+        1
+    ] = rows
+
+
+    if isinstance(
+        result,
+        tuple,
+    ):
+
+        return tuple(
+            parts
+        )
+
+
+    return parts
+
+
+def execute(filters=None):
+
+    result = (
+        _productivity_execute_before_tallies_hourly_route_v118(
+            filters
+        )
+    )
+
+
+    return (
+        _productivity_apply_tallies_hourly_route_v118(
+            result,
+            filters,
+        )
+    )
+
+
+# END KOSI_PRODUCTIVITY_TALLIES_HOURLY_ROUTE_V118
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_TALLIES_HOURLY_ROUTE_MATCH_V118B
+#
+# V118 originally refused an Hourly route when:
+#
+#     Machine + Material matched
+#
+# but:
+#
+#     more than one From Area existed during the report period
+#
+# That was intentionally conservative but causes monthly Tallies
+# route columns to remain blank.
+#
+# Correct Tallies rule:
+#
+# - Route source is Hourly Production only.
+# - Exact From Area match is preferred when available.
+# - Otherwise use ALL Hourly routes captured for the selected:
+#
+#       Machine + Material + Date Range
+#
+# - Unique From Area / To Area / Hauling Distance values are
+#   displayed by V118 joined with " / ".
+#
+# No Survey route fallback.
+# No Actual BCM changes.
+# No Tallies BCM changes.
+# ============================================================
+
+
+def _productivity_v118b_route_key(value):
+
+    return " ".join(
+        _productivity_v118_text(
+            value
+        )
+        .casefold()
+        .split()
+    )
+
+
+def _productivity_v118_route_matches(
+    routes,
+    machine,
+    material,
+    from_area,
+    start_date,
+    end_date,
+):
+
+    machine = (
+        _productivity_v118_text(
+            machine
+        )
+    )
+
+
+    material = (
+        _productivity_v118_material(
+            material
+        )
+        or _productivity_v118_text(
+            material
+        )
+    )
+
+
+    from_area = (
+        _productivity_v118_text(
+            from_area
+        )
+    )
+
+
+    machine_key = (
+        _productivity_v118b_route_key(
+            machine
+        )
+    )
+
+
+    material_key = (
+        _productivity_v118b_route_key(
+            material
+        )
+    )
+
+
+    # --------------------------------------------------------
+    # All Hourly rows for the same machine + material and
+    # inside this report/month section.
+    # --------------------------------------------------------
+
+    base = [
+        route
+        for route in routes
+        if (
+            _productivity_v118b_route_key(
+                route.get(
+                    "machine"
+                )
+            )
+            == machine_key
+
+            and
+
+            _productivity_v118b_route_key(
+                route.get(
+                    "material"
+                )
+            )
+            == material_key
+
+            and
+
+            _productivity_v118_date_in_scope(
+                route,
+                start_date,
+                end_date,
+            )
+        )
+    ]
+
+
+    if not base:
+
+        return []
+
+
+    # --------------------------------------------------------
+    # Prefer an exact Hourly From Area match when the displayed
+    # detail row already identifies the area.
+    # --------------------------------------------------------
+
+    if from_area:
+
+        from_key = (
+            _productivity_v118b_route_key(
+                from_area
+            )
+        )
+
+
+        exact = [
+            route
+            for route in base
+            if (
+                _productivity_v118b_route_key(
+                    route.get(
+                        "from_area"
+                    )
+                )
+                == from_key
+            )
+        ]
+
+
+        if exact:
+
+            return exact
+
+
+    # --------------------------------------------------------
+    # IMPORTANT V118B:
+    #
+    # Do NOT return blank merely because several routes were
+    # captured during the month.
+    #
+    # Returning the complete Hourly set allows the existing
+    # V118 presentation logic to display:
+    #
+    #     From Area:
+    #         Pit 1 / East Pit / West Pit
+    #
+    #     To Area:
+    #         Pit 2 / Dump 1 / ...
+    #
+    #     Hauling Distance:
+    #         0-20 / 0-50 / ...
+    #
+    # Every value still originates from Hourly Production.
+    # --------------------------------------------------------
+
+    return base
+
+
+# END KOSI_PRODUCTIVITY_TALLIES_HOURLY_ROUTE_MATCH_V118B
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_TALLIES_HOURLY_GEO_LAYER_V118E
+#
+# Tallies detail material must come from Hourly Production.
+#
+# Parent material remains:
+#
+#     Softs
+#     Hards
+#     Coal
+#
+# Detail material comes from:
+#
+# Excavator:
+#     Truck Loads.geo_mat_layer_truck
+#
+# Dozer:
+#     Dozer Production.dozer_geo_mat_layer
+#
+# Examples:
+#
+#     1 - Topsoil      -> Topsoil
+#     1 - Overburden   -> Overburden
+#     2 - Midburden    -> Midburden
+#
+# Route remains Hourly:
+#
+#     From Area
+#     To Area
+#     Hauling Distance
+#
+# Actual BCMs remains untouched.
+# ============================================================
+
+
+_productivity_execute_before_tallies_hourly_geo_layer_v118e = execute
+
+
+def _productivity_v118e_geo_display(value):
+
+    import re
+
+    value = str(
+        value
+        or ""
+    ).strip()
+
+
+    if not value:
+
+        return ""
+
+
+    # 1 - Topsoil -> Topsoil
+    # 2 - Midburden -> Midburden
+
+    cleaned = re.sub(
+        r"^\s*\d+\s*-\s*",
+        "",
+        value,
+    ).strip()
+
+
+    return (
+        cleaned
+        or value
+    )
+
+
+# ------------------------------------------------------------
+# Override V118 Excavator route source.
+#
+# Same V118 fields + geo_mat_layer_truck.
+# ------------------------------------------------------------
+
+def _productivity_v118_excavator_routes(
+    filters,
+):
+
+    conditions, values = (
+        _productivity_v118_conditions(
+            filters
+        )
+    )
+
+
+    if not conditions:
+
+        return []
+
+
+    sql = f"""
+        SELECT
+            hp.prod_date,
+            hp.shift,
+
+            tl.asset_name_shoval AS machine,
+
+            tl.mat_type AS raw_material,
+
+            tl.geo_mat_layer_truck AS geo_layer,
+
+            tl.mining_areas_trucks AS from_area,
+
+            tl.exc_to_area AS to_area,
+
+            tl.exc_hauling_distance_meter
+                AS hauling_distance,
+
+            SUM(
+                COALESCE(
+                    tl.bcms,
+                    0
+                )
+            ) AS weight
+
+        FROM `tabTruck Loads` tl
+
+        INNER JOIN `tabHourly Production` hp
+            ON hp.name = tl.parent
+
+        WHERE
+            {" AND ".join(conditions)}
+
+            AND COALESCE(
+                tl.asset_name_shoval,
+                ''
+            ) != ''
+
+        GROUP BY
+            hp.prod_date,
+            hp.shift,
+            tl.asset_name_shoval,
+            tl.mat_type,
+            tl.geo_mat_layer_truck,
+            tl.mining_areas_trucks,
+            tl.exc_to_area,
+            tl.exc_hauling_distance_meter
+
+        ORDER BY
+            hp.prod_date,
+            hp.shift,
+            tl.asset_name_shoval,
+            tl.mat_type,
+            tl.geo_mat_layer_truck,
+            tl.mining_areas_trucks,
+            tl.exc_to_area
+    """
+
+
+    rows = frappe.db.sql(
+        sql,
+        values,
+        as_dict=True,
+    )
+
+
+    output = []
+
+
+    for row in rows:
+
+        material = (
+            _productivity_v118_material(
+                row.get(
+                    "raw_material"
+                )
+            )
+        )
+
+
+        if not material:
+
+            continue
+
+
+        output.append({
+            "source":
+                "Excavator",
+
+            "date":
+                row.get(
+                    "prod_date"
+                ),
+
+            "shift":
+                row.get(
+                    "shift"
+                ),
+
+            "machine":
+                _productivity_v118_text(
+                    row.get(
+                        "machine"
+                    )
+                ),
+
+            "material":
+                material,
+
+            "geo_layer":
+                _productivity_v118_text(
+                    row.get(
+                        "geo_layer"
+                    )
+                ),
+
+            "from_area":
+                _productivity_v118_text(
+                    row.get(
+                        "from_area"
+                    )
+                ),
+
+            "to_area":
+                _productivity_v118_text(
+                    row.get(
+                        "to_area"
+                    )
+                ),
+
+            "hauling_distance":
+                _productivity_v118_text(
+                    row.get(
+                        "hauling_distance"
+                    )
+                ),
+
+            "weight":
+                _productivity_v118_number(
+                    row.get(
+                        "weight"
+                    )
+                ),
+        })
+
+
+    return output
+
+
+# ------------------------------------------------------------
+# Override V118 Dozer route source.
+#
+# Same V118 fields + dozer_geo_mat_layer.
+# ------------------------------------------------------------
+
+def _productivity_v118_dozer_routes(
+    filters,
+):
+
+    conditions, values = (
+        _productivity_v118_conditions(
+            filters
+        )
+    )
+
+
+    if not conditions:
+
+        return []
+
+
+    sql = f"""
+        SELECT
+            hp.prod_date,
+            hp.shift,
+
+            dp.asset_name AS machine,
+
+            dp.dozer_geo_mat_layer AS raw_material,
+
+            dp.dozer_geo_mat_layer AS geo_layer,
+
+            dp.mining_areas_dozer_child AS from_area,
+
+            dp.area_to AS to_area,
+
+            dp.dozer_hauling_distance_meter
+                AS hauling_distance,
+
+            SUM(
+                COALESCE(
+                    dp.bcm_hour,
+                    0
+                )
+            ) AS weight
+
+        FROM `tabDozer Production` dp
+
+        INNER JOIN `tabHourly Production` hp
+            ON hp.name = dp.parent
+
+        WHERE
+            {" AND ".join(conditions)}
+
+            AND COALESCE(
+                dp.asset_name,
+                ''
+            ) != ''
+
+        GROUP BY
+            hp.prod_date,
+            hp.shift,
+            dp.asset_name,
+            dp.dozer_geo_mat_layer,
+            dp.mining_areas_dozer_child,
+            dp.area_to,
+            dp.dozer_hauling_distance_meter
+
+        ORDER BY
+            hp.prod_date,
+            hp.shift,
+            dp.asset_name,
+            dp.dozer_geo_mat_layer,
+            dp.mining_areas_dozer_child,
+            dp.area_to
+    """
+
+
+    rows = frappe.db.sql(
+        sql,
+        values,
+        as_dict=True,
+    )
+
+
+    output = []
+
+
+    for row in rows:
+
+        material = (
+            _productivity_v118_material(
+                row.get(
+                    "raw_material"
+                )
+            )
+        )
+
+
+        if not material:
+
+            continue
+
+
+        output.append({
+            "source":
+                "Dozer",
+
+            "date":
+                row.get(
+                    "prod_date"
+                ),
+
+            "shift":
+                row.get(
+                    "shift"
+                ),
+
+            "machine":
+                _productivity_v118_text(
+                    row.get(
+                        "machine"
+                    )
+                ),
+
+            "material":
+                material,
+
+            "geo_layer":
+                _productivity_v118_text(
+                    row.get(
+                        "geo_layer"
+                    )
+                ),
+
+            "from_area":
+                _productivity_v118_text(
+                    row.get(
+                        "from_area"
+                    )
+                ),
+
+            "to_area":
+                _productivity_v118_text(
+                    row.get(
+                        "to_area"
+                    )
+                ),
+
+            "hauling_distance":
+                _productivity_v118_text(
+                    row.get(
+                        "hauling_distance"
+                    )
+                ),
+
+            "weight":
+                _productivity_v118_number(
+                    row.get(
+                        "weight"
+                    )
+                ),
+        })
+
+
+    return output
+
+
+def _productivity_apply_tallies_hourly_geo_layer_v118e(
+    result,
+    filters,
+):
+
+    if not result:
+
+        return result
+
+
+    if not _productivity_v118_target(
+        filters
+    ):
+
+        return result
+
+
+    parts = list(
+        result
+    )
+
+
+    if len(
+        parts
+    ) < 2:
+
+        return result
+
+
+    rows = [
+        dict(
+            row
+        )
+        if hasattr(
+            row,
+            "get",
+        )
+        else row
+        for row in (
+            parts[
+                1
+            ]
+            or []
+        )
+    ]
+
+
+    routes = (
+        _productivity_v118_excavator_routes(
+            filters
+        )
+        + _productivity_v118_dozer_routes(
+            filters
+        )
+    )
+
+
+    if not routes:
+
+        return result
+
+
+    f = frappe._dict(
+        filters
+        or {}
+    )
+
+
+    selected_asset = (
+        _productivity_v118_text(
+            f.get(
+                "asset"
+            )
+        )
+    )
+
+
+    current_machine = ""
+    current_material = ""
+
+    machine_indent = None
+    material_indent = None
+
+
+    for row in rows:
+
+        if not hasattr(
+            row,
+            "get",
+        ):
+
+            continue
+
+
+        label = (
+            _productivity_v118_text(
+                row.get(
+                    "label"
+                )
+            )
+        )
+
+
+        visible_material = (
+            _productivity_v118_text(
+                row.get(
+                    "material"
+                )
+            )
+        )
+
+
+        indent = (
+            _productivity_v118_indent(
+                row
+            )
+        )
+
+
+        # ----------------------------------------------------
+        # Category boundary
+        # ----------------------------------------------------
+
+        if (
+            label
+            in (
+                "Excavator",
+                "ADT",
+                "Dozer",
+                "Total Fleet",
+            )
+            and not visible_material
+        ):
+
+            current_machine = ""
+            current_material = ""
+
+            machine_indent = None
+            material_indent = None
+
+            continue
+
+
+        # ----------------------------------------------------
+        # Selected machine
+        # ----------------------------------------------------
+
+        if (
+            selected_asset
+            and label == selected_asset
+            and not visible_material
+        ):
+
+            current_machine = label
+
+            current_material = ""
+
+            machine_indent = indent
+            material_indent = None
+
+            continue
+
+
+        # ----------------------------------------------------
+        # Normal machine row
+        # ----------------------------------------------------
+
+        machine_flag = False
+
+
+        for fieldname in (
+            "productivity_is_machine_total",
+            "is_machine_total",
+        ):
+
+            try:
+
+                if int(
+                    float(
+                        row.get(
+                            fieldname
+                        )
+                        or 0
+                    )
+                ) == 1:
+
+                    machine_flag = True
+
+            except Exception:
+
+                pass
+
+
+        if (
+            machine_flag
+            and label
+            and not visible_material
+        ):
+
+            current_machine = label
+
+            current_material = ""
+
+            machine_indent = indent
+            material_indent = None
+
+            continue
+
+
+        if not current_machine:
+
+            direct_machine = (
+                _productivity_v118_direct_machine(
+                    row
+                )
+            )
+
+
+            if direct_machine:
+
+                current_machine = (
+                    direct_machine
+                )
+
+
+        # ----------------------------------------------------
+        # Material parent:
+        #
+        # Machine
+        #   Softs
+        #     Topsoil
+        #
+        # Only tree depth identifies the parent.
+        # ----------------------------------------------------
+
+        canonical = (
+            _productivity_v118_material(
+                visible_material
+            )
+        )
+
+
+        if (
+            current_machine
+            and canonical
+            and machine_indent is not None
+            and indent
+            == machine_indent + 1
+        ):
+
+            current_material = canonical
+
+            material_indent = indent
+
+            continue
+
+
+        # ----------------------------------------------------
+        # We only change final Hourly-enriched Tallies details.
+        # ----------------------------------------------------
+
+        if not row.get(
+            "productivity_tallies_hourly_route_v118"
+        ):
+
+            continue
+
+
+        if not (
+            current_machine
+            and current_material
+        ):
+
+            continue
+
+
+        if (
+            material_indent is not None
+            and indent <= material_indent
+        ):
+
+            continue
+
+
+        start_date = (
+            row.get(
+                "monthly_start_date"
+            )
+            or f.get(
+                "start_date"
+            )
+        )
+
+
+        end_date = (
+            row.get(
+                "monthly_end_date"
+            )
+            or f.get(
+                "end_date"
+            )
+        )
+
+
+        matches = (
+            _productivity_v118_route_matches(
+                routes,
+                current_machine,
+                current_material,
+                row.get(
+                    "from_area"
+                ),
+                start_date,
+                end_date,
+            )
+        )
+
+
+        if not matches:
+
+            continue
+
+
+        geo_layers = (
+            _productivity_v118_unique(
+                _productivity_v118e_geo_display(
+                    match.get(
+                        "geo_layer"
+                    )
+                )
+                for match in matches
+            )
+        )
+
+
+        if not geo_layers:
+
+            continue
+
+
+        row[
+            "material"
+        ] = (
+            _productivity_v118_join(
+                geo_layers
+            )
+        )
+
+
+        row[
+            "productivity_tallies_hourly_geo_layer_v118e"
+        ] = 1
+
+
+    parts[
+        1
+    ] = rows
+
+
+    if isinstance(
+        result,
+        tuple,
+    ):
+
+        return tuple(
+            parts
+        )
+
+
+    return parts
+
+
+def execute(filters=None):
+
+    result = (
+        _productivity_execute_before_tallies_hourly_geo_layer_v118e(
+            filters
+        )
+    )
+
+
+    return (
+        _productivity_apply_tallies_hourly_geo_layer_v118e(
+            result,
+            filters,
+        )
+    )
+
+
+# END KOSI_PRODUCTIVITY_TALLIES_HOURLY_GEO_LAYER_V118E
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_TALLIES_DOZER_LEAF_ROUTE_V118F
+#
+# Selected Dozer Tallies can render as:
+#
+#     EX411
+#       1 - Topsoil
+#
+# rather than:
+#
+#     EX411
+#       Softs
+#         Topsoil
+#
+# Therefore the indent=Machine+1 row is already the final leaf
+# row and must receive Hourly:
+#
+#     Geo Layer
+#     From Area
+#     To Area
+#     Hauling Distance
+#     BCM/HD
+#
+# Excavator material parents that contain deeper child rows are
+# NOT changed by this layer.
+#
+# Actual BCMs remain untouched.
+# ============================================================
+
+
+_productivity_execute_before_tallies_dozer_leaf_route_v118f = execute
+
+
+def _productivity_v118f_has_child(
+    rows,
+    index,
+    row_indent,
+):
+
+    next_index = (
+        index + 1
+    )
+
+
+    while next_index < len(
+        rows
+    ):
+
+        candidate = rows[
+            next_index
+        ]
+
+
+        if not hasattr(
+            candidate,
+            "get",
+        ):
+
+            next_index += 1
+            continue
+
+
+        candidate_indent = (
+            _productivity_v118_indent(
+                candidate
+            )
+        )
+
+
+        if candidate_indent <= row_indent:
+
+            return False
+
+
+        return True
+
+
+    return False
+
+
+def _productivity_v118f_selected_asset(filters):
+
+    value = frappe._dict(
+        filters
+        or {}
+    ).get(
+        "asset"
+    )
+
+
+    if isinstance(
+        value,
+        (list, tuple, set),
+    ):
+
+        values = [
+            _productivity_v118_text(
+                item
+            )
+            for item in value
+            if _productivity_v118_text(
+                item
+            )
+        ]
+
+
+        if len(
+            values
+        ) == 1:
+
+            return values[
+                0
+            ]
+
+
+        return ""
+
+
+    return (
+        _productivity_v118_text(
+            value
+        )
+    )
+
+
+def _productivity_apply_tallies_dozer_leaf_route_v118f(
+    result,
+    filters,
+):
+
+    if not result:
+
+        return result
+
+
+    if not _productivity_v118_target(
+        filters
+    ):
+
+        return result
+
+
+    selected_asset = (
+        _productivity_v118f_selected_asset(
+            filters
+        )
+    )
+
+
+    if not selected_asset:
+
+        return result
+
+
+    parts = list(
+        result
+    )
+
+
+    if len(
+        parts
+    ) < 2:
+
+        return result
+
+
+    rows = [
+        dict(
+            row
+        )
+        if hasattr(
+            row,
+            "get",
+        )
+        else row
+        for row in (
+            parts[
+                1
+            ]
+            or []
+        )
+    ]
+
+
+    routes = (
+        _productivity_v118_dozer_routes(
+            filters
+        )
+    )
+
+
+    if not routes:
+
+        return result
+
+
+    machine_routes = [
+        route
+        for route in routes
+        if (
+            _productivity_v118_text(
+                route.get(
+                    "machine"
+                )
+            )
+            == selected_asset
+        )
+    ]
+
+
+    if not machine_routes:
+
+        return result
+
+
+    # --------------------------------------------------------
+    # Only activate this special leaf logic if the selected
+    # asset actually exists in Dozer Production for the period.
+    # --------------------------------------------------------
+
+    current_machine = ""
+    machine_indent = None
+
+
+    for index, row in enumerate(
+        rows
+    ):
+
+        if not hasattr(
+            row,
+            "get",
+        ):
+
+            continue
+
+
+        label = (
+            _productivity_v118_text(
+                row.get(
+                    "label"
+                )
+            )
+        )
+
+
+        visible_material = (
+            _productivity_v118_text(
+                row.get(
+                    "material"
+                )
+            )
+        )
+
+
+        indent = (
+            _productivity_v118_indent(
+                row
+            )
+        )
+
+
+        if (
+            label == selected_asset
+            and not visible_material
+        ):
+
+            current_machine = (
+                selected_asset
+            )
+
+            machine_indent = (
+                indent
+            )
+
+            continue
+
+
+        if not (
+            current_machine
+            and machine_indent is not None
+        ):
+
+            continue
+
+
+        # End selected machine section.
+        if (
+            label
+            and not visible_material
+            and indent <= machine_indent
+        ):
+
+            current_machine = ""
+            machine_indent = None
+
+            continue
+
+
+        # ----------------------------------------------------
+        # Selected Dozer leaf row:
+        #
+        # Machine indent     = 0
+        # Leaf material     = 1
+        #
+        # It must NOT have a deeper child row.
+        # ----------------------------------------------------
+
+        if indent != (
+            machine_indent + 1
+        ):
+
+            continue
+
+
+        if not visible_material:
+
+            continue
+
+
+        if _productivity_v118f_has_child(
+            rows,
+            index,
+            indent,
+        ):
+
+            # This is a normal material parent such as the
+            # Excavator Softs/Hards/Coal hierarchy.
+            continue
+
+
+        material = (
+            _productivity_v118_material(
+                visible_material
+            )
+        )
+
+
+        if not material:
+
+            continue
+
+
+        matches = (
+            _productivity_v118_route_matches(
+                machine_routes,
+                selected_asset,
+                material,
+                "",
+                frappe._dict(
+                    filters
+                    or {}
+                ).get(
+                    "start_date"
+                ),
+                frappe._dict(
+                    filters
+                    or {}
+                ).get(
+                    "end_date"
+                ),
+            )
+        )
+
+
+        if not matches:
+
+            continue
+
+
+        geo_layers = (
+            _productivity_v118_unique(
+                _productivity_v118e_geo_display(
+                    match.get(
+                        "geo_layer"
+                    )
+                )
+                for match in matches
+            )
+        )
+
+
+        from_values = (
+            _productivity_v118_unique(
+                match.get(
+                    "from_area"
+                )
+                for match in matches
+            )
+        )
+
+
+        to_values = (
+            _productivity_v118_unique(
+                match.get(
+                    "to_area"
+                )
+                for match in matches
+            )
+        )
+
+
+        distance_values = (
+            _productivity_v118_unique(
+                match.get(
+                    "hauling_distance"
+                )
+                for match in matches
+            )
+        )
+
+
+        if geo_layers:
+
+            row[
+                "material"
+            ] = (
+                _productivity_v118_join(
+                    geo_layers
+                )
+            )
+
+
+        row[
+            "from_area"
+        ] = (
+            _productivity_v118_join(
+                from_values
+            )
+        )
+
+
+        row[
+            "to_area"
+        ] = (
+            _productivity_v118_join(
+                to_values
+            )
+        )
+
+
+        row[
+            "hauling_distance_m"
+        ] = (
+            _productivity_v118_join(
+                distance_values
+            )
+        )
+
+
+        average_distance = (
+            _productivity_v118_weighted_distance(
+                matches
+            )
+        )
+
+
+        bcm = (
+            _productivity_v118_number(
+                row.get(
+                    "output"
+                )
+            )
+        )
+
+
+        row[
+            "productivity_bcm_hd"
+        ] = (
+            round(
+                bcm
+                / average_distance,
+                2,
+            )
+            if (
+                bcm > 0
+                and average_distance > 0
+            )
+            else ""
+        )
+
+
+        row[
+            "productivity_tallies_hourly_route_v118"
+        ] = 1
+
+
+        row[
+            "productivity_tallies_hourly_geo_layer_v118e"
+        ] = 1
+
+
+        row[
+            "productivity_tallies_dozer_leaf_route_v118f"
+        ] = 1
+
+
+    parts[
+        1
+    ] = rows
+
+
+    if isinstance(
+        result,
+        tuple,
+    ):
+
+        return tuple(
+            parts
+        )
+
+
+    return parts
+
+
+def execute(filters=None):
+
+    result = (
+        _productivity_execute_before_tallies_dozer_leaf_route_v118f(
+            filters
+        )
+    )
+
+
+    return (
+        _productivity_apply_tallies_dozer_leaf_route_v118f(
+            result,
+            filters,
+        )
+    )
+
+
+# END KOSI_PRODUCTIVITY_TALLIES_DOZER_LEAF_ROUTE_V118F
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_TALLIES_DOZER_DIRECT_CHILD_V118G
+#
+# Selected Dozer Tallies are rebuilt DIRECTLY from:
+#
+#     tabDozer Production
+#
+# Source mapping:
+#
+#     asset_name
+#         -> Machine
+#
+#     dozer_geo_mat_layer
+#         -> Material detail
+#
+#     mining_areas_dozer_child
+#         -> From Area
+#
+#     area_to
+#         -> To Area
+#
+#     dozer_hauling_distance_meter
+#         -> Hauling Distance
+#
+#     bcm_hour
+#         -> Output Tallies
+#
+#
+# This removes incorrect old hierarchy such as:
+#
+#     EX411
+#       1 - Topsoil
+#         Hards
+#
+# and produces:
+#
+#     EX411
+#       Topsoil   180   Pit 1   Pit 2   0-20
+#
+# Applies:
+#
+#     Tallies BCMs
+#     Summary Per Machine
+#     Selected Dozer Asset
+#
+# Actual BCMs and Excavator Tallies are untouched.
+# ============================================================
+
+
+_productivity_execute_before_dozer_direct_child_v118g = execute
+
+
+def _productivity_v118g_selected_asset(filters):
+
+    value = frappe._dict(
+        filters
+        or {}
+    ).get(
+        "asset"
+    )
+
+
+    if isinstance(
+        value,
+        (list, tuple, set),
+    ):
+
+        values = [
+            _productivity_v118_text(
+                item
+            )
+            for item in value
+            if _productivity_v118_text(
+                item
+            )
+        ]
+
+
+        if len(
+            values
+        ) == 1:
+
+            return values[
+                0
+            ]
+
+
+        return ""
+
+
+    return (
+        _productivity_v118_text(
+            value
+        )
+    )
+
+
+def _productivity_v118g_dozer_rows(
+    filters,
+    asset,
+):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+
+    start_date = filters.get(
+        "start_date"
+    )
+
+
+    end_date = filters.get(
+        "end_date"
+    )
+
+
+    site = filters.get(
+        "site"
+    )
+
+
+    shift = filters.get(
+        "shift"
+    )
+
+
+    if not (
+        start_date
+        and end_date
+        and site
+        and asset
+    ):
+
+        return []
+
+
+    values = {
+        "start_date":
+            start_date,
+
+        "end_date":
+            end_date,
+
+        "site":
+            site,
+
+        "asset":
+            asset,
+    }
+
+
+    conditions = [
+        (
+            "hp.prod_date BETWEEN "
+            "%(start_date)s AND %(end_date)s"
+        ),
+
+        "hp.location = %(site)s",
+
+        "hp.docstatus < 2",
+
+        "dp.asset_name = %(asset)s",
+    ]
+
+
+    if shift:
+
+        values[
+            "shift"
+        ] = shift
+
+
+        conditions.append(
+            "hp.shift = %(shift)s"
+        )
+
+
+    rows = frappe.db.sql(
+        f"""
+        SELECT
+            dp.asset_name,
+
+            dp.dozer_geo_mat_layer
+                AS geo_layer,
+
+            dp.mining_areas_dozer_child
+                AS from_area,
+
+            dp.area_to
+                AS to_area,
+
+            dp.dozer_hauling_distance_meter
+                AS hauling_distance,
+
+            SUM(
+                COALESCE(
+                    dp.bcm_hour,
+                    0
+                )
+            ) AS bcm
+
+        FROM `tabDozer Production` dp
+
+        INNER JOIN `tabHourly Production` hp
+            ON hp.name = dp.parent
+
+        WHERE
+            {" AND ".join(conditions)}
+
+            AND COALESCE(
+                dp.dozer_geo_mat_layer,
+                ''
+            ) != ''
+
+            AND COALESCE(
+                dp.bcm_hour,
+                0
+            ) > 0
+
+        GROUP BY
+            dp.asset_name,
+            dp.dozer_geo_mat_layer,
+            dp.mining_areas_dozer_child,
+            dp.area_to,
+            dp.dozer_hauling_distance_meter
+
+        ORDER BY
+            dp.dozer_geo_mat_layer,
+            dp.mining_areas_dozer_child,
+            dp.area_to,
+            dp.dozer_hauling_distance_meter
+        """,
+        values,
+        as_dict=True,
+    )
+
+
+    return [
+        frappe._dict(
+            row
+        )
+        for row in rows
+    ]
+
+
+def _productivity_v118g_distance_midpoint(
+    value,
+):
+
+    return (
+        _productivity_v118_distance_midpoint(
+            value
+        )
+    )
+
+
+def _productivity_apply_dozer_direct_child_v118g(
+    result,
+    filters,
+):
+
+    if not result:
+
+        return result
+
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+
+    if (
+        _productivity_v118_text(
+            filters.get(
+                "bcm_basis"
+            )
+        )
+        != "Tallies BCMs"
+    ):
+
+        return result
+
+
+    if (
+        _productivity_v118_text(
+            filters.get(
+                "summary_view"
+            )
+        )
+        != "Summary Per Machine"
+    ):
+
+        return result
+
+
+    asset = (
+        _productivity_v118g_selected_asset(
+            filters
+        )
+    )
+
+
+    if not asset:
+
+        return result
+
+
+    source_rows = (
+        _productivity_v118g_dozer_rows(
+            filters,
+            asset,
+        )
+    )
+
+
+    # Selected asset is not a Dozer in this period.
+    # Leave Excavator/other assets untouched.
+
+    if not source_rows:
+
+        return result
+
+
+    parts = list(
+        result
+    )
+
+
+    if len(
+        parts
+    ) < 2:
+
+        return result
+
+
+    rows = list(
+        parts[
+            1
+        ]
+        or []
+    )
+
+
+    machine_index = None
+    machine_indent = None
+    machine_row = None
+
+
+    for index, row in enumerate(
+        rows
+    ):
+
+        if not hasattr(
+            row,
+            "get",
+        ):
+
+            continue
+
+
+        if (
+            _productivity_v118_text(
+                row.get(
+                    "label"
+                )
+            )
+            == asset
+
+            and
+
+            not _productivity_v118_text(
+                row.get(
+                    "material"
+                )
+            )
+        ):
+
+            machine_index = index
+
+            machine_indent = (
+                _productivity_v118_indent(
+                    row
+                )
+            )
+
+            machine_row = dict(
+                row
+            )
+
+            break
+
+
+    if machine_index is None:
+
+        return result
+
+
+    # --------------------------------------------------------
+    # Find end of selected machine subtree.
+    # --------------------------------------------------------
+
+    end = (
+        machine_index + 1
+    )
+
+
+    while end < len(
+        rows
+    ):
+
+        row = rows[
+            end
+        ]
+
+
+        if not hasattr(
+            row,
+            "get",
+        ):
+
+            end += 1
+            continue
+
+
+        level = (
+            _productivity_v118_indent(
+                row
+            )
+        )
+
+
+        label = (
+            _productivity_v118_text(
+                row.get(
+                    "label"
+                )
+            )
+        )
+
+
+        material = (
+            _productivity_v118_text(
+                row.get(
+                    "material"
+                )
+            )
+        )
+
+
+        if (
+            label
+            and not material
+            and level <= machine_indent
+        ):
+
+            break
+
+
+        end += 1
+
+
+    # --------------------------------------------------------
+    # Preserve machine total hours/output.
+    # Rebuild all children directly from Dozer Production.
+    # --------------------------------------------------------
+
+    machine_hours = (
+        _productivity_v118_number(
+            machine_row.get(
+                "working_hours"
+            )
+        )
+    )
+
+
+    total_bcm = sum(
+        _productivity_v118_number(
+            row.get(
+                "bcm"
+            )
+        )
+        for row in source_rows
+    )
+
+
+    # Tallies machine output must remain the actual child-table
+    # production total.
+
+    machine_row[
+        "output"
+    ] = total_bcm
+
+
+    machine_row[
+        "adjusted_bcm"
+    ] = total_bcm
+
+
+    machine_row[
+        "tallies_bcm"
+    ] = total_bcm
+
+
+    machine_row[
+        "productivity"
+    ] = (
+        round(
+            total_bcm
+            / machine_hours,
+            0,
+        )
+        if machine_hours > 0
+        else 0
+    )
+
+
+    machine_row[
+        "productivity_tallies_dozer_direct_child_v118g"
+    ] = 1
+
+
+    children = []
+
+
+    for source in source_rows:
+
+        bcm = (
+            _productivity_v118_number(
+                source.get(
+                    "bcm"
+                )
+            )
+        )
+
+
+        if total_bcm > 0:
+
+            hours = (
+                machine_hours
+                * bcm
+                / total_bcm
+            )
+
+        else:
+
+            hours = 0.0
+
+
+        geo_layer = (
+            _productivity_v118e_geo_display(
+                source.get(
+                    "geo_layer"
+                )
+            )
+        )
+
+
+        distance_text = (
+            _productivity_v118_text(
+                source.get(
+                    "hauling_distance"
+                )
+            )
+        )
+
+
+        average_distance = (
+            _productivity_v118g_distance_midpoint(
+                distance_text
+            )
+        )
+
+
+        child = {
+            "label":
+                "",
+
+            "indent":
+                machine_indent + 1,
+
+            "working_hours":
+                round(
+                    hours,
+                    3,
+                ),
+
+            "output":
+                bcm,
+
+            "adjusted_bcm":
+                bcm,
+
+            "tallies_bcm":
+                bcm,
+
+            "output_coal_tonnes":
+                "",
+
+            "coal_tons":
+                "",
+
+            "productivity":
+                (
+                    round(
+                        bcm
+                        / hours,
+                        0,
+                    )
+                    if hours > 0
+                    else 0
+                ),
+
+            "productivity_bcm_hd":
+                (
+                    round(
+                        bcm
+                        / average_distance,
+                        2,
+                    )
+                    if (
+                        bcm > 0
+                        and average_distance > 0
+                    )
+                    else ""
+                ),
+
+            "material":
+                geo_layer,
+
+            "from_area":
+                _productivity_v118_text(
+                    source.get(
+                        "from_area"
+                    )
+                ),
+
+            "to_area":
+                _productivity_v118_text(
+                    source.get(
+                        "to_area"
+                    )
+                ),
+
+            "hauling_distance_m":
+                distance_text,
+
+            "productivity_tallies_hourly_route_v118":
+                1,
+
+            "productivity_tallies_hourly_geo_layer_v118e":
+                1,
+
+            "productivity_tallies_dozer_direct_child_v118g":
+                1,
+        }
+
+
+        children.append(
+            child
+        )
+
+
+    new_rows = (
+        rows[
+            :machine_index
+        ]
+        + [
+            machine_row
+        ]
+        + children
+        + rows[
+            end:
+        ]
+    )
+
+
+    parts[
+        1
+    ] = new_rows
+
+
+    if isinstance(
+        result,
+        tuple,
+    ):
+
+        return tuple(
+            parts
+        )
+
+
+    return parts
+
+
+def execute(filters=None):
+
+    result = (
+        _productivity_execute_before_dozer_direct_child_v118g(
+            filters
+        )
+    )
+
+
+    return (
+        _productivity_apply_dozer_direct_child_v118g(
+            result,
+            filters,
+        )
+    )
+
+
+# END KOSI_PRODUCTIVITY_TALLIES_DOZER_DIRECT_CHILD_V118G
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_TALLIES_GEO_GENERIC_CLEANUP_V118H
+#
+# PURPOSE
+# ------------------------------------------------------------
+#
+# Tallies detail Material is sourced from Hourly Geo / Mat Layer.
+#
+# During a full period, the same machine/material can have:
+#
+#     Softs
+#     1 - Topsoil
+#
+# V118E joins unique values, which can display:
+#
+#     Softs / Topsoil
+#
+# But Softs is already the parent Material category.
+#
+# Correct display:
+#
+#     Softs
+#       Topsoil
+#
+#
+# RULE
+# ------------------------------------------------------------
+#
+# If a detail Material contains both:
+#
+#     generic category:
+#         Softs
+#         Hards
+#         Coal
+#
+# AND
+#
+#     one or more specific Geo / Mat Layer values
+#
+# remove the generic category from the detail label.
+#
+#
+# Examples:
+#
+#     Softs / Topsoil
+#         -> Topsoil
+#
+#     Hards / Interburden
+#         -> Interburden
+#
+#     Coal / C# Upper
+#         -> C# Upper
+#
+# But:
+#
+#     Softs
+#         -> Softs
+#
+# if no more specific Geo Layer exists.
+#
+#
+# IMPORTANT
+# ------------------------------------------------------------
+#
+# - Display cleanup only.
+# - Tallies BCM unchanged.
+# - From Area unchanged.
+# - To Area unchanged.
+# - Hauling Distance unchanged.
+# - BCM/HD unchanged.
+# - Dozer direct child rows remain supported.
+# - Actual BCMs untouched.
+# ============================================================
+
+
+_productivity_execute_before_geo_generic_cleanup_v118h = execute
+
+
+def _productivity_v118h_clean_material(
+    value,
+):
+
+    import re
+
+
+    value = str(
+        value
+        or ""
+    ).strip()
+
+
+    if not value:
+
+        return value
+
+
+    parts = [
+        part.strip()
+        for part in re.split(
+            r"\s*/\s*",
+            value,
+        )
+        if part.strip()
+    ]
+
+
+    if not parts:
+
+        return value
+
+
+    # --------------------------------------------------------
+    # Remove duplicates while preserving order.
+    # --------------------------------------------------------
+
+    unique = []
+
+    seen = set()
+
+
+    for part in parts:
+
+        key = (
+            " ".join(
+                part
+                .casefold()
+                .split()
+            )
+        )
+
+
+        if key in seen:
+
+            continue
+
+
+        seen.add(
+            key
+        )
+
+
+        unique.append(
+            part
+        )
+
+
+    generic = {
+        "softs",
+        "hards",
+        "coal",
+    }
+
+
+    specific = [
+        part
+        for part in unique
+        if (
+            " ".join(
+                part
+                .casefold()
+                .split()
+            )
+            not in generic
+        )
+    ]
+
+
+    # --------------------------------------------------------
+    # If at least one specific Geo Layer exists, display only
+    # the specific layer(s).
+    # --------------------------------------------------------
+
+    if specific:
+
+        return " / ".join(
+            specific
+        )
+
+
+    # --------------------------------------------------------
+    # No specific layer:
+    # preserve the generic material rather than returning blank.
+    # --------------------------------------------------------
+
+    return " / ".join(
+        unique
+    )
+
+
+def _productivity_apply_geo_generic_cleanup_v118h(
+    result,
+    filters,
+):
+
+    if not result:
+
+        return result
+
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+
+    # Tallies only.
+    if (
+        str(
+            filters.get(
+                "bcm_basis"
+            )
+            or ""
+        ).strip()
+        != "Tallies BCMs"
+    ):
+
+        return result
+
+
+    # Summary Per Machine only.
+    if (
+        str(
+            filters.get(
+                "summary_view"
+            )
+            or ""
+        ).strip()
+        != "Summary Per Machine"
+    ):
+
+        return result
+
+
+    parts = list(
+        result
+    )
+
+
+    if len(
+        parts
+    ) < 2:
+
+        return result
+
+
+    rows = []
+
+
+    for original in (
+        parts[
+            1
+        ]
+        or []
+    ):
+
+        if not hasattr(
+            original,
+            "get",
+        ):
+
+            rows.append(
+                original
+            )
+
+            continue
+
+
+        row = dict(
+            original
+        )
+
+
+        # ----------------------------------------------------
+        # Only Hourly-generated Tallies detail rows.
+        #
+        # Do NOT alter normal parent Material rows.
+        # ----------------------------------------------------
+
+        is_hourly_detail = bool(
+            row.get(
+                "productivity_tallies_hourly_route_v118"
+            )
+            or
+            row.get(
+                "productivity_tallies_hourly_geo_layer_v118e"
+            )
+            or
+            row.get(
+                "productivity_tallies_dozer_leaf_route_v118f"
+            )
+            or
+            row.get(
+                "productivity_tallies_dozer_direct_child_v118g"
+            )
+        )
+
+
+        if not is_hourly_detail:
+
+            rows.append(
+                row
+            )
+
+            continue
+
+
+        material = str(
+            row.get(
+                "material"
+            )
+            or ""
+        ).strip()
+
+
+        if material:
+
+            cleaned = (
+                _productivity_v118h_clean_material(
+                    material
+                )
+            )
+
+
+            row[
+                "material"
+            ] = cleaned
+
+
+            if cleaned != material:
+
+                row[
+                    "productivity_tallies_geo_generic_cleanup_v118h"
+                ] = 1
+
+
+        rows.append(
+            row
+        )
+
+
+    parts[
+        1
+    ] = rows
+
+
+    if isinstance(
+        result,
+        tuple,
+    ):
+
+        return tuple(
+            parts
+        )
+
+
+    return parts
+
+
+def execute(filters=None):
+
+    result = (
+        _productivity_execute_before_geo_generic_cleanup_v118h(
+            filters
+        )
+    )
+
+
+    return (
+        _productivity_apply_geo_generic_cleanup_v118h(
+            result,
+            filters,
+        )
+    )
+
+
+# END KOSI_PRODUCTIVITY_TALLIES_GEO_GENERIC_CLEANUP_V118H
