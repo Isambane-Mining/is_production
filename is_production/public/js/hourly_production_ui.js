@@ -465,6 +465,49 @@ is_production.ui.HourlyProductionUI = class {
     ).join('');
 
     let dozersHtml = `
+        <style>
+            /* KOSI_DOZER_STRAIGHT_COLUMNS_V1 */
+
+            .dozer-ui-section .dozer-fields-row {
+                display: grid !important;
+                grid-template-columns: repeat(6, minmax(0, 1fr)) !important;
+                gap: 8px !important;
+                align-items: end !important;
+                width: 100% !important;
+            }
+
+            .dozer-ui-section .dozer-field {
+                width: 100% !important;
+                min-width: 0 !important;
+                margin: 0 !important;
+            }
+
+            .dozer-ui-section .dozer-field label {
+                display: block !important;
+                white-space: nowrap !important;
+                margin-bottom: 5px !important;
+                line-height: 1.2 !important;
+            }
+
+            .dozer-ui-section .dozer-field .form-control {
+                width: 100% !important;
+                min-width: 0 !important;
+                box-sizing: border-box !important;
+            }
+
+            @media (max-width: 900px) {
+                .dozer-ui-section .dozer-fields-row {
+                    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+                }
+            }
+
+            @media (max-width: 520px) {
+                .dozer-ui-section .dozer-fields-row {
+                    grid-template-columns: 1fr !important;
+                }
+            }
+        </style>
+
         <div class="dozer-section">
             <h3 class="dozer-section-title">
                 Dozers<img src="/assets/is_production/images/dozer.png" class="dozer-icon">
@@ -475,6 +518,7 @@ is_production.ui.HourlyProductionUI = class {
     dozerNames.forEach(dozerName => {
         const dozerData = this.frm.doc.dozer_production?.find(d => d.asset_name === dozerName) || {};
         const haulingDistance = dozerData.dozer_hauling_distance_meter || '';
+        const areaTo = dozerData.area_to || '';
 
         // Kriel Rehabilitation fixed BCM rates must also be applied
         // when an existing dozer row is first rendered.
@@ -536,6 +580,16 @@ is_production.ui.HourlyProductionUI = class {
                             ${dozerData.mining_areas_dozer_child ? `<option value="${dozerData.mining_areas_dozer_child}" selected>${dozerData.mining_areas_dozer_child}</option>` : ''}
                         </select>
                     </div>
+
+                    <div class="dozer-field">
+                        <label>Area To</label>
+                        <input type="text"
+                               class="form-control dozer-area-to"
+                               data-dozer-name="${dozerName}"
+                               value="${areaTo}"
+                               autocomplete="off">
+                    </div>
+
                     <div class="dozer-field">
                         <label>Geo / Mat Layer</label>
                         <select class="form-control dozer-geo-layer" data-dozer-name="${dozerName}">
@@ -657,6 +711,46 @@ is_production.ui.HourlyProductionUI = class {
 
             this.frm.refresh_field('dozer_production');
             this.frm.toolbar.refresh();
+        }
+    );
+
+    // Area To - free text field
+    $(document).off(
+        'input.dozer_area_to change.dozer_area_to',
+        '.dozer-area-to'
+    );
+
+    $(document).on(
+        'input.dozer_area_to change.dozer_area_to',
+        '.dozer-area-to',
+        (event) => {
+
+            const input = $(event.currentTarget);
+            const dozerName = input.data('dozer-name');
+
+            const areaTo = String(
+                input.val() || ''
+            ).trim();
+
+            const row = (this.frm.doc.dozer_production || []).find(
+                d => d.asset_name === dozerName
+            );
+
+            if (!row) {
+                return;
+            }
+
+            row.area_to = areaTo;
+
+            frappe.model.set_value(
+                row.doctype,
+                row.name,
+                'area_to',
+                areaTo
+            );
+
+            this.frm.dirty = true;
+            this.frm.doc.__unsaved = 1;
         }
     );
 
