@@ -13,6 +13,7 @@
   "dozer_geo_mat_layer",
   "dozer_hauling_distance_meter",
   "mining_areas_dozer_child",
+  "area_to",
   "dozer_service",
   "bcm_hour"
  ],
@@ -67,6 +68,14 @@
    "in_list_view": 1,
    "label": "Primary Working Area",
    "read_only": 1
+  },
+  {
+   "allow_in_quick_entry": 1,
+   "columns": 1,
+   "fieldname": "area_to",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Area To"
   },
   {
    "allow_in_quick_entry": 1,
