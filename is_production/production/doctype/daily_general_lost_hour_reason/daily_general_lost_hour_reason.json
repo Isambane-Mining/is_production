@@ -38,11 +38,6 @@
  "name": "Daily General Lost Hour Reason",
  "permissions": [
   {
-   "read": 1,
-   "select": 1,
-   "role": "All"
-  },
-  {
    "create": 1,
    "delete": 1,
    "email": 1,
