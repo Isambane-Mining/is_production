@@ -19,12 +19,18 @@ frappe.pages["hourly-dashboard"].on_page_load = function (wrapper) {
     single_column: true
   });
 
-  const mpp = page.add_field({
-    fieldtype: "Link",
-    label: __("Monthly Production Planning"),
-    fieldname: "monthly_production_planning",
-    options: "Monthly Production Planning",
-    change: () => load_and_render(false)
+  const OPERATIONAL_DAY_METHOD =
+    "is_production.production.report.hourly_dashboard.hourly_dashboard.get_operational_day";
+  let _setting_date = false;
+  let _live_day = null;
+  let _request_id = 0;
+  const production_date = page.add_field({
+    fieldtype: "Date",
+    label: __("Production Date"),
+    fieldname: "production_date",
+    change: () => {
+      if (!_setting_date) load_and_render(false);
+    }
   });
 
   // -------------------------
@@ -352,57 +358,55 @@ frappe.pages["hourly-dashboard"].on_page_load = function (wrapper) {
   // -------------------------
   // Main loader
   // -------------------------
-  function load_and_render(is_auto) {
+  async function load_and_render(is_auto) {
+    const request_id = ++_request_id;
+    const selected_date = production_date.get_value();
     $status.text(is_auto ? "Refreshing..." : "Loading...");
 
-    return Promise.all([
-      run_report({ monthly_production_planning: mpp.get_value() || "" }),
-      get_site_colour_map()
-    ])
-      .then(([res, siteColourMap]) => {
-        const rows = extract_rows_from_response(res);
-
-        render_dashboard(rows, siteColourMap);
-
-        const time = new Date().toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit"
-        });
-
-        $status.text(`Last updated: ${time} (refreshes at :10 and :30)`);
-
-        if (is_auto) {
-          frappe.show_alert(
-            {
-              message: `Hourly Dashboard updated at ${time}`,
-              indicator: "green"
-            },
-            5
-          );
+    try {
+      const response = await frappe.call({ method: OPERATIONAL_DAY_METHOD, freeze: false });
+      if (request_id !== _request_id) return;
+      const current_day = response.message;
+      const date = !selected_date || (is_auto && selected_date === _live_day)
+        ? current_day : selected_date;
+      _live_day = current_day;
+      if (production_date.get_value() !== date) {
+        _setting_date = true;
+        try {
+          await production_date.set_value(date);
+        } finally {
+          _setting_date = false;
         }
-      })
-      .catch((e) => {
-        console.error(e);
-        $status.text("Error loading dashboard data.");
-        $dash.html(`<div class="text-danger">Could not load data. Check console / server logs.</div>`);
+      }
+      const [res, siteColourMap] = await Promise.all([
+        run_report({ production_date: date }),
+        get_site_colour_map()
+      ]);
+      if (request_id !== _request_id) return;
+      render_dashboard(extract_rows_from_response(res), siteColourMap);
+
+      const time = new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit"
       });
+      $status.text(`Last updated: ${time} (refreshes at :10 and :30)`);
+      if (is_auto) {
+        frappe.show_alert({
+          message: `Hourly Dashboard updated at ${time}`,
+          indicator: "green"
+        }, 5);
+      }
+    } catch (e) {
+      if (request_id !== _request_id) return;
+      console.error(e);
+      $status.text("Error loading dashboard data.");
+      $dash.html(`<div class="text-danger">Could not load data. Check console / server logs.</div>`);
+    }
   }
 
-  // -------------------------
-  // Initial load
-  // -------------------------
-  frappe.db.get_list("Monthly Production Planning", {
-    fields: ["name"],
-    order_by: "prod_month_end_date desc, modified desc",
-    limit: 1
-  }).then((rows) => {
-    if (rows.length) {
-      mpp.set_value(rows[0].name);
-    } else {
-      load_and_render(false);
-    }
-    start_aligned_refresh();
-  });
+  // Default date comes from the site's clock, independent of browser timezone.
+  load_and_render(false);
+  start_aligned_refresh();
 
   // -------------------------
   // Cleanup

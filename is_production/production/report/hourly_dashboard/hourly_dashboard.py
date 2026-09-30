@@ -4,15 +4,16 @@
 
 
 import frappe
-from datetime import datetime, timedelta
-from frappe.utils import getdate
+from datetime import timedelta
+from frappe.utils import getdate, now_datetime
 
 
 # =========================================================
 # OPERATIONAL DAY (06:00 -> 05:59)
 # =========================================================
+@frappe.whitelist()
 def get_operational_day():
-    now = datetime.now()
+    now = now_datetime()
     return now.date() - timedelta(days=1) if now.hour < 6 else now.date()
 
 
@@ -75,7 +76,7 @@ def execute(filters=None):
     columns = get_columns()
 
     prod_date = get_selected_production_day(
-        filters.get("monthly_production_planning")
+        filters.get("production_date")
     )
     active_sites = get_active_planning_sites(prod_date)
 
@@ -83,15 +84,15 @@ def execute(filters=None):
     hourly_data = get_all_hourly_data(prod_date)
 
     data = []
-    for site_order, site in enumerate(SITE_ORDER):
-        if site not in active_sites:
-            continue
+    ordered_sites = [site for site in SITE_ORDER if site in active_sites]
+    ordered_sites.extend(sorted(set(active_sites) - set(SITE_ORDER)))
+    for site_order, site in enumerate(ordered_sites):
 
         excavators = excavators_by_site.get(site, [])
         site_data = hourly_data.get(site, {})
         header_colour = SITE_HEADER_COLOURS.get(site, "#FFFFFF")
 
-        # Preserve the old dashboard behaviour: a site from the selected plan
+        # Preserve the old dashboard behaviour: a site with a valid plan
         # should still render, even if there are no excavators for that site.
         if not excavators:
             data.append(build_data_row(
@@ -119,37 +120,32 @@ def execute(filters=None):
     return columns, data
 
 
-def get_selected_production_day(plan_name=None):
-    operational_day = get_operational_day()
-
-    if not plan_name:
-        return operational_day
-
-    plan = frappe.get_doc("Monthly Production Planning", plan_name)
-    start_date = getdate(plan.prod_month_start_date) if plan.prod_month_start_date else None
-    end_date = getdate(plan.prod_month_end_date) if plan.prod_month_end_date else None
-
-    if start_date and end_date and start_date <= operational_day <= end_date:
-        return operational_day
-
-    return end_date or operational_day
+def get_selected_production_day(production_date=None):
+    return getdate(production_date) if production_date else get_operational_day()
 
 
 def get_active_planning_sites(prod_date):
-    """Return sites covered by their latest valid monthly production plan."""
+    """Map each covered site to its latest modified non-cancelled plan.
+
+    Coverage is inclusive; name breaks modification timestamp ties.
+    Draft plans remain applicable, matching the existing dashboard behaviour.
+    """
     rows = frappe.get_all(
         "Monthly Production Planning",
         filters={
-            "location": ["in", SITE_ORDER],
             "prod_month_start_date": ["<=", prod_date],
             "prod_month_end_date": [">=", prod_date],
             "docstatus": ["<", 2],
         },
         fields=["name", "location", "prod_month_end_date", "modified"],
-        order_by="prod_month_end_date desc, modified desc",
+        order_by="modified desc, name desc",
     )
 
-    return {row.location for row in rows if row.location}
+    plans_by_site = {}
+    for row in rows:
+        if row.location:
+            plans_by_site.setdefault(row.location, row)
+    return plans_by_site
 
 
 def get_columns():
