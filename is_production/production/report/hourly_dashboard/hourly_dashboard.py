@@ -33,32 +33,24 @@ SLOT_LABELS = [
     "24-01", "01-02", "02-03", "03-04", "04-05", "05-06"
 ]
 
-HOUR_SLOT_MAP = {
-    "6:00-7:00": 1,
-    "7:00-8:00": 2,
-    "8:00-9:00": 3,
-    "9:00-10:00": 4,
-    "10:00-11:00": 5,
-    "11:00-12:00": 6,
-    "12:00-13:00": 7,
-    "13:00-14:00": 8,
-    "14:00-15:00": 9,
-    "15:00-16:00": 10,
-    "16:00-17:00": 11,
-    "17:00-18:00": 12,
-    "18:00-19:00": 13,
-    "19:00-20:00": 14,
-    "20:00-21:00": 15,
-    "21:00-22:00": 16,
-    "22:00-23:00": 17,
-    "23:00-0:00": 18,
-    "0:00-1:00": 19,
-    "1:00-2:00": 20,
-    "2:00-3:00": 21,
-    "3:00-4:00": 22,
-    "4:00-5:00": 23,
-    "5:00-6:00": 24,
-}
+def get_hour_slot_number(hour_slot):
+    """Return dashboard slot 1-24 for padded or unpadded Hourly Production slots."""
+    if not hour_slot:
+        return None
+
+    try:
+        start_text = str(hour_slot).split("-", 1)[0]
+        start_hour = int(start_text.split(":", 1)[0])
+    except (ValueError, IndexError):
+        return None
+
+    if 6 <= start_hour <= 23:
+        return start_hour - 5
+
+    if 0 <= start_hour <= 5:
+        return start_hour + 19
+
+    return None
 
 SITE_ORDER = [
     "Klipfontein",
@@ -250,27 +242,45 @@ def get_all_excavators():
 
 
 def get_all_hourly_data(prod_date):
+    """Load one operational production day: 06:00 through 05:59 next calendar day."""
+    prod_date = getdate(prod_date)
+    next_date = prod_date + timedelta(days=1)
+
     rows = frappe.db.sql("""
         SELECT
+            hp.prod_date,
             hp.location AS site,
             tl.asset_name_shoval AS excavator,
             hp.hour_slot AS hour_slot,
             SUM(tl.bcms) AS bcm
         FROM `tabHourly Production` hp
         JOIN `tabTruck Loads` tl ON tl.parent = hp.name
-        WHERE hp.prod_date = %s
+        WHERE hp.prod_date IN (%s, %s)
           AND tl.asset_name_shoval IS NOT NULL
         GROUP BY
+            hp.prod_date,
             hp.location,
             tl.asset_name_shoval,
             hp.hour_slot
-    """, prod_date, as_dict=True)
+    """, (prod_date, next_date), as_dict=True)
 
     data = {}
 
     for row in rows:
-        slot = HOUR_SLOT_MAP.get(row.hour_slot)
+        slot = get_hour_slot_number(row.hour_slot)
         if not slot:
+            continue
+
+        start_hour = int(str(row.hour_slot).split("-", 1)[0].split(":", 1)[0])
+
+        # Operational production day is 06:00 -> 05:59 next calendar day.
+        operational_date = (
+            getdate(row.prod_date) - timedelta(days=1)
+            if start_hour < 6
+            else getdate(row.prod_date)
+        )
+
+        if operational_date != prod_date:
             continue
 
         data.setdefault(row.site, {}).setdefault(row.excavator, {})[str(slot)] = int(row.bcm or 0)
