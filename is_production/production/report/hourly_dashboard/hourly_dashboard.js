@@ -1,27 +1,23 @@
 // Copyright (c) 2026, Isambane Mining (Pty) Ltd
-// Hourly Dashboard – Multi-Site Monthly Production
+// Hourly Dashboard – Multi-Site Hourly Production
 
 
 frappe.query_reports["Hourly Dashboard"] = {
     filters: [
         {
-            fieldname: "monthly_production_planning",
-            label: __("Monthly Production Planning"),
-            fieldtype: "Link",
-            options: "Monthly Production Planning"
+            fieldname: "production_date",
+            label: __("Production Date"),
+            fieldtype: "Date"
         }
     ],
 
     onload: function (report) {
-        if (!report.get_filter_value("monthly_production_planning")) {
-            frappe.db.get_list("Monthly Production Planning", {
-                fields: ["name"],
-                order_by: "prod_month_end_date desc, modified desc",
-                limit: 1
-            }).then((rows) => {
-                if (rows.length) {
-                    report.set_filter_value("monthly_production_planning", rows[0].name);
-                    report.refresh();
+        if (!report.get_filter_value("production_date")) {
+            frappe.call({
+                method: "is_production.production.report.hourly_dashboard.hourly_dashboard.get_operational_day"
+            }).then((response) => {
+                if (!report.get_filter_value("production_date")) {
+                    report.set_filter_value("production_date", response.message);
                 }
             });
         }
