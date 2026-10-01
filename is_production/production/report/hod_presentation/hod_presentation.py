@@ -365,13 +365,15 @@ def get_columns():
         {
             "label": _("Days Worked"),
             "fieldname": "days_worked",
-            "fieldtype": "Int",
+            "fieldtype": "Float",
+            "precision": 2,
             "width": 105,
         },
         {
             "label": _("Days Left"),
             "fieldname": "days_left",
-            "fieldtype": "Int",
+            "fieldtype": "Float",
+            "precision": 2,
             "width": 90,
         },
         {
@@ -734,37 +736,115 @@ def build_filtered_production_row(
         - selected_target_coal
     )
 
-    days_left = max(
-        num_prod_days
-        - month_to_date_worked_days,
+    # --------------------------------------------------------------
+    # HOD PRODUCTION HOURS
+    #
+    # Use the planned hours in Monthly Production Days for the
+    # selected report period and MTD period.
+    #
+    # This correctly handles:
+    #   normal 18-hour production days
+    #   6-hour Sundays
+    #   historical HOD report dates
+    # --------------------------------------------------------------
+
+    selected_planned_hours = 0.0
+    month_to_date_planned_hours = 0.0
+
+    for prod_day in monthly_plan.get("month_prod_days") or []:
+        prod_date = getdate(prod_day.shift_start_date)
+
+        planned_hours = (
+            flt(prod_day.shift_day_hours)
+            + flt(prod_day.shift_night_hours)
+            + flt(prod_day.shift_morning_hours)
+            + flt(prod_day.shift_afternoon_hours)
+        )
+
+        if (
+            plan_start
+            <= prod_date
+            <= selected_end
+        ):
+            month_to_date_planned_hours += planned_hours
+
+        if (
+            selected_start
+            <= prod_date
+            <= selected_end
+        ):
+            selected_planned_hours += planned_hours
+
+    total_planned_hours = flt(
+        monthly_plan.total_month_prod_hours
+    )
+
+    remaining_hours = max(
+        total_planned_hours
+        - month_to_date_planned_hours,
         0,
     )
 
-    remaining_volume = (
-        monthly_target
-        - selected_actual_bcm
-    )
-
-    daily_required = (
-        remaining_volume
-        / days_left
-        if days_left
+    month_to_date_worked_days = (
+        month_to_date_planned_hours / 18.0
+        if month_to_date_planned_hours > 0
         else 0
     )
 
-    daily_achieved = (
-        selected_actual_bcm
-        / selected_worked_days
-        if selected_worked_days
+    selected_equivalent_days = (
+        selected_planned_hours / 18.0
+        if selected_planned_hours > 0
+        else 0
+    )
+
+    days_left = (
+        remaining_hours / 18.0
+        if remaining_hours > 0
+        else 0
+    )
+
+    remaining_volume = max(
+        monthly_target
+        - month_to_date_actual_bcm,
+        0,
+    )
+
+    # Forecast:
+    # MTD BCM / MTD planned hours x total monthly planned hours
+    hourly_achieved = (
+        month_to_date_actual_bcm
+        / month_to_date_planned_hours
+        if month_to_date_planned_hours > 0
         else 0
     )
 
     forecast = (
+        hourly_achieved
+        * total_planned_hours
+        if total_planned_hours > 0
+        else 0
+    )
+
+    # Daily Required:
+    # Remaining BCM / equivalent remaining production days
+    remaining_equivalent_days = (
+        remaining_hours / 18.0
+    )
+
+    daily_required = (
+        remaining_volume
+        / remaining_equivalent_days
+        if remaining_equivalent_days > 0
+        else 0
+    )
+
+    # Daily Achieved:
+    # Selected period BCM / selected equivalent production days
+    daily_achieved = (
         selected_actual_bcm
-        + (
-            daily_achieved
-            * days_left
-        )
+        / selected_equivalent_days
+        if selected_equivalent_days > 0
+        else 0
     )
 
     strip_ratio = (
@@ -835,11 +915,13 @@ def build_filtered_production_row(
             daily_achieved,
             1,
         ),
-        "days_worked": int(
-            selected_worked_days
+        "days_worked": round(
+            month_to_date_worked_days,
+            2,
         ),
-        "days_left": int(
-            days_left
+        "days_left": round(
+            days_left,
+            2,
         ),
         "strip_ratio": round(
             strip_ratio,
