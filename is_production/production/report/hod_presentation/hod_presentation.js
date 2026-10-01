@@ -1841,10 +1841,10 @@ function hodRenderSiteCard(row) {
                         "",
                         `${hodFormatNumber(
                             row.days_worked,
-                            0
+                            2
                         )} / ${hodFormatNumber(
                             row.days_left,
-                            0
+                            2
                         )}`
                     )}
 

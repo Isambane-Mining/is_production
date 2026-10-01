@@ -1251,318 +1251,6 @@ is_production.ui.HourlyProductionUI = class {
         );
 
         // ----------------------------------------------------
-        // Blank-style support for time inputs
-        // ----------------------------------------------------
-        if (!document.getElementById('exc-load-time-blank-style')) {
-            $('head').append(`
-
-            `);
-        }
-
-        const toggleExcLoadTimeBlankState = (inputElement) => {
-            const input = $(inputElement);
-            const value = String(input.val() || '').trim();
-
-            if (value) {
-                input.removeClass('exc-load-time-blank');
-            } else {
-                input.addClass('exc-load-time-blank');
-            }
-        };
-
-        // ----------------------------------------------------
-        // Custom Excavator Load Time Slider Picker
-        // ----------------------------------------------------
-
-        if (!document.getElementById('exc-slider-time-picker-style')) {
-            $('head').append(`
-
-            `);
-        }
-
-        const padExcTime = value =>
-            String(value).padStart(2, '0');
-
-        const setExcSliderTime = (
-            picker,
-            hour,
-            minute,
-            second
-        ) => {
-            const time =
-                `${padExcTime(hour)}:` +
-                `${padExcTime(minute)}:` +
-                `${padExcTime(second)}`;
-
-            picker.find('.exc-slider-time-display').text(time);
-
-            return time;
-        };
-
-        const closeExcSliderTimePicker = () => {
-            $('.exc-slider-time-picker').remove();
-        };
-
-        const openExcSliderTimePicker = inputElement => {
-
-            closeExcSliderTimePicker();
-
-            const input = $(inputElement);
-
-            let value = String(input.val() || '').trim();
-
-            let hour = 18;
-            let minute = 0;
-            let second = 0;
-
-            if (/^\d{2}:\d{2}:\d{2}$/.test(value)) {
-                const parts = value.split(':').map(Number);
-
-                hour = parts[0];
-                minute = parts[1];
-                second = parts[2];
-            }
-
-            const picker = $(`
-                <div class="exc-slider-time-picker">
-
-                    <div class="exc-slider-time-display">
-                        ${padExcTime(hour)}:${padExcTime(minute)}:${padExcTime(second)}
-                    </div>
-
-                    <div class="exc-slider-row">
-                        <input
-                            type="range"
-                            class="exc-slider-hour"
-                            min="0"
-                            max="23"
-                            step="1"
-                            value="${hour}">
-                    </div>
-
-                    <div class="exc-slider-row">
-                        <input
-                            type="range"
-                            class="exc-slider-minute"
-                            min="0"
-                            max="59"
-                            step="1"
-                            value="${minute}">
-                    </div>
-
-                    <div class="exc-slider-row">
-                        <input
-                            type="range"
-                            class="exc-slider-second"
-                            min="0"
-                            max="59"
-                            step="1"
-                            value="${second}">
-                    </div>
-
-                    <div class="exc-slider-now">
-                        Now
-                    </div>
-
-                    <div class="exc-slider-clear">
-                        Clear
-                    </div>
-
-                </div>
-            `);
-
-            $('body').append(picker);
-
-            const rect = inputElement.getBoundingClientRect();
-
-            picker.css({
-                top: `${rect.bottom + 3}px`,
-                left: `${rect.left}px`
-            });
-
-            const updateFromSliders = () => {
-
-                const hour = Number(
-                    picker.find('.exc-slider-hour').val()
-                );
-
-                const minute = Number(
-                    picker.find('.exc-slider-minute').val()
-                );
-
-                const second = Number(
-                    picker.find('.exc-slider-second').val()
-                );
-
-                const time = setExcSliderTime(
-                    picker,
-                    hour,
-                    minute,
-                    second
-                );
-
-                input.val(time);
-                input.removeClass('exc-load-time-blank');
-
-                input.trigger('change');
-            };
-
-            picker.on(
-                'input',
-                'input[type="range"]',
-                updateFromSliders
-            );
-
-            picker.on(
-                'click',
-                '.exc-slider-clear',
-                function() {
-
-                    input.val('');
-                    input.addClass('exc-load-time-blank');
-
-                    input.trigger('change');
-
-                    closeExcSliderTimePicker();
-                }
-            );
-
-            picker.on(
-                'click',
-                '.exc-slider-now',
-                function() {
-
-                    const now = new Date();
-
-                    const hour = now.getHours();
-                    const minute = now.getMinutes();
-                    const second = now.getSeconds();
-
-                    picker.find('.exc-slider-hour').val(hour);
-                    picker.find('.exc-slider-minute').val(minute);
-                    picker.find('.exc-slider-second').val(second);
-
-                    const time = setExcSliderTime(
-                        picker,
-                        hour,
-                        minute,
-                        second
-                    );
-
-                    input.val(time);
-                    input.removeClass('exc-load-time-blank');
-
-                    input.trigger('change');
-
-                    closeExcSliderTimePicker();
-                }
-            );
-        };
-
-
-        // ----------------------------------------------------
-        // Allow manual HH:MM:SS editing like Day Shift Start
-        // ----------------------------------------------------
-        $(document).off(
-            'blur.excavator_load_time_manual change.excavator_load_time_manual',
-            '.exc-start-load-time, .exc-end-load-time'
-        );
-
-        $(document).on(
-            'blur.excavator_load_time_manual change.excavator_load_time_manual',
-            '.exc-start-load-time, .exc-end-load-time',
-            function() {
-
-                const input = $(this);
-                let value = String(input.val() || '').trim();
-
-                // Blank is allowed.
-                if (!value) {
-                    input.val('');
-                    input.addClass('exc-load-time-blank');
-                    return;
-                }
-
-                // Accept HH:MM and normalize to HH:MM:00.
-                if (/^\d{1,2}:\d{2}$/.test(value)) {
-                    value = value + ':00';
-                }
-
-                // Validate HH:MM:SS.
-                const match = value.match(
-                    /^(\d{1,2}):(\d{2}):(\d{2})$/
-                );
-
-                if (!match) {
-                    frappe.msgprint(
-                        __('Please enter time as HH:MM:SS')
-                    );
-                    input.focus();
-                    return;
-                }
-
-                const hour = Number(match[1]);
-                const minute = Number(match[2]);
-                const second = Number(match[3]);
-
-                if (
-                    hour > 23 ||
-                    minute > 59 ||
-                    second > 59
-                ) {
-                    frappe.msgprint(
-                        __('Please enter a valid time.')
-                    );
-                    input.focus();
-                    return;
-                }
-
-                value =
-                    String(hour).padStart(2, '0') + ':' +
-                    String(minute).padStart(2, '0') + ':' +
-                    String(second).padStart(2, '0');
-
-                input.val(value);
-                input.removeClass('exc-load-time-blank');
-            }
-        );
-
-        $(document).off(
-            'click.excavator_slider_time_picker',
-            '.exc-start-load-time, .exc-end-load-time'
-        );
-
-        $(document).on(
-            'click.excavator_slider_time_picker',
-            '.exc-start-load-time, .exc-end-load-time',
-            function(event) {
-
-                event.stopPropagation();
-
-                openExcSliderTimePicker(this);
-            }
-        );
-
-
-        $(document).off(
-            'click.excavator_slider_time_picker_close'
-        );
-
-        $(document).on(
-            'click.excavator_slider_time_picker_close',
-            function(event) {
-
-                if (
-                    !$(event.target).closest(
-                        '.exc-slider-time-picker, .exc-load-time-input'
-                    ).length
-                ) {
-                    closeExcSliderTimePicker();
-                }
-            }
-        );
-
-        // ----------------------------------------------------
         // Excavator Start / End Load Time
         // ----------------------------------------------------
         $(document).off(
@@ -1570,43 +1258,15 @@ is_production.ui.HourlyProductionUI = class {
             '.exc-start-load-time, .exc-end-load-time'
         );
 
-        // Open native time selector when user clicks anywhere
-        // inside Start Load Time or End Load Time.
-        $(document).off(
-            'click.excavator_time_picker',
-            '.exc-start-load-time, .exc-end-load-time'
-        );
-
-        $(document).on(
-            'click.excavator_time_picker',
-            '.exc-start-load-time, .exc-end-load-time',
-            function() {
-                try {
-                    if (typeof this.showPicker === 'function') {
-                        this.showPicker();
-                    }
-                } catch (error) {
-                    // Browser will still allow the normal native picker.
-                }
-            }
-        );
-
         $(document).on(
             'change.excavator_load_time input.excavator_load_time',
             '.exc-start-load-time, .exc-end-load-time',
             function() {
                 const excavatorName = $(this).data('excavator-name');
-
-                toggleExcLoadTimeBlankState(this);
-
                 const block = $(this).closest('.excavator-header');
 
                 const startInput = block.find('.exc-start-load-time');
                 const endInput = block.find('.exc-end-load-time');
-
-                toggleExcLoadTimeBlankState(startInput);
-                toggleExcLoadTimeBlankState(endInput);
-
                 const startLoadTime = String(
                     startInput.val() || ''
                 ).trim();
@@ -1622,12 +1282,6 @@ is_production.ui.HourlyProductionUI = class {
                 );
             }
         );
-
-        me.frm.fields_dict.dnd_html_excavator_ui.$wrapper
-            .find('.exc-load-time-input')
-            .each(function() {
-                toggleExcLoadTimeBlankState(this);
-            });
 
         // Populate all Hauling Distance selectors from master.
         frappe.db.get_list('Hauling Distance Meter', {
@@ -1675,6 +1329,57 @@ is_production.ui.HourlyProductionUI = class {
                 'Unable to load Hauling Distance Meter options:',
                 error
             );
+        }).then(() => {
+            // ------------------------------------------------
+            // Excavator Start / End Load Time picker
+            // Run only after Hauling Distance setup completes.
+            // ------------------------------------------------
+            const wrapper =
+                me.frm.fields_dict.dnd_html_excavator_ui?.$wrapper;
+
+            if (!wrapper) {
+                return;
+            }
+
+            if (
+                typeof $.fn === 'undefined' ||
+                typeof $.fn.flatpickr !== 'function'
+            ) {
+                console.warn(
+                    'Flatpickr is not available for Excavator load times.'
+                );
+                return;
+            }
+
+            wrapper
+                .find(
+                    '.exc-start-load-time, .exc-end-load-time'
+                )
+                .each(function() {
+                    const input = this;
+
+                    if (input._flatpickr) {
+                        input._flatpickr.destroy();
+                    }
+
+                    $(input).flatpickr({
+                        enableTime: true,
+                        noCalendar: true,
+                        time_24hr: true,
+                        enableSeconds: true,
+                        allowInput: true,
+                        minuteIncrement: 1,
+                        dateFormat: 'H:i:S',
+                        onChange: function(
+                            selectedDates,
+                            dateStr
+                        ) {
+                            $(input)
+                                .val(dateStr)
+                                .trigger('change');
+                        }
+                    });
+                });
         });
     }
 
