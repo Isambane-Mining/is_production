@@ -280,69 +280,139 @@ if (frm.doc.prod_adjust_factor == null) {
       }
     });
   },
- // Section: Refresh Machines from Assets (non-destructive)
-refresh_machines_from_assets(frm) {
+ // Refresh Machines synchronises site membership without resetting allocations.
+async refresh_machines_from_assets(frm) {
+  if (!canManageMonthlyPlanningMachines()) {
+    showMachinePlanningPermissionMessage();
+    return;
+  }
   if (!frm.doc.location) {
     frappe.msgprint(__('Please select a location first.'));
     return;
   }
 
-  frappe.call({
-    method: "frappe.client.get_list",
-    args: {
-      doctype: "Asset",
-      filters: {
-        location: frm.doc.location,
-        docstatus: 1   // ✅ Only Submitted assets
-      },
-      fields: ["name", "item_name", "asset_category"],
-      limit_page_length: 500
-    },
-    callback: function(r) {
-      const assets = r.message || [];
-
-      const excavators = assets.filter(a => a.asset_category === "Excavator");
-      const trucks     = assets.filter(a => a.asset_category === "ADT");
-      const dozers     = assets.filter(a => a.asset_category === "Dozer");
-
-      // helper: sync without wiping table
-      function syncTable(tableName, keyField, assetList, assignFields = {}) {
-        let table = frm.doc[tableName] || [];
-
-        // keep only valid rows
-        table = table.filter(row =>
-          assetList.some(asset => asset.name === row[keyField])
-        );
-
-        // add missing rows
-        assetList.forEach(asset => {
-          if (!table.some(row => row[keyField] === asset.name)) {
-            const row = frm.add_child(tableName);
-            row[keyField] = asset.name;
-            Object.assign(row, assignFields(asset));
-          }
-        });
-
-        frm.doc[tableName] = table;
-        frm.refresh_field(tableName);
+  const location = frm.doc.location;
+  const doc = frm.doc;
+  const assets = [];
+  // Fetch every page before removing anything: a truncated list is not site membership.
+  for (let start = 0; ; start += 500) {
+    const r = await frappe.call({
+      method: "frappe.client.get_list",
+      args: {
+        doctype: "Asset",
+        filters: {
+          location,
+          docstatus: 1,
+          asset_category: ["in", ["Excavator", "ADT", "Dozer"]]
+        },
+        fields: ["name", "item_name", "asset_category"],
+        order_by: "name asc",
+        limit_start: start,
+        limit_page_length: 500
       }
+    });
+    if (r.exc || !Array.isArray(r.message)) {
+      return;
+    }
+    assets.push(...r.message);
+    if (r.message.length < 500) break;
+  }
 
-      // 🔄 Sync each table
-      syncTable("excavator_truck_assignments", "excavator", excavators, a => ({
-        excavator_model: a.item_name
-      }));
+  // Do not apply a response to a different site/document or after access changed.
+  if (frm.doc !== doc || frm.doc.location !== location) return;
+  if (!canManageMonthlyPlanningMachines()) {
+    showMachinePlanningPermissionMessage();
+    return;
+  }
 
-      syncTable("excavator_truck_assignments", "truck", trucks, a => ({
-        truck_model: a.item_name
-      }));
+  const excavators = new Set(assets.filter(a => a.asset_category === "Excavator").map(a => a.name));
+  const trucks = new Set(assets.filter(a => a.asset_category === "ADT").map(a => a.name));
+  const dozers = new Set(assets.filter(a => a.asset_category === "Dozer").map(a => a.name));
+  const existing = new Set();
+  const productionExcavators = new Set(getActiveEmptyExcavators(frm));
+  (doc.excavator_truck_assignments || []).forEach(row => {
+    if (row.excavator) existing.add(row.excavator);
+    if (row.truck) existing.add(row.truck);
+    if (row.excavator && row.truck) productionExcavators.add(row.excavator);
+  });
+  (doc.dozer_table || []).forEach(row => {
+    if (row.asset_name) existing.add(row.asset_name);
+  });
+  getActiveEmptyExcavators(frm).forEach(id => existing.add(id));
 
-      syncTable("dozer_table", "asset_name", dozers, a => ({
-        item_name: a.item_name
-      }));
+  let changed = false;
+  function removeRow(row) {
+    frappe.model.clear_doc(row.doctype, row.name);
+    changed = true;
+  }
 
-      frappe.msgprint(__("✅ Machines refreshed — only adds/removes applied, existing assignments kept."));
+  doc.excavator_truck_assignments = (doc.excavator_truck_assignments || []).filter(row => {
+    // Keep the onsite half of an invalid pair, with its row identity and planning data.
+    if (row.excavator && !excavators.has(row.excavator)) {
+      row.excavator = null;
+      row.excavator_model = null;
+      changed = true;
+    }
+    if (row.truck && !trucks.has(row.truck)) {
+      row.truck = null;
+      row.truck_model = null;
+      changed = true;
+    }
+    if (row.excavator || row.truck) return true;
+    removeRow(row);
+    return false;
+  });
+  doc.dozer_table = (doc.dozer_table || []).filter(row => {
+    if (dozers.has(row.asset_name)) return true;
+    removeRow(row);
+    return false;
+  });
+
+  const activeEmpty = getActiveEmptyExcavators(frm).filter(id => excavators.has(id));
+  productionExcavators.forEach(id => {
+    if (excavators.has(id) && !activeEmpty.includes(id) &&
+        !doc.excavator_truck_assignments.some(row => row.excavator === id && row.truck)) {
+      activeEmpty.push(id);
     }
   });
+  if (JSON.stringify(activeEmpty) !== JSON.stringify(getActiveEmptyExcavators(frm))) {
+    setActiveEmptyExcavators(frm, activeEmpty);
+    changed = true;
+  }
+
+  // Add only missing machines; never attach a new ADT or assign a new dozer.
+  assets.forEach(asset => {
+    if (asset.asset_category === "Dozer") {
+      if (doc.dozer_table.some(row => row.asset_name === asset.name)) return;
+      const row = frm.add_child("dozer_table");
+      row.asset_name = asset.name;
+      row.item_name = asset.item_name;
+      row.dozing_type = '';
+    } else {
+      const isExcavator = asset.asset_category === "Excavator";
+      const key = isExcavator ? "excavator" : "truck";
+      if (doc.excavator_truck_assignments.some(row => row[key] === asset.name)) return;
+      const row = frm.add_child("excavator_truck_assignments");
+      row[key] = asset.name;
+      row[`${key}_model`] = asset.item_name;
+      row[isExcavator ? "truck" : "excavator"] = null;
+    }
+    changed = true;
+  });
+
+  if (changed) frm.dirty();
+  frm.refresh_field("excavator_truck_assignments");
+  frm.refresh_field("dozer_table");
+  await frm.trigger('update_equipment_counts');
+  renderTruckAssignmentUI(frm);
+  renderDozerAssignmentUI(frm);
+
+  const onsite = new Set(assets.map(a => a.name));
+  const added = [...onsite].filter(id => !existing.has(id)).length;
+  const removed = [...existing].filter(id => !onsite.has(id)).length;
+  const preserved = [...existing].filter(id => onsite.has(id)).length;
+  frappe.msgprint(__("Machines synchronised: {0} added, {1} removed, {2} preserved.",
+    [added, removed, preserved]));
 },
 
 
