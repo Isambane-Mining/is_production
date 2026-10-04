@@ -888,13 +888,42 @@ def update_all_active_mpp_mtd():
 
     for name in mpps:
         try:
-            doc = frappe.get_doc("Monthly Production Planning", name)
-            doc.update_mtd_production()
+            refresh_mtd_production(name)
+            frappe.db.commit()
         except Exception:
+            frappe.db.rollback()
             frappe.log_error(
                 frappe.get_traceback(),
                 f"Hourly MPP MTD Update - {name}",
             )
+
+
+def refresh_mtd_production(name):
+    """
+    Recalculate and save MTD on one MPP, holding a row lock on it.
+
+    for_update=True takes SELECT ... FOR UPDATE on the parent row, so concurrent
+    writers (scheduler, Hourly Production saves, Raven reports, the MPP button)
+    queue behind each other instead of failing with MariaDB 1020
+    "Record has changed since last read".
+    """
+    doc = frappe.get_doc("Monthly Production Planning", name, for_update=True)
+    doc.update_mtd_production()
+    return doc
+
+
+def enqueue_mtd_refresh(name):
+    """Queue one MTD refresh per MPP; saves that land close together collapse into a single job."""
+    frappe.enqueue(
+        "is_production.production.doctype.monthly_production_planning."
+        "monthly_production_planning.refresh_mtd_production",
+        queue="short",
+        name=name,
+        job_id=f"mpp_mtd::{frappe.local.site}::{name}",
+        deduplicate=True,
+        enqueue_after_commit=True,
+    )
+
 
 @frappe.whitelist()
 def update_mtd_production(name):
@@ -902,8 +931,7 @@ def update_mtd_production(name):
     RPC wrapper so Hourly Production can trigger the MPP MTD update.
     """
     try:
-        doc = frappe.get_doc('Monthly Production Planning', name)
-        doc.update_mtd_production()
+        refresh_mtd_production(name)
         return {"status": "success", "name": name}
     except Exception as e:
         frappe.log_error(
