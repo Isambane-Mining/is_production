@@ -20,8 +20,13 @@ add_to_apps_screen = [
 fixtures = [
     {"dt": "Role", "filters": [["name", "in", ["Production Manager", "Production User", "Production Supervisor", "Production Foreman", "Engineering Supervisor", "Control Clerk", "External Surveryor", "Drill Supervisor"]]]},
     {"dt": "Custom DocPerm", "filters": [["role", "in", ["Production Manager", "Production User", "Production Supervisor", "Production Foreman", "Engineering Supervisor", "Control Clerk", "External Surveryor", "Drill Supervisor"]]]},
-    {"dt": "Asset Category", "filters": [["name", "in", ["Dozer", "ADT", "Rigid", "Excavator"]]]}
 ]
+
+# Asset Categories (Dozer, ADT, Excavator) are not a fixture: they need
+# company-specific accounts. They are created against the site's default
+# company by is_production.setup.asset_categories instead.
+after_install = "is_production.setup.asset_categories.ensure_asset_categories"
+after_migrate = "is_production.setup.asset_categories.ensure_asset_categories"
 
 override_whitelisted_methods = {
     # Override the PDF‐body renderer

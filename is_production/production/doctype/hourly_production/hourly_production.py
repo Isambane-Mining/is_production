@@ -7,6 +7,14 @@ from frappe import _
 from html import escape
 from frappe.utils import getdate, add_to_date, nowdate, formatdate
 
+# MTD summary fields copied from Monthly Production Planning onto the hour for reports
+MPP_MTD_FIELDS = [
+    'monthly_target_bcm', 'target_bcm_day', 'target_bcm_hour',
+    'month_act_ts_bcm_tallies', 'month_act_dozing_bcm_tallies',
+    'monthly_act_tally_survey_variance', 'month_actual_bcm',
+    'mtd_bcm_day', 'mtd_bcm_hour', 'month_forecated_bcm'
+]
+
 
 class HourlyProduction(Document):
 
@@ -775,20 +783,17 @@ class HourlyProduction(Document):
         self.day_total_bcm = (day_total[0][0] or 0) + current_hour_total
 
     def before_print(self, print_settings):
+        # Read-only: printing must not save the MPP. Print previews re-render on every
+        # form refresh, and recalculating here raced the scheduler / on_update writers.
+        # The stored MTD values are kept current by on_update and the hourly scheduler.
         if getattr(self, 'month_prod_planning', None):
-            frappe.get_attr(
-                "is_production.production.doctype.monthly_production_planning."
-                "monthly_production_planning.update_mtd_production"
-            )(name=self.month_prod_planning)
-
-            mpp = frappe.get_doc("Monthly Production Planning", self.month_prod_planning)
-            for field in [
-                'monthly_target_bcm', 'target_bcm_day', 'target_bcm_hour',
-                'month_act_ts_bcm_tallies', 'month_act_dozing_bcm_tallies',
-                'monthly_act_tally_survey_variance', 'month_actual_bcm',
-                'mtd_bcm_day', 'mtd_bcm_hour', 'month_forecated_bcm'
-            ]:
-                setattr(self, field, getattr(mpp, field))
+            mpp = frappe.db.get_value(
+                "Monthly Production Planning", self.month_prod_planning,
+                MPP_MTD_FIELDS, as_dict=True
+            )
+            if mpp:
+                for field in MPP_MTD_FIELDS:
+                    setattr(self, field, mpp.get(field))
 
     # -------------------------------------------------------------------------
     # Raven Production Reports
@@ -1651,13 +1656,15 @@ class HourlyProduction(Document):
             return
 
         try:
-            monthly_doc = frappe.get_doc("Monthly Production Planning", self.month_prod_planning)
+            from is_production.production.doctype.monthly_production_planning.monthly_production_planning import (
+                refresh_mtd_production,
+            )
 
-            # Try controller refresh if method exists
+            # Locked refresh so this doesn't race the scheduler / on_update jobs
             try:
-                if hasattr(monthly_doc, "update_mtd_production"):
-                    monthly_doc.update_mtd_production()
+                monthly_doc = refresh_mtd_production(self.month_prod_planning)
             except Exception:
+                monthly_doc = frappe.get_doc("Monthly Production Planning", self.month_prod_planning)
                 frappe.log_error(
                     frappe.get_traceback(),
                     "Raven Monthly Statistics Controller Refresh Failed"
@@ -1733,13 +1740,14 @@ class HourlyProduction(Document):
             return
 
         try:
-            frappe.get_attr(
-                "is_production.production.doctype.monthly_production_planning."
-                "monthly_production_planning.update_mtd_production"
-            )(name=self.month_prod_planning)
+            from is_production.production.doctype.monthly_production_planning.monthly_production_planning import (
+                enqueue_mtd_refresh,
+            )
+
+            enqueue_mtd_refresh(self.month_prod_planning)
 
             frappe.msgprint(
-                _("Month-to-Date Production updated automatically."),
+                _("Month-to-Date Production update queued."),
                 alert=True,
                 indicator="green"
             )
