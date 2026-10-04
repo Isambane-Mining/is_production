@@ -32,29 +32,39 @@ function clearAllCachedDocs() {
 
 async function syncCachedDocs() {
     const docs = getCachedDocs();
-    if (!docs.length) return;
+    if (!docs.length) return { success: 0, failed: 0, skipped: 0 };
 
     const results = {
         success: 0,
-        failed: 0
+        failed: 0,
+        skipped: 0
     };
 
     for (const doc of docs) {
+        // Docs cached before their first save only exist in this browser
+        // (name "new-hourly-production-..."), so they must be inserted, not updated.
+        // insert() replaces the temporary name with the format:{location}-{prod_date}-{hour_slot} autoname.
+        const isNew = !!doc.__islocal || String(doc.name || '').startsWith('new-');
+
         try {
             await frappe.call({
-                method: 'frappe.client.set_value',
-                args: {
-                    doctype: doc.doctype,
-                    name: doc.name,
-                    values: doc
-                },
-                freeze: true,
-                async: false
+                method: isNew ? 'frappe.client.insert' : 'frappe.client.save',
+                args: { doc },
+                freeze: true
             });
             removeCachedDoc(doc.name);
             results.success++;
             console.log('Synced doc:', doc.name);
         } catch (e) {
+            const excType = e && e.responseJSON && e.responseJSON.exc_type;
+            if (isNew && excType === 'DuplicateEntryError') {
+                // That hour was captured on the server since this was cached offline;
+                // the server copy wins, so stop retrying the stale local one.
+                removeCachedDoc(doc.name);
+                results.skipped++;
+                console.warn('Dropped offline copy, hour already exists on server:', doc.name);
+                continue;
+            }
             results.failed++;
             console.error('Sync failed for', doc.name, e);
             // Keep in cache if sync fails
