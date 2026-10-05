@@ -373,10 +373,31 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Reporting",
-   "link_count": 17,
+   "link_count": 19,
    "link_type": "DocType",
    "onboard": 0,
    "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "HOD Presentation",
+   "link_count": 0,
+   "link_to": "HOD Presentation",
+   "link_type": "Report",
+   "onboard": 0,
+   "report_ref_doctype": "Monthly Production Planning",
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "ADT Hourly Productivity",
+   "link_count": 0,
+   "link_to": "adt-hourly-productivity",
+   "link_type": "Page",
+   "onboard": 0,
+   "type": "Link"
   },
   {
    "hidden": 0,
@@ -549,7 +570,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-09-03 07:19:03.390111",
+ "modified": "2026-10-05 07:56:10.097589",
  "modified_by": "Administrator",
  "module": "Production",
  "name": "Production",
