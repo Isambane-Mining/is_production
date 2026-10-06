@@ -6,44 +6,8 @@ from datetime import datetime
 from frappe.utils import strip_html_tags
 
 
-def execute(filters=None):
-    filters = filters or {}
-    start_date = filters.get("start_date")
-    end_date = filters.get("end_date")
-    site = filters.get("site")
-
-    if not start_date or not end_date or not site:
-        frappe.throw("Start Date, End Date and Site are required filters.")
-
-    # --- Get the matching Monthly Production Plan ---
-    plans = frappe.get_all(
-        "Monthly Production Planning",
-        filters={
-            "location": site,
-            "prod_month_start_date": ["<=", end_date],
-            "prod_month_end_date": [">=", start_date],
-        },
-        fields=[
-            "name", "location",
-            "monthly_target_bcm", "coal_tons_planned", "coal_planned_bcm", "waste_bcms_planned",
-            "total_ts_planned_volumes", "planned_dozer_volumes",
-            "num_prod_days", "total_month_prod_hours",
-            "month_forecated_bcm",
-            "month_actual_coal",
-            "month_actual_bcm"
-        ],
-        order_by="creation desc",
-        limit_page_length=1
-    )
-
-    if not plans:
-        return get_columns(), [{"block1": "No data found", "block2": "", "block3": ""}]
-
-    d = plans[0]
-
-    def fmt_int(val):
-        return f"{int(val or 0):,}"
-
+def get_production_actuals(start_date, end_date, site):
+    """Return the same actual production values used by Production Performance."""
     COAL_CONVERSION = 1.5
 
     # --- Tallies (from Hourly Production) ---
@@ -155,6 +119,81 @@ def execute(filters=None):
     actual_bcm = (ts_actual_bcm or 0) + (dozing_actual_bcm or 0)
     coal_bcm_actual = (coal_tons_actual / COAL_CONVERSION) if coal_tons_actual else 0
     waste_bcm_actual = actual_bcm - coal_bcm_actual
+
+
+    return {
+        "ts_tallies": ts_tallies or 0,
+        "dozing_tallies": dozing_tallies or 0,
+        "tallies_total": tallies_total or 0,
+        "coal_bcm_tallies": coal_bcm_tallies or 0,
+        "coal_tons_hp": coal_tons_hp or 0,
+        "waste_bcm_tallies": waste_bcm_tallies or 0,
+        "ts_actual_bcm": ts_actual_bcm or 0,
+        "dozing_actual_bcm": dozing_actual_bcm or 0,
+        "coal_tons_actual": coal_tons_actual or 0,
+        "coal_bcm_actual": coal_bcm_actual or 0,
+        "waste_bcm_actual": waste_bcm_actual or 0,
+        "actual_bcm": actual_bcm or 0,
+    }
+
+
+def execute(filters=None):
+    filters = filters or {}
+    start_date = filters.get("start_date")
+    end_date = filters.get("end_date")
+    site = filters.get("site")
+
+    if not start_date or not end_date or not site:
+        frappe.throw("Start Date, End Date and Site are required filters.")
+
+    # --- Get the matching Monthly Production Plan ---
+    plans = frappe.get_all(
+        "Monthly Production Planning",
+        filters={
+            "location": site,
+            "prod_month_start_date": ["<=", end_date],
+            "prod_month_end_date": [">=", start_date],
+        },
+        fields=[
+            "name", "location",
+            "monthly_target_bcm", "coal_tons_planned", "coal_planned_bcm", "waste_bcms_planned",
+            "total_ts_planned_volumes", "planned_dozer_volumes",
+            "num_prod_days", "total_month_prod_hours",
+            "month_forecated_bcm",
+            "month_actual_coal",
+            "month_actual_bcm"
+        ],
+        order_by="creation desc",
+        limit_page_length=1
+    )
+
+    if not plans:
+        return get_columns(), [{"block1": "No data found", "block2": "", "block3": ""}]
+
+    d = plans[0]
+
+    def fmt_int(val):
+        return f"{int(val or 0):,}"
+
+    actuals = get_production_actuals(
+        start_date,
+        end_date,
+        site,
+    )
+
+    ts_tallies = actuals["ts_tallies"]
+    dozing_tallies = actuals["dozing_tallies"]
+    tallies_total = actuals["tallies_total"]
+    coal_bcm_tallies = actuals["coal_bcm_tallies"]
+    coal_tons_hp = actuals["coal_tons_hp"]
+    waste_bcm_tallies = actuals["waste_bcm_tallies"]
+
+    ts_actual_bcm = actuals["ts_actual_bcm"]
+    dozing_actual_bcm = actuals["dozing_actual_bcm"]
+    coal_tons_actual = actuals["coal_tons_actual"]
+    coal_bcm_actual = actuals["coal_bcm_actual"]
+    waste_bcm_actual = actuals["waste_bcm_actual"]
+    actual_bcm = actuals["actual_bcm"]
 
     total_days = d.num_prod_days or 0
     total_hours = d.total_month_prod_hours or 0

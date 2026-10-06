@@ -88,6 +88,18 @@ frappe.query_reports["HOD Presentation"] = {
             default: "Include Swing/Spare"
         },
         {
+            fieldname: "asset_ownership",
+            label: __("Asset Ownership"),
+            fieldtype: "Select",
+            options: [
+                "Isambane & Excavo Assets",
+                "Suppliers Assets",
+                "All Assets"
+            ],
+            reqd: 1,
+            default: "Isambane & Excavo Assets"
+        },
+        {
             fieldname: "au_target_filter",
             label: __("A & U Target"),
             fieldtype: "Select",
@@ -337,6 +349,68 @@ function hodGetComplexName(site) {
 }
 
 
+function hodJoinNames(values) {
+    const names = (values || [])
+        .map(value => String(value || "").trim())
+        .filter(Boolean);
+
+    if (!names.length) {
+        return "";
+    }
+
+    if (names.length === 1) {
+        return names[0];
+    }
+
+    if (names.length === 2) {
+        return names.join(" and ");
+    }
+
+    return (
+        names.slice(0, -1).join(", ") +
+        " and " +
+        names[names.length - 1]
+    );
+}
+
+
+function hodFormatMonthYear(value) {
+    const rawValue = String(value || "").trim();
+
+    if (!rawValue) {
+        return "";
+    }
+
+    const parts = rawValue.split("-");
+
+    if (parts.length !== 3) {
+        return rawValue;
+    }
+
+    const year = Number(parts[0]);
+    const month = Number(parts[1]);
+
+    if (
+        !Number.isInteger(year) ||
+        !Number.isInteger(month) ||
+        month < 1 ||
+        month > 12
+    ) {
+        return rawValue;
+    }
+
+    return new Intl.DateTimeFormat(
+        "en-ZA",
+        {
+            month: "long",
+            year: "numeric"
+        }
+    ).format(
+        new Date(year, month - 1, 1)
+    );
+}
+
+
 function hodOrderRowsByComplex(rows) {
     const order = [];
 
@@ -485,7 +559,8 @@ function hodChunkProductionCards(cards, size = 4) {
 
 
 async function captureHodProductionSlides(
-    productionSection
+    productionSection,
+    endDate
 ) {
     const slides = [];
 
@@ -615,19 +690,23 @@ async function captureHodProductionSlides(
                         ? ` (${chunkIndex + 1}/${chunks.length})`
                         : "";
 
+                const performanceSubtitle =
+                    siteNames.length
+                        ? "Outlook and Operating Indicators for " +
+                          hodJoinNames(siteNames)
+                        : "Outlook and Operating Indicators";
+
                 slides.push({
                     title:
-                        "HOD Production Summary - " +
                         complexTitle +
-                        chunkLabel +
-                        (
-                            siteNames.length
-                                ? " - " +
-                                  siteNames.join(
-                                      " / "
-                                  )
-                                : ""
-                        ),
+                        " - Production Performance" +
+                        chunkLabel,
+
+                    subtitle:
+                        performanceSubtitle,
+
+                    period_label:
+                        hodFormatMonthYear(endDate),
 
                     image_data:
                         await captureHodSection(
@@ -772,7 +851,8 @@ async function downloadHodPresentation(report) {
         if (productionSection) {
             const productionSlides =
                 await captureHodProductionSlides(
-                    productionSection
+                    productionSection,
+                    endDate
                 );
 
             capturedSlides.push(
@@ -812,16 +892,12 @@ async function downloadHodPresentation(report) {
             ) {
                 capturedSlides.push({
                     title:
-                        complexName +
-                        " - " +
-                        categorySection.title +
-                        " - " +
-                        siteName +
-                        (
-                            sitePeriod
-                                ? " | " + sitePeriod
-                                : ""
-                        ),
+                        "Engineering Performance - " +
+                        siteName,
+
+                    heading_style:
+                        "engineering",
+
                     image_data:
                         await captureHodCategorySection(
                             categorySection.element,
@@ -835,28 +911,78 @@ async function downloadHodPresentation(report) {
                     '.daily-dashboard-tab-panel[data-panel="hours"]'
                 );
 
-            for (
-                const categorySection
-                of getHodHoursCategorySections(hoursPanel)
-            ) {
-                capturedSlides.push({
-                    title:
-                        complexName +
-                        " - " +
-                        categorySection.category +
-                        " Hours Based Performance - " +
-                        siteName +
-                        (
-                            sitePeriod
-                                ? " | " + sitePeriod
-                                : ""
-                        ),
-                    image_data:
-                        await captureHodCategorySection(
-                            categorySection.element,
-                            hoursPanel
-                        )
-                });
+            if (hoursPanel) {
+                const chartsRoot =
+                    hoursPanel.firstElementChild ||
+                    hoursPanel;
+
+                const originalPanelStyle =
+                    hoursPanel.getAttribute("style");
+
+                const originalRootStyle =
+                    chartsRoot.getAttribute("style");
+
+                try {
+                    hoursPanel.style.display = "block";
+                    hoursPanel.style.visibility = "visible";
+                    hoursPanel.style.width = "100%";
+                    hoursPanel.style.maxWidth = "none";
+                    hoursPanel.style.overflow = "visible";
+
+                    chartsRoot.style.display = "block";
+                    chartsRoot.style.visibility = "visible";
+                    chartsRoot.style.width = "100%";
+                    chartsRoot.style.maxWidth = "none";
+                    chartsRoot.style.overflow = "visible";
+
+                    await new Promise(resolve => {
+                        window.requestAnimationFrame(() => {
+                            window.requestAnimationFrame(
+                                resolve
+                            );
+                        });
+                    });
+
+                    capturedSlides.push({
+                        title:
+                            "Hours Based Performance - " +
+                            siteName,
+
+                        heading_style:
+                            "engineering",
+
+                        image_data:
+                            await captureHodSection(
+                                chartsRoot,
+                                {
+                                    quality: 0.90,
+                                    pixelRatio: 1.0
+                                }
+                            )
+                    });
+                } finally {
+                    if (originalPanelStyle === null) {
+                        hoursPanel.removeAttribute(
+                            "style"
+                        );
+                    } else {
+                        hoursPanel.setAttribute(
+                            "style",
+                            originalPanelStyle
+                        );
+                    }
+
+                    if (originalRootStyle === null) {
+                        chartsRoot.removeAttribute(
+                            "style"
+                        );
+                    } else {
+                        chartsRoot.setAttribute(
+                            "style",
+                            originalRootStyle
+                        );
+                    }
+                }
             }
         }
 
@@ -1100,7 +1226,7 @@ async function captureHodCategorySection(
             element,
             {
                 quality: 0.92,
-                pixelRatio: 1,
+                pixelRatio: 1.15,
                 width: fullWidth
             }
         );
@@ -1561,6 +1687,9 @@ async function loadHodAvailabilityDashboards(
         ),
         machine_scope: getFilterValue(
             "machine_scope"
+        ),
+        asset_ownership: getFilterValue(
+            "asset_ownership"
         ),
         au_target_filter: getFilterValue(
             "au_target_filter"
