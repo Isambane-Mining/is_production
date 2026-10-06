@@ -20,6 +20,10 @@ from frappe.utils import (
     time_diff_in_hours,
 )
 
+from is_production.production.report.production_performance.production_performance import (
+    get_production_actuals,
+)
+
 from is_production.production.page.production_summary_dashboard.production_summary_dashboard import (
     COAL_CONVERSION,
     get_completed_production_days,
@@ -54,6 +58,12 @@ MACHINE_SCOPES = (
 AU_TARGET_FILTERS = (
     "100% A & U",
     "85% A & U",
+)
+
+ASSET_OWNERSHIP_OPTIONS = (
+    "Isambane & Excavo Assets",
+    "Suppliers Assets",
+    "All Assets",
 )
 
 DEFAULT_SUMMARY_TYPE = "Average Per Machine"
@@ -102,6 +112,7 @@ def execute(filters=None):
         summary_type,
         machine_scope,
         au_target_filter,
+        asset_ownership,
     ) = validate_filters(filters)
 
     payloads = [
@@ -432,6 +443,7 @@ def get_report_payload(
         summary_type,
         machine_scope,
         au_target_filter,
+        asset_ownership,
     ) = validate_filters(filters)
 
     site = site_override or sites[0]
@@ -529,6 +541,7 @@ def get_report_payload(
         summary_type=summary_type,
         machine_scope=machine_scope,
         au_target_filter=au_target_filter,
+        asset_ownership=asset_ownership,
         include_detail=include_au_detail,
     )
 
@@ -558,49 +571,41 @@ def get_filtered_bcm_summary(
     start_date,
     end_date,
 ):
-    """
-    Return Truck & Shovel, Dozing and total Actual BCM
-    for the selected production-date range.
-    """
+    """Use the same production actuals as Production Performance."""
     if not site or not start_date or not end_date:
         return {
             "truck_shovel_bcm": 0.0,
             "dozing_bcm": 0.0,
             "actual_bcm": 0.0,
+            "actual_coal_tons": 0.0,
+            "actual_coal_bcm": 0.0,
+            "actual_waste_bcm": 0.0,
         }
 
-    rows = frappe.db.sql(
-        """
-        SELECT
-            COALESCE(SUM(total_ts_bcm), 0)
-                AS truck_shovel_bcm,
-            COALESCE(SUM(total_dozing_bcm), 0)
-                AS dozing_bcm
-        FROM `tabHourly Production`
-        WHERE location = %s
-          AND prod_date BETWEEN %s AND %s
-          AND docstatus < 2
-        """,
-        (site, start_date, end_date),
-        as_dict=True,
-    )
-
-    row = rows[0] if rows else {}
-
-    truck_shovel_bcm = flt(
-        row.get("truck_shovel_bcm")
-    )
-
-    dozing_bcm = flt(
-        row.get("dozing_bcm")
+    actuals = get_production_actuals(
+        str(getdate(start_date)),
+        str(getdate(end_date)),
+        site,
     )
 
     return {
-        "truck_shovel_bcm": truck_shovel_bcm,
-        "dozing_bcm": dozing_bcm,
-        "actual_bcm": (
-            truck_shovel_bcm
-            + dozing_bcm
+        "truck_shovel_bcm": flt(
+            actuals.get("ts_actual_bcm")
+        ),
+        "dozing_bcm": flt(
+            actuals.get("dozing_actual_bcm")
+        ),
+        "actual_bcm": flt(
+            actuals.get("actual_bcm")
+        ),
+        "actual_coal_tons": flt(
+            actuals.get("coal_tons_actual")
+        ),
+        "actual_coal_bcm": flt(
+            actuals.get("coal_bcm_actual")
+        ),
+        "actual_waste_bcm": flt(
+            actuals.get("waste_bcm_actual")
         ),
     }
 
@@ -691,11 +696,7 @@ def build_filtered_production_row(
     )
 
     selected_actual_coal = flt(
-        get_mtd_coal_dynamic(
-            site,
-            selected_end,
-            selected_start,
-        )
+        selected_bcms.get("actual_coal_tons")
     )
 
     selected_actual_waste = (
@@ -1004,6 +1005,11 @@ def validate_filters(filters):
         or DEFAULT_AU_TARGET_FILTER
     ).strip()
 
+    asset_ownership = (
+        filters.get("asset_ownership")
+        or DEFAULT_ASSET_OWNERSHIP
+    ).strip()
+
     if not end_date:
         frappe.throw(_("End Date is required."))
 
@@ -1041,12 +1047,20 @@ def validate_filters(filters):
             )
         )
 
+    if asset_ownership not in ASSET_OWNERSHIP_OPTIONS:
+        frappe.throw(
+            _("Asset Ownership must be one of: {0}.").format(
+                ", ".join(ASSET_OWNERSHIP_OPTIONS)
+            )
+        )
+
     return (
         end_date,
         sites,
         summary_type,
         machine_scope,
         au_target_filter,
+        asset_ownership,
     )
 
 
@@ -1361,6 +1375,7 @@ def get_availability_summary(
     summary_type,
     machine_scope,
     au_target_filter,
+    asset_ownership,
     include_detail=True,
 ):
     module = _load_daily_availability_module()
@@ -1386,7 +1401,7 @@ def get_availability_summary(
     try:
         dashboard_scope = _dashboard_machine_scope(machine_scope)
         filters["machine_scope"] = dashboard_scope
-        filters["asset_ownership"] = DEFAULT_ASSET_OWNERSHIP
+        filters["asset_ownership"] = asset_ownership
 
         source_rows = module.fetch_grouped_data(
             site,
@@ -1394,7 +1409,7 @@ def get_availability_summary(
             end_text,
             dashboard_scope,
             au_target_filter,
-            DEFAULT_ASSET_OWNERSHIP,
+            asset_ownership,
         ) or []
 
         spare_map = module.get_spare_swing_asset_map(
@@ -2454,6 +2469,7 @@ def get_availability_dashboard_html(
     summary_type=None,
     machine_scope=None,
     au_target_filter=None,
+    asset_ownership=None,
 ):
     check_report_access()
 
@@ -2507,6 +2523,18 @@ def get_availability_dashboard_html(
         or DEFAULT_AU_TARGET_FILTER
     )
 
+    asset_ownership = (
+        asset_ownership
+        or DEFAULT_ASSET_OWNERSHIP
+    )
+
+    if asset_ownership not in ASSET_OWNERSHIP_OPTIONS:
+        frappe.throw(
+            _("Asset Ownership must be one of: {0}.").format(
+                ", ".join(ASSET_OWNERSHIP_OPTIONS)
+            )
+        )
+
     module = _load_daily_availability_module()
 
     dashboard_filters = frappe._dict(
@@ -2520,7 +2548,12 @@ def get_availability_dashboard_html(
             "summary_type": summary_type,
             "machine_scope": machine_scope,
             "au_target_filter": au_target_filter,
-            "asset_ownership": DEFAULT_ASSET_OWNERSHIP,
+            "asset_ownership": asset_ownership,
+            "chart_categories": [
+                "ADT",
+                "Dozer",
+                "Excavator",
+            ],
             "hours_display": "Hours Average per Category",
         }
     )

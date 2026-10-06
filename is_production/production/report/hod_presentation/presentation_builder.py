@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 from io import BytesIO
+from pathlib import Path
 from typing import BinaryIO
 
 from pptx import Presentation
@@ -20,6 +21,13 @@ BLACK = "050505"
 WHITE = "FFFFFF"
 MUTED = "AAB4C3"
 RED = "E03124"
+
+LOGO_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "public"
+    / "images"
+    / "isambane_logo.png"
+)
 
 
 def build_hod_presentation(
@@ -89,15 +97,92 @@ def build_hod_presentation(
                 captured.get("title")
                 or site
             )
+            slide_subtitle = str(
+                captured.get("subtitle")
+                or ""
+            )
+            slide_period = str(
+                captured.get("period_label")
+                or ""
+            )
+            heading_style = str(
+                captured.get("heading_style")
+                or ""
+            )
+
+            detailed_heading = bool(
+                slide_subtitle
+                or slide_period
+            )
+
+            engineering_heading = (
+                heading_style
+                == "engineering"
+            )
+
+            hours_heading = (
+                "Hours Based Performance"
+                in slide_title
+            )
+
             _add_slide_heading(
                 slide,
                 slide_title,
+                subtitle=slide_subtitle,
+                period_label=slide_period,
+                heading_style=heading_style,
             )
+
+            image_top = (
+                0.58
+                if hours_heading
+                else (
+                    0.80
+                    if engineering_heading
+                    else (
+                        1.48
+                        if detailed_heading
+                        else 0.72
+                    )
+                )
+            )
+
+            image_bottom_margin = (
+                0.08
+                if hours_heading
+                else (
+                    0.28
+                    if detailed_heading
+                    else 0.18
+                )
+            )
+
             _add_image_fitted(
                 slide,
                 image_bytes,
-                top_inches=0.72,
-                height_inches=6.68,
+                top_inches=image_top,
+                height_inches=(
+                    SLIDE_HEIGHT
+                    - image_top
+                    - image_bottom_margin
+                ),
+                top_align=(
+                    engineering_heading
+                    or hours_heading
+                ),
+                side_margin_inches=(
+                    0.08
+                    if hours_heading
+                    else (
+                        0.22
+                        if engineering_heading or detailed_heading
+                        else 0.0
+                    )
+                ),
+                stretch_to_fill=(
+                    detailed_heading
+                    or hours_heading
+                ),
             )
 
         if not prs.slides:
@@ -143,6 +228,9 @@ def _add_image_fitted(
     *,
     top_inches: float = 0.0,
     height_inches: float = SLIDE_HEIGHT,
+    top_align: bool = False,
+    side_margin_inches: float = 0.0,
+    stretch_to_fill: bool = False,
 ) -> None:
     image_stream = BytesIO(image_bytes)
 
@@ -152,12 +240,23 @@ def _add_image_fitted(
         0,
     )
 
-    slide_w = Inches(SLIDE_WIDTH)
+    side_margin = Inches(side_margin_inches)
+    slide_w = Inches(
+        SLIDE_WIDTH
+        - (side_margin_inches * 2)
+    )
     slide_h = Inches(height_inches)
     top_offset = Inches(top_inches)
 
     image_w = picture.width
     image_h = picture.height
+
+    if stretch_to_fill:
+        picture.left = side_margin
+        picture.top = top_offset
+        picture.width = slide_w
+        picture.height = slide_h
+        return
 
     if not image_w or not image_h:
         picture.left = 0
@@ -176,49 +275,163 @@ def _add_image_fitted(
 
     picture.width = fitted_w
     picture.height = fitted_h
-    picture.left = int((slide_w - fitted_w) / 2)
-    picture.top = (
-        top_offset
-        + int((slide_h - fitted_h) / 2)
+    picture.left = (
+        side_margin
+        + int((slide_w - fitted_w) / 2)
+    )
+
+    if top_align:
+        picture.top = top_offset
+    else:
+        picture.top = (
+            top_offset
+            + int((slide_h - fitted_h) / 2)
+        )
+
+
+
+def _add_isambane_logo(slide) -> None:
+    if not LOGO_PATH.exists():
+        return
+
+    slide.shapes.add_picture(
+        str(LOGO_PATH),
+        Inches(0.12),
+        Inches(0.03),
+        width=Inches(1.20),
     )
 
 
-
-def _add_slide_heading(slide, title: str) -> None:
-    banner = slide.shapes.add_shape(
-        MSO_SHAPE.RECTANGLE,
-        0,
-        0,
-        Inches(SLIDE_WIDTH),
-        Inches(0.68),
+def _add_slide_heading(
+    slide,
+    title: str,
+    *,
+    subtitle: str = "",
+    period_label: str = "",
+    heading_style: str = "",
+) -> None:
+    detailed_heading = bool(
+        subtitle
+        or period_label
     )
-    banner.fill.solid()
-    banner.fill.fore_color.rgb = _rgb("0F1F53")
-    banner.line.fill.background()
 
-    accent = slide.shapes.add_shape(
-        MSO_SHAPE.RECTANGLE,
-        0,
-        Inches(0.64),
-        Inches(SLIDE_WIDTH),
-        Inches(0.04),
-    )
-    accent.fill.solid()
-    accent.fill.fore_color.rgb = _rgb(RED)
-    accent.line.fill.background()
+    _add_isambane_logo(slide)
+
+    if heading_style == "engineering":
+        _add_text(
+            slide,
+            title,
+            0.35,
+            0.05,
+            12.63,
+            0.48,
+            17,
+            "FFF200",
+            bold=True,
+            align=PP_ALIGN.CENTER,
+        )
+
+        panel = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE,
+            Inches(0.20),
+            Inches(0.66),
+            Inches(SLIDE_WIDTH - 0.40),
+            Inches(SLIDE_HEIGHT - 0.76),
+        )
+        panel.fill.solid()
+        panel.fill.fore_color.rgb = _rgb(WHITE)
+        panel.line.fill.background()
+
+        return
+
+    if not detailed_heading:
+        banner = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE,
+            0,
+            0,
+            Inches(SLIDE_WIDTH),
+            Inches(0.68),
+        )
+        banner.fill.solid()
+        banner.fill.fore_color.rgb = _rgb("0F1F53")
+        banner.line.fill.background()
+
+        accent = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE,
+            0,
+            Inches(0.64),
+            Inches(SLIDE_WIDTH),
+            Inches(0.04),
+        )
+        accent.fill.solid()
+        accent.fill.fore_color.rgb = _rgb(RED)
+        accent.line.fill.background()
+
+        _add_text(
+            slide,
+            title,
+            0.35,
+            0.08,
+            12.63,
+            0.48,
+            20,
+            WHITE,
+            bold=True,
+            align=PP_ALIGN.CENTER,
+        )
+        return
 
     _add_text(
         slide,
         title,
         0.35,
-        0.08,
+        0.04,
         12.63,
         0.48,
-        20,
-        WHITE,
+        17,
+        "FFF200",
         bold=True,
         align=PP_ALIGN.CENTER,
     )
+
+    panel = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE,
+        Inches(0.20),
+        Inches(0.66),
+        Inches(SLIDE_WIDTH - 0.40),
+        Inches(SLIDE_HEIGHT - 0.76),
+    )
+    panel.fill.solid()
+    panel.fill.fore_color.rgb = _rgb(WHITE)
+    panel.line.fill.background()
+
+    if subtitle:
+        _add_text(
+            slide,
+            subtitle,
+            0.55,
+            0.78,
+            12.23,
+            0.42,
+            16,
+            "59647A",
+            align=PP_ALIGN.CENTER,
+            font_name="Calibri",
+        )
+
+    if period_label:
+        _add_text(
+            slide,
+            period_label,
+            0.75,
+            1.16,
+            3.00,
+            0.34,
+            14,
+            BLACK,
+            align=PP_ALIGN.LEFT,
+            font_name="Arial",
+        )
 
 
 def _blank_slide(prs: Presentation):
@@ -281,6 +494,7 @@ def _add_text(
     *,
     bold: bool = False,
     align=PP_ALIGN.LEFT,
+    font_name: str | None = None,
 ):
     box = slide.shapes.add_textbox(
         Inches(x),
@@ -304,7 +518,7 @@ def _add_text(
 
     run = paragraph.add_run()
     run.text = str(text or "")
-    run.font.name = FONT_NAME
+    run.font.name = font_name or FONT_NAME
     run.font.size = Pt(font_size)
     run.font.bold = bold
     run.font.color.rgb = _rgb(colour)
