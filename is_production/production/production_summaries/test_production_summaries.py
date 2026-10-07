@@ -156,7 +156,8 @@ class TestScheduler(unittest.TestCase):
             site = kwargs['filters']['site']
             return [frappe._dict(period_start=start) for found_site, start in saved if found_site == site]
 
-        with patch.object(scheduler, 'get_site_starts', return_value=sources), \
+        with patch.object(scheduler, 'get_plan_windows', return_value={site: [(getdate, now.date())] for site, getdate in sources.items()}), \
+             patch.object(scheduler, 'get_site_starts', return_value=sources), \
              patch.object(scheduler, 'create_snapshot', side_effect=create), \
              patch.object(scheduler.frappe, 'get_all', side_effect=get_all), \
              patch.object(scheduler.frappe, 'enqueue', side_effect=lambda **kw: jobs.append(kw)), \
@@ -299,6 +300,9 @@ class TestFrappeIntegration(unittest.TestCase):
             frappe.db.delete(doctype)
         self.fixture('Location', 'Koppie', location_name='Koppie')
         self.fixture('Location', 'Gwab', location_name='Gwab')
+        for site in ['Koppie']:
+            self.fixture('Monthly Production Planning', 'BASE-'+site, location=site,
+                         prod_month_start_date='2026-10-01', prod_month_end_date='2026-10-01')
 
     def fixture(self, doctype, name, **values):
         doc = frappe.get_doc(dict(doctype=doctype, name=name, **values))
@@ -385,6 +389,8 @@ class TestFrappeIntegration(unittest.TestCase):
         from . import scheduler, snapshot
         self.source('source', datetime(2026, 10, 1, 6), 100)
         self.source('other', datetime(2026, 10, 1, 6), 200, site='Gwab')
+        self.fixture('Monthly Production Planning','GWAB',location='Gwab',
+                     prod_month_start_date='2026-10-01',prod_month_end_date='2026-10-01')
         original = snapshot.load_snapshot
         def fail(site, p):
             if site == 'Gwab':
@@ -402,6 +408,8 @@ class TestFrappeIntegration(unittest.TestCase):
     def test_schema_reload_preserves_snapshots_and_read_only_permissions(self):
         from . import snapshot
         p = periods.make_period('daily', datetime(2026, 9, 30, 6))
+        self.fixture('Monthly Production Planning', 'SEP', location='Koppie',
+                     prod_month_start_date='2026-09-30', prod_month_end_date='2026-09-30')
         name = snapshot.create_snapshot('Koppie', p)
         frappe.db.commit()
         for slug, kind in [('hourly_production_summary', 'hourly'), ('shift_production_summary', 'shift'),
@@ -417,6 +425,8 @@ class TestFrappeIntegration(unittest.TestCase):
     def test_earliest_midnight_source_recovers_previous_operational_day(self):
         from . import scheduler
         self.source('earliest', datetime(2026, 10, 1, 0), 100)
+        self.fixture('Monthly Production Planning', 'SEP', location='Koppie',
+                     prod_month_start_date='2026-09-30', prod_month_end_date='2026-09-30')
         self.assertEqual(scheduler.get_site_starts()['Koppie'], date(2026, 9, 30))
         result = scheduler.recover('hourly', as_of=datetime(2026, 10, 1, 1))
         self.assertEqual(result['created'], 19)
@@ -500,6 +510,24 @@ class TestFrappeIntegration(unittest.TestCase):
                 self.assertEqual(payload['as_of'], '2026-10-01T06:00:00')
                 self.assertNotIn('now', payload)
 
+    def test_no_plan_cancelled_plan_and_wrong_site_cannot_generate(self):
+        from . import snapshot, scheduler
+        from .eligibility import get_covering_plan
+        frappe.db.delete('Monthly Production Planning')
+        self.source('active-data',datetime(2026,10,1,6),100)
+        self.fixture('Monthly Production Planning','CANCELLED',location='Koppie',
+            prod_month_start_date='2026-10-01',prod_month_end_date='2026-10-01',docstatus=2)
+        self.fixture('Monthly Production Planning','ELSEWHERE',location='Gwab',
+            prod_month_start_date='2026-10-01',prod_month_end_date='2026-10-01')
+        self.assertIsNone(get_covering_plan('Koppie','2026-10-01'))
+        for kind in snapshot.DOCTYPES:
+            self.assertIsNone(snapshot.create_snapshot('Koppie',periods.make_period(kind,datetime(2026,10,1,6))))
+        result=scheduler.recover('hourly',as_of=datetime(2026,10,1,7))
+        self.assertEqual(result['created'],1)  # Only Gwab's valid planning period.
+        self.assertEqual(result['attempted'],1)
+        self.assertFalse(frappe.db.exists('Hourly Production Summary',{'site':'Koppie'}))
+
+
 
 class TestCronQueue(unittest.TestCase):
     def test_cron_jobs_enqueue_long_recovery_after_commit(self):
@@ -516,3 +544,36 @@ class TestCronQueue(unittest.TestCase):
             self.assertTrue(job['enqueue_after_commit'])
             self.assertEqual(job['as_of'], '2026-10-01T06:00:00')
             self.assertNotIn('now', job)
+
+
+class TestPlanningEligibility(unittest.TestCase):
+    def test_covering_plan_query_uses_operational_date_and_non_cancelled_status(self):
+        from .eligibility import get_covering_plan
+        p=periods.make_period('hourly',datetime(2026,10,1,2))
+        with patch('frappe.get_all',return_value=[frappe._dict(name='SEP')]) as query:
+            self.assertEqual(get_covering_plan('Koppie',p.report_date),'SEP')
+        self.assertEqual(query.call_args.kwargs['filters'],dict(location='Koppie',
+            prod_month_start_date=['<=',date(2026,9,30)],prod_month_end_date=['>=',date(2026,9,30)],docstatus=['<',2]))
+
+    def test_ineligible_direct_creation_never_loads_sources(self):
+        from . import snapshot
+        from types import SimpleNamespace
+        with patch.object(snapshot.frappe,'db',SimpleNamespace(exists=lambda *a:False)), \
+             patch.object(snapshot,'get_covering_plan',return_value=None), \
+             patch.object(snapshot,'load_snapshot',side_effect=AssertionError('must not load')):
+            self.assertIsNone(snapshot.create_snapshot('Inactive',periods.make_period('daily',datetime(2026,10,1,6))))
+
+    def test_eligible_periods_jump_gaps_and_keep_midnight_in_previous_month(self):
+        from .eligibility import eligible_periods
+        windows=[(date(2026,9,30),date(2026,9,30)),(date(2026,10,2),date(2026,10,2))]
+        found=list(eligible_periods('hourly',datetime(2026,9,1,6),datetime(2026,10,3,6),windows))
+        self.assertEqual(len(found),48)
+        self.assertIn(datetime(2026,10,1,5),[p.start for p in found])
+        self.assertNotIn(datetime(2026,10,1,6),[p.start for p in found])
+        self.assertEqual(len(list(eligible_periods('daily',datetime(2026,9,1,6),datetime(2026,10,3,6),windows))),2)
+
+    def test_overlapping_plan_ranges_do_not_duplicate_periods(self):
+        from .eligibility import eligible_periods
+        windows=[(date(2026,9,1),date(2026,9,30)),(date(2026,9,20),date(2026,10,1))]
+        found=list(eligible_periods('shift',datetime(2026,9,30,6),datetime(2026,10,2,6),windows))
+        self.assertEqual(len(found),4)

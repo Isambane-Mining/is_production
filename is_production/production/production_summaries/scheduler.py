@@ -12,7 +12,8 @@ import json
 import frappe
 from frappe.utils import get_datetime, getdate, now_datetime
 
-from .periods import completed_periods, source_hour
+from .periods import source_hour
+from .eligibility import get_plan_windows, eligible_periods
 from .snapshot import DOCTYPES, create_snapshot
 
 DEFAULT_BATCH_SIZE = 200
@@ -85,7 +86,10 @@ def recover(kind, as_of=None, batch_size=DEFAULT_BATCH_SIZE, cursor=None):
     created = failed = attempted = 0
     continuation = None
     cursor_start = get_datetime(cursor['start']) if cursor else None
+    plan_windows = get_plan_windows()
     for site, source_date in sorted(get_site_starts().items()):
+        if site not in plan_windows:
+            continue
         if cursor and site < cursor['site']:
             continue
         start = datetime.combine(getdate(source_date), datetime.min.time()).replace(hour=6)
@@ -94,7 +98,7 @@ def recover(kind, as_of=None, batch_size=DEFAULT_BATCH_SIZE, cursor=None):
         rows = frappe.get_all(DOCTYPES[kind], filters={'site': site,
             'period_start': ['between', [start, as_of]]}, fields=['period_start'])
         existing = {get_datetime(row['period_start']) for row in rows}
-        for period in completed_periods(kind, start, as_of):
+        for period in eligible_periods(kind, start, as_of, plan_windows[site]):
             if period.start in existing:
                 continue
             if attempted >= batch_size:

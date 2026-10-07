@@ -7,6 +7,7 @@ from frappe.model.document import Document
 from frappe.utils import get_datetime, now_datetime
 
 from .calculations import load_snapshot
+from .eligibility import get_covering_plan
 from .periods import make_period
 
 DOCTYPES = {
@@ -64,6 +65,8 @@ def create_snapshot(site, period):
     doctype = DOCTYPES[period.kind]
     key = snapshot_key(site, period)
     if frappe.db.exists(doctype, key):
+        return None
+    if not get_covering_plan(site, period.report_date):
         return None
     savepoint = f'production_summary_{key[:16]}'
     frappe.db.savepoint(savepoint)

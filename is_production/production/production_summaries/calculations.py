@@ -10,6 +10,7 @@ from datetime import timedelta
 from frappe.utils import flt
 
 from .periods import hour_slot, source_hour
+from .eligibility import get_covering_plan
 
 COAL_TONS_PER_BCM = 1.5
 CALCULATION_VERSION = '1'
@@ -168,8 +169,6 @@ def load_snapshot(site, period):
         for doc in parents:
             doc[parentfield] = by_parent[doc['name']]
 
-    plans = frappe.get_all('Monthly Production Planning', filters={'location': site,
-        'prod_month_start_date': ['<=', period.report_date], 'prod_month_end_date': ['>=', period.report_date],
-        'docstatus': ['<', 2]}, fields=['name'], order_by='modified desc, name desc', limit=1)
-    plan = frappe.get_doc('Monthly Production Planning', plans[0]['name']).as_dict() if plans else None
+    plan_name = get_covering_plan(site, period.report_date)
+    plan = frappe.get_doc('Monthly Production Planning', plan_name).as_dict() if plan_name else None
     return build_snapshot(site, period, hourly, drilling, plan)
