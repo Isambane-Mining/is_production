@@ -1,0 +1,655 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-10-08 08:53:51.972282",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "simulation_id",
+  "project_name",
+  "geo_project",
+  "column_break_header",
+  "start_date",
+  "is_demo",
+  "description",
+  "section_break_summary",
+  "block_count",
+  "activity_count",
+  "equipment_count",
+  "column_break_summary",
+  "source_created",
+  "source_modified",
+  "schema_version",
+  "grid_version",
+  "tab_settings",
+  "section_break_calendar",
+  "hours_per_day",
+  "max_years",
+  "sa_holidays",
+  "column_break_calendar",
+  "work_monday",
+  "work_tuesday",
+  "work_wednesday",
+  "work_thursday",
+  "work_friday",
+  "work_saturday",
+  "work_sunday",
+  "section_break_targets",
+  "target_coal",
+  "target_waste",
+  "target_waste_unit",
+  "column_break_targets",
+  "target_basis",
+  "target_mode",
+  "section_break_void",
+  "void_tip_on",
+  "void_tip_ref",
+  "void_tip_after_strips",
+  "column_break_void",
+  "void_tip_roads",
+  "void_tip_doze_after_strips",
+  "section_break_cutoff",
+  "cutoff_by",
+  "column_break_cutoff",
+  "cutoff_stop",
+  "section_break_crs",
+  "crs_preset",
+  "crs_axis",
+  "column_break_crs",
+  "crs_proj4",
+  "section_break_grid",
+  "grid_x0",
+  "grid_y0",
+  "grid_cell",
+  "column_break_grid",
+  "grid_nx",
+  "grid_ny",
+  "grid_file",
+  "section_break_imagery",
+  "imagery_provider",
+  "imagery_opacity",
+  "vertical_exaggeration",
+  "column_break_imagery",
+  "imagery_google_key",
+  "imagery_custom_url",
+  "imagery_file_name",
+  "imagery_file",
+  "tab_geology",
+  "surfaces",
+  "layers",
+  "tab_blocks",
+  "id_column",
+  "blocks",
+  "section_break_attributes",
+  "attribute_columns",
+  "attribute_report",
+  "source_json",
+  "tab_sequence",
+  "pits",
+  "activities",
+  "limits",
+  "tab_fleet",
+  "fleet",
+  "tab_roads_dumps",
+  "roads",
+  "dumps",
+  "tab_overlays",
+  "overlays",
+  "json_meta"
+ ],
+ "fields": [
+  {
+   "fieldname": "simulation_id",
+   "fieldtype": "Data",
+   "label": "Simulation ID",
+   "read_only": 1,
+   "unique": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "project_name",
+   "fieldtype": "Data",
+   "label": "Project Name",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "bold": 1
+  },
+  {
+   "fieldname": "geo_project",
+   "fieldtype": "Link",
+   "label": "Geo Project",
+   "options": "Geo Project",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "column_break_header",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "start_date",
+   "fieldtype": "Date",
+   "label": "Start Date",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "is_demo",
+   "fieldtype": "Check",
+   "label": "Example Data"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  },
+  {
+   "fieldname": "section_break_summary",
+   "fieldtype": "Section Break",
+   "label": "Summary"
+  },
+  {
+   "fieldname": "block_count",
+   "fieldtype": "Int",
+   "label": "Blocks",
+   "read_only": 1
+  },
+  {
+   "fieldname": "activity_count",
+   "fieldtype": "Int",
+   "label": "Activities",
+   "read_only": 1
+  },
+  {
+   "fieldname": "equipment_count",
+   "fieldtype": "Int",
+   "label": "Fleet Units",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_summary",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "source_created",
+   "fieldtype": "Data",
+   "label": "Created in Simulator",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_modified",
+   "fieldtype": "Data",
+   "label": "Last Saved by Simulator",
+   "read_only": 1
+  },
+  {
+   "fieldname": "schema_version",
+   "fieldtype": "Int",
+   "label": "Schema Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "grid_version",
+   "fieldtype": "Int",
+   "label": "Grid Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "tab_settings",
+   "fieldtype": "Tab Break",
+   "label": "Settings"
+  },
+  {
+   "fieldname": "section_break_calendar",
+   "fieldtype": "Section Break",
+   "label": "Calendar"
+  },
+  {
+   "fieldname": "hours_per_day",
+   "fieldtype": "Float",
+   "label": "Working Hours per Day"
+  },
+  {
+   "fieldname": "max_years",
+   "fieldtype": "Int",
+   "label": "Maximum Years Simulated"
+  },
+  {
+   "fieldname": "sa_holidays",
+   "fieldtype": "Check",
+   "label": "Stop on SA Public Holidays"
+  },
+  {
+   "fieldname": "column_break_calendar",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "work_monday",
+   "fieldtype": "Check",
+   "label": "Works Monday"
+  },
+  {
+   "fieldname": "work_tuesday",
+   "fieldtype": "Check",
+   "label": "Works Tuesday"
+  },
+  {
+   "fieldname": "work_wednesday",
+   "fieldtype": "Check",
+   "label": "Works Wednesday"
+  },
+  {
+   "fieldname": "work_thursday",
+   "fieldtype": "Check",
+   "label": "Works Thursday"
+  },
+  {
+   "fieldname": "work_friday",
+   "fieldtype": "Check",
+   "label": "Works Friday"
+  },
+  {
+   "fieldname": "work_saturday",
+   "fieldtype": "Check",
+   "label": "Works Saturday"
+  },
+  {
+   "fieldname": "work_sunday",
+   "fieldtype": "Check",
+   "label": "Works Sunday"
+  },
+  {
+   "fieldname": "section_break_targets",
+   "fieldtype": "Section Break",
+   "label": "Monthly Targets"
+  },
+  {
+   "fieldname": "target_coal",
+   "fieldtype": "Float",
+   "label": "Coal Target (t / month)"
+  },
+  {
+   "fieldname": "target_waste",
+   "fieldtype": "Float",
+   "label": "Waste Target / month"
+  },
+  {
+   "fieldname": "target_waste_unit",
+   "fieldtype": "Select",
+   "label": "Waste Target Unit",
+   "options": "\nbcm\nt"
+  },
+  {
+   "fieldname": "column_break_targets",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "target_basis",
+   "fieldtype": "Select",
+   "label": "Target Basis",
+   "options": "\ncalendar\nworking"
+  },
+  {
+   "fieldname": "target_mode",
+   "fieldtype": "Select",
+   "label": "Target Use",
+   "options": "\nlimit\ncompare"
+  },
+  {
+   "fieldname": "section_break_void",
+   "fieldtype": "Section Break",
+   "label": "Tipping into the Void"
+  },
+  {
+   "fieldname": "void_tip_on",
+   "fieldtype": "Check",
+   "label": "Tip Waste into the Void"
+  },
+  {
+   "fieldname": "void_tip_ref",
+   "fieldtype": "Select",
+   "label": "Tip Level",
+   "options": "\ntop\nfloor"
+  },
+  {
+   "fieldname": "void_tip_after_strips",
+   "fieldtype": "Int",
+   "label": "Start After Strips"
+  },
+  {
+   "fieldname": "column_break_void",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "void_tip_roads",
+   "fieldtype": "Check",
+   "label": "Tip on Roads"
+  },
+  {
+   "fieldname": "void_tip_doze_after_strips",
+   "fieldtype": "Int",
+   "label": "Doze After Strips"
+  },
+  {
+   "fieldname": "section_break_cutoff",
+   "fieldtype": "Section Break",
+   "label": "Seam Cut-off"
+  },
+  {
+   "fieldname": "cutoff_by",
+   "fieldtype": "Select",
+   "label": "Cut-off By",
+   "options": "\nblock\ncell"
+  },
+  {
+   "fieldname": "column_break_cutoff",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "cutoff_stop",
+   "fieldtype": "Check",
+   "label": "Stop Mining Below Thin Seams"
+  },
+  {
+   "fieldname": "section_break_crs",
+   "fieldtype": "Section Break",
+   "label": "Coordinate System"
+  },
+  {
+   "fieldname": "crs_preset",
+   "fieldtype": "Data",
+   "label": "Preset"
+  },
+  {
+   "fieldname": "crs_axis",
+   "fieldtype": "Select",
+   "label": "Axes",
+   "options": "\nEN\nWS"
+  },
+  {
+   "fieldname": "column_break_crs",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "crs_proj4",
+   "fieldtype": "Small Text",
+   "label": "Proj4 Definition"
+  },
+  {
+   "fieldname": "section_break_grid",
+   "fieldtype": "Section Break",
+   "label": "Terrain Grid"
+  },
+  {
+   "fieldname": "grid_x0",
+   "fieldtype": "Float",
+   "label": "Origin X",
+   "read_only": 1
+  },
+  {
+   "fieldname": "grid_y0",
+   "fieldtype": "Float",
+   "label": "Origin Y",
+   "read_only": 1
+  },
+  {
+   "fieldname": "grid_cell",
+   "fieldtype": "Float",
+   "label": "Cell Size (m)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_grid",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "grid_nx",
+   "fieldtype": "Int",
+   "label": "Columns",
+   "read_only": 1
+  },
+  {
+   "fieldname": "grid_ny",
+   "fieldtype": "Int",
+   "label": "Rows",
+   "read_only": 1
+  },
+  {
+   "fieldname": "grid_file",
+   "fieldtype": "Attach",
+   "label": "Surface Grid Data",
+   "read_only": 1,
+   "no_copy": 1,
+   "description": "All surfaces resampled to the grid (built by the simulator)"
+  },
+  {
+   "fieldname": "section_break_imagery",
+   "fieldtype": "Section Break",
+   "label": "Imagery & View",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "imagery_provider",
+   "fieldtype": "Data",
+   "label": "Imagery Provider"
+  },
+  {
+   "fieldname": "imagery_opacity",
+   "fieldtype": "Float",
+   "label": "Imagery Opacity"
+  },
+  {
+   "fieldname": "vertical_exaggeration",
+   "fieldtype": "Float",
+   "label": "Vertical Exaggeration"
+  },
+  {
+   "fieldname": "column_break_imagery",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "imagery_google_key",
+   "fieldtype": "Data",
+   "label": "Google Map Tiles Key"
+  },
+  {
+   "fieldname": "imagery_custom_url",
+   "fieldtype": "Data",
+   "label": "Custom Tile URL"
+  },
+  {
+   "fieldname": "imagery_file_name",
+   "fieldtype": "Data",
+   "label": "Image File Name"
+  },
+  {
+   "fieldname": "imagery_file",
+   "fieldtype": "Attach",
+   "label": "Satellite Image Data",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "tab_geology",
+   "fieldtype": "Tab Break",
+   "label": "Geology"
+  },
+  {
+   "fieldname": "surfaces",
+   "fieldtype": "Table",
+   "label": "Surfaces",
+   "options": "Mining Simulation Surface"
+  },
+  {
+   "fieldname": "layers",
+   "fieldtype": "Table",
+   "label": "Layers",
+   "options": "Mining Simulation Layer",
+   "description": "Top to bottom"
+  },
+  {
+   "fieldname": "tab_blocks",
+   "fieldtype": "Tab Break",
+   "label": "Blocks"
+  },
+  {
+   "fieldname": "id_column",
+   "fieldtype": "Data",
+   "label": "Block ID Attribute"
+  },
+  {
+   "fieldname": "blocks",
+   "fieldtype": "Table",
+   "label": "Blocks",
+   "options": "Mining Simulation Block"
+  },
+  {
+   "fieldname": "section_break_attributes",
+   "fieldtype": "Section Break",
+   "label": "Block Attributes",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "attribute_columns",
+   "fieldtype": "Code",
+   "label": "Attribute Columns",
+   "options": "JSON"
+  },
+  {
+   "fieldname": "attribute_report",
+   "fieldtype": "Code",
+   "label": "Attributes in the Monthly Report",
+   "options": "JSON"
+  },
+  {
+   "fieldname": "source_json",
+   "fieldtype": "Code",
+   "label": "Import Source",
+   "options": "JSON"
+  },
+  {
+   "fieldname": "tab_sequence",
+   "fieldtype": "Tab Break",
+   "label": "Sequence"
+  },
+  {
+   "fieldname": "pits",
+   "fieldtype": "Table",
+   "label": "Pits",
+   "options": "Mining Simulation Pit"
+  },
+  {
+   "fieldname": "activities",
+   "fieldtype": "Table",
+   "label": "Activities",
+   "options": "Mining Simulation Activity"
+  },
+  {
+   "fieldname": "limits",
+   "fieldtype": "Table",
+   "label": "Depth Limits",
+   "options": "Mining Simulation Limit"
+  },
+  {
+   "fieldname": "tab_fleet",
+   "fieldtype": "Tab Break",
+   "label": "Fleet"
+  },
+  {
+   "fieldname": "fleet",
+   "fieldtype": "Table",
+   "label": "Fleet",
+   "options": "Mining Simulation Equipment"
+  },
+  {
+   "fieldname": "tab_roads_dumps",
+   "fieldtype": "Tab Break",
+   "label": "Roads & Dumps"
+  },
+  {
+   "fieldname": "roads",
+   "fieldtype": "Table",
+   "label": "Roads",
+   "options": "Mining Simulation Road"
+  },
+  {
+   "fieldname": "dumps",
+   "fieldtype": "Table",
+   "label": "Dumps",
+   "options": "Mining Simulation Dump"
+  },
+  {
+   "fieldname": "tab_overlays",
+   "fieldtype": "Tab Break",
+   "label": "Overlays"
+  },
+  {
+   "fieldname": "overlays",
+   "fieldtype": "Table",
+   "label": "Overlays & Keep-out Zones",
+   "options": "Mining Simulation Overlay"
+  },
+  {
+   "fieldname": "json_meta",
+   "fieldtype": "Long Text",
+   "label": "JSON Meta",
+   "hidden": 1,
+   "read_only": 1,
+   "no_copy": 0,
+   "description": "Keys, nulls and unmapped values of the simulator object (keeps import/export lossless)"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-08 08:53:51.972282",
+ "modified_by": "Administrator",
+ "module": "Geo Planning",
+ "name": "Mining Simulation Project",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Production Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Production User",
+   "share": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0,
+ "autoname": "field:simulation_id",
+ "naming_rule": "By fieldname",
+ "title_field": "project_name",
+ "show_title_field_in_link": 1,
+ "search_fields": "project_name,geo_project",
+ "description": "A mine plan for the Mining Simulation page: geology, blocks, mining sequence, fleet, roads and dumps"
+}

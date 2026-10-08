@@ -112,7 +112,8 @@ frappe.pages["mining-schedule-simu"].on_page_load = function(wrapper) {
     $("#reset_btn").on("click", reset);
     c.stack_item.$input.on("change", applyStackItem);
 
-    initThree();
+    // three.js is not on every desk page: load it for this page
+    frappe.require("production_dependencies.bundle.js", initThree);
 
     function loading(msg){ $("#mss_loading").text(msg || "Loading...").css("display","flex"); }
     function done(){ $("#mss_loading").hide(); }

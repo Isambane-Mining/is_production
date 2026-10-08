@@ -1,0 +1,122 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-10-08 08:53:51.972282",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "road_name",
+  "road_type",
+  "road_width",
+  "gradient",
+  "start_elevation",
+  "end_elevation",
+  "column_break_road",
+  "road_id",
+  "leave_in_blocks",
+  "follows_pit",
+  "spoil_dump_id",
+  "points",
+  "json_meta"
+ ],
+ "fields": [
+  {
+   "fieldname": "road_name",
+   "fieldtype": "Data",
+   "label": "Road",
+   "in_list_view": 1,
+   "reqd": 1,
+   "columns": 3
+  },
+  {
+   "fieldname": "road_type",
+   "fieldtype": "Select",
+   "label": "Type",
+   "options": "\nramp\nhaul",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "road_width",
+   "fieldtype": "Float",
+   "label": "Width (m)",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "gradient",
+   "fieldtype": "Float",
+   "label": "Gradient (%)",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "start_elevation",
+   "fieldtype": "Float",
+   "label": "Start Elevation",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "end_elevation",
+   "fieldtype": "Float",
+   "label": "End Elevation",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "column_break_road",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "road_id",
+   "fieldtype": "Data",
+   "label": "Road ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "leave_in_blocks",
+   "fieldtype": "Check",
+   "label": "Leave Ramp in Blocks"
+  },
+  {
+   "fieldname": "follows_pit",
+   "fieldtype": "Check",
+   "label": "Follows the Pit"
+  },
+  {
+   "fieldname": "spoil_dump_id",
+   "fieldtype": "Data",
+   "label": "Spoil Dump ID"
+  },
+  {
+   "fieldname": "points",
+   "fieldtype": "Code",
+   "label": "Centre Line Points",
+   "options": "JSON"
+  },
+  {
+   "fieldname": "json_meta",
+   "fieldtype": "Long Text",
+   "label": "JSON Meta",
+   "hidden": 1,
+   "read_only": 1,
+   "no_copy": 0,
+   "description": "Keys, nulls and unmapped values of the simulator object (keeps import/export lossless)"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-08 08:53:51.972282",
+ "modified_by": "Administrator",
+ "module": "Geo Planning",
+ "name": "Mining Simulation Road",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0,
+ "istable": 1
+}

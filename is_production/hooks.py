@@ -38,8 +38,9 @@ override_whitelisted_methods = {
 # ------------------------------------------------------------------------
 
 # Load Sortable.js from CDN across all Desk pages
+# production_dependencies.bundle.js (three.js, SortableJS) is loaded with frappe.require by the
+# pages and forms that use it, not on every desk page
 app_include_js = [
-    "production_dependencies.bundle.js",
     "/assets/is_production/js/hourly_production_ui.js"
 ]
 
@@ -47,7 +48,6 @@ app_include_js = [
 # Include doctype-specific JS
 # ------------------------------------------------------------------------
 
-# Load your custom form script only for Jorrie Test Nested
 doctype_js = {
     "Monthly Production Planning": "production/doctype/monthly_production_planning/monthly_production_planning.js"
 }

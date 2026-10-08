@@ -1,0 +1,29 @@
+{
+ "content": null,
+ "creation": "2026-10-08 08:57:15.835852",
+ "docstatus": 0,
+ "doctype": "Page",
+ "idx": 0,
+ "modified": "2026-10-08 08:57:15.835852",
+ "modified_by": "Administrator",
+ "module": "Geo Planning",
+ "name": "mining-simulation",
+ "owner": "Administrator",
+ "page_name": "mining-simulation",
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Production Manager"
+  },
+  {
+   "role": "Production User"
+  }
+ ],
+ "script": null,
+ "standard": "Yes",
+ "style": null,
+ "system_page": 0,
+ "title": "Mining Simulation"
+}

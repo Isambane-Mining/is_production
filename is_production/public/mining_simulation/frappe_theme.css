@@ -1,0 +1,169 @@
+/* Frappe theme for the Mining Simulation page.
+
+   The simulator styles itself through design tokens on :root (--bg, --panel, --ink, --accent,
+   --view, the fonts, ...). Here those tokens take Frappe's own theme variables, which
+   frappe_theme.js loads from the desk stylesheet, so the page follows the user's Frappe theme:
+   colours, fonts, borders and the 3D viewport, light or dark.
+
+   Her overlays on the 3D view use fixed dark colours; they are restyled below with the same
+   selectors. The simulator's own file is not changed, and its Share copies keep its own look.
+
+   Specificity: :root[data-theme=...] (0,2,0) loaded after her style wins over her :root,
+   :root[data-theme="dark"] and prefers-color-scheme rules. frappe_theme.js always sets
+   data-theme. */
+
+:root[data-theme="light"],
+:root[data-theme="dark"] {
+	--bg: var(--surface-gray-1);
+	--panel: var(--bg-color);
+	--field: var(--control-bg);
+	--ink: var(--text-color);
+	--ink-2: var(--text-muted);
+	--muted: var(--text-light);
+	--line: var(--dark-border-color);
+	--line-2: var(--border-color);
+	--accent: var(--ink-gray-9);
+	--accent-ink: var(--surface-base);
+	--accent-soft: var(--surface-gray-3);
+	--view: var(--surface-gray-2);
+	--view-2: var(--surface-gray-3);
+	--view-ink: var(--text-color);
+	--view-muted: var(--text-light);
+	--chip: var(--subtle-fg);
+	--ok: var(--alert-text-success);
+	--warn: var(--alert-text-warning);
+	--bad: var(--alert-text-danger);
+	--grid: var(--border-color);
+	--axis: var(--dark-border-color);
+	--shadow: var(--elevation-sm);
+	--font-ui: var(--font-stack);
+	--font-cond: var(--font-stack);
+	--font-mono: var(--font-family-monospace);
+	--r: 8px;
+	--fs-xs: var(--text-xs);
+	--fs-s: var(--text-sm);
+	--fs-m: var(--text-base);
+	--fs-l: var(--text-lg);
+	--fs-xl: var(--text-2xl);
+	/* overlays on the 3D view */
+	--overlay-bg: color-mix(in srgb, var(--bg-color) 92%, transparent);
+	--overlay-border: var(--border-color);
+	--overlay-hover: var(--surface-gray-3);
+}
+:root[data-theme="light"] {
+	color-scheme: light;
+}
+:root[data-theme="dark"] {
+	color-scheme: dark;
+}
+
+html.frappe-theme-loading body {
+	visibility: hidden;
+}
+
+/* ---------- toolbars, pop-ups and panels over the 3D view ---------- */
+:root[data-theme] .vbar,
+:root[data-theme] .slice-pop,
+:root[data-theme] .layers-pop,
+:root[data-theme] .legend3d,
+:root[data-theme] .coords,
+:root[data-theme] .sat-note,
+:root[data-theme] .busy .box {
+	background: var(--overlay-bg);
+	border: 1px solid var(--overlay-border);
+	box-shadow: var(--shadow);
+	color: var(--text-color);
+}
+:root[data-theme] .vbar button:hover,
+:root[data-theme] .slice-pop .sm-btn:hover {
+	background: var(--overlay-hover);
+}
+:root[data-theme] .vbar button.on,
+:root[data-theme] .slice-pop .seg button.on,
+:root[data-theme] .slice-pop .sm-btn.on {
+	color: var(--accent-ink);
+}
+:root[data-theme] .vbar .sep {
+	background: var(--overlay-border);
+}
+:root[data-theme] .vbar select,
+:root[data-theme] .slice-pop .seg,
+:root[data-theme] .slice-pop .seg button + button,
+:root[data-theme] .slice-pop .sm-btn {
+	border-color: var(--dark-border-color);
+}
+:root[data-theme] .vbar select option {
+	background: var(--bg-color);
+	color: var(--text-color);
+}
+:root[data-theme] .slice-pop .sm-btn,
+:root[data-theme] .slice-pop .sm-btn:disabled {
+	background: var(--control-bg);
+}
+:root[data-theme] .sat-note a {
+	color: var(--text-color);
+	text-decoration: underline;
+}
+
+/* status bar over the view while drawing */
+:root[data-theme] .hud {
+	color: var(--accent-ink);
+}
+:root[data-theme] .hud .btn {
+	background: color-mix(in srgb, var(--accent-ink) 18%, transparent);
+	color: var(--accent-ink);
+}
+:root[data-theme] .hud .btn:hover {
+	background: color-mix(in srgb, var(--accent-ink) 30%, transparent);
+}
+
+/* working overlay */
+:root[data-theme] .busy {
+	background: color-mix(in srgb, var(--bg-color) 45%, transparent);
+	color: var(--text-color);
+}
+:root[data-theme] .busy .bar {
+	background: var(--surface-gray-3);
+}
+
+/* message icons and dialog buttons on status colours */
+:root[data-theme] .msg.warn .ic,
+:root[data-theme] .msg.error .ic,
+:root[data-theme] .msg.info .ic {
+	color: var(--bg-color);
+}
+
+/* ---------- labels on the model ---------- */
+:root[data-theme] .lbl3d:not(.toe) {
+	color: var(--text-color);
+	text-shadow:
+		0 0 3px var(--bg-color),
+		0 0 2px var(--bg-color),
+		0 0 1px var(--bg-color);
+}
+:root[data-theme] .lbl3d.seq,
+:root[data-theme] .lbl3d.pit {
+	background: var(--overlay-bg);
+	color: var(--text-color);
+	text-shadow: none;
+}
+:root[data-theme] .lbl3d.pit {
+	border-color: var(--text-color);
+}
+:root[data-theme] .lbl3d.dump {
+	color: var(--text-color);
+}
+:root[data-theme] .lbl3d.limit {
+	background: color-mix(in srgb, var(--bg-color) 80%, #7c5cff);
+	color: var(--text-color);
+}
+
+/* ---------- measuring: keep the yellow tool colour, on themed labels ---------- */
+:root[data-theme] .mlabel {
+	background: var(--overlay-bg);
+	color: var(--text-color);
+	border-color: #e0b400;
+}
+:root[data-theme] .meas-pop .mgrid .v.big {
+	color: var(--text-color);
+}

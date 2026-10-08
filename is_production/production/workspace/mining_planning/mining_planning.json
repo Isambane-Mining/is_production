@@ -1,0 +1,76 @@
+{
+ "charts": [],
+ "content": "[{\"id\": \"4ceac6f80f\", \"type\": \"header\", \"data\": {\"text\": \"\\u003cspan class=\\\"h4\\\"\\u003e\\u003cb\\u003eMining Planning\\u003c/b\\u003e\\u003c/span\\u003e\", \"col\": 12}}, {\"id\": \"55cac2bff2\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Mining Simulation\", \"col\": 3}}, {\"id\": \"a8be43518a\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Simulation Projects\", \"col\": 3}}, {\"id\": \"88a6cdafec\", \"type\": \"spacer\", \"data\": {\"col\": 12}}, {\"id\": \"ff5498d6df\", \"type\": \"card\", \"data\": {\"card_name\": \"Mining Simulation\", \"col\": 4}}]",
+ "creation": "2026-10-08 12:47:50.791989",
+ "custom_blocks": [],
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "hide_custom": 1,
+ "icon": "pickaxe",
+ "idx": 0,
+ "indicator_color": "orange",
+ "is_hidden": 0,
+ "label": "Mining Planning",
+ "link_type": "DocType",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Mining Simulation",
+   "link_count": 2,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Mining Simulation",
+   "link_count": 0,
+   "link_to": "mining-simulation",
+   "link_type": "Page",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Mining Simulation Project",
+   "link_count": 0,
+   "link_to": "Mining Simulation Project",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-10-08 12:48:29.398854",
+ "modified_by": "Administrator",
+ "module": "Production",
+ "name": "Mining Planning",
+ "number_cards": [],
+ "owner": "Administrator",
+ "parent_page": "Production",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 46.0,
+ "shortcuts": [
+  {
+   "color": "Orange",
+   "doc_view": "",
+   "label": "Mining Simulation",
+   "link_to": "mining-simulation",
+   "type": "Page"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Simulation Projects",
+   "link_to": "Mining Simulation Project",
+   "type": "DocType"
+  }
+ ],
+ "standard": 1,
+ "title": "Mining Planning",
+ "type": "Workspace"
+}

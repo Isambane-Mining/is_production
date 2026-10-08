@@ -1,0 +1,188 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-10-08 08:53:51.972282",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "activity_name",
+  "mining_method",
+  "destination_mode",
+  "start_date",
+  "layer_id",
+  "pit_id",
+  "color",
+  "column_break_activity",
+  "activity_id",
+  "lookahead",
+  "push_bearing",
+  "max_rate",
+  "doze_share",
+  "mix_mode",
+  "shared_fleet_of",
+  "section_break_dependency",
+  "depends_on",
+  "dependency_lead",
+  "dependency_unit",
+  "section_break_path",
+  "destinations",
+  "block_path",
+  "json_meta"
+ ],
+ "fields": [
+  {
+   "fieldname": "activity_name",
+   "fieldtype": "Data",
+   "label": "Activity",
+   "in_list_view": 1,
+   "reqd": 1,
+   "columns": 3
+  },
+  {
+   "fieldname": "mining_method",
+   "fieldtype": "Select",
+   "label": "Method",
+   "options": "\ntruck_shovel\ndozer_push\nmixed",
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "destination_mode",
+   "fieldtype": "Select",
+   "label": "Destination",
+   "options": "\ndumps\nvoid",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "start_date",
+   "fieldtype": "Date",
+   "label": "Start Date",
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "layer_id",
+   "fieldtype": "Data",
+   "label": "Layer ID"
+  },
+  {
+   "fieldname": "pit_id",
+   "fieldtype": "Data",
+   "label": "Pit ID"
+  },
+  {
+   "fieldname": "color",
+   "fieldtype": "Color",
+   "label": "Colour"
+  },
+  {
+   "fieldname": "column_break_activity",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "activity_id",
+   "fieldtype": "Data",
+   "label": "Activity ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "lookahead",
+   "fieldtype": "Int",
+   "label": "Lookahead (blocks)"
+  },
+  {
+   "fieldname": "push_bearing",
+   "fieldtype": "Float",
+   "label": "Push Bearing (°)"
+  },
+  {
+   "fieldname": "max_rate",
+   "fieldtype": "Float",
+   "label": "Maximum Rate",
+   "description": "0 = no limit"
+  },
+  {
+   "fieldname": "doze_share",
+   "fieldtype": "Float",
+   "label": "Dozer Share (%)",
+   "depends_on": "eval:doc.mining_method=='mixed'"
+  },
+  {
+   "fieldname": "mix_mode",
+   "fieldtype": "Select",
+   "label": "Mixed Mode",
+   "options": "\ntogether\nbackup",
+   "depends_on": "eval:doc.mining_method=='mixed'"
+  },
+  {
+   "fieldname": "shared_fleet_of",
+   "fieldtype": "Data",
+   "label": "Uses Fleet Of (Activity ID)"
+  },
+  {
+   "fieldname": "section_break_dependency",
+   "fieldtype": "Section Break",
+   "label": "Dependency"
+  },
+  {
+   "fieldname": "depends_on",
+   "fieldtype": "Data",
+   "label": "Depends On",
+   "description": "'below' or an Activity ID"
+  },
+  {
+   "fieldname": "dependency_lead",
+   "fieldtype": "Int",
+   "label": "Maximum Lead"
+  },
+  {
+   "fieldname": "dependency_unit",
+   "fieldtype": "Select",
+   "label": "Lead Unit",
+   "options": "\nstrip\nblock"
+  },
+  {
+   "fieldname": "section_break_path",
+   "fieldtype": "Section Break",
+   "label": "Path & Dumps"
+  },
+  {
+   "fieldname": "destinations",
+   "fieldtype": "Code",
+   "label": "Dump Options",
+   "options": "JSON",
+   "description": "[{dump, from}] — each dump comes into use on its date"
+  },
+  {
+   "fieldname": "block_path",
+   "fieldtype": "Code",
+   "label": "Block Path",
+   "options": "JSON",
+   "description": "Block IDs in mining order"
+  },
+  {
+   "fieldname": "json_meta",
+   "fieldtype": "Long Text",
+   "label": "JSON Meta",
+   "hidden": 1,
+   "read_only": 1,
+   "no_copy": 0,
+   "description": "Keys, nulls and unmapped values of the simulator object (keeps import/export lossless)"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-08 08:53:51.972282",
+ "modified_by": "Administrator",
+ "module": "Geo Planning",
+ "name": "Mining Simulation Activity",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0,
+ "istable": 1
+}
