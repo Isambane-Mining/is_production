@@ -460,6 +460,13 @@ frappe.pages["geo-seam-3d-viewer"].on_page_load = function(wrapper) {
 	}
 
 	function ensure_three_loaded() {
+		// three.js is not on every desk page: load it for this page
+		return new Promise((resolve) => frappe.require("production_dependencies.bundle.js", resolve)).then(
+			use_loaded_three
+		);
+	}
+
+	function use_loaded_three() {
 		THREE = is_production && is_production.THREE;
 		OrbitControls = is_production && is_production.OrbitControls;
 		STLExporter = is_production && is_production.STLExporter;

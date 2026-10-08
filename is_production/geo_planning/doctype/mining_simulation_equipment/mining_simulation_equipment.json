@@ -1,0 +1,201 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-10-08 08:53:51.972282",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "equipment_name",
+  "equipment_kind",
+  "activity_id",
+  "qty",
+  "availability",
+  "utilisation",
+  "column_break_equipment",
+  "equipment_id",
+  "production_mode",
+  "production_rate",
+  "section_break_excavator",
+  "bucket_size",
+  "bucket_fill",
+  "cycle_time",
+  "section_break_truck",
+  "payload",
+  "body_volume",
+  "spot_time",
+  "dump_time",
+  "column_break_truck",
+  "speed_loaded_flat",
+  "speed_loaded_ramp",
+  "speed_empty_flat",
+  "speed_empty_ramp",
+  "json_meta"
+ ],
+ "fields": [
+  {
+   "fieldname": "equipment_name",
+   "fieldtype": "Data",
+   "label": "Equipment",
+   "in_list_view": 1,
+   "reqd": 1,
+   "columns": 3
+  },
+  {
+   "fieldname": "equipment_kind",
+   "fieldtype": "Select",
+   "label": "Kind",
+   "options": "\nexcavator\ntruck\ndozer",
+   "in_list_view": 1,
+   "reqd": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "activity_id",
+   "fieldtype": "Data",
+   "label": "Activity ID",
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "qty",
+   "fieldtype": "Float",
+   "label": "Quantity",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "availability",
+   "fieldtype": "Float",
+   "label": "Availability",
+   "in_list_view": 1,
+   "columns": 1,
+   "description": "Fraction, e.g. 0.85"
+  },
+  {
+   "fieldname": "utilisation",
+   "fieldtype": "Float",
+   "label": "Utilisation",
+   "in_list_view": 1,
+   "columns": 1,
+   "description": "Fraction, e.g. 0.8"
+  },
+  {
+   "fieldname": "column_break_equipment",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "equipment_id",
+   "fieldtype": "Data",
+   "label": "Equipment ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "production_mode",
+   "fieldtype": "Select",
+   "label": "Production",
+   "options": "\ncalc\ndirect",
+   "depends_on": "eval:doc.equipment_kind=='excavator'",
+   "description": "calc: bucket × cycle; direct: the rate below"
+  },
+  {
+   "fieldname": "production_rate",
+   "fieldtype": "Float",
+   "label": "Production Rate (bcm/h)",
+   "depends_on": "eval:doc.equipment_kind!='truck'"
+  },
+  {
+   "fieldname": "section_break_excavator",
+   "fieldtype": "Section Break",
+   "label": "Excavator",
+   "depends_on": "eval:doc.equipment_kind=='excavator'"
+  },
+  {
+   "fieldname": "bucket_size",
+   "fieldtype": "Float",
+   "label": "Bucket (m³)"
+  },
+  {
+   "fieldname": "bucket_fill",
+   "fieldtype": "Float",
+   "label": "Bucket Fill Factor"
+  },
+  {
+   "fieldname": "cycle_time",
+   "fieldtype": "Float",
+   "label": "Cycle Time (s)"
+  },
+  {
+   "fieldname": "section_break_truck",
+   "fieldtype": "Section Break",
+   "label": "Truck",
+   "depends_on": "eval:doc.equipment_kind=='truck'"
+  },
+  {
+   "fieldname": "payload",
+   "fieldtype": "Float",
+   "label": "Payload (t)"
+  },
+  {
+   "fieldname": "body_volume",
+   "fieldtype": "Float",
+   "label": "Body Volume (m³)"
+  },
+  {
+   "fieldname": "spot_time",
+   "fieldtype": "Float",
+   "label": "Spot Time (min)"
+  },
+  {
+   "fieldname": "dump_time",
+   "fieldtype": "Float",
+   "label": "Dump Time (min)"
+  },
+  {
+   "fieldname": "column_break_truck",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "speed_loaded_flat",
+   "fieldtype": "Float",
+   "label": "Loaded Speed, Flat (km/h)"
+  },
+  {
+   "fieldname": "speed_loaded_ramp",
+   "fieldtype": "Float",
+   "label": "Loaded Speed, Ramp (km/h)"
+  },
+  {
+   "fieldname": "speed_empty_flat",
+   "fieldtype": "Float",
+   "label": "Empty Speed, Flat (km/h)"
+  },
+  {
+   "fieldname": "speed_empty_ramp",
+   "fieldtype": "Float",
+   "label": "Empty Speed, Ramp (km/h)"
+  },
+  {
+   "fieldname": "json_meta",
+   "fieldtype": "Long Text",
+   "label": "JSON Meta",
+   "hidden": 1,
+   "read_only": 1,
+   "no_copy": 0,
+   "description": "Keys, nulls and unmapped values of the simulator object (keeps import/export lossless)"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-08 08:53:51.972282",
+ "modified_by": "Administrator",
+ "module": "Geo Planning",
+ "name": "Mining Simulation Equipment",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0,
+ "istable": 1
+}

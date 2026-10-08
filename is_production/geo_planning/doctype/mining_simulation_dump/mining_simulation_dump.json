@@ -1,0 +1,122 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-10-08 08:53:51.972282",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "dump_name",
+  "dump_kind",
+  "max_height",
+  "lift_height",
+  "face_angle",
+  "column_break_dump",
+  "dump_id",
+  "crest_elevation",
+  "fill_to",
+  "color",
+  "entry_point",
+  "points",
+  "json_meta"
+ ],
+ "fields": [
+  {
+   "fieldname": "dump_name",
+   "fieldtype": "Data",
+   "label": "Dump",
+   "in_list_view": 1,
+   "reqd": 1,
+   "columns": 3
+  },
+  {
+   "fieldname": "dump_kind",
+   "fieldtype": "Select",
+   "label": "Kind",
+   "options": "\ntopsoil\nwaste\nrom",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "max_height",
+   "fieldtype": "Float",
+   "label": "Maximum Height (m)",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "lift_height",
+   "fieldtype": "Float",
+   "label": "Lift Height (m)",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "face_angle",
+   "fieldtype": "Float",
+   "label": "Face Angle (°)",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "column_break_dump",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "dump_id",
+   "fieldtype": "Data",
+   "label": "Dump ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "crest_elevation",
+   "fieldtype": "Float",
+   "label": "Crest Elevation"
+  },
+  {
+   "fieldname": "fill_to",
+   "fieldtype": "Select",
+   "label": "Fill To",
+   "options": "\ncrest\ntopo"
+  },
+  {
+   "fieldname": "color",
+   "fieldtype": "Color",
+   "label": "Colour"
+  },
+  {
+   "fieldname": "entry_point",
+   "fieldtype": "Code",
+   "label": "Entry Point",
+   "options": "JSON"
+  },
+  {
+   "fieldname": "points",
+   "fieldtype": "Code",
+   "label": "Footprint Points",
+   "options": "JSON"
+  },
+  {
+   "fieldname": "json_meta",
+   "fieldtype": "Long Text",
+   "label": "JSON Meta",
+   "hidden": 1,
+   "read_only": 1,
+   "no_copy": 0,
+   "description": "Keys, nulls and unmapped values of the simulator object (keeps import/export lossless)"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-08 08:53:51.972282",
+ "modified_by": "Administrator",
+ "module": "Geo Planning",
+ "name": "Mining Simulation Dump",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0,
+ "istable": 1
+}

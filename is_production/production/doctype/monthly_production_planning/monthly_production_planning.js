@@ -1312,9 +1312,12 @@ function moveTruckBackToSpare(frm, truckId) {
 }
 
 function enableDragAndDrop(frm) {
-  enableTruckDragAndDrop(frm);
-  enableExcavatorDragAndDrop(frm);
-  enableDozerDragAndDrop(frm);
+  // SortableJS comes with production_dependencies.bundle.js, which is not on every desk page
+  frappe.require("production_dependencies.bundle.js", () => {
+    enableTruckDragAndDrop(frm);
+    enableExcavatorDragAndDrop(frm);
+    enableDozerDragAndDrop(frm);
+  });
 }
 
 function enableTruckDragAndDrop(frm) {

@@ -1,7 +1,6 @@
 {
- "app": "is_production",
  "charts": [],
- "content": "[{\"id\":\"70CtpqZyzz\",\"type\":\"header\",\"data\":{\"text\":\"<span style=\\\"font-size: 16px;\\\">Technical Mine Planning</span>\",\"col\":12}},{\"id\":\"QXdmj5gd34\",\"type\":\"card\",\"data\":{\"card_name\":\"Define Project\",\"col\":4}},{\"id\":\"jxCvbfNGKY\",\"type\":\"card\",\"data\":{\"card_name\":\"Importing Tool\",\"col\":4}},{\"id\":\"NlrnEamKxP\",\"type\":\"card\",\"data\":{\"card_name\":\"Geology Points\",\"col\":4}},{\"id\":\"QY1pso7lwE\",\"type\":\"card\",\"data\":{\"card_name\":\"Pit Boundary Points\",\"col\":4}},{\"id\":\"mHhy6PGlWm\",\"type\":\"card\",\"data\":{\"card_name\":\"Calculations\",\"col\":4}},{\"id\":\"vuxbIpMew-\",\"type\":\"card\",\"data\":{\"card_name\":\"View Data Before Creating Blocks\",\"col\":4}},{\"id\":\"qAwGvERmoC\",\"type\":\"card\",\"data\":{\"card_name\":\"Create Pit Layout\",\"col\":4}},{\"id\":\"lzuNm7KgY9\",\"type\":\"card\",\"data\":{\"card_name\":\"Add Geology\",\"col\":4}},{\"id\":\"XcPdPTQuUx\",\"type\":\"card\",\"data\":{\"card_name\":\"Define Area Material\",\"col\":4}},{\"id\":\"ntxwCaRHaI\",\"type\":\"card\",\"data\":{\"card_name\":\"Mining Blocks\",\"col\":4}},{\"id\":\"6BHUTak2TV\",\"type\":\"card\",\"data\":{\"card_name\":\"View Block Information\",\"col\":4}},{\"id\":\"-UR6js5LEl\",\"type\":\"card\",\"data\":{\"card_name\":\"Sequence and Block Selection\",\"col\":4}},{\"id\":\"5SPfmWwL79\",\"type\":\"card\",\"data\":{\"card_name\":\"Scheduling\",\"col\":4}},{\"id\":\"NtWPPDP0Bg\",\"type\":\"card\",\"data\":{\"card_name\":\"Scheduling Comparisons\",\"col\":4}},{\"id\":\"I-tsIX6Vdz\",\"type\":\"card\",\"data\":{\"card_name\":\"Schedule Results\",\"col\":4}},{\"id\":\"DabEwSfup6\",\"type\":\"card\",\"data\":{\"card_name\":\"Additional\",\"col\":4}},{\"id\":\"RFtb9yDRnr\",\"type\":\"card\",\"data\":{\"card_name\":\"Cut and Fill\",\"col\":4}},{\"id\":\"SD8tXi6UgN\",\"type\":\"card\",\"data\":{\"card_name\":\"Setup-1\",\"col\":4}},{\"id\":\"OGciW76ubY\",\"type\":\"card\",\"data\":{\"card_name\":\"Setup-2\",\"col\":4}}]",
+ "content": "[{\"id\": \"70CtpqZyzz\", \"type\": \"header\", \"data\": {\"text\": \"\\u003cspan style=\\\"font-size:16px\\\"\\u003eTechnical Mine Planning\\u003c/span\\u003e\", \"col\": 12}}, {\"id\": \"QXdmj5gd34\", \"type\": \"card\", \"data\": {\"card_name\": \"Define Project\", \"col\": 4}}, {\"id\": \"jxCvbfNGKY\", \"type\": \"card\", \"data\": {\"card_name\": \"Importing Tool\", \"col\": 4}}, {\"id\": \"NlrnEamKxP\", \"type\": \"card\", \"data\": {\"card_name\": \"Geology Points\", \"col\": 4}}, {\"id\": \"QY1pso7lwE\", \"type\": \"card\", \"data\": {\"card_name\": \"Pit Boundary Points\", \"col\": 4}}, {\"id\": \"mHhy6PGlWm\", \"type\": \"card\", \"data\": {\"card_name\": \"Calculations\", \"col\": 4}}, {\"id\": \"vuxbIpMew-\", \"type\": \"card\", \"data\": {\"card_name\": \"View Data Before Creating Blocks\", \"col\": 4}}, {\"id\": \"qAwGvERmoC\", \"type\": \"card\", \"data\": {\"card_name\": \"Create Pit Layout\", \"col\": 4}}, {\"id\": \"lzuNm7KgY9\", \"type\": \"card\", \"data\": {\"card_name\": \"Add Geology\", \"col\": 4}}, {\"id\": \"XcPdPTQuUx\", \"type\": \"card\", \"data\": {\"card_name\": \"Define Area Material\", \"col\": 4}}, {\"id\": \"ntxwCaRHaI\", \"type\": \"card\", \"data\": {\"card_name\": \"Mining Blocks\", \"col\": 4}}, {\"id\": \"6BHUTak2TV\", \"type\": \"card\", \"data\": {\"card_name\": \"View Block Information\", \"col\": 4}}, {\"id\": \"-UR6js5LEl\", \"type\": \"card\", \"data\": {\"card_name\": \"Sequence and Block Selection\", \"col\": 4}}, {\"id\": \"5SPfmWwL79\", \"type\": \"card\", \"data\": {\"card_name\": \"Scheduling\", \"col\": 4}}, {\"id\": \"NtWPPDP0Bg\", \"type\": \"card\", \"data\": {\"card_name\": \"Scheduling Comparisons\", \"col\": 4}}, {\"id\": \"I-tsIX6Vdz\", \"type\": \"card\", \"data\": {\"card_name\": \"Schedule Results\", \"col\": 4}}, {\"id\": \"DabEwSfup6\", \"type\": \"card\", \"data\": {\"card_name\": \"Additional\", \"col\": 4}}, {\"id\": \"RFtb9yDRnr\", \"type\": \"card\", \"data\": {\"card_name\": \"Cut and Fill\", \"col\": 4}}, {\"id\": \"SD8tXi6UgN\", \"type\": \"card\", \"data\": {\"card_name\": \"Setup-1\", \"col\": 4}}, {\"id\": \"OGciW76ubY\", \"type\": \"card\", \"data\": {\"card_name\": \"Setup-2\", \"col\": 4}}]",
  "creation": "2025-02-19 13:48:23.174564",
  "custom_blocks": [],
  "docstatus": 0,
@@ -696,7 +695,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-07-15 14:13:39.456868",
+ "modified": "2026-10-08 12:47:50.972982",
  "modified_by": "Administrator",
  "module": "Production",
  "name": "Survey Data",
@@ -708,6 +707,7 @@
  "roles": [],
  "sequence_id": 45.0,
  "shortcuts": [],
+ "standard": 1,
  "title": "Survey Data",
  "type": "Workspace"
 }
