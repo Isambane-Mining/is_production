@@ -8,7 +8,7 @@ from frappe.utils import get_datetime, now_datetime
 
 from .production_summary_sources import load_snapshot
 from .production_summary_planning import get_covering_plan
-from ..production_summaries.periods import make_period
+from .production_summary_periods import make_period
 
 DOCTYPES = {
     'hourly': 'Hourly Production Summary',

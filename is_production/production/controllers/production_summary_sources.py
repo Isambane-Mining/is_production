@@ -2,7 +2,7 @@
 from collections import defaultdict
 
 from .production_summary_planning import get_covering_plan
-from ..production_summaries.calculations import build_snapshot
+from .production_summary_calculations import build_snapshot
 
 
 def load_snapshot(site, period):

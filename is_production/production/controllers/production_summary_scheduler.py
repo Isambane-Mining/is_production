@@ -13,8 +13,8 @@ import frappe
 from frappe.utils import get_datetime, getdate, now_datetime
 from frappe.utils.background_jobs import get_redis_conn
 
-from ..production_summaries.periods import source_hour, make_period, completed_hour
-from ..production_summaries.eligibility import eligible_periods
+from .production_summary_periods import source_hour, make_period, completed_hour
+from .production_summary_eligibility import eligible_periods
 from .production_summary_planning import get_plan_windows
 from .production_summary_snapshot import DOCTYPES, create_snapshot
 

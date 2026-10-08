@@ -1,7 +1,7 @@
 """Pure planning-window and operational-period coverage helpers."""
 from datetime import datetime, timedelta
 
-from .periods import completed_periods
+from .production_summary_periods import completed_periods
 
 
 def merge_plan_windows(grouped):

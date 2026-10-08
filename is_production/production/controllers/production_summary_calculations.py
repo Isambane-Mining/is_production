@@ -9,7 +9,7 @@ from datetime import timedelta
 
 from frappe.utils import flt
 
-from .periods import hour_slot, source_hour
+from .production_summary_periods import hour_slot, source_hour
 
 COAL_TONS_PER_BCM = 1.5
 CALCULATION_VERSION = '1'

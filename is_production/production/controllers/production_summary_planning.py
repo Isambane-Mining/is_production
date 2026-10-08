@@ -3,7 +3,7 @@ from collections import defaultdict
 
 import frappe
 from frappe.utils import getdate
-from ..production_summaries.eligibility import merge_plan_windows
+from .production_summary_eligibility import merge_plan_windows
 
 
 def get_covering_plan(site, report_date):
