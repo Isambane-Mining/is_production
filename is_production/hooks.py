@@ -61,16 +61,30 @@ page_js = {
 }
 
 scheduler_events = {
-    "hourly_long": [
-        "is_production.production.production_summaries.scheduler.recover_all_summaries",
-    ],
     "hourly": [
         "is_production.production.doctype.monthly_production_planning.monthly_production_planning.update_all_active_mpp_mtd",
     ],
 
     "cron": {
-        "0 6,18 * * *": [
-            "is_production.production.production_summaries.scheduler.create_shift_summaries",
+        # Current-period summaries: stagger after backups and existing reports.
+        "22 * * * *": [
+            "is_production.production.controllers.production_summary_scheduler.create_hourly_summaries",
+        ],
+        "37 6 * * *": [
+            "is_production.production.controllers.production_summary_scheduler.create_daily_summaries",
+        ],
+        # Historical recovery: one bounded batch per type, no auto-continuations.
+        "37 2 * * *": [
+            "is_production.production.controllers.production_summary_scheduler.recover_hourly_summaries",
+        ],
+        "43 2 * * *": [
+            "is_production.production.controllers.production_summary_scheduler.recover_shift_summaries",
+        ],
+        "49 2 * * *": [
+            "is_production.production.controllers.production_summary_scheduler.recover_daily_summaries",
+        ],
+        "27 6,18 * * *": [
+            "is_production.production.controllers.production_summary_scheduler.create_shift_summaries",
         ],
         # DAILY 05:55 - CEO Dashboard 1 PDF snapshot email
         "55 5 * * *": [
@@ -84,7 +98,6 @@ scheduler_events = {
 
         # Daily 06:00 - update current week
         "0 6 * * *": [
-            "is_production.production.production_summaries.scheduler.create_daily_summaries",
             "is_production.production.doctype.production_efficiency.production_efficiency.update_weekly_records"
         ],
 

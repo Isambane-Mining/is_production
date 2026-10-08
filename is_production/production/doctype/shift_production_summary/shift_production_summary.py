@@ -1,6 +1,6 @@
 # Copyright (c) 2026, Isambane Mining (Pty) Ltd
 # For license information, please see license.txt
-from is_production.production.production_summaries.snapshot import ProductionSnapshot
+from is_production.production.controllers.production_summary_snapshot import ProductionSnapshot
 
 
 class ShiftProductionSummary(ProductionSnapshot):

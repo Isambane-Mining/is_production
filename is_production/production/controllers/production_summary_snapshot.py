@@ -6,9 +6,9 @@ import frappe
 from frappe.model.document import Document
 from frappe.utils import get_datetime, now_datetime
 
-from .calculations import load_snapshot
-from .eligibility import get_covering_plan
-from .periods import make_period
+from .production_summary_sources import load_snapshot
+from .production_summary_planning import get_covering_plan
+from ..production_summaries.periods import make_period
 
 DOCTYPES = {
     'hourly': 'Hourly Production Summary',

@@ -2,7 +2,7 @@
 import json
 import unittest
 from datetime import date, datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 import frappe
 
@@ -118,7 +118,7 @@ class TestCalculations(unittest.TestCase):
 
 class TestSnapshotIdentity(unittest.TestCase):
     def test_site_kind_and_period_have_distinct_stable_keys(self):
-        from . import snapshot
+        from ..controllers import production_summary_snapshot as snapshot
         p = periods.make_period('hourly', datetime(2026, 10, 1, 6))
         self.assertEqual(snapshot.snapshot_key('Koppie', p), snapshot.snapshot_key('Koppie', p))
         keys = {snapshot.snapshot_key('Koppie', p), snapshot.snapshot_key('Gwab', p),
@@ -127,7 +127,7 @@ class TestSnapshotIdentity(unittest.TestCase):
         self.assertEqual(len(keys), 4)
 
     def test_existing_summary_is_not_recalculated(self):
-        from . import snapshot
+        from ..controllers import production_summary_snapshot as snapshot
         from types import SimpleNamespace
         p = periods.make_period('hourly', datetime(2026, 10, 1, 6))
         with patch.object(snapshot.frappe, 'db', SimpleNamespace(exists=lambda *a: True)), \
@@ -138,7 +138,7 @@ class TestSnapshotIdentity(unittest.TestCase):
 class TestScheduler(unittest.TestCase):
     """Only storage/queue IO is replaced; run the real recovery loop."""
     def run_recovery(self, kind, now, sources, existing=None, fail=None, batch_size=200, cursor=None):
-        from . import scheduler
+        from ..controllers import production_summary_scheduler as scheduler
         from types import SimpleNamespace
         saved = existing if existing is not None else set()
         created, jobs, errors = [], [], []
@@ -156,7 +156,9 @@ class TestScheduler(unittest.TestCase):
             site = kwargs['filters']['site']
             return [frappe._dict(period_start=start) for found_site, start in saved if found_site == site]
 
-        with patch.object(scheduler, 'get_plan_windows', return_value={site: [(getdate, now.date())] for site, getdate in sources.items()}), \
+        with patch.object(scheduler, '_execution_lock', return_value=MagicMock()), \
+             patch.object(scheduler, '_commit_and_release'), \
+             patch.object(scheduler, 'get_plan_windows', return_value={site: [(getdate, now.date())] for site, getdate in sources.items()}), \
              patch.object(scheduler, 'get_site_starts', return_value=sources), \
              patch.object(scheduler, 'create_snapshot', side_effect=create), \
              patch.object(scheduler.frappe, 'get_all', side_effect=get_all), \
@@ -177,18 +179,18 @@ class TestScheduler(unittest.TestCase):
         rerun, _, _, _ = self.run_recovery('hourly', datetime(2026, 10, 2, 6), sources, existing)
         self.assertEqual(rerun, [])
 
-    def test_batch_continuation_is_bounded_and_resumes_after_commit(self):
+    def test_batch_is_bounded_and_manual_cursor_resumes_without_auto_chain(self):
         sources, existing = {'Koppie': date(2026, 9, 30)}, set()
         now = datetime(2026, 10, 2, 6)
-        created, jobs, _, _ = self.run_recovery('hourly', now, sources, existing, batch_size=24)
+        created, jobs, _, result = self.run_recovery('hourly', now, sources, existing, batch_size=24)
         self.assertEqual(len(created), 24)
-        self.assertEqual(len(jobs), 1)
-        self.assertTrue(jobs[0]['enqueue_after_commit'])
-        self.assertEqual(jobs[0]['as_of'], '2026-10-02T06:00:00')
-        self.assertNotIn('now', jobs[0])
-        created2, jobs2, _, _ = self.run_recovery('hourly', now, sources, existing, batch_size=24, cursor=jobs[0]['cursor'])
+        self.assertEqual(jobs, [])
+        self.assertEqual(result['continuation'], {'site': 'Koppie', 'start': '2026-10-01T06:00:00'})
+        created2, jobs2, _, result2 = self.run_recovery('hourly', now, sources, existing,
+                                                      batch_size=24, cursor=result['continuation'])
         self.assertEqual(len(created2), 24)
         self.assertEqual(jobs2, [])
+        self.assertIsNone(result2['continuation'])
         self.assertEqual(len(existing), 48)
 
     def test_failed_site_does_not_stop_other_site_and_is_retried(self):
@@ -214,8 +216,8 @@ class TestScheduler(unittest.TestCase):
                 self.assertEqual([start for site, start in created], starts)
 
     def test_invalid_batch_size_rejected(self):
-        from . import scheduler
-        for size in [0, -1, 10001]:
+        from ..controllers import production_summary_scheduler as scheduler
+        for size in [0, -1, 201, 10001]:
             with self.assertRaises(ValueError):
                 scheduler.recover('hourly', as_of=datetime(2026, 10, 1, 7), batch_size=size)
 
@@ -294,7 +296,9 @@ class TestFrappeIntegration(unittest.TestCase):
 
     def setUp(self):
         # Only disposable fixture and new snapshot tables are cleared.
-        from .snapshot import DOCTYPES
+        for kind in ('hourly', 'shift', 'daily'):
+            frappe.db.set_global('production_summary_recovery_' + kind, None)
+        from ..controllers.production_summary_snapshot import DOCTYPES
         for doctype in [*DOCTYPES.values(), 'Truck Loads', 'Dozer Production', 'Drills Hourly Entries',
                         'Hourly Production', 'Hourly Drilling Report', 'Monthly Production Planning', 'Location']:
             frappe.db.delete(doctype)
@@ -319,7 +323,7 @@ class TestFrappeIntegration(unittest.TestCase):
                      parentfield='dozer_production', bcm_hour=20, asset_name='DZ-1', dozer_service='Production Dozing-50m')
 
     def test_real_loader_and_all_three_document_insertions(self):
-        from . import snapshot
+        from ..controllers import production_summary_snapshot as snapshot
         self.source('day', datetime(2026, 9, 30, 6), 100)
         self.source('night', datetime(2026, 9, 30, 18), 200)
         self.source('last', datetime(2026, 10, 1, 5), 300)
@@ -348,7 +352,7 @@ class TestFrappeIntegration(unittest.TestCase):
         self.assertEqual(frappe.db.get_value('Hourly Production', 'next', 'hour_total_bcm'), 900)
 
     def test_database_primary_and_unique_key_protect_against_worker_races(self):
-        from . import snapshot
+        from ..controllers import production_summary_snapshot as snapshot
         p = periods.make_period('hourly', datetime(2026, 10, 1, 6))
         name = snapshot.create_snapshot('Koppie', p)
         real_exists = frappe.db.exists
@@ -367,7 +371,7 @@ class TestFrappeIntegration(unittest.TestCase):
             duplicate.db_insert()
 
     def test_real_save_delete_rename_and_manual_insert_are_denied(self):
-        from . import snapshot
+        from ..controllers import production_summary_snapshot as snapshot
         from frappe.model.rename_doc import rename_doc
         p = periods.make_period('hourly', datetime(2026, 10, 1, 6))
         name = snapshot.create_snapshot('Koppie', p)
@@ -380,13 +384,14 @@ class TestFrappeIntegration(unittest.TestCase):
             frappe.delete_doc(doc.doctype, name, ignore_permissions=True)
         with self.assertRaises(frappe.PermissionError):
             rename_doc(doc.doctype, name, 'renamed', ignore_permissions=True)
-        values = calculations.load_snapshot('Koppie', periods.make_period('hourly', p.end))
+        from ..controllers.production_summary_sources import load_snapshot
+        values = load_snapshot('Koppie', periods.make_period('hourly', p.end))
         with self.assertRaises(frappe.PermissionError):
             frappe.get_doc(dict(values, doctype=doc.doctype)).insert(ignore_permissions=True)
         self.assertEqual(frappe.db.get_value(doc.doctype, name, 'period_bcm'), 0)
 
     def test_real_scheduler_recovery_and_failure_savepoints(self):
-        from . import scheduler, snapshot
+        from ..controllers import production_summary_scheduler as scheduler, production_summary_snapshot as snapshot
         self.source('source', datetime(2026, 10, 1, 6), 100)
         self.source('other', datetime(2026, 10, 1, 6), 200, site='Gwab')
         self.fixture('Monthly Production Planning','GWAB',location='Gwab',
@@ -406,7 +411,7 @@ class TestFrappeIntegration(unittest.TestCase):
         self.assertEqual(result['created'], 0)
 
     def test_schema_reload_preserves_snapshots_and_read_only_permissions(self):
-        from . import snapshot
+        from ..controllers import production_summary_snapshot as snapshot
         p = periods.make_period('daily', datetime(2026, 9, 30, 6))
         self.fixture('Monthly Production Planning', 'SEP', location='Koppie',
                      prod_month_start_date='2026-09-30', prod_month_end_date='2026-09-30')
@@ -423,7 +428,7 @@ class TestFrappeIntegration(unittest.TestCase):
         self.assertTrue(frappe.db.exists('Daily Production Summary', name))
 
     def test_earliest_midnight_source_recovers_previous_operational_day(self):
-        from . import scheduler
+        from ..controllers import production_summary_scheduler as scheduler
         self.source('earliest', datetime(2026, 10, 1, 0), 100)
         self.fixture('Monthly Production Planning', 'SEP', location='Koppie',
                      prod_month_start_date='2026-09-30', prod_month_end_date='2026-09-30')
@@ -435,7 +440,7 @@ class TestFrappeIntegration(unittest.TestCase):
         self.assertEqual(rows[0]['report_date'], date(2026, 9, 30))
 
     def test_drilling_only_site_early_hours_anchor_previous_operational_day(self):
-        from . import scheduler
+        from ..controllers import production_summary_scheduler as scheduler
         self.fixture('Hourly Drilling Report', 'HDR', site='Koppie', date='2026-10-01')
         self.fixture('Drills Hourly Entries', 'DRILL', parent='HDR', parenttype='Hourly Drilling Report',
                      parentfield='hourly_entries', drill='DR-1', hourly_slot='00:00-01:00', meters=12)
@@ -444,12 +449,22 @@ class TestFrappeIntegration(unittest.TestCase):
     def test_scheduler_registration_is_idempotent_and_jobs_use_expected_frequencies(self):
         from frappe.core.doctype.scheduled_job_type.scheduled_job_type import sync_jobs
         from is_production import hooks
-        sync_jobs(hooks.scheduler_events)
-        sync_jobs(hooks.scheduler_events)
-        prefix = 'is_production.production.production_summaries.scheduler.'
+        old_prefix = 'is_production.production.production_summaries.scheduler.'
         for method, frequency, cron in [('recover_all_summaries', 'Hourly Long', ''),
-            ('create_shift_summaries', 'Cron', '0 6,18 * * *'),
-            ('create_daily_summaries', 'Cron', '0 6 * * *')]:
+                                       ('create_shift_summaries', 'Cron', '0 6,18 * * *'),
+                                       ('create_daily_summaries', 'Cron', '0 6 * * *')]:
+            frappe.get_doc(dict(doctype='Scheduled Job Type', name='legacy-' + method,
+                                method=old_prefix + method, frequency=frequency, cron_format=cron)).db_insert()
+        sync_jobs(hooks.scheduler_events)
+        sync_jobs(hooks.scheduler_events)
+        self.assertFalse(frappe.get_all('Scheduled Job Type', filters={'method': ['like', old_prefix + '%']}))
+        prefix = 'is_production.production.controllers.production_summary_scheduler.'
+        for method, frequency, cron in [('create_hourly_summaries', 'Cron', '22 * * * *'),
+            ('create_shift_summaries', 'Cron', '27 6,18 * * *'),
+            ('create_daily_summaries', 'Cron', '37 6 * * *'),
+            ('recover_hourly_summaries', 'Cron', '37 2 * * *'),
+            ('recover_shift_summaries', 'Cron', '43 2 * * *'),
+            ('recover_daily_summaries', 'Cron', '49 2 * * *')]:
             rows = frappe.get_all('Scheduled Job Type', filters={'method': prefix + method}, fields=['frequency', 'cron_format'])
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]['frequency'], frequency)
@@ -457,14 +472,12 @@ class TestFrappeIntegration(unittest.TestCase):
                 self.assertEqual(rows[0]['cron_format'], cron)
 
 
-    def test_real_enqueue_defers_continuation_until_commit_and_preserves_cutoff(self):
+    def test_recovery_does_not_enqueue_even_after_commit_and_cursor_resumes(self):
         from types import SimpleNamespace
         from frappe.utils import background_jobs
-        from . import scheduler
-
+        from ..controllers import production_summary_scheduler as scheduler
         self.source('source', datetime(2026, 10, 1, 6), 100)
         queued = []
-        # Keep Frappe enqueue real. Only the external RQ boundary is replaced.
         queue = SimpleNamespace(count=0, enqueue_call=lambda *a, **kw: queued.append(kw))
         with patch.object(background_jobs, 'get_queue', return_value=queue), \
              patch.object(background_jobs, 'get_job', return_value=None):
@@ -472,25 +485,20 @@ class TestFrappeIntegration(unittest.TestCase):
             self.assertEqual(result['created'], 1)
             self.assertEqual(result['attempted'], 1)
             self.assertEqual(frappe.db.count('Hourly Production Summary'), 1)
-            self.assertEqual(queued, [])
             self.assertEqual(result['continuation']['start'], '2026-10-01T07:00:00')
             frappe.db.commit()
-            self.assertEqual(len(queued), 1)
-            payload = queued[0]['kwargs']['kwargs']
-            self.assertEqual(payload['as_of'], '2026-10-01T08:00:00')
-            self.assertNotIn('now', payload)
-            self.assertEqual(payload['cursor'], result['continuation'])
-            # Run the captured worker arguments: it must finish just the next
-            # hour at the original cutoff, even though wall-clock time is later.
-            next_batch = scheduler.recover(**payload)
+            self.assertEqual(queued, [])
+            next_batch = scheduler.recover('hourly', as_of=datetime(2026,10,1,8),
+                                           batch_size=1, cursor=result['continuation'])
             self.assertEqual((next_batch['created'], next_batch['attempted']), (1, 1))
             self.assertIsNone(next_batch['continuation'])
             self.assertEqual(frappe.db.count('Hourly Production Summary'), 2)
+            self.assertEqual(queued, [])
 
     def test_real_enqueue_cron_jobs_are_deferred_and_keep_cutoff(self):
         from types import SimpleNamespace
         from frappe.utils import background_jobs
-        from . import scheduler
+        from ..controllers import production_summary_scheduler as scheduler
 
         queued = []
         queue = SimpleNamespace(count=0, enqueue_call=lambda *a, **kw: queued.append(kw))
@@ -510,9 +518,67 @@ class TestFrappeIntegration(unittest.TestCase):
                 self.assertEqual(payload['as_of'], '2026-10-01T06:00:00')
                 self.assertNotIn('now', payload)
 
+    def test_off_peak_recovery_persists_cursor_and_frozen_cutoff_across_slots(self):
+        # Also proves Frappe defaults/cache invalidation cannot delete the lock.
+        from ..controllers import production_summary_scheduler as scheduler
+        self.source('source', datetime(2026, 10, 1, 6), 100)
+        with patch.object(scheduler, 'DEFAULT_BATCH_SIZE', 1), \
+             patch.object(scheduler.frappe, 'enqueue') as enqueue:
+            first = scheduler.run_recovery('hourly', as_of=datetime(2026, 10, 1, 8))
+            self.assertEqual((first['created'], first['attempted']), (1, 1))
+            state = json.loads(frappe.db.get_global(scheduler._state_key('hourly')))
+            self.assertEqual(state, {'as_of': '2026-10-01T08:00:00',
+                                    'cursor': {'site': 'Koppie', 'start': '2026-10-01T07:00:00'}})
+            second = scheduler.run_recovery('hourly', as_of=datetime(2026, 10, 2, 8))
+            self.assertEqual((second['created'], second['attempted']), (1, 1))
+            self.assertIsNone(second['continuation'])
+            self.assertFalse(frappe.db.get_global(scheduler._state_key('hourly')))
+            self.assertEqual(frappe.db.count('Hourly Production Summary'), 2)
+            self.assertNotIn(datetime(2026,10,1,8), frappe.get_all('Hourly Production Summary', pluck='period_start'))
+            enqueue.assert_not_called()
+
+    def test_real_shared_lock_blocks_every_summary_worker_and_preserves_cursor(self):
+        from ..controllers import production_summary_scheduler as scheduler
+        cursor = json.dumps({'as_of': '2026-10-01T08:00:00',
+                             'cursor': {'site': 'Koppie', 'start': '2026-10-01T07:00:00'}})
+        frappe.db.set_global(scheduler._state_key('hourly'), cursor)
+        frappe.db.commit()
+        lock = scheduler._execution_lock()
+        self.assertTrue(lock.acquire(blocking=False))
+        try:
+            for kind in ('hourly', 'shift', 'daily'):
+                for worker in (scheduler.generate, scheduler.run_recovery, scheduler.recover):
+                    with self.subTest(kind=kind, worker=worker.__name__):
+                        result = worker(kind, as_of=datetime(2026, 10, 1, 8))
+                        self.assertTrue(result['skipped'])
+                        self.assertEqual(result['attempted'], 0)
+            self.assertEqual(frappe.db.get_global(scheduler._state_key('hourly')), cursor)
+        finally:
+            lock.release()
+        self.assertFalse(scheduler.generate('hourly', as_of=datetime(2026, 10, 1, 8))['skipped'])
+
+    def test_delayed_generation_preserves_report_windows_without_history_scan(self):
+        from ..controllers import production_summary_scheduler as scheduler
+        self.fixture('Monthly Production Planning', 'SEP', location='Koppie',
+                     prod_month_start_date='2026-09-30', prod_month_end_date='2026-09-30')
+        cases = [('hourly', datetime(2026, 10, 1, 6, 22), datetime(2026,10,1,5), datetime(2026,10,1,6), 'Night'),
+                 ('shift', datetime(2026, 10, 1, 6, 27), datetime(2026,9,30,18), datetime(2026,10,1,6), 'Night'),
+                 ('daily', datetime(2026, 10, 1, 6, 37), datetime(2026,9,30,6), datetime(2026,10,1,6), 'Full Daily'),
+                 ('shift', datetime(2026, 10, 1, 18, 27), datetime(2026,10,1,6), datetime(2026,10,1,18), 'Day')]
+        with patch.object(scheduler, 'get_site_starts', side_effect=AssertionError('no historical scan')):
+            for kind, cutoff, start, end, shift in cases:
+                with self.subTest(kind=kind, cutoff=cutoff):
+                    result = scheduler.generate(kind, as_of=cutoff)
+                    self.assertEqual(result['created'], 1)
+                    doc = next(row for row in frappe.get_all(scheduler.DOCTYPES[kind],
+                               fields=['period_start', 'period_end', 'shift', 'report_date']) if row.period_start == start)
+                    self.assertEqual((doc.period_start, doc.period_end, doc.shift), (start,end,shift))
+                    self.assertEqual(doc.report_date, (start-timedelta(hours=6)).date())
+                    self.assertEqual(scheduler.generate(kind, as_of=cutoff)['created'], 0)
+
     def test_no_plan_cancelled_plan_and_wrong_site_cannot_generate(self):
-        from . import snapshot, scheduler
-        from .eligibility import get_covering_plan
+        from ..controllers import production_summary_snapshot as snapshot, production_summary_scheduler as scheduler
+        from ..controllers.production_summary_planning import get_covering_plan
         frappe.db.delete('Monthly Production Planning')
         self.source('active-data',datetime(2026,10,1,6),100)
         self.fixture('Monthly Production Planning','CANCELLED',location='Koppie',
@@ -530,8 +596,8 @@ class TestFrappeIntegration(unittest.TestCase):
 
 
 class TestCronQueue(unittest.TestCase):
-    def test_cron_jobs_enqueue_long_recovery_after_commit(self):
-        from . import scheduler
+    def test_cron_jobs_enqueue_bounded_generation_after_commit(self):
+        from ..controllers import production_summary_scheduler as scheduler
         queued = []
         with patch.object(scheduler, 'now_datetime', return_value=datetime(2026, 10, 1, 6)), \
              patch.object(scheduler.frappe, 'enqueue', side_effect=lambda **kw: queued.append(kw)):
@@ -540,7 +606,8 @@ class TestCronQueue(unittest.TestCase):
         self.assertEqual([job['kind'] for job in queued], ['shift', 'daily'])
         for job in queued:
             self.assertEqual(job['queue'], 'long')
-            self.assertEqual(job['timeout'], 1500)
+            self.assertEqual(job['timeout'], 300)
+            self.assertEqual(job['method'], scheduler.METHOD_PREFIX + 'generate')
             self.assertTrue(job['enqueue_after_commit'])
             self.assertEqual(job['as_of'], '2026-10-01T06:00:00')
             self.assertNotIn('now', job)
@@ -548,7 +615,7 @@ class TestCronQueue(unittest.TestCase):
 
 class TestPlanningEligibility(unittest.TestCase):
     def test_covering_plan_query_uses_operational_date_and_non_cancelled_status(self):
-        from .eligibility import get_covering_plan
+        from ..controllers.production_summary_planning import get_covering_plan
         p=periods.make_period('hourly',datetime(2026,10,1,2))
         with patch('frappe.get_all',return_value=[frappe._dict(name='SEP')]) as query:
             self.assertEqual(get_covering_plan('Koppie',p.report_date),'SEP')
@@ -556,7 +623,7 @@ class TestPlanningEligibility(unittest.TestCase):
             prod_month_start_date=['<=',date(2026,9,30)],prod_month_end_date=['>=',date(2026,9,30)],docstatus=['<',2]))
 
     def test_ineligible_direct_creation_never_loads_sources(self):
-        from . import snapshot
+        from ..controllers import production_summary_snapshot as snapshot
         from types import SimpleNamespace
         with patch.object(snapshot.frappe,'db',SimpleNamespace(exists=lambda *a:False)), \
              patch.object(snapshot,'get_covering_plan',return_value=None), \
