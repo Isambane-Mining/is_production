@@ -1,0 +1,455 @@
+{
+ "doctype": "DocType",
+ "name": "Shift Production Summary",
+ "module": "Production",
+ "engine": "InnoDB",
+ "autoname": "field:snapshot_key",
+ "naming_rule": "By fieldname",
+ "allow_rename": 0,
+ "allow_import": 0,
+ "allow_bulk_edit": 0,
+ "track_changes": 0,
+ "creation": "2026-10-07 00:00:00",
+ "modified": "2026-10-07 00:00:00",
+ "owner": "Administrator",
+ "modified_by": "Administrator",
+ "field_order": [
+  "identity_section",
+  "site",
+  "report_date",
+  "shift",
+  "hour_slot",
+  "period_start",
+  "period_end",
+  "generated_at",
+  "calculation_version",
+  "snapshot_key",
+  "production_section",
+  "period_bcm",
+  "hour_bcm",
+  "shift_accumulated_bcm",
+  "daily_bcm",
+  "excavator_bcm",
+  "dozer_bcm",
+  "drill_meters",
+  "coal_bcm",
+  "coal_tons",
+  "waste_bcm",
+  "planning_section",
+  "monthly_production_planning",
+  "monthly_target_bcm",
+  "daily_target",
+  "hourly_target",
+  "production_to_date",
+  "remaining_bcm",
+  "actual_hourly_rate",
+  "actual_daily_rate",
+  "required_hourly_rate",
+  "required_daily_rate",
+  "strip_ratio",
+  "survey_variance_bcm",
+  "forecast_bcm",
+  "coverage_section",
+  "source_hour_count",
+  "expected_hour_count",
+  "missing_hour_count",
+  "source_data_missing",
+  "details_section",
+  "excavator_production_json",
+  "dozer_production_json",
+  "drill_production_json",
+  "report_data_json"
+ ],
+ "fields": [
+  {
+   "fieldname": "identity_section",
+   "fieldtype": "Section Break",
+   "label": "Reporting Period",
+   "read_only": 1
+  },
+  {
+   "fieldname": "site",
+   "fieldtype": "Link",
+   "label": "Site",
+   "read_only": 1,
+   "options": "Location",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "report_date",
+   "fieldtype": "Date",
+   "label": "Report Date",
+   "read_only": 1,
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "shift",
+   "fieldtype": "Select",
+   "label": "Shift",
+   "read_only": 1,
+   "options": "Day\nNight\nFull Daily",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "hour_slot",
+   "fieldtype": "Data",
+   "label": "Hour Slot",
+   "read_only": 1,
+   "reqd": 0,
+   "in_list_view": 0
+  },
+  {
+   "fieldname": "period_start",
+   "fieldtype": "Datetime",
+   "label": "Period Start",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "period_end",
+   "fieldtype": "Datetime",
+   "label": "Period End",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "generated_at",
+   "fieldtype": "Datetime",
+   "label": "Generated At",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "calculation_version",
+   "fieldtype": "Data",
+   "label": "Calculation Version",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "snapshot_key",
+   "fieldtype": "Data",
+   "label": "Snapshot Key",
+   "read_only": 1,
+   "reqd": 1,
+   "unique": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "production_section",
+   "fieldtype": "Section Break",
+   "label": "Production Snapshot",
+   "read_only": 1
+  },
+  {
+   "fieldname": "period_bcm",
+   "fieldtype": "Float",
+   "label": "Period BCM",
+   "read_only": 1,
+   "precision": "3",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "hour_bcm",
+   "fieldtype": "Float",
+   "label": "Hour BCM",
+   "read_only": 1,
+   "precision": "3",
+   "in_list_view": 0
+  },
+  {
+   "fieldname": "shift_accumulated_bcm",
+   "fieldtype": "Float",
+   "label": "Shift Accumulated BCM",
+   "read_only": 1,
+   "precision": "3",
+   "in_list_view": 0
+  },
+  {
+   "fieldname": "daily_bcm",
+   "fieldtype": "Float",
+   "label": "Daily BCM Through Period End",
+   "read_only": 1,
+   "precision": "3",
+   "in_list_view": 0
+  },
+  {
+   "fieldname": "excavator_bcm",
+   "fieldtype": "Float",
+   "label": "Excavator BCM",
+   "read_only": 1,
+   "precision": "3",
+   "in_list_view": 0
+  },
+  {
+   "fieldname": "dozer_bcm",
+   "fieldtype": "Float",
+   "label": "Dozer BCM",
+   "read_only": 1,
+   "precision": "3",
+   "in_list_view": 0
+  },
+  {
+   "fieldname": "drill_meters",
+   "fieldtype": "Float",
+   "label": "Drilling Meters",
+   "read_only": 1,
+   "precision": "3",
+   "in_list_view": 0
+  },
+  {
+   "fieldname": "coal_bcm",
+   "fieldtype": "Float",
+   "label": "Coal BCM",
+   "read_only": 1,
+   "precision": "3",
+   "in_list_view": 0
+  },
+  {
+   "fieldname": "coal_tons",
+   "fieldtype": "Float",
+   "label": "Coal Tons",
+   "read_only": 1,
+   "precision": "3",
+   "in_list_view": 0
+  },
+  {
+   "fieldname": "waste_bcm",
+   "fieldtype": "Float",
+   "label": "Waste BCM",
+   "read_only": 1,
+   "precision": "3",
+   "in_list_view": 0
+  },
+  {
+   "fieldname": "planning_section",
+   "fieldtype": "Section Break",
+   "label": "Monthly Planning Values Captured at Generation",
+   "read_only": 1
+  },
+  {
+   "fieldname": "monthly_production_planning",
+   "fieldtype": "Link",
+   "label": "Monthly Production Planning",
+   "read_only": 1,
+   "options": "Monthly Production Planning"
+  },
+  {
+   "fieldname": "monthly_target_bcm",
+   "fieldtype": "Float",
+   "label": "Monthly Target BCM",
+   "read_only": 1,
+   "precision": "3"
+  },
+  {
+   "fieldname": "daily_target",
+   "fieldtype": "Float",
+   "label": "Daily Target BCM",
+   "read_only": 1,
+   "precision": "3"
+  },
+  {
+   "fieldname": "hourly_target",
+   "fieldtype": "Float",
+   "label": "Hourly Target BCM",
+   "read_only": 1,
+   "precision": "3"
+  },
+  {
+   "fieldname": "production_to_date",
+   "fieldtype": "Float",
+   "label": "Production to Date BCM",
+   "read_only": 1,
+   "precision": "3"
+  },
+  {
+   "fieldname": "remaining_bcm",
+   "fieldtype": "Float",
+   "label": "Remaining BCM",
+   "read_only": 1,
+   "precision": "3"
+  },
+  {
+   "fieldname": "actual_hourly_rate",
+   "fieldtype": "Float",
+   "label": "Actual Hourly Rate BCM",
+   "read_only": 1,
+   "precision": "3"
+  },
+  {
+   "fieldname": "actual_daily_rate",
+   "fieldtype": "Float",
+   "label": "Actual Daily Rate BCM",
+   "read_only": 1,
+   "precision": "3"
+  },
+  {
+   "fieldname": "required_hourly_rate",
+   "fieldtype": "Float",
+   "label": "Required Hourly Rate BCM",
+   "read_only": 1,
+   "precision": "3"
+  },
+  {
+   "fieldname": "required_daily_rate",
+   "fieldtype": "Float",
+   "label": "Required Daily Rate BCM",
+   "read_only": 1,
+   "precision": "3"
+  },
+  {
+   "fieldname": "strip_ratio",
+   "fieldtype": "Float",
+   "label": "Monthly Strip Ratio",
+   "read_only": 1,
+   "precision": "3"
+  },
+  {
+   "fieldname": "survey_variance_bcm",
+   "fieldtype": "Float",
+   "label": "Survey Variance BCM",
+   "read_only": 1,
+   "precision": "3"
+  },
+  {
+   "fieldname": "forecast_bcm",
+   "fieldtype": "Float",
+   "label": "Forecast BCM",
+   "read_only": 1,
+   "precision": "3"
+  },
+  {
+   "fieldname": "coverage_section",
+   "fieldtype": "Section Break",
+   "label": "Source Coverage",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_hour_count",
+   "fieldtype": "Int",
+   "label": "Source Hour Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "expected_hour_count",
+   "fieldtype": "Int",
+   "label": "Expected Hour Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "missing_hour_count",
+   "fieldtype": "Int",
+   "label": "Missing Hour Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_data_missing",
+   "fieldtype": "Check",
+   "label": "Missing or Invalid Source Data",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "details_section",
+   "fieldtype": "Section Break",
+   "label": "Equipment Details and Traceability",
+   "read_only": 1,
+   "collapsible": 1
+  },
+  {
+   "fieldname": "excavator_production_json",
+   "fieldtype": "Code",
+   "label": "Excavator Production JSON",
+   "read_only": 1,
+   "options": "JSON"
+  },
+  {
+   "fieldname": "dozer_production_json",
+   "fieldtype": "Code",
+   "label": "Dozer Production JSON",
+   "read_only": 1,
+   "options": "JSON"
+  },
+  {
+   "fieldname": "drill_production_json",
+   "fieldtype": "Code",
+   "label": "Drill Production JSON",
+   "read_only": 1,
+   "options": "JSON"
+  },
+  {
+   "fieldname": "report_data_json",
+   "fieldtype": "Code",
+   "label": "Raw Report Snapshot JSON",
+   "read_only": 1,
+   "options": "JSON"
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "report": 1,
+   "export": 1,
+   "print": 1
+  },
+  {
+   "role": "Production Manager",
+   "read": 1,
+   "report": 1,
+   "export": 1,
+   "print": 1
+  },
+  {
+   "role": "Production User",
+   "read": 1,
+   "report": 1,
+   "export": 1,
+   "print": 1
+  },
+  {
+   "role": "Production Supervisor",
+   "read": 1,
+   "report": 1,
+   "export": 1,
+   "print": 1
+  },
+  {
+   "role": "Production Foreman",
+   "read": 1,
+   "report": 1,
+   "export": 1,
+   "print": 1
+  },
+  {
+   "role": "Control Clerk",
+   "read": 1,
+   "report": 1,
+   "export": 1,
+   "print": 1
+  },
+  {
+   "role": "Drill Supervisor",
+   "read": 1,
+   "report": 1,
+   "export": 1,
+   "print": 1
+  }
+ ],
+ "sort_field": "period_start",
+ "sort_order": "DESC",
+ "title_field": "site",
+ "search_fields": "site,report_date,shift,hour_slot",
+ "actions": [],
+ "links": [],
+ "states": []
+}

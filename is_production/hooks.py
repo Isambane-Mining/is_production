@@ -66,6 +66,26 @@ scheduler_events = {
     ],
 
     "cron": {
+        # Current-period summaries: stagger after backups and existing reports.
+        "22 * * * *": [
+            "is_production.production.controllers.production_summary_scheduler.create_hourly_summaries",
+        ],
+        "37 6 * * *": [
+            "is_production.production.controllers.production_summary_scheduler.create_daily_summaries",
+        ],
+        # Historical recovery: one bounded batch per type, no auto-continuations.
+        "37 2 * * *": [
+            "is_production.production.controllers.production_summary_scheduler.recover_hourly_summaries",
+        ],
+        "43 2 * * *": [
+            "is_production.production.controllers.production_summary_scheduler.recover_shift_summaries",
+        ],
+        "49 2 * * *": [
+            "is_production.production.controllers.production_summary_scheduler.recover_daily_summaries",
+        ],
+        "27 6,18 * * *": [
+            "is_production.production.controllers.production_summary_scheduler.create_shift_summaries",
+        ],
         # DAILY 05:55 - CEO Dashboard 1 PDF snapshot email
         "55 5 * * *": [
             "is_production.production.controllers.notifications.send_ceo_dashboard_daily_emails",
