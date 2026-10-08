@@ -123,7 +123,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-06-05 10:49:20.419338",
+ "modified": "2026-10-08 14:42:23.621464",
  "modified_by": "Administrator",
  "module": "Production",
  "name": "Daily Diesel Sheet",
@@ -170,6 +170,7 @@
    "role": "Production User",
    "select": 1,
    "share": 1,
+   "submit": 1,
    "write": 1
   }
  ],

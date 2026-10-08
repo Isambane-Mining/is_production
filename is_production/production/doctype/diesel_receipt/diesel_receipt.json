@@ -131,7 +131,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-02-09 13:59:26.064112",
+ "modified": "2026-10-08 14:42:23.623418",
  "modified_by": "Administrator",
  "module": "Production",
  "name": "Diesel Receipt",
@@ -169,7 +169,7 @@
    "write": 1
   },
   {
-   "cancel": 1,
+   "amend": 1,
    "create": 1,
    "email": 1,
    "export": 1,
@@ -179,7 +179,6 @@
    "role": "Production User",
    "select": 1,
    "share": 1,
-   "submit": 1,
    "write": 1
   }
  ],

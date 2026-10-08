@@ -204,8 +204,8 @@
   {
    "fieldname": "num_prod_days",
    "fieldtype": "Float",
-   "precision": "2",
    "label": "Number of Production Days",
+   "precision": "2",
    "read_only": 1
   },
   {
@@ -237,8 +237,8 @@
   {
    "fieldname": "prod_days_completed",
    "fieldtype": "Float",
-   "precision": "2",
    "label": "Number of Production Days Completed",
+   "precision": "2",
    "read_only": 1
   },
   {
@@ -272,8 +272,8 @@
   {
    "fieldname": "month_remaining_production_days",
    "fieldtype": "Float",
-   "precision": "2",
-   "label": "Month Remaining Production Days"
+   "label": "Month Remaining Production Days",
+   "precision": "2"
   },
   {
    "fieldname": "mtd_bcm_hour",
@@ -583,7 +583,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-07-29 07:23:51.123375",
+ "modified": "2026-10-08 14:42:23.624356",
  "modified_by": "Administrator",
  "module": "Production",
  "name": "Monthly Production Planning",
@@ -622,7 +622,8 @@
    "report": 1,
    "role": "Production User",
    "select": 1,
-   "share": 1
+   "share": 1,
+   "write": 1
   }
  ],
  "row_format": "Dynamic",
