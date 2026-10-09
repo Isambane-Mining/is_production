@@ -89,11 +89,12 @@ frappe.query_reports["Productivity"] = {
             options: "Tallies BCMs\nActual BCMs",
             default: "Tallies BCMs"
         },
+        // KOSI_PRODUCTIVITY_TRUCK_BENCHMARK_FILTER_V119
         {
             fieldname: "summary_view",
             label: __("Summary"),
             fieldtype: "Select",
-            options: "Summary Per Machine\nHours and Material",
+            options: "Summary Per Machine\nHours and Material\nTRUCK BENCHMARK ANALYSIS",
             default: "Summary Per Machine"
         }
     ],
@@ -22650,3 +22651,4760 @@ if (
 
 
 // END KOSI_PRODUCTIVITY_DIRECT_IMAGE_V120
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_TRUCK_BENCHMARK_FORMATTER_V119
+//
+// Styling logic only.
+//
+// No CSS is embedded here.
+//
+// Special heading and summary rows bypass the existing
+// zero-hours / zero-output formatter logic.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+    if (!report) {
+        return;
+    }
+
+
+    const previous_formatter = (
+        report.formatter
+    );
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        const is_special = (
+            data
+            && (
+                data.truck_benchmark_group_header
+                || data.truck_benchmark_route_row
+                || data.truck_benchmark_summary_row
+            )
+        );
+
+
+        if (is_special) {
+
+            let rendered = (
+                default_formatter(
+                    value,
+                    row,
+                    column,
+                    data
+                )
+            );
+
+
+            const fieldname = (
+                (
+                    column
+                    && column.fieldname
+                )
+                ||
+                (
+                    column
+                    && column.df
+                    && column.df.fieldname
+                )
+                ||
+                ""
+            );
+
+
+            if (
+                fieldname
+                === "label"
+            ) {
+
+                if (
+                    data.truck_benchmark_route_row
+                ) {
+
+                    return (
+                        "<em>"
+                        + rendered
+                        + "</em>"
+                    );
+                }
+
+
+                return (
+                    "<strong>"
+                    + rendered
+                    + "</strong>"
+                );
+            }
+
+
+            return rendered;
+        }
+
+
+        if (
+            typeof previous_formatter
+            === "function"
+        ) {
+
+            return previous_formatter(
+                value,
+                row,
+                column,
+                data,
+                default_formatter
+            );
+        }
+
+
+        return default_formatter(
+            value,
+            row,
+            column,
+            data
+        );
+    };
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_TRUCK_BENCHMARK_FORMATTER_V119
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_TRUCK_BENCHMARK_ADT_BUTTON_V119B
+// KOSI_PRODUCTIVITY_ADT_CALCULATION_POPUP_V119C
+//
+// Popup now exposes the exact calculation:
+//
+//     Sum of Hourly ADT Counts
+//     ------------------------
+//     Active Hours Observed
+//
+// Example:
+//
+//     119 / 30 = 4.0
+//
+// Display/audit improvement only.
+// No backend calculation changes.
+//
+//
+// Adds a View ADTs button to TRUCK BENCHMARK ANALYSIS.
+//
+// No custom CSS.
+// Uses standard Frappe button and dialog components.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+
+    if (!report) {
+        return;
+    }
+
+
+    if (
+        report
+            ._productivity_v119b_adt_button_applied
+    ) {
+        return;
+    }
+
+
+    report
+        ._productivity_v119b_adt_button_applied = true;
+
+
+    const previous_formatter = (
+        report.formatter
+    );
+
+
+    function get_fieldname(
+        column
+    ) {
+
+        return (
+            (
+                column
+                && column.fieldname
+            )
+            ||
+            (
+                column
+                && column.df
+                && column.df.fieldname
+            )
+            ||
+            ""
+        );
+    }
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        const fieldname = (
+            get_fieldname(
+                column
+            )
+        );
+
+
+        if (
+            fieldname === "adt_details"
+        ) {
+
+            if (
+                !data
+                || !data.truck_benchmark_machine_row
+            ) {
+                return "";
+            }
+
+
+            const adts = Array.isArray(
+                data._actual_adt_assets
+            )
+                ? data._actual_adt_assets
+                : [];
+
+
+            if (!adts.length) {
+
+                return (
+                    '<button type="button" '
+                    + 'class="btn btn-xs btn-default" '
+                    + 'disabled>'
+                    + __('No ADTs')
+                    + '</button>'
+                );
+            }
+
+
+            const payload = encodeURIComponent(
+                JSON.stringify({
+                    excavator:
+                        data.label || "",
+
+                    material:
+                        data._benchmark_material || "",
+
+                    hauling_distance:
+                        data._benchmark_distance || "",
+
+                    avg_actual_adts:
+                        data.avg_actual_adts || 0,
+
+                    active_hour_count:
+                        data._active_hour_count || 0,
+
+                    adt_count_sum:
+                        data._adt_count_sum || 0,
+
+                    adts:
+                        adts
+                })
+            );
+
+
+            return (
+                '<button type="button" '
+                + 'class="btn btn-xs btn-default '
+                + 'productivity-v119b-view-adts" '
+                + 'data-payload="'
+                + payload
+                + '">'
+                + __('View ADTs')
+                + '</button>'
+            );
+        }
+
+
+        if (
+            typeof previous_formatter
+            === "function"
+        ) {
+
+            return previous_formatter(
+                value,
+                row,
+                column,
+                data,
+                default_formatter
+            );
+        }
+
+
+        return default_formatter(
+            value,
+            row,
+            column,
+            data
+        );
+    };
+
+
+    $(document)
+        .off(
+            "click.productivityV119B",
+            ".productivity-v119b-view-adts"
+        )
+        .on(
+            "click.productivityV119B",
+            ".productivity-v119b-view-adts",
+            function (event) {
+
+                event.preventDefault();
+
+
+                const raw = (
+                    $(this).attr(
+                        "data-payload"
+                    )
+                    || ""
+                );
+
+
+                let payload = {};
+
+
+                try {
+
+                    payload = JSON.parse(
+                        decodeURIComponent(
+                            raw
+                        )
+                    );
+
+                } catch (error) {
+
+                    frappe.msgprint(
+                        __(
+                            "Unable to read ADT details."
+                        )
+                    );
+
+                    return;
+                }
+
+
+                const adts = Array.isArray(
+                    payload.adts
+                )
+                    ? payload.adts
+                    : [];
+
+
+                const dialog = (
+                    new frappe.ui.Dialog({
+                        title:
+                            __(
+                                "Actual ADTs Loaded"
+                            ),
+
+                        fields: [
+                            {
+                                fieldname:
+                                    "details",
+
+                                fieldtype:
+                                    "HTML"
+                            }
+                        ]
+                    })
+                );
+
+
+                const wrapper = (
+                    dialog
+                        .fields_dict
+                        .details
+                        .$wrapper
+                );
+
+
+                const summary = $("<div>");
+
+
+                $("<p>")
+                    .text(
+                        __(
+                            "Excavator"
+                        )
+                        + ": "
+                        + (
+                            payload.excavator
+                            || ""
+                        )
+                    )
+                    .appendTo(
+                        summary
+                    );
+
+
+                $("<p>")
+                    .text(
+                        __(
+                            "Material"
+                        )
+                        + ": "
+                        + (
+                            payload.material
+                            || ""
+                        )
+                    )
+                    .appendTo(
+                        summary
+                    );
+
+
+                $("<p>")
+                    .text(
+                        __(
+                            "Hauling Distance"
+                        )
+                        + ": "
+                        + (
+                            payload.hauling_distance
+                            || "Not Captured"
+                        )
+                    )
+                    .appendTo(
+                        summary
+                    );
+
+
+                const activeHours = Number(
+                    payload.active_hour_count
+                    || 0
+                );
+
+
+                const totalHourlyAdtCount = Number(
+                    payload.adt_count_sum
+                    || 0
+                );
+
+
+                const calculatedAverage = (
+                    activeHours > 0
+                        ? (
+                            totalHourlyAdtCount
+                            / activeHours
+                        )
+                        : 0
+                );
+
+
+                $("<p>")
+                    .text(
+                        __(
+                            "Active Hours Observed"
+                        )
+                        + ": "
+                        + activeHours
+                    )
+                    .appendTo(
+                        summary
+                    );
+
+
+                $("<p>")
+                    .text(
+                        __(
+                            "Total Hourly ADT Count"
+                        )
+                        + ": "
+                        + totalHourlyAdtCount
+                    )
+                    .appendTo(
+                        summary
+                    );
+
+
+                $("<p>")
+                    .text(
+                        __(
+                            "Calculation"
+                        )
+                        + ": "
+                        + (
+                            activeHours > 0
+                                ? (
+                                    totalHourlyAdtCount
+                                    + " ÷ "
+                                    + activeHours
+                                    + " = "
+                                    + calculatedAverage.toFixed(
+                                        1
+                                    )
+                                )
+                                : __(
+                                    "No active hours"
+                                )
+                        )
+                    )
+                    .appendTo(
+                        summary
+                    );
+
+
+                $("<p>")
+                    .text(
+                        __(
+                            "Average Actual ADTs per Active Hour"
+                        )
+                        + ": "
+                        + calculatedAverage.toFixed(
+                            1
+                        )
+                    )
+                    .appendTo(
+                        summary
+                    );
+
+
+                $("<p>")
+                    .text(
+                        __(
+                            "Unique ADT Machines Used"
+                        )
+                        + ": "
+                        + adts.length
+                    )
+                    .appendTo(
+                        summary
+                    );
+
+
+                const list = $(
+                    '<ul class="list-group">'
+                );
+
+
+                adts.forEach(
+                    function (asset) {
+
+                        $("<li>")
+                            .addClass(
+                                "list-group-item"
+                            )
+                            .text(
+                                asset
+                            )
+                            .appendTo(
+                                list
+                            );
+                    }
+                );
+
+
+                wrapper
+                    .empty()
+                    .append(
+                        summary
+                    )
+                    .append(
+                        list
+                    );
+
+
+                dialog.show();
+            }
+        );
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_TRUCK_BENCHMARK_ADT_BUTTON_V119B
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_UNIQUE_ACTUAL_ADTS_DIALOG_V119D
+//
+// Final Truck Benchmark ADT detail formatter.
+//
+// Displays:
+//
+//   Unique Actual ADTs Loaded
+//   Avg Actual ADTs / Active Hour
+//   Active Hours Observed
+//   Total Hourly ADT Count
+//   Calculation
+//   Actual ADT machine numbers
+//
+// No custom CSS.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+
+    if (!report) {
+        return;
+    }
+
+
+    if (
+        report
+            ._productivity_v119d_unique_adts_applied
+    ) {
+        return;
+    }
+
+
+    report
+        ._productivity_v119d_unique_adts_applied = true;
+
+
+    const previous_formatter = (
+        report.formatter
+    );
+
+
+    function get_fieldname(
+        column
+    ) {
+
+        return (
+            (
+                column
+                && column.fieldname
+            )
+            ||
+            (
+                column
+                && column.df
+                && column.df.fieldname
+            )
+            ||
+            ""
+        );
+    }
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        const fieldname = (
+            get_fieldname(
+                column
+            )
+        );
+
+
+        if (
+            fieldname
+            === "adt_details"
+        ) {
+
+            if (
+                !data
+                || !data.truck_benchmark_machine_row
+            ) {
+                return "";
+            }
+
+
+            const adts = Array.isArray(
+                data._actual_adt_assets
+            )
+                ? data._actual_adt_assets
+                : [];
+
+
+            if (!adts.length) {
+
+                return (
+                    '<button type="button" '
+                    + 'class="btn btn-xs btn-default" '
+                    + 'disabled>'
+                    + __('No ADTs')
+                    + '</button>'
+                );
+            }
+
+
+            const payload = encodeURIComponent(
+                JSON.stringify({
+                    excavator:
+                        data.label || "",
+
+                    material:
+                        data._benchmark_material || "",
+
+                    hauling_distance:
+                        data._benchmark_distance || "",
+
+                    unique_actual_adts:
+                        data.unique_actual_adts
+                        || adts.length,
+
+                    avg_actual_adts:
+                        data.avg_actual_adts
+                        || 0,
+
+                    active_hour_count:
+                        data._active_hour_count
+                        || 0,
+
+                    adt_count_sum:
+                        data._adt_count_sum
+                        || 0,
+
+                    adts:
+                        adts
+                })
+            );
+
+
+            return (
+                '<button type="button" '
+                + 'class="btn btn-xs btn-default '
+                + 'productivity-v119d-view-adts" '
+                + 'data-payload="'
+                + payload
+                + '">'
+                + __('View ADTs')
+                + '</button>'
+            );
+        }
+
+
+        if (
+            typeof previous_formatter
+            === "function"
+        ) {
+
+            return previous_formatter(
+                value,
+                row,
+                column,
+                data,
+                default_formatter
+            );
+        }
+
+
+        return default_formatter(
+            value,
+            row,
+            column,
+            data
+        );
+    };
+
+
+    $(document)
+        .off(
+            "click.productivityV119D",
+            ".productivity-v119d-view-adts"
+        )
+        .on(
+            "click.productivityV119D",
+            ".productivity-v119d-view-adts",
+            function (event) {
+
+                event.preventDefault();
+
+
+                const raw = (
+                    $(this).attr(
+                        "data-payload"
+                    )
+                    || ""
+                );
+
+
+                let payload = {};
+
+
+                try {
+
+                    payload = JSON.parse(
+                        decodeURIComponent(
+                            raw
+                        )
+                    );
+
+                } catch (error) {
+
+                    frappe.msgprint(
+                        __(
+                            "Unable to read ADT details."
+                        )
+                    );
+
+                    return;
+                }
+
+
+                const adts = Array.isArray(
+                    payload.adts
+                )
+                    ? payload.adts
+                    : [];
+
+
+                const activeHours = Number(
+                    payload.active_hour_count
+                    || 0
+                );
+
+
+                const totalHourlyAdtCount = Number(
+                    payload.adt_count_sum
+                    || 0
+                );
+
+
+                const averageActualAdts = (
+                    activeHours > 0
+                        ? (
+                            totalHourlyAdtCount
+                            / activeHours
+                        )
+                        : 0
+                );
+
+
+                const uniqueActualAdts = (
+                    adts.length
+                );
+
+
+                const dialog = (
+                    new frappe.ui.Dialog({
+                        title:
+                            __(
+                                "Actual ADTs Loaded"
+                            ),
+
+                        fields: [
+                            {
+                                fieldname:
+                                    "details",
+
+                                fieldtype:
+                                    "HTML"
+                            }
+                        ]
+                    })
+                );
+
+
+                const wrapper = (
+                    dialog
+                        .fields_dict
+                        .details
+                        .$wrapper
+                );
+
+
+                const summary = $("<div>");
+
+
+                function add_line(
+                    label,
+                    value
+                ) {
+
+                    $("<p>")
+                        .text(
+                            label
+                            + ": "
+                            + value
+                        )
+                        .appendTo(
+                            summary
+                        );
+                }
+
+
+                add_line(
+                    __(
+                        "Excavator"
+                    ),
+                    payload.excavator
+                    || ""
+                );
+
+
+                add_line(
+                    __(
+                        "Material"
+                    ),
+                    payload.material
+                    || ""
+                );
+
+
+                add_line(
+                    __(
+                        "Hauling Distance"
+                    ),
+                    payload.hauling_distance
+                    || "Not Captured"
+                );
+
+
+                $("<hr>")
+                    .appendTo(
+                        summary
+                    );
+
+
+                add_line(
+                    __(
+                        "Unique Actual ADTs Loaded"
+                    ),
+                    uniqueActualAdts
+                );
+
+
+                add_line(
+                    __(
+                        "Average Actual ADTs per Active Hour"
+                    ),
+                    (
+                        typeof window.productivity_v119g_whole_number
+                        === "function"
+                            ? window.productivity_v119g_whole_number(
+                                averageActualAdts
+                            )
+                            : String(
+                                Math.round(
+                                    averageActualAdts
+                                )
+                            )
+                    )
+                );
+
+
+                $("<hr>")
+                    .appendTo(
+                        summary
+                    );
+
+
+                add_line(
+                    __(
+                        "Active Hours Observed"
+                    ),
+                    activeHours
+                );
+
+
+                add_line(
+                    __(
+                        "Total Hourly ADT Count"
+                    ),
+                    totalHourlyAdtCount
+                );
+
+
+                add_line(
+                    __(
+                        "Calculation"
+                    ),
+                    (
+                        activeHours > 0
+                            ? (
+                                totalHourlyAdtCount
+                                + " ÷ "
+                                + activeHours
+                                + " = "
+                                + (
+                        typeof window.productivity_v119g_whole_number
+                        === "function"
+                            ? window.productivity_v119g_whole_number(
+                                averageActualAdts
+                            )
+                            : String(
+                                Math.round(
+                                    averageActualAdts
+                                )
+                            )
+                    )
+                            )
+                            : __(
+                                "No active hours"
+                            )
+                    )
+                );
+
+
+                $("<hr>")
+                    .appendTo(
+                        summary
+                    );
+
+
+                add_line(
+                    __(
+                        "ADT Machine Numbers"
+                    ),
+                    uniqueActualAdts
+                );
+
+
+                const list = $(
+                    '<ul class="list-group">'
+                );
+
+
+                adts.forEach(
+                    function (asset) {
+
+                        $("<li>")
+                            .addClass(
+                                "list-group-item"
+                            )
+                            .text(
+                                asset
+                            )
+                            .appendTo(
+                                list
+                            );
+                    }
+                );
+
+
+                wrapper
+                    .empty()
+                    .append(
+                        summary
+                    )
+                    .append(
+                        list
+                    );
+
+
+                dialog.show();
+            }
+        );
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_UNIQUE_ACTUAL_ADTS_DIALOG_V119D
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_BENCHMARK_HEADER_ZERO_CLEANUP_V119F
+//
+// Display cleanup only.
+//
+// Group heading:
+//     show label only.
+//
+// Routes included:
+//     show label only.
+//
+// All other cells on these two special rows remain blank.
+//
+// Prevents empty Float columns from rendering as 0.0.
+//
+// No CSS.
+// No backend changes.
+// No calculation changes.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+
+    if (!report) {
+        return;
+    }
+
+
+    if (
+        report
+            ._productivity_v119f_header_zero_cleanup_applied
+    ) {
+        return;
+    }
+
+
+    report
+        ._productivity_v119f_header_zero_cleanup_applied = true;
+
+
+    const previous_formatter = (
+        report.formatter
+    );
+
+
+    function get_fieldname(
+        column
+    ) {
+
+        return (
+            (
+                column
+                && column.fieldname
+            )
+            ||
+            (
+                column
+                && column.df
+                && column.df.fieldname
+            )
+            ||
+            ""
+        );
+    }
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        const is_heading_row = (
+            data
+            && (
+                data.truck_benchmark_group_header
+                || data.truck_benchmark_route_row
+            )
+        );
+
+
+        if (
+            is_heading_row
+            && get_fieldname(
+                column
+            ) !== "label"
+        ) {
+
+            return "";
+        }
+
+
+        if (
+            typeof previous_formatter
+            === "function"
+        ) {
+
+            return previous_formatter(
+                value,
+                row,
+                column,
+                data,
+                default_formatter
+            );
+        }
+
+
+        return default_formatter(
+            value,
+            row,
+            column,
+            data
+        );
+    };
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_BENCHMARK_HEADER_ZERO_CLEANUP_V119F
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_TRUCK_BENCHMARK_ZERO_DECIMAL_DIALOG_V119G
+//
+// Final ADT popup formatter.
+//
+//     4.0 -> 4
+//     3.3 -> 3
+//
+// Display only.
+// Backend calculation remains unchanged.
+// ============================================================
+
+(function () {
+
+    function productivity_v119g_whole_number(
+        value
+    ) {
+
+        const number = Number(
+            value
+            || 0
+        );
+
+
+        if (!Number.isFinite(number)) {
+            return "0";
+        }
+
+
+        return String(
+            Math.round(
+                number
+            )
+        );
+    }
+
+
+    window.productivity_v119g_whole_number = (
+        productivity_v119g_whole_number
+    );
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_TRUCK_BENCHMARK_ZERO_DECIMAL_DIALOG_V119G
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_TRUCK_BENCHMARK_FINAL_ZERO_DECIMAL_V119H
+//
+// FINAL DISPLAY LAYER for TRUCK BENCHMARK ANALYSIS.
+//
+// All visible numeric report values display at 0 decimals.
+//
+// Examples:
+//
+//     86.000      -> 86
+//     17,260.000  -> 17,260
+//     200.698     -> 201
+//     212.020     -> 212
+//     5.233       -> 5
+//
+// AVERAGE / WEIGHTED BY HOURS:
+//     Unique Actual ADTs = blank
+//     Avg Actual ADTs    = blank
+//
+// Group and Route heading rows:
+//     numeric columns = blank
+//
+// No backend or calculation changes.
+// No CSS.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+
+    if (!report) {
+        return;
+    }
+
+
+    if (
+        report
+            ._productivity_v119h_final_zero_decimal_applied
+    ) {
+        return;
+    }
+
+
+    report
+        ._productivity_v119h_final_zero_decimal_applied = true;
+
+
+    const previous_formatter = (
+        report.formatter
+    );
+
+
+    const numeric_fields = new Set([
+        "working_hours",
+        "output",
+        "productivity",
+        "benchmark_bcm_hr",
+        "unique_actual_adts",
+        "avg_actual_adts",
+        "variance_bcm_hr",
+        "source_rows"
+    ]);
+
+
+    const summary_blank_fields = new Set([
+        "unique_actual_adts",
+        "avg_actual_adts",
+        "adt_details"
+    ]);
+
+
+    function get_fieldname(
+        column
+    ) {
+
+        return (
+            (
+                column
+                && column.fieldname
+            )
+            ||
+            (
+                column
+                && column.df
+                && column.df.fieldname
+            )
+            ||
+            ""
+        );
+    }
+
+
+    function whole_number(
+        value
+    ) {
+
+        if (
+            value === null
+            || value === undefined
+            || value === ""
+        ) {
+            return "";
+        }
+
+
+        let raw = value;
+
+
+        if (
+            typeof raw
+            === "string"
+        ) {
+
+            raw = raw
+                .replace(
+                    /,/g,
+                    ""
+                )
+                .trim();
+        }
+
+
+        const number = Number(
+            raw
+        );
+
+
+        if (
+            !Number.isFinite(
+                number
+            )
+        ) {
+            return "";
+        }
+
+
+        // Symmetric normal rounding:
+        //
+        //  5.5 ->  6
+        // -5.5 -> -6
+
+        const rounded = (
+            number < 0
+                ? -Math.round(
+                    Math.abs(
+                        number
+                    )
+                )
+                : Math.round(
+                    number
+                )
+        );
+
+
+        return rounded.toLocaleString(
+            "en-US",
+            {
+                minimumFractionDigits:
+                    0,
+
+                maximumFractionDigits:
+                    0
+            }
+        );
+    }
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        if (!data) {
+
+            if (
+                typeof previous_formatter
+                === "function"
+            ) {
+
+                return previous_formatter(
+                    value,
+                    row,
+                    column,
+                    data,
+                    default_formatter
+                );
+            }
+
+
+            return default_formatter(
+                value,
+                row,
+                column,
+                data
+            );
+        }
+
+
+        const fieldname = (
+            get_fieldname(
+                column
+            )
+        );
+
+
+        const is_group_header = (
+            !!data.truck_benchmark_group_header
+        );
+
+
+        const is_route_row = (
+            !!data.truck_benchmark_route_row
+        );
+
+
+        const is_machine_row = (
+            !!data.truck_benchmark_machine_row
+        );
+
+
+        const is_summary_row = (
+            !!data.truck_benchmark_summary_row
+        );
+
+
+        const is_benchmark_row = (
+            is_group_header
+            || is_route_row
+            || is_machine_row
+            || is_summary_row
+        );
+
+
+        // Leave all other Productivity views alone.
+
+        if (!is_benchmark_row) {
+
+            if (
+                typeof previous_formatter
+                === "function"
+            ) {
+
+                return previous_formatter(
+                    value,
+                    row,
+                    column,
+                    data,
+                    default_formatter
+                );
+            }
+
+
+            return default_formatter(
+                value,
+                row,
+                column,
+                data
+            );
+        }
+
+
+        // ----------------------------------------------------
+        // Group title / Routes included
+        //
+        // Only Label should contain anything.
+        // ----------------------------------------------------
+
+        if (
+            is_group_header
+            || is_route_row
+        ) {
+
+            if (
+                fieldname !== "label"
+            ) {
+                return "";
+            }
+
+
+            if (
+                typeof previous_formatter
+                === "function"
+            ) {
+
+                return previous_formatter(
+                    value,
+                    row,
+                    column,
+                    data,
+                    default_formatter
+                );
+            }
+
+
+            return default_formatter(
+                value,
+                row,
+                column,
+                data
+            );
+        }
+
+
+        // ----------------------------------------------------
+        // Summary rows
+        //
+        // Do NOT display 0 for fields that deliberately have
+        // no aggregate ADT value.
+        // ----------------------------------------------------
+
+        if (
+            is_summary_row
+            && summary_blank_fields.has(
+                fieldname
+            )
+        ) {
+            return "";
+        }
+
+
+        // ----------------------------------------------------
+        // All Truck Benchmark numeric fields:
+        // zero-decimal display.
+        // ----------------------------------------------------
+
+        if (
+            numeric_fields.has(
+                fieldname
+            )
+        ) {
+
+            const raw_value = (
+                data[
+                    fieldname
+                ]
+            );
+
+
+            return whole_number(
+                raw_value
+            );
+        }
+
+
+        // ----------------------------------------------------
+        // Performance %
+        //
+        // Example:
+        //     102.6% -> 103%
+        // ----------------------------------------------------
+
+        if (
+            fieldname
+            === "performance_pct"
+        ) {
+
+            const performance = String(
+                data.performance_pct
+                || ""
+            ).trim();
+
+
+            if (
+                performance.endsWith(
+                    "%"
+                )
+            ) {
+
+                const raw = Number(
+                    performance
+                        .slice(
+                            0,
+                            -1
+                        )
+                        .trim()
+                );
+
+
+                if (
+                    Number.isFinite(
+                        raw
+                    )
+                ) {
+
+                    return (
+                        whole_number(
+                            raw
+                        )
+                        + "%"
+                    );
+                }
+            }
+        }
+
+
+        // Preserve View ADTs button, Status and labels.
+
+        if (
+            typeof previous_formatter
+            === "function"
+        ) {
+
+            return previous_formatter(
+                value,
+                row,
+                column,
+                data,
+                default_formatter
+            );
+        }
+
+
+        return default_formatter(
+            value,
+            row,
+            column,
+            data
+        );
+    };
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_TRUCK_BENCHMARK_FINAL_ZERO_DECIMAL_V119H
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_PROPORTIONAL_RECONCILED_HOURS_DIALOG_V119J
+//
+// View ADTs popup for proportional reconciled hours.
+//
+// Shows:
+//
+//   Excavator Total Working Hours
+//   This Material / Excavator Working Hours
+//   Total Hourly ADT Count
+//   Avg Actual ADTs / Working Hour
+//
+// No CSS.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+
+    if (!report) {
+        return;
+    }
+
+
+    if (
+        report
+            ._productivity_v119j_dialog_applied
+    ) {
+        return;
+    }
+
+
+    report
+        ._productivity_v119j_dialog_applied = true;
+
+
+    const previous_formatter = (
+        report.formatter
+    );
+
+
+    function get_fieldname(
+        column
+    ) {
+
+        return (
+            (
+                column
+                && column.fieldname
+            )
+            ||
+            (
+                column
+                && column.df
+                && column.df.fieldname
+            )
+            ||
+            ""
+        );
+    }
+
+
+    function whole_number(
+        value
+    ) {
+
+        const number = Number(
+            value
+            || 0
+        );
+
+
+        if (!Number.isFinite(number)) {
+            return "0";
+        }
+
+
+        return Math.round(
+            number
+        ).toLocaleString(
+            "en-US"
+        );
+    }
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        const fieldname = (
+            get_fieldname(
+                column
+            )
+        );
+
+
+        if (
+            fieldname === "adt_details"
+            && data
+            && data.truck_benchmark_machine_row
+        ) {
+
+            const adts = Array.isArray(
+                data._actual_adt_assets
+            )
+                ? data._actual_adt_assets
+                : [];
+
+
+            if (!adts.length) {
+
+                return (
+                    '<button type="button" '
+                    + 'class="btn btn-xs btn-default" '
+                    + 'disabled>'
+                    + __('No ADTs')
+                    + '</button>'
+                );
+            }
+
+
+            const payload = encodeURIComponent(
+                JSON.stringify({
+                    excavator:
+                        data.label || "",
+
+                    material:
+                        data._benchmark_material || "",
+
+                    hauling_distance:
+                        data._benchmark_distance || "",
+
+                    reconciled_machine_hours:
+                        data._reconciled_machine_hours || 0,
+
+                    reconciled_group_hours:
+                        data._reconciled_group_hours || 0,
+
+                    total_hourly_adt_count:
+                        data._adt_count_sum || 0,
+
+                    avg_actual_adts:
+                        data.avg_actual_adts || 0,
+
+                    adts:
+                        adts
+                })
+            );
+
+
+            return (
+                '<button type="button" '
+                + 'class="btn btn-xs btn-default '
+                + 'productivity-v119j-view-adts" '
+                + 'data-payload="'
+                + payload
+                + '">'
+                + __('View ADTs')
+                + '</button>'
+            );
+        }
+
+
+        if (
+            typeof previous_formatter
+            === "function"
+        ) {
+
+            return previous_formatter(
+                value,
+                row,
+                column,
+                data,
+                default_formatter
+            );
+        }
+
+
+        return default_formatter(
+            value,
+            row,
+            column,
+            data
+        );
+    };
+
+
+    $(document)
+        .off(
+            "click.productivityV119J",
+            ".productivity-v119j-view-adts"
+        )
+        .on(
+            "click.productivityV119J",
+            ".productivity-v119j-view-adts",
+            function (event) {
+
+                event.preventDefault();
+
+
+                let payload = {};
+
+
+                try {
+
+                    payload = JSON.parse(
+                        decodeURIComponent(
+                            $(this).attr(
+                                "data-payload"
+                            )
+                            || ""
+                        )
+                    );
+
+                } catch (error) {
+
+                    frappe.msgprint(
+                        __(
+                            "Unable to read ADT details."
+                        )
+                    );
+
+                    return;
+                }
+
+
+                const adts = Array.isArray(
+                    payload.adts
+                )
+                    ? payload.adts
+                    : [];
+
+
+                const machineHours = Number(
+                    payload.reconciled_machine_hours
+                    || 0
+                );
+
+
+                const groupHours = Number(
+                    payload.reconciled_group_hours
+                    || 0
+                );
+
+
+                const totalHourlyAdtCount = Number(
+                    payload.total_hourly_adt_count
+                    || 0
+                );
+
+
+                const averageActualAdts = (
+                    groupHours > 0
+                        ? (
+                            totalHourlyAdtCount
+                            / groupHours
+                        )
+                        : 0
+                );
+
+
+                const dialog = (
+                    new frappe.ui.Dialog({
+                        title:
+                            __(
+                                "Actual ADTs Loaded"
+                            ),
+
+                        fields: [
+                            {
+                                fieldname:
+                                    "details",
+
+                                fieldtype:
+                                    "HTML"
+                            }
+                        ]
+                    })
+                );
+
+
+                const wrapper = (
+                    dialog
+                        .fields_dict
+                        .details
+                        .$wrapper
+                );
+
+
+                const summary = $("<div>");
+
+
+                function add_line(
+                    label,
+                    value
+                ) {
+
+                    $("<p>")
+                        .text(
+                            label
+                            + ": "
+                            + value
+                        )
+                        .appendTo(
+                            summary
+                        );
+                }
+
+
+                add_line(
+                    __("Excavator"),
+                    payload.excavator || ""
+                );
+
+
+                add_line(
+                    __("Material"),
+                    payload.material || ""
+                );
+
+
+                add_line(
+                    __("Hauling Distance"),
+                    payload.hauling_distance
+                    || "Not Captured"
+                );
+
+
+                $("<hr>").appendTo(
+                    summary
+                );
+
+
+                add_line(
+                    __(
+                        "Unique Actual ADTs Loaded"
+                    ),
+                    adts.length
+                );
+
+
+                add_line(
+                    __(
+                        "Avg Actual ADTs / Working Hour"
+                    ),
+                    whole_number(
+                        averageActualAdts
+                    )
+                );
+
+
+                $("<hr>").appendTo(
+                    summary
+                );
+
+
+                add_line(
+                    __(
+                        "Excavator Total Working Hours"
+                    ),
+                    whole_number(
+                        machineHours
+                    )
+                );
+
+
+                add_line(
+                    __(
+                        "This Material / Excavator Working Hours"
+                    ),
+                    whole_number(
+                        groupHours
+                    )
+                );
+
+
+                add_line(
+                    __(
+                        "Total Hourly ADT Count"
+                    ),
+                    whole_number(
+                        totalHourlyAdtCount
+                    )
+                );
+
+
+                add_line(
+                    __("Calculation"),
+                    (
+                        whole_number(
+                            totalHourlyAdtCount
+                        )
+                        + " ÷ "
+                        + whole_number(
+                            groupHours
+                        )
+                        + " = "
+                        + whole_number(
+                            averageActualAdts
+                        )
+                    )
+                );
+
+
+                $("<hr>").appendTo(
+                    summary
+                );
+
+
+                add_line(
+                    __(
+                        "ADT Machine Numbers"
+                    ),
+                    adts.length
+                );
+
+
+                const list = $(
+                    '<ul class="list-group">'
+                );
+
+
+                adts.forEach(
+                    function (asset) {
+
+                        $("<li>")
+                            .addClass(
+                                "list-group-item"
+                            )
+                            .text(
+                                asset
+                            )
+                            .appendTo(
+                                list
+                            );
+                    }
+                );
+
+
+                wrapper
+                    .empty()
+                    .append(
+                        summary
+                    )
+                    .append(
+                        list
+                    );
+
+
+                dialog.show();
+            }
+        );
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_PROPORTIONAL_RECONCILED_HOURS_DIALOG_V119J
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_UNALLOCATED_DETAIL_FORMATTER_V119K
+//
+// Unallocated rows deliberately have no:
+//
+//     Benchmark
+//     ADT count
+//     ADT average
+//     View ADTs
+//     Performance
+//     Variance
+//     Source Row count
+//
+// No CSS.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+
+    if (!report) {
+        return;
+    }
+
+
+    if (
+        report
+            ._productivity_v119k_formatter_applied
+    ) {
+        return;
+    }
+
+
+    report
+        ._productivity_v119k_formatter_applied = true;
+
+
+    const previous_formatter = (
+        report.formatter
+    );
+
+
+    function get_fieldname(
+        column
+    ) {
+
+        return (
+            (
+                column
+                && column.fieldname
+            )
+            ||
+            (
+                column
+                && column.df
+                && column.df.fieldname
+            )
+            ||
+            ""
+        );
+    }
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        const fieldname = (
+            get_fieldname(
+                column
+            )
+        );
+
+
+        if (
+            data
+            && data
+                ._productivity_v119k_unallocated
+        ) {
+
+            const blank_fields = [
+                "benchmark_bcm_hr",
+                "unique_actual_adts",
+                "avg_actual_adts",
+                "adt_details",
+                "performance_pct",
+                "variance_bcm_hr",
+                "source_rows"
+            ];
+
+
+            if (
+                blank_fields.includes(
+                    fieldname
+                )
+            ) {
+
+                return "";
+            }
+
+
+            if (
+                fieldname
+                === "productivity"
+                && Number(
+                    data.working_hours
+                    || 0
+                ) <= 0
+            ) {
+
+                return "";
+            }
+        }
+
+
+        if (
+            typeof previous_formatter
+            === "function"
+        ) {
+
+            return previous_formatter(
+                value,
+                row,
+                column,
+                data,
+                default_formatter
+            );
+        }
+
+
+        return default_formatter(
+            value,
+            row,
+            column,
+            data
+        );
+    };
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_UNALLOCATED_DETAIL_FORMATTER_V119K
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_ACTUAL_MACHINE_ADTS_DIALOG_V119P
+//
+// Actual BCMs:
+// ADT data is machine-level because historical Truck Loads
+// do not contain Survey Hauling Distance / To Area.
+//
+// No CSS.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+
+    if (!report) {
+        return;
+    }
+
+
+    if (
+        report
+            ._productivity_v119p_dialog_applied
+    ) {
+        return;
+    }
+
+
+    report
+        ._productivity_v119p_dialog_applied = true;
+
+
+    const previous_formatter = (
+        report.formatter
+    );
+
+
+    function fieldname(
+        column
+    ) {
+
+        return (
+            (
+                column
+                && column.fieldname
+            )
+            ||
+            (
+                column
+                && column.df
+                && column.df.fieldname
+            )
+            ||
+            ""
+        );
+    }
+
+
+    function whole(
+        value
+    ) {
+
+        const number = Number(
+            value
+            || 0
+        );
+
+
+        if (!Number.isFinite(number)) {
+            return "0";
+        }
+
+
+        return Math.round(
+            number
+        ).toLocaleString(
+            "en-US"
+        );
+    }
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        if (
+            fieldname(
+                column
+            ) === "adt_details"
+            && data
+            && data
+                ._productivity_v119o_actual_survey
+            && data
+                .truck_benchmark_machine_row
+        ) {
+
+            const adts = Array.isArray(
+                data._actual_adt_assets
+            )
+                ? data._actual_adt_assets
+                : [];
+
+
+            if (!adts.length) {
+                return "";
+            }
+
+
+            const payload = encodeURIComponent(
+                JSON.stringify({
+                    excavator:
+                        data.label || "",
+
+                    machine_hours:
+                        data._adt_machine_working_hours
+                        || 0,
+
+                    hourly_adt_count:
+                        data._adt_count_sum
+                        || 0,
+
+                    active_hour_records:
+                        data._adt_machine_active_hour_records
+                        || 0,
+
+                    truck_load_rows:
+                        data._adt_machine_truck_load_rows
+                        || 0,
+
+                    unique_adts:
+                        adts.length,
+
+                    adts:
+                        adts
+                })
+            );
+
+
+            return (
+                '<button type="button" '
+                + 'class="btn btn-xs btn-default '
+                + 'productivity-v119p-view-adts" '
+                + 'data-payload="'
+                + payload
+                + '">'
+                + __('View ADTs')
+                + '</button>'
+            );
+        }
+
+
+        if (
+            typeof previous_formatter
+            === "function"
+        ) {
+
+            return previous_formatter(
+                value,
+                row,
+                column,
+                data,
+                default_formatter
+            );
+        }
+
+
+        return default_formatter(
+            value,
+            row,
+            column,
+            data
+        );
+    };
+
+
+    $(document)
+        .off(
+            "click.productivityV119P",
+            ".productivity-v119p-view-adts"
+        )
+        .on(
+            "click.productivityV119P",
+            ".productivity-v119p-view-adts",
+            function (event) {
+
+                event.preventDefault();
+
+
+                let payload;
+
+
+                try {
+
+                    payload = JSON.parse(
+                        decodeURIComponent(
+                            $(this).attr(
+                                "data-payload"
+                            )
+                        )
+                    );
+
+                } catch (error) {
+
+                    frappe.msgprint(
+                        __(
+                            "Unable to read ADT details."
+                        )
+                    );
+
+                    return;
+                }
+
+
+                const hours = Number(
+                    payload.machine_hours
+                    || 0
+                );
+
+
+                const numerator = Number(
+                    payload.hourly_adt_count
+                    || 0
+                );
+
+
+                const average = (
+                    hours > 0
+                        ? numerator / hours
+                        : 0
+                );
+
+
+                const dialog = (
+                    new frappe.ui.Dialog({
+                        title:
+                            __(
+                                "Actual ADTs - Excavator Total"
+                            ),
+
+                        fields: [
+                            {
+                                fieldtype:
+                                    "HTML",
+
+                                fieldname:
+                                    "details"
+                            }
+                        ]
+                    })
+                );
+
+
+                const wrapper = (
+                    dialog
+                        .fields_dict
+                        .details
+                        .$wrapper
+                );
+
+
+                const content = $("<div>");
+
+
+                function line(
+                    label,
+                    value
+                ) {
+
+                    $("<p>")
+                        .text(
+                            label
+                            + ": "
+                            + value
+                        )
+                        .appendTo(
+                            content
+                        );
+                }
+
+
+                line(
+                    __("Excavator"),
+                    payload.excavator
+                );
+
+
+                line(
+                    __("Scope"),
+                    __(
+                        "Entire selected period - machine level"
+                    )
+                );
+
+
+                $("<hr>")
+                    .appendTo(
+                        content
+                    );
+
+
+                line(
+                    __("Machine Working Hours"),
+                    whole(
+                        hours
+                    )
+                );
+
+
+                line(
+                    __(
+                        "Sum Distinct ADTs Per Hour"
+                    ),
+                    whole(
+                        numerator
+                    )
+                );
+
+
+                line(
+                    __(
+                        "Avg Actual ADTs / Machine Working Hr"
+                    ),
+                    whole(
+                        average
+                    )
+                );
+
+
+                line(
+                    __("Calculation"),
+                    (
+                        whole(
+                            numerator
+                        )
+                        + " ÷ "
+                        + whole(
+                            hours
+                        )
+                        + " = "
+                        + whole(
+                            average
+                        )
+                    )
+                );
+
+
+                $("<hr>")
+                    .appendTo(
+                        content
+                    );
+
+
+                line(
+                    __("Unique Actual ADT Assets"),
+                    payload.unique_adts
+                );
+
+
+                line(
+                    __(
+                        "Hourly Production Records With ADT Activity"
+                    ),
+                    payload.active_hour_records
+                );
+
+
+                line(
+                    __("Truck Load Rows"),
+                    payload.truck_load_rows
+                );
+
+
+                const list = $(
+                    '<ul class="list-group">'
+                );
+
+
+                (
+                    payload.adts
+                    || []
+                ).forEach(
+                    function (asset) {
+
+                        $("<li>")
+                            .addClass(
+                                "list-group-item"
+                            )
+                            .text(
+                                asset
+                            )
+                            .appendTo(
+                                list
+                            );
+                    }
+                );
+
+
+                wrapper
+                    .empty()
+                    .append(
+                        content
+                    )
+                    .append(
+                        list
+                    );
+
+
+                dialog.show();
+            }
+        );
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_ACTUAL_MACHINE_ADTS_DIALOG_V119P
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_ROW_ADTS_DIALOG_V119Q
+//
+// ACTUAL BCMs:
+//
+// ADT popup now represents ONLY:
+//
+//     Selected Material
+//     + Selected Hauling Distance
+//
+// Machine-total ADTs are not shown on individual rows.
+//
+// No CSS.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+
+    if (!report) {
+        return;
+    }
+
+
+    if (
+        report
+            ._productivity_v119q_dialog_applied
+    ) {
+        return;
+    }
+
+
+    report
+        ._productivity_v119q_dialog_applied = true;
+
+
+    const previous_formatter = (
+        report.formatter
+    );
+
+
+    function fieldname(
+        column
+    ) {
+
+        return (
+            (
+                column
+                && column.fieldname
+            )
+            ||
+            (
+                column
+                && column.df
+                && column.df.fieldname
+            )
+            ||
+            ""
+        );
+    }
+
+
+    function whole(
+        value
+    ) {
+
+        const number = Number(
+            value
+            || 0
+        );
+
+
+        if (!Number.isFinite(number)) {
+            return "0";
+        }
+
+
+        return Math.round(
+            number
+        ).toLocaleString(
+            "en-US"
+        );
+    }
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        const name = fieldname(
+            column
+        );
+
+
+        const is_actual_row = (
+            data
+            && data
+                .truck_benchmark_machine_row
+            && data
+                ._productivity_v119o_actual_survey
+        );
+
+
+        if (
+            is_actual_row
+            && (
+                name
+                === "unique_actual_adts"
+                ||
+                name
+                === "avg_actual_adts"
+            )
+        ) {
+
+            if (
+                !data
+                    ._productivity_v119q_row_adt_available
+            ) {
+
+                return "";
+            }
+
+
+            return whole(
+                value
+            );
+        }
+
+
+        if (
+            is_actual_row
+            && name
+                === "adt_details"
+        ) {
+
+            if (
+                !data
+                    ._productivity_v119q_row_adt_available
+            ) {
+
+                return __(
+                    "Not available"
+                );
+            }
+
+
+            const adts = Array.isArray(
+                data._actual_adt_assets
+            )
+                ? data._actual_adt_assets
+                : [];
+
+
+            const payload = encodeURIComponent(
+                JSON.stringify({
+                    excavator:
+                        data.label || "",
+
+                    material:
+                        data._adt_scope_material
+                        || "",
+
+                    hauling_distance:
+                        data._adt_scope_distance
+                        || "",
+
+                    routes:
+                        data._adt_scope_routes
+                        || [],
+
+                    working_hours:
+                        data._adt_row_working_hours
+                        || data.working_hours
+                        || 0,
+
+                    adt_hour_count:
+                        data._adt_count_sum
+                        || 0,
+
+                    unique_adts:
+                        adts.length,
+
+                    matched_rows:
+                        data._adt_row_truck_load_rows
+                        || 0,
+
+                    adts:
+                        adts
+                })
+            );
+
+
+            return (
+                '<button type="button" '
+                + 'class="btn btn-xs btn-default '
+                + 'productivity-v119q-view-adts" '
+                + 'data-payload="'
+                + payload
+                + '">'
+                + __('View ADTs')
+                + '</button>'
+            );
+        }
+
+
+        if (
+            typeof previous_formatter
+            === "function"
+        ) {
+
+            return previous_formatter(
+                value,
+                row,
+                column,
+                data,
+                default_formatter
+            );
+        }
+
+
+        return default_formatter(
+            value,
+            row,
+            column,
+            data
+        );
+    };
+
+
+    $(document)
+        .off(
+            "click.productivityV119Q",
+            ".productivity-v119q-view-adts"
+        )
+        .on(
+            "click.productivityV119Q",
+            ".productivity-v119q-view-adts",
+            function (event) {
+
+                event.preventDefault();
+
+
+                let payload;
+
+
+                try {
+
+                    payload = JSON.parse(
+                        decodeURIComponent(
+                            $(this).attr(
+                                "data-payload"
+                            )
+                        )
+                    );
+
+                } catch (error) {
+
+                    frappe.msgprint(
+                        __(
+                            "Unable to read ADT details."
+                        )
+                    );
+
+                    return;
+                }
+
+
+                const hours = Number(
+                    payload.working_hours
+                    || 0
+                );
+
+
+                const adtHourCount = Number(
+                    payload.adt_hour_count
+                    || 0
+                );
+
+
+                const average = (
+                    hours > 0
+                        ? (
+                            adtHourCount
+                            / hours
+                        )
+                        : 0
+                );
+
+
+                const dialog = (
+                    new frappe.ui.Dialog({
+                        title:
+                            __(
+                                "Actual ADTs - Material + Hauling Distance"
+                            ),
+
+                        fields: [
+                            {
+                                fieldtype:
+                                    "HTML",
+
+                                fieldname:
+                                    "details"
+                            }
+                        ]
+                    })
+                );
+
+
+                const wrapper = (
+                    dialog
+                        .fields_dict
+                        .details
+                        .$wrapper
+                );
+
+
+                const content = $("<div>");
+
+
+                function line(
+                    label,
+                    value
+                ) {
+
+                    $("<p>")
+                        .text(
+                            label
+                            + ": "
+                            + value
+                        )
+                        .appendTo(
+                            content
+                        );
+                }
+
+
+                line(
+                    __("Excavator"),
+                    payload.excavator
+                );
+
+
+                line(
+                    __("Material"),
+                    payload.material
+                );
+
+
+                line(
+                    __("Hauling Distance"),
+                    payload.hauling_distance
+                );
+
+
+                if (
+                    Array.isArray(
+                        payload.routes
+                    )
+                    && payload.routes.length
+                ) {
+
+                    line(
+                        __("Route(s)"),
+                        payload.routes.join(
+                            " / "
+                        )
+                    );
+                }
+
+
+                line(
+                    __("Scope"),
+                    __(
+                        "Selected Material + Hauling Distance"
+                    )
+                );
+
+
+                $("<hr>")
+                    .appendTo(
+                        content
+                    );
+
+
+                line(
+                    __("Row Working Hours"),
+                    whole(
+                        hours
+                    )
+                );
+
+
+                line(
+                    __("Total ADT-Hour Count"),
+                    whole(
+                        adtHourCount
+                    )
+                );
+
+
+                line(
+                    __(
+                        "Avg Actual ADTs / Row Working Hr"
+                    ),
+                    whole(
+                        average
+                    )
+                );
+
+
+                line(
+                    __("Calculation"),
+                    (
+                        whole(
+                            adtHourCount
+                        )
+                        + " ÷ "
+                        + whole(
+                            hours
+                        )
+                        + " = "
+                        + whole(
+                            average
+                        )
+                    )
+                );
+
+
+                $("<hr>")
+                    .appendTo(
+                        content
+                    );
+
+
+                line(
+                    __(
+                        "Unique ADT Assets in This Scope"
+                    ),
+                    payload.unique_adts
+                );
+
+
+                line(
+                    __(
+                        "Matched Truck Load Rows"
+                    ),
+                    payload.matched_rows
+                );
+
+
+                const list = $(
+                    '<ul class="list-group">'
+                );
+
+
+                (
+                    payload.adts
+                    || []
+                ).forEach(
+                    function (asset) {
+
+                        $("<li>")
+                            .addClass(
+                                "list-group-item"
+                            )
+                            .text(
+                                asset
+                            )
+                            .appendTo(
+                                list
+                            );
+                    }
+                );
+
+
+                wrapper
+                    .empty()
+                    .append(
+                        content
+                    )
+                    .append(
+                        list
+                    );
+
+
+                dialog.show();
+            }
+        );
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_ROW_ADTS_DIALOG_V119Q
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_ACTUAL_MATERIAL_ADTS_DIALOG_V119R
+//
+// Actual row:
+//     Material + HD + Route come from Survey.
+//
+// ADT machines:
+//     matched from Truck Loads / Tallies MATERIAL.
+//
+// Historical Truck Load HD is not required.
+//
+// No CSS.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+
+    if (!report) {
+        return;
+    }
+
+
+    if (
+        report
+            ._productivity_v119r_dialog_applied
+    ) {
+        return;
+    }
+
+
+    report
+        ._productivity_v119r_dialog_applied = true;
+
+
+    const previous_formatter = (
+        report.formatter
+    );
+
+
+    function fieldname(
+        column
+    ) {
+
+        return (
+            (
+                column
+                && column.fieldname
+            )
+            ||
+            (
+                column
+                && column.df
+                && column.df.fieldname
+            )
+            ||
+            ""
+        );
+    }
+
+
+    function whole(
+        value
+    ) {
+
+        const number = Number(
+            value
+            || 0
+        );
+
+
+        if (!Number.isFinite(number)) {
+            return "0";
+        }
+
+
+        return Math.round(
+            number
+        ).toLocaleString(
+            "en-US"
+        );
+    }
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        const name = fieldname(
+            column
+        );
+
+
+        const is_actual_row = (
+            data
+            && data
+                .truck_benchmark_machine_row
+            && data
+                ._productivity_v119o_actual_survey
+        );
+
+
+        if (
+            is_actual_row
+            && (
+                name === "unique_actual_adts"
+                ||
+                name === "avg_actual_adts"
+            )
+        ) {
+
+            if (
+                !data
+                    ._productivity_v119r_material_adt_available
+            ) {
+
+                return "";
+            }
+
+
+            return whole(
+                value
+            );
+        }
+
+
+        if (
+            is_actual_row
+            && name === "adt_details"
+        ) {
+
+            if (
+                !data
+                    ._productivity_v119r_material_adt_available
+            ) {
+
+                return "";
+            }
+
+
+            const adts = Array.isArray(
+                data._actual_adt_assets
+            )
+                ? data._actual_adt_assets
+                : [];
+
+
+            const payload = encodeURIComponent(
+                JSON.stringify({
+                    excavator:
+                        data.label || "",
+
+                    material:
+                        data._benchmark_material
+                        || "",
+
+                    hauling_distance:
+                        data._benchmark_distance
+                        || "",
+
+                    routes:
+                        data._benchmark_routes
+                        || [],
+
+                    material_key:
+                        data._productivity_v119r_material_key
+                        || "",
+
+                    material_working_hours:
+                        data._adt_material_working_hours
+                        || 0,
+
+                    adt_hour_count:
+                        data._adt_count_sum
+                        || 0,
+
+                    unique_adts:
+                        adts.length,
+
+                    tallies_geo_layers:
+                        data._adt_material_geo_layers
+                        || [],
+
+                    tallies_bcm:
+                        data._adt_material_tallies_bcm
+                        || 0,
+
+                    truck_load_rows:
+                        data._adt_material_truck_load_rows
+                        || 0,
+
+                    adts:
+                        adts
+                })
+            );
+
+
+            return (
+                '<button type="button" '
+                + 'class="btn btn-xs btn-default '
+                + 'productivity-v119r-view-adts" '
+                + 'data-payload="'
+                + payload
+                + '">'
+                + __('View ADTs')
+                + '</button>'
+            );
+        }
+
+
+        if (
+            typeof previous_formatter
+            === "function"
+        ) {
+
+            return previous_formatter(
+                value,
+                row,
+                column,
+                data,
+                default_formatter
+            );
+        }
+
+
+        return default_formatter(
+            value,
+            row,
+            column,
+            data
+        );
+    };
+
+
+    $(document)
+        .off(
+            "click.productivityV119R",
+            ".productivity-v119r-view-adts"
+        )
+        .on(
+            "click.productivityV119R",
+            ".productivity-v119r-view-adts",
+            function (event) {
+
+                event.preventDefault();
+
+
+                let payload;
+
+
+                try {
+
+                    payload = JSON.parse(
+                        decodeURIComponent(
+                            $(this).attr(
+                                "data-payload"
+                            )
+                        )
+                    );
+
+                } catch (error) {
+
+                    frappe.msgprint(
+                        __(
+                            "Unable to read ADT details."
+                        )
+                    );
+
+                    return;
+                }
+
+
+                const hours = Number(
+                    payload.material_working_hours
+                    || 0
+                );
+
+
+                const numerator = Number(
+                    payload.adt_hour_count
+                    || 0
+                );
+
+
+                const average = (
+                    hours > 0
+                        ? numerator / hours
+                        : 0
+                );
+
+
+                const dialog = (
+                    new frappe.ui.Dialog({
+                        title:
+                            __(
+                                "Actual ADTs - Material"
+                            ),
+
+                        fields: [
+                            {
+                                fieldtype:
+                                    "HTML",
+
+                                fieldname:
+                                    "details"
+                            }
+                        ]
+                    })
+                );
+
+
+                const wrapper = (
+                    dialog
+                        .fields_dict
+                        .details
+                        .$wrapper
+                );
+
+
+                const content = $("<div>");
+
+
+                function line(
+                    label,
+                    value
+                ) {
+
+                    $("<p>")
+                        .text(
+                            label
+                            + ": "
+                            + value
+                        )
+                        .appendTo(
+                            content
+                        );
+                }
+
+
+                line(
+                    __("Excavator"),
+                    payload.excavator
+                );
+
+
+                line(
+                    __("Actual Material"),
+                    payload.material
+                );
+
+
+                line(
+                    __("Actual Hauling Distance"),
+                    payload.hauling_distance
+                );
+
+
+                if (
+                    Array.isArray(
+                        payload.routes
+                    )
+                    && payload.routes.length
+                ) {
+
+                    line(
+                        __("Actual Route(s)"),
+                        payload.routes.join(
+                            " / "
+                        )
+                    );
+                }
+
+
+                line(
+                    __("ADT Match Source"),
+                    __(
+                        "Tallies / Truck Loads material"
+                    )
+                );
+
+
+                if (
+                    Array.isArray(
+                        payload.tallies_geo_layers
+                    )
+                    && payload
+                        .tallies_geo_layers
+                        .length
+                ) {
+
+                    line(
+                        __(
+                            "Tallies Material Layer"
+                        ),
+                        payload
+                            .tallies_geo_layers
+                            .join(
+                                " / "
+                            )
+                    );
+                }
+
+
+                $("<hr>")
+                    .appendTo(
+                        content
+                    );
+
+
+                line(
+                    __(
+                        "Material Working Hours"
+                    ),
+                    whole(
+                        hours
+                    )
+                );
+
+
+                line(
+                    __(
+                        "Total ADT-Hour Count"
+                    ),
+                    whole(
+                        numerator
+                    )
+                );
+
+
+                line(
+                    __(
+                        "Avg Actual ADTs / Material Working Hr"
+                    ),
+                    whole(
+                        average
+                    )
+                );
+
+
+                line(
+                    __("Calculation"),
+                    (
+                        whole(
+                            numerator
+                        )
+                        + " ÷ "
+                        + whole(
+                            hours
+                        )
+                        + " = "
+                        + whole(
+                            average
+                        )
+                    )
+                );
+
+
+                $("<hr>")
+                    .appendTo(
+                        content
+                    );
+
+
+                line(
+                    __(
+                        "Unique Actual ADT Assets"
+                    ),
+                    payload.unique_adts
+                );
+
+
+                line(
+                    __(
+                        "Matched Truck Load Rows"
+                    ),
+                    payload.truck_load_rows
+                );
+
+
+                const list = $(
+                    '<ul class="list-group">'
+                );
+
+
+                (
+                    payload.adts
+                    || []
+                ).forEach(
+                    function (asset) {
+
+                        $("<li>")
+                            .addClass(
+                                "list-group-item"
+                            )
+                            .text(
+                                asset
+                            )
+                            .appendTo(
+                                list
+                            );
+                    }
+                );
+
+
+                wrapper
+                    .empty()
+                    .append(
+                        content
+                    )
+                    .append(
+                        list
+                    );
+
+
+                dialog.show();
+            }
+        );
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_ACTUAL_MATERIAL_ADTS_DIALOG_V119R
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_ADT_ACTIVE_HOURS_DIALOG_V119S
+//
+// Cleaner ADT popup.
+//
+// Removes confusing:
+//
+//     Survey Material Working Hours as ADT denominator
+//     Matched Truck Load Rows
+//
+// Shows:
+//
+//     Unique Actual ADTs
+//     Tallies Active Loading Hours
+//     Total ADT-Hour Count
+//     Average ADTs / Active Loading Hour
+//
+// No CSS.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+
+    if (!report) {
+        return;
+    }
+
+
+    if (
+        report
+            ._productivity_v119s_dialog_applied
+    ) {
+        return;
+    }
+
+
+    report
+        ._productivity_v119s_dialog_applied = true;
+
+
+    const previous_formatter = (
+        report.formatter
+    );
+
+
+    function get_fieldname(
+        column
+    ) {
+
+        return (
+            (
+                column
+                && column.fieldname
+            )
+            ||
+            (
+                column
+                && column.df
+                && column.df.fieldname
+            )
+            ||
+            ""
+        );
+    }
+
+
+    function whole(
+        value
+    ) {
+
+        const number = Number(
+            value
+            || 0
+        );
+
+
+        if (!Number.isFinite(number)) {
+            return "0";
+        }
+
+
+        return Math.round(
+            number
+        ).toLocaleString(
+            "en-US"
+        );
+    }
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        const fieldname = (
+            get_fieldname(
+                column
+            )
+        );
+
+
+        const isMaterialAdtRow = (
+            data
+            && data
+                .truck_benchmark_machine_row
+            && data
+                ._productivity_v119o_actual_survey
+            && data
+                ._productivity_v119r_material_adt_available
+        );
+
+
+        if (
+            isMaterialAdtRow
+            && fieldname === "adt_details"
+        ) {
+
+            const adts = Array.isArray(
+                data._actual_adt_assets
+            )
+                ? data._actual_adt_assets
+                : [];
+
+
+            if (!adts.length) {
+                return "";
+            }
+
+
+            const payload = encodeURIComponent(
+                JSON.stringify({
+                    excavator:
+                        data.label || "",
+
+                    material:
+                        data._benchmark_material
+                        || "",
+
+                    hauling_distance:
+                        data._benchmark_distance
+                        || "",
+
+                    routes:
+                        data._benchmark_routes
+                        || [],
+
+                    tallies_layers:
+                        data._adt_material_geo_layers
+                        || [],
+
+                    active_loading_hours:
+                        data._adt_average_active_loading_hours
+                        || data._adt_material_active_hour_records
+                        || 0,
+
+                    adt_hour_count:
+                        data._adt_count_sum
+                        || 0,
+
+                    unique_adts:
+                        adts.length,
+
+                    adts:
+                        adts
+                })
+            );
+
+
+            return (
+                '<button type="button" '
+                + 'class="btn btn-xs btn-default '
+                + 'productivity-v119s-view-adts" '
+                + 'data-payload="'
+                + payload
+                + '">'
+                + __('View ADTs')
+                + '</button>'
+            );
+        }
+
+
+        if (
+            typeof previous_formatter
+            === "function"
+        ) {
+
+            return previous_formatter(
+                value,
+                row,
+                column,
+                data,
+                default_formatter
+            );
+        }
+
+
+        return default_formatter(
+            value,
+            row,
+            column,
+            data
+        );
+    };
+
+
+    $(document)
+        .off(
+            "click.productivityV119S",
+            ".productivity-v119s-view-adts"
+        )
+        .on(
+            "click.productivityV119S",
+            ".productivity-v119s-view-adts",
+            function (event) {
+
+                event.preventDefault();
+
+
+                let payload;
+
+
+                try {
+
+                    payload = JSON.parse(
+                        decodeURIComponent(
+                            $(this).attr(
+                                "data-payload"
+                            )
+                        )
+                    );
+
+                } catch (error) {
+
+                    frappe.msgprint(
+                        __(
+                            "Unable to read ADT details."
+                        )
+                    );
+
+                    return;
+                }
+
+
+                const activeHours = Number(
+                    payload.active_loading_hours
+                    || 0
+                );
+
+
+                const adtHourCount = Number(
+                    payload.adt_hour_count
+                    || 0
+                );
+
+
+                const average = (
+                    activeHours > 0
+                        ? (
+                            adtHourCount
+                            / activeHours
+                        )
+                        : 0
+                );
+
+
+                const dialog = (
+                    new frappe.ui.Dialog({
+                        title:
+                            __(
+                                "Actual ADTs - Material"
+                            ),
+
+                        fields: [
+                            {
+                                fieldtype:
+                                    "HTML",
+
+                                fieldname:
+                                    "details"
+                            }
+                        ]
+                    })
+                );
+
+
+                const wrapper = (
+                    dialog
+                        .fields_dict
+                        .details
+                        .$wrapper
+                );
+
+
+                const content = $("<div>");
+
+
+                function line(
+                    label,
+                    value
+                ) {
+
+                    $("<p>")
+                        .text(
+                            label
+                            + ": "
+                            + value
+                        )
+                        .appendTo(
+                            content
+                        );
+                }
+
+
+                line(
+                    __("Excavator"),
+                    payload.excavator
+                );
+
+
+                line(
+                    __("Actual Material"),
+                    payload.material
+                );
+
+
+                line(
+                    __("Actual Hauling Distance"),
+                    payload.hauling_distance
+                );
+
+
+                if (
+                    Array.isArray(
+                        payload.routes
+                    )
+                    && payload.routes.length
+                ) {
+
+                    line(
+                        __("Actual Route(s)"),
+                        payload.routes.join(
+                            " / "
+                        )
+                    );
+                }
+
+
+                if (
+                    Array.isArray(
+                        payload.tallies_layers
+                    )
+                    && payload
+                        .tallies_layers
+                        .length
+                ) {
+
+                    line(
+                        __("Tallies Material"),
+                        payload
+                            .tallies_layers
+                            .join(
+                                " / "
+                            )
+                    );
+                }
+
+
+                $("<hr>")
+                    .appendTo(
+                        content
+                    );
+
+
+                line(
+                    __(
+                        "Unique Actual ADT Assets"
+                    ),
+                    payload.unique_adts
+                );
+
+
+                line(
+                    __(
+                        "Active Loading Hours"
+                    ),
+                    whole(
+                        activeHours
+                    )
+                );
+
+
+                line(
+                    __(
+                        "Total ADT-Hour Count"
+                    ),
+                    whole(
+                        adtHourCount
+                    )
+                );
+
+
+                line(
+                    __(
+                        "Avg Actual ADTs / Active Loading Hr"
+                    ),
+                    whole(
+                        average
+                    )
+                );
+
+
+                line(
+                    __("Calculation"),
+                    (
+                        whole(
+                            adtHourCount
+                        )
+                        + " ÷ "
+                        + whole(
+                            activeHours
+                        )
+                        + " = "
+                        + whole(
+                            average
+                        )
+                    )
+                );
+
+
+                $("<hr>")
+                    .appendTo(
+                        content
+                    );
+
+
+                const list = $(
+                    '<ul class="list-group">'
+                );
+
+
+                (
+                    payload.adts
+                    || []
+                ).forEach(
+                    function (asset) {
+
+                        $("<li>")
+                            .addClass(
+                                "list-group-item"
+                            )
+                            .text(
+                                asset
+                            )
+                            .appendTo(
+                                list
+                            );
+                    }
+                );
+
+
+                wrapper
+                    .empty()
+                    .append(
+                        content
+                    )
+                    .append(
+                        list
+                    );
+
+
+                dialog.show();
+            }
+        );
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_ADT_ACTIVE_HOURS_DIALOG_V119S
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_ACTUAL_POPUP_ALIGNMENT_V119T
+//
+// Actual popup aligned with Tallies layout.
+//
+// Survey remains source for:
+//   Material
+//   Hauling Distance
+//   Route
+//
+// ADTs remain sourced from Tallies / Truck Loads material.
+//
+// No CSS.
+// ============================================================
+
+(function () {
+
+    const report = (
+        frappe.query_reports[
+            "Productivity"
+        ]
+    );
+
+
+    if (!report) {
+        return;
+    }
+
+
+    if (
+        report
+            ._productivity_v119t_popup_applied
+    ) {
+        return;
+    }
+
+
+    report
+        ._productivity_v119t_popup_applied = true;
+
+
+    const previous_formatter = (
+        report.formatter
+    );
+
+
+    function get_fieldname(
+        column
+    ) {
+
+        return (
+            (
+                column
+                && column.fieldname
+            )
+            ||
+            (
+                column
+                && column.df
+                && column.df.fieldname
+            )
+            ||
+            ""
+        );
+    }
+
+
+    function whole(
+        value
+    ) {
+
+        const number = Number(
+            value
+            || 0
+        );
+
+
+        if (!Number.isFinite(number)) {
+            return "0";
+        }
+
+
+        return Math.round(
+            number
+        ).toLocaleString(
+            "en-US"
+        );
+    }
+
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+
+        const fieldname = (
+            get_fieldname(
+                column
+            )
+        );
+
+
+        const is_actual_adt_row = (
+            data
+            && data
+                .truck_benchmark_machine_row
+            && data
+                ._productivity_v119o_actual_survey
+            && data
+                ._productivity_v119r_material_adt_available
+            && data
+                ._productivity_v119t_actual_popup
+        );
+
+
+        if (
+            is_actual_adt_row
+            && fieldname === "adt_details"
+        ) {
+
+            const adts = Array.isArray(
+                data._actual_adt_assets
+            )
+                ? data._actual_adt_assets
+                : [];
+
+
+            if (!adts.length) {
+                return "";
+            }
+
+
+            const payload = encodeURIComponent(
+                JSON.stringify({
+                    excavator:
+                        data.label || "",
+
+                    material:
+                        data._benchmark_material
+                        || "",
+
+                    hauling_distance:
+                        data._benchmark_distance
+                        || "",
+
+                    routes:
+                        data._benchmark_routes
+                        || [],
+
+                    excavator_total_hours:
+                        data._adt_popup_excavator_total_working_hours
+                        || 0,
+
+                    material_excavator_hours:
+                        data._adt_popup_material_excavator_working_hours
+                        || data.working_hours
+                        || 0,
+
+                    total_hourly_adt_count:
+                        data._adt_count_sum
+                        || 0,
+
+                    unique_actual_adts:
+                        adts.length,
+
+                    adts:
+                        adts
+                })
+            );
+
+
+            return (
+                '<button type="button" '
+                + 'class="btn btn-xs btn-default '
+                + 'productivity-v119t-view-adts" '
+                + 'data-payload="'
+                + payload
+                + '">'
+                + __('View ADTs')
+                + '</button>'
+            );
+        }
+
+
+        if (
+            typeof previous_formatter
+            === "function"
+        ) {
+
+            return previous_formatter(
+                value,
+                row,
+                column,
+                data,
+                default_formatter
+            );
+        }
+
+
+        return default_formatter(
+            value,
+            row,
+            column,
+            data
+        );
+    };
+
+
+    $(document)
+        .off(
+            "click.productivityV119T",
+            ".productivity-v119t-view-adts"
+        )
+        .on(
+            "click.productivityV119T",
+            ".productivity-v119t-view-adts",
+            function (event) {
+
+                event.preventDefault();
+
+
+                let payload;
+
+
+                try {
+
+                    payload = JSON.parse(
+                        decodeURIComponent(
+                            $(this).attr(
+                                "data-payload"
+                            )
+                        )
+                    );
+
+                } catch (error) {
+
+                    frappe.msgprint(
+                        __(
+                            "Unable to read ADT details."
+                        )
+                    );
+
+                    return;
+                }
+
+
+                const excavatorHours = Number(
+                    payload.excavator_total_hours
+                    || 0
+                );
+
+
+                const materialHours = Number(
+                    payload.material_excavator_hours
+                    || 0
+                );
+
+
+                const adtCount = Number(
+                    payload.total_hourly_adt_count
+                    || 0
+                );
+
+
+                const average = (
+                    materialHours > 0
+                        ? adtCount / materialHours
+                        : 0
+                );
+
+
+                const adts = Array.isArray(
+                    payload.adts
+                )
+                    ? payload.adts
+                    : [];
+
+
+                const dialog = (
+                    new frappe.ui.Dialog({
+                        title:
+                            __(
+                                "Actual ADTs Loaded"
+                            ),
+
+                        fields: [
+                            {
+                                fieldtype:
+                                    "HTML",
+
+                                fieldname:
+                                    "details"
+                            }
+                        ]
+                    })
+                );
+
+
+                const wrapper = (
+                    dialog
+                        .fields_dict
+                        .details
+                        .$wrapper
+                );
+
+
+                const content = $("<div>");
+
+
+                function line(
+                    label,
+                    value
+                ) {
+
+                    $("<p>")
+                        .text(
+                            label
+                            + ": "
+                            + value
+                        )
+                        .appendTo(
+                            content
+                        );
+                }
+
+
+                line(
+                    __("Excavator"),
+                    payload.excavator
+                );
+
+
+                line(
+                    __("Material"),
+                    payload.material
+                );
+
+
+                if (
+                    payload.hauling_distance
+                ) {
+
+                    line(
+                        __("Hauling Distance"),
+                        payload.hauling_distance
+                    );
+                }
+
+
+                if (
+                    Array.isArray(
+                        payload.routes
+                    )
+                    && payload.routes.length
+                ) {
+
+                    line(
+                        __("Route(s)"),
+                        payload.routes.join(
+                            " / "
+                        )
+                    );
+                }
+
+
+                $("<hr>")
+                    .appendTo(
+                        content
+                    );
+
+
+                line(
+                    __(
+                        "Unique Actual ADTs Loaded"
+                    ),
+                    payload.unique_actual_adts
+                );
+
+
+                line(
+                    __(
+                        "Avg Actual ADTs / Working Hour"
+                    ),
+                    whole(
+                        average
+                    )
+                );
+
+
+                $("<hr>")
+                    .appendTo(
+                        content
+                    );
+
+
+                line(
+                    __(
+                        "Excavator Total Working Hours"
+                    ),
+                    whole(
+                        excavatorHours
+                    )
+                );
+
+
+                line(
+                    __(
+                        "This Material / Excavator Working Hours"
+                    ),
+                    whole(
+                        materialHours
+                    )
+                );
+
+
+                line(
+                    __(
+                        "Total Hourly ADT Count"
+                    ),
+                    whole(
+                        adtCount
+                    )
+                );
+
+
+                line(
+                    __("Calculation"),
+                    (
+                        whole(
+                            adtCount
+                        )
+                        + " ÷ "
+                        + whole(
+                            materialHours
+                        )
+                        + " = "
+                        + whole(
+                            average
+                        )
+                    )
+                );
+
+
+                $("<hr>")
+                    .appendTo(
+                        content
+                    );
+
+
+                line(
+                    __("ADT Machine Numbers"),
+                    adts.length
+                );
+
+
+                const list = $(
+                    '<ul class="list-group">'
+                );
+
+
+                adts.forEach(
+                    function (asset) {
+
+                        $("<li>")
+                            .addClass(
+                                "list-group-item"
+                            )
+                            .text(
+                                asset
+                            )
+                            .appendTo(
+                                list
+                            );
+                    }
+                );
+
+
+                wrapper
+                    .empty()
+                    .append(
+                        content
+                    )
+                    .append(
+                        list
+                    );
+
+
+                dialog.show();
+            }
+        );
+
+})();
+
+
+// END KOSI_PRODUCTIVITY_ACTUAL_POPUP_ALIGNMENT_V119T
