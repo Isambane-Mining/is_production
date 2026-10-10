@@ -72708,7 +72708,7 @@ def _productivity_v119_selected_mpps(filters):
     return result
 
 
-def _productivity_v119_benchmark(filters):
+def _productivity_v119_benchmark_base(filters):
 
     plans = (
         _productivity_v119_selected_mpps(
@@ -73712,7 +73712,7 @@ def _productivity_v119_machine_metrics(
             ),
     })
 
-def _productivity_v119_report(filters):
+def _productivity_v119_tallies_base_report(filters):
 
     benchmark = (
         _productivity_v119_benchmark(
@@ -74234,7 +74234,6 @@ def execute(filters=None):
 # END KOSI_PRODUCTIVITY_TRUCK_BENCHMARK_ANALYSIS_V119
 
 
-# ============================================================
 # KOSI_PRODUCTIVITY_UNIQUE_ACTUAL_ADTS_V119D
 #
 # TRUCK BENCHMARK ANALYSIS
@@ -74264,15 +74263,11 @@ def execute(filters=None):
 # ============================================================
 
 
-_productivity_v119_report_before_unique_adts_v119d = (
-    _productivity_v119_report
-)
 
-
-def _productivity_v119_report(filters):
+def _productivity_v119_tallies_unique_adts_report(filters):
 
     columns, rows = (
-        _productivity_v119_report_before_unique_adts_v119d(
+        _productivity_v119_tallies_base_report(
             filters
         )
     )
@@ -74425,7 +74420,6 @@ def _productivity_v119_report(filters):
 # END KOSI_PRODUCTIVITY_UNIQUE_ACTUAL_ADTS_V119D
 
 
-# ============================================================
 # KOSI_PRODUCTIVITY_TRUCK_BENCHMARK_ZERO_DECIMAL_V119G
 #
 # TRUCK BENCHMARK ANALYSIS display precision only.
@@ -74445,15 +74439,11 @@ def _productivity_v119_report(filters):
 # ============================================================
 
 
-_productivity_v119_report_before_zero_decimal_v119g = (
-    _productivity_v119_report
-)
 
-
-def _productivity_v119_report(filters):
+def _productivity_v119_tallies_zero_decimal_report(filters):
 
     columns, rows = (
-        _productivity_v119_report_before_zero_decimal_v119g(
+        _productivity_v119_tallies_unique_adts_report(
             filters
         )
     )
@@ -74581,7 +74571,6 @@ def _productivity_v119_report(filters):
 # END KOSI_PRODUCTIVITY_TRUCK_BENCHMARK_ZERO_DECIMAL_V119G
 
 
-# ============================================================
 # KOSI_PRODUCTIVITY_PROPORTIONAL_RECONCILED_HOURS_V119J
 #
 # TRUCK BENCHMARK ANALYSIS
@@ -74648,30 +74637,6 @@ def _productivity_v119_report(filters):
 # No machine-specific hours are hard-coded.
 #
 # ============================================================
-
-
-# ------------------------------------------------------------
-# Choose the correct base report.
-#
-# If V119I was installed, use the report from BEFORE V119I,
-# because V119I assigns the full machine total to each group.
-#
-# Otherwise use the current V119 report.
-# ------------------------------------------------------------
-
-if globals().get(
-    "_productivity_v119_report_before_reconciled_hours_v119i"
-):
-
-    _productivity_v119j_base_report = (
-        _productivity_v119_report_before_reconciled_hours_v119i
-    )
-
-else:
-
-    _productivity_v119j_base_report = (
-        _productivity_v119_report
-    )
 
 
 def _productivity_v119j_reconciled_machine_hours(
@@ -75168,7 +75133,7 @@ def _productivity_v119j_recalculate_group_summaries(
     return rows
 
 
-def _productivity_v119_report(
+def _productivity_v119_tallies_reconciled_report(
     filters,
 ):
 
@@ -75176,7 +75141,7 @@ def _productivity_v119_report(
 
 
     columns, rows = (
-        _productivity_v119j_base_report(
+        _productivity_v119_tallies_zero_decimal_report(
             filters
         )
     )
@@ -75524,7 +75489,6 @@ def _productivity_v119_report(
 # END KOSI_PRODUCTIVITY_PROPORTIONAL_RECONCILED_HOURS_V119J
 
 
-# ============================================================
 # KOSI_PRODUCTIVITY_UNALLOCATED_DETAIL_V119K
 #
 # TRUCK BENCHMARK ANALYSIS
@@ -75594,12 +75558,8 @@ def _productivity_v119_report(
 # ============================================================
 
 
-_productivity_v119_report_before_unallocated_v119k = (
-    _productivity_v119_report
-)
 
-
-def _productivity_v119k_summary_map(
+def _productivity_v119k_summary_map_base(
     filters,
     machines,
     start_date=None,
@@ -76188,12 +76148,12 @@ def _productivity_v119k_covered_hours(
     )
 
 
-def _productivity_v119_report(
+def _productivity_v119_tallies_coverage_report(
     filters,
 ):
 
     columns, rows = (
-        _productivity_v119_report_before_unallocated_v119k(
+        _productivity_v119_tallies_reconciled_report(
             filters
         )
     )
@@ -77044,7 +77004,6 @@ def _productivity_v119_report(
 # END KOSI_PRODUCTIVITY_UNALLOCATED_DETAIL_V119K
 
 
-# ============================================================
 # KOSI_PRODUCTIVITY_CAPTURED_DATE_MPP_FIX_V119L
 #
 # V119K captured-date reconciliation fix.
@@ -77094,10 +77053,6 @@ def _productivity_v119_report(
 # ============================================================
 
 
-_productivity_v119k_summary_map_before_mpp_fix_v119l = (
-    _productivity_v119k_summary_map
-)
-
 
 def _productivity_v119k_summary_map(
     filters,
@@ -77146,7 +77101,7 @@ def _productivity_v119k_summary_map(
 
 
     return (
-        _productivity_v119k_summary_map_before_mpp_fix_v119l(
+        _productivity_v119k_summary_map_base(
             safe_filters,
             machines,
             start_date=
@@ -77160,7 +77115,6 @@ def _productivity_v119k_summary_map(
 # END KOSI_PRODUCTIVITY_CAPTURED_DATE_MPP_FIX_V119L
 
 
-# ============================================================
 # KOSI_PRODUCTIVITY_DISTRIBUTE_BALANCE_V119M
 #
 # Remove the separate:
@@ -77227,17 +77181,13 @@ def _productivity_v119k_summary_map(
 # ============================================================
 
 
-_productivity_v119_report_before_distribute_balance_v119m = (
-    _productivity_v119_report
-)
 
-
-def _productivity_v119_report(
+def _productivity_v119_tallies_final_report(
     filters,
 ):
 
     columns, rows = (
-        _productivity_v119_report_before_distribute_balance_v119m(
+        _productivity_v119_tallies_coverage_report(
             filters
         )
     )
@@ -77728,7 +77678,6 @@ def _productivity_v119_report(
 # END KOSI_PRODUCTIVITY_DISTRIBUTE_BALANCE_V119M
 
 
-# ============================================================
 # KOSI_PRODUCTIVITY_TS_TEMPO_BENCHMARK_V119N
 #
 # TRUCK BENCHMARK ANALYSIS
@@ -77769,17 +77718,13 @@ def _productivity_v119_report(
 # ============================================================
 
 
-_productivity_v119_benchmark_before_ts_tempo_v119n = (
-    _productivity_v119_benchmark
-)
-
 
 def _productivity_v119_benchmark(
     filters,
 ):
 
     benchmark = (
-        _productivity_v119_benchmark_before_ts_tempo_v119n(
+        _productivity_v119_benchmark_base(
             filters
         )
     )
@@ -77879,7 +77824,6 @@ def _productivity_v119_benchmark(
 # END KOSI_PRODUCTIVITY_TS_TEMPO_BENCHMARK_V119N
 
 
-# ============================================================
 # KOSI_PRODUCTIVITY_ACTUAL_SURVEY_BENCHMARK_V119O
 #
 # TRUCK BENCHMARK ANALYSIS
@@ -77948,10 +77892,6 @@ def _productivity_v119_benchmark(
 #
 # ============================================================
 
-
-_productivity_v119_report_before_actual_survey_v119o = (
-    _productivity_v119_report
-)
 
 
 def _productivity_v119o_is_actual(
@@ -79657,1915 +79597,10 @@ def _productivity_v119o_actual_report(
     )
 
 
-def _productivity_v119_report(
-    filters,
-):
-
-    filters = frappe._dict(
-        filters
-        or {}
-    )
-
-
-    if not (
-        _productivity_v119o_is_actual(
-            filters
-        )
-    ):
-
-        # Tallies path remains EXACTLY as before V119O.
-
-        return (
-            _productivity_v119_report_before_actual_survey_v119o(
-                filters
-            )
-        )
-
-
-    return (
-        _productivity_v119o_actual_report(
-            filters
-        )
-    )
-
 
 # END KOSI_PRODUCTIVITY_ACTUAL_SURVEY_BENCHMARK_V119O
 
 
-# ============================================================
-# KOSI_PRODUCTIVITY_ACTUAL_MACHINE_ADTS_V119P
-#
-# Historical Truck Loads do not contain enough information to
-# safely attach ADTs to Survey Material + Hauling Distance
-# rows.
-#
-# Therefore Actual BCM benchmark ADTs are calculated at
-# EXCAVATOR level.
-#
-#
-# UNIQUE ACTUAL ADTs
-#
-#     Unique Truck asset numbers used by Excavator
-#     during selected period.
-#
-#
-# TOTAL HOURLY ADT COUNT
-#
-# For every Hourly Production document:
-#
-#     count distinct Truck assets
-#     used by the Excavator
-#
-# Then sum those hourly counts.
-#
-#
-# AVG ACTUAL ADTs / WORKING HOUR
-#
-#     Total Hourly ADT Count
-#     ----------------------
-#     Summary Per Machine Working Hours
-#
-#
-# Example EX01:
-#
-#     1,514 / 283 = 5.35
-#
-# Display layer rounds to 0 decimals:
-#
-#     5
-#
-# Nothing is hard-coded.
-# ============================================================
-
-
-_productivity_v119_report_before_machine_adts_v119p = (
-    _productivity_v119_report
-)
-
-
-def _productivity_v119p_machine_adt_stats(
-    filters,
-    machines,
-):
-
-    from collections import defaultdict
-
-
-    filters = frappe._dict(
-        filters
-        or {}
-    )
-
-
-    machines = sorted({
-        _productivity_v119_text(
-            machine
-        )
-        for machine in (
-            machines
-            or []
-        )
-        if _productivity_v119_text(
-            machine
-        )
-    })
-
-
-    stats = {
-        machine: {
-            "trucks":
-                set(),
-
-            "parent_trucks":
-                defaultdict(
-                    set
-                ),
-
-            "truck_load_rows":
-                0,
-        }
-        for machine in machines
-    }
-
-
-    if not machines:
-
-        return stats
-
-
-    hourly_filters = {
-        "prod_date": [
-            "between",
-            [
-                filters.get(
-                    "start_date"
-                ),
-                filters.get(
-                    "end_date"
-                ),
-            ],
-        ],
-
-        "location":
-            filters.get(
-                "site"
-            ),
-
-        "docstatus": [
-            "<",
-            2,
-        ],
-    }
-
-
-    shift = (
-        _productivity_v119_text(
-            filters.get(
-                "shift"
-            )
-        )
-    )
-
-
-    if shift:
-
-        hourly_filters[
-            "shift"
-        ] = shift
-
-
-    parents = frappe.get_all(
-        "Hourly Production",
-
-        filters=
-            hourly_filters,
-
-        pluck=
-            "name",
-
-        limit_page_length=0,
-    )
-
-
-    if not parents:
-
-        return stats
-
-
-    truck_rows = frappe.get_all(
-        "Truck Loads",
-
-        filters={
-            "parent": [
-                "in",
-                parents,
-            ],
-
-            "asset_name_shoval": [
-                "in",
-                machines,
-            ],
-
-            "bcms": [
-                ">",
-                0,
-            ],
-        },
-
-        fields=[
-            "parent",
-            "asset_name_shoval",
-            "asset_name_truck",
-        ],
-
-        limit_page_length=0,
-    )
-
-
-    for row in truck_rows:
-
-        machine = (
-            _productivity_v119_text(
-                row.asset_name_shoval
-            )
-        )
-
-
-        truck = (
-            _productivity_v119_text(
-                row.asset_name_truck
-            )
-        )
-
-
-        if (
-            machine not in stats
-            or not truck
-        ):
-
-            continue
-
-
-        stats[
-            machine
-        ][
-            "truck_load_rows"
-        ] += 1
-
-
-        stats[
-            machine
-        ][
-            "trucks"
-        ].add(
-            truck
-        )
-
-
-        stats[
-            machine
-        ][
-            "parent_trucks"
-        ][
-            row.parent
-        ].add(
-            truck
-        )
-
-
-    for machine in machines:
-
-        machine_stats = stats[
-            machine
-        ]
-
-
-        machine_stats[
-            "hourly_adt_count"
-        ] = sum(
-            len(
-                trucks
-            )
-            for trucks in (
-                machine_stats[
-                    "parent_trucks"
-                ].values()
-            )
-        )
-
-
-        machine_stats[
-            "active_hour_records"
-        ] = len(
-            machine_stats[
-                "parent_trucks"
-            ]
-        )
-
-
-    return stats
-
-
-def _productivity_v119_report(
-    filters,
-):
-
-    filters = frappe._dict(
-        filters
-        or {}
-    )
-
-
-    columns, rows = (
-        _productivity_v119_report_before_machine_adts_v119p(
-            filters
-        )
-    )
-
-
-    # Tallies remains unchanged.
-
-    if not (
-        _productivity_v119o_is_actual(
-            filters
-        )
-    ):
-
-        return (
-            columns,
-            rows,
-        )
-
-
-    machine_rows = [
-        row
-        for row in (
-            rows
-            or []
-        )
-        if (
-            hasattr(
-                row,
-                "get",
-            )
-            and row.get(
-                "truck_benchmark_machine_row"
-            )
-            and row.get(
-                "_productivity_v119o_actual_survey"
-            )
-        )
-    ]
-
-
-    if not machine_rows:
-
-        return (
-            columns,
-            rows,
-        )
-
-
-    machines = sorted({
-        _productivity_v119_text(
-            row.get(
-                "label"
-            )
-        )
-        for row in machine_rows
-        if _productivity_v119_text(
-            row.get(
-                "label"
-            )
-        )
-    })
-
-
-    controls = (
-        _productivity_v119o_actual_controls(
-            _productivity_v119o_actual_source(
-                filters
-            )
-        )
-    )
-
-
-    stats = (
-        _productivity_v119p_machine_adt_stats(
-            filters,
-            machines,
-        )
-    )
-
-
-    for row in machine_rows:
-
-        machine = (
-            _productivity_v119_text(
-                row.get(
-                    "label"
-                )
-            )
-        )
-
-
-        control = (
-            controls.get(
-                machine,
-                {}
-            )
-        )
-
-
-        machine_hours = (
-            _productivity_v119_number(
-                control.get(
-                    "hours"
-                )
-            )
-        )
-
-
-        machine_stats = (
-            stats.get(
-                machine,
-                {}
-            )
-        )
-
-
-        trucks = sorted(
-            machine_stats.get(
-                "trucks",
-                set(),
-            )
-        )
-
-
-        hourly_adt_count = (
-            _productivity_v119_number(
-                machine_stats.get(
-                    "hourly_adt_count"
-                )
-            )
-        )
-
-
-        avg_actual_adts = (
-            hourly_adt_count
-            / machine_hours
-            if machine_hours > 0
-            else 0.0
-        )
-
-
-        row[
-            "unique_actual_adts"
-        ] = (
-            len(
-                trucks
-            )
-            if trucks
-            else ""
-        )
-
-
-        row[
-            "avg_actual_adts"
-        ] = (
-            avg_actual_adts
-            if trucks
-            else ""
-        )
-
-
-        row[
-            "adt_details"
-        ] = (
-            "View ADTs"
-            if trucks
-            else ""
-        )
-
-
-        row[
-            "_actual_adt_assets"
-        ] = trucks
-
-
-        row[
-            "_adt_count_sum"
-        ] = hourly_adt_count
-
-
-        row[
-            "_adt_machine_working_hours"
-        ] = machine_hours
-
-
-        row[
-            "_adt_machine_active_hour_records"
-        ] = int(
-            machine_stats.get(
-                "active_hour_records"
-            )
-            or 0
-        )
-
-
-        row[
-            "_adt_machine_truck_load_rows"
-        ] = int(
-            machine_stats.get(
-                "truck_load_rows"
-            )
-            or 0
-        )
-
-
-        row[
-            "_adt_scope"
-        ] = (
-            "Excavator total for selected period"
-        )
-
-
-        row[
-            "_adt_average_denominator"
-        ] = (
-            "Summary Per Machine Working Hours"
-        )
-
-
-    # ========================================================
-    # CLEAR ADT VALUES FROM AVERAGE / WEIGHTED SUMMARY ROWS
-    # ========================================================
-
-    for row in (
-        rows
-        or []
-    ):
-
-        if not (
-            hasattr(
-                row,
-                "get",
-            )
-            and row.get(
-                "truck_benchmark_summary_row"
-            )
-        ):
-
-            continue
-
-
-        row[
-            "unique_actual_adts"
-        ] = ""
-
-
-        row[
-            "avg_actual_adts"
-        ] = ""
-
-
-        row[
-            "adt_details"
-        ] = ""
-
-
-    # ========================================================
-    # COLUMN LABELS MUST MAKE MACHINE SCOPE CLEAR
-    # ========================================================
-
-    for column in (
-        columns
-        or []
-    ):
-
-        if not hasattr(
-            column,
-            "get",
-        ):
-
-            continue
-
-
-        fieldname = column.get(
-            "fieldname"
-        )
-
-
-        if fieldname == "unique_actual_adts":
-
-            column[
-                "label"
-            ] = (
-                "Machine Unique Actual ADTs"
-            )
-
-
-        elif fieldname == "avg_actual_adts":
-
-            column[
-                "label"
-            ] = (
-                "Avg Actual ADTs / Machine Working Hr"
-            )
-
-
-    return (
-        columns,
-        rows,
-    )
-
-
-# END KOSI_PRODUCTIVITY_ACTUAL_MACHINE_ADTS_V119P
-
-
-# ============================================================
-# KOSI_PRODUCTIVITY_ROW_ADTS_V119Q
-#
-# ACTUAL BCM TRUCK BENCHMARK
-#
-# ADTs must belong to the SPECIFIC benchmark row:
-#
-#     Excavator
-#     Material family
-#     Hauling Distance
-#
-# Never copy whole-machine ADT totals to every Survey row.
-#
-#
-# MATCHING SAFETY
-# ------------------------------------------------------------
-#
-# Truck Load ADTs are used only where:
-#
-#     Machine matches
-#     Broad Material matches
-#     Hauling Distance matches
-#
-# AND that combination identifies only ONE final Survey
-# Material + Hauling Distance group for the machine.
-#
-# If historical Truck Loads have no Hauling Distance:
-#
-#     ADT values remain blank.
-#
-# This is deliberate. We do not invent or duplicate ADTs.
-#
-#
-# ADT-HOUR COUNT
-# ------------------------------------------------------------
-#
-# For a safely matched Material + HD scope:
-#
-#     For each Hourly Production record:
-#         count distinct ADT assets
-#
-#     Then sum those counts.
-#
-#
-# AVG ACTUAL ADTs
-# ------------------------------------------------------------
-#
-#     Row ADT-Hour Count
-#     ------------------
-#     Row Working Hours
-#
-# ============================================================
-
-
-_productivity_v119_report_before_row_adts_v119q = (
-    _productivity_v119_report
-)
-
-
-def _productivity_v119q_norm(
-    value,
-):
-
-    import re
-
-
-    return re.sub(
-        r"[^a-z0-9]+",
-        "",
-        _productivity_v119_text(
-            value
-        ).casefold(),
-    )
-
-
-def _productivity_v119q_distance_spec(
-    value,
-):
-
-    import re
-
-
-    text = (
-        _productivity_v119_text(
-            value
-        )
-    )
-
-
-    if not text:
-
-        return None
-
-
-    if (
-        text.casefold()
-        == "not captured"
-    ):
-
-        return None
-
-
-    clean = (
-        text.replace(
-            ",",
-            ""
-        )
-    )
-
-
-    numbers = re.findall(
-        r"\d+(?:\.\d+)?",
-        clean,
-    )
-
-
-    if len(
-        numbers
-    ) >= 2:
-
-        first = float(
-            numbers[
-                0
-            ]
-        )
-
-        second = float(
-            numbers[
-                1
-            ]
-        )
-
-
-        return (
-            "range",
-            min(
-                first,
-                second,
-            ),
-            max(
-                first,
-                second,
-            ),
-        )
-
-
-    if len(
-        numbers
-    ) == 1:
-
-        return (
-            "point",
-            float(
-                numbers[
-                    0
-            ]
-        ),
-    )
-
-
-    normalized = (
-        _productivity_v119q_norm(
-            text
-        )
-    )
-
-
-    if not normalized:
-
-        return None
-
-
-    return (
-        "text",
-        normalized,
-    )
-
-
-def _productivity_v119q_distance_signature(
-    value,
-):
-
-    spec = (
-        _productivity_v119q_distance_spec(
-            value
-        )
-    )
-
-
-    if not spec:
-
-        return ""
-
-
-    return repr(
-        spec
-    )
-
-
-def _productivity_v119q_distance_matches(
-    survey_value,
-    truck_value,
-):
-
-    survey = (
-        _productivity_v119q_distance_spec(
-            survey_value
-        )
-    )
-
-
-    truck = (
-        _productivity_v119q_distance_spec(
-            truck_value
-        )
-    )
-
-
-    if not (
-        survey
-        and truck
-    ):
-
-        return False
-
-
-    if survey == truck:
-
-        return True
-
-
-    # --------------------------------------------------------
-    # Survey is normally a range such as:
-    #
-    #     2500-3000
-    #
-    # Truck Load may contain a point value such as:
-    #
-    #     2750
-    #
-    # Use lower-inclusive / upper-exclusive range matching
-    # so a boundary such as 2500 belongs to 2500-3000,
-    # rather than both 2000-2500 and 2500-3000.
-    # --------------------------------------------------------
-
-    if (
-        survey[
-            0
-        ]
-        == "range"
-        and truck[
-            0
-        ]
-        == "point"
-    ):
-
-        low = survey[
-            1
-        ]
-
-        high = survey[
-            2
-        ]
-
-        point = truck[
-            1
-        ]
-
-
-        if low == high:
-
-            return (
-                point
-                == low
-            )
-
-
-        return (
-            low
-            <= point
-            < high
-        )
-
-
-    if (
-        survey[
-            0
-        ]
-        == "point"
-        and truck[
-            0
-        ]
-        == "range"
-    ):
-
-        point = survey[
-            1
-        ]
-
-        low = truck[
-            1
-        ]
-
-        high = truck[
-            2
-        ]
-
-
-        if low == high:
-
-            return (
-                point
-                == low
-            )
-
-
-        return (
-            low
-            <= point
-            < high
-        )
-
-
-    return False
-
-
-def _productivity_v119q_survey_ref_map(
-    filters,
-):
-
-    details = (
-        _productivity_v119o_survey_details(
-            _productivity_v119o_actual_source(
-                filters
-            )
-        )
-    )
-
-
-    output = {}
-
-
-    for detail in (
-        details
-        or []
-    ):
-
-        survey_name = (
-            _productivity_v119_text(
-                detail.get(
-                    "survey_name"
-                )
-            )
-        )
-
-
-        survey_idx = detail.get(
-            "survey_idx"
-        )
-
-
-        if (
-            not survey_name
-            or survey_idx
-            in (
-                None,
-                "",
-            )
-        ):
-
-            continue
-
-
-        output[
-            (
-                survey_name,
-                int(
-                    survey_idx
-                ),
-            )
-        ] = detail
-
-
-    return output
-
-
-def _productivity_v119q_row_scope(
-    row,
-    ref_map,
-):
-
-    refs = (
-        row.get(
-            "_productivity_v119o_survey_refs"
-        )
-        or []
-    )
-
-
-    details = []
-
-
-    for ref in refs:
-
-        if not (
-            isinstance(
-                ref,
-                (
-                    list,
-                    tuple,
-                ),
-            )
-            and len(
-                ref
-            ) >= 2
-        ):
-
-            continue
-
-
-        survey_name = (
-            _productivity_v119_text(
-                ref[
-                    0
-                ]
-            )
-        )
-
-
-        try:
-
-            survey_idx = int(
-                ref[
-                    1
-                ]
-            )
-
-        except Exception:
-
-            continue
-
-
-        detail = ref_map.get(
-            (
-                survey_name,
-                survey_idx,
-            )
-        )
-
-
-        if detail:
-
-            details.append(
-                detail
-            )
-
-
-    broad_values = {
-        _productivity_v119_text(
-            detail.get(
-                "broad_material"
-            )
-        )
-        for detail in details
-        if _productivity_v119_text(
-            detail.get(
-                "broad_material"
-            )
-        )
-    }
-
-
-    broad_norms = {
-        _productivity_v119q_norm(
-            value
-        )
-        for value in broad_values
-        if _productivity_v119q_norm(
-            value
-        )
-    }
-
-
-    broad_material = (
-        next(
-            iter(
-                broad_values
-            )
-        )
-        if len(
-            broad_values
-        )
-        == 1
-        else ""
-    )
-
-
-    broad_norm = (
-        next(
-            iter(
-                broad_norms
-            )
-        )
-        if len(
-            broad_norms
-        )
-        == 1
-        else ""
-    )
-
-
-    material = (
-        _productivity_v119_text(
-            row.get(
-                "_benchmark_material"
-            )
-        )
-    )
-
-
-    distance = (
-        _productivity_v119_text(
-            row.get(
-                "_benchmark_distance"
-            )
-        )
-    )
-
-
-    return {
-        "machine":
-            _productivity_v119_text(
-                row.get(
-                    "label"
-                )
-            ),
-
-        "material":
-            material,
-
-        "broad_material":
-            broad_material,
-
-        "broad_norm":
-            broad_norm,
-
-        "distance":
-            distance,
-
-        "distance_signature":
-            _productivity_v119q_distance_signature(
-                distance
-            ),
-
-        "routes":
-            list(
-                row.get(
-                    "_benchmark_routes"
-                )
-                or []
-            ),
-    }
-
-
-def _productivity_v119q_truck_rows(
-    filters,
-    machines,
-):
-
-    filters = frappe._dict(
-        filters
-        or {}
-    )
-
-
-    machines = sorted({
-        _productivity_v119_text(
-            machine
-        )
-        for machine in (
-            machines
-            or []
-        )
-        if _productivity_v119_text(
-            machine
-        )
-    })
-
-
-    if not machines:
-
-        return []
-
-
-    hourly_filters = {
-        "prod_date": [
-            "between",
-            [
-                filters.get(
-                    "start_date"
-                ),
-                filters.get(
-                    "end_date"
-                ),
-            ],
-        ],
-
-        "location":
-            filters.get(
-                "site"
-            ),
-
-        "docstatus": [
-            "<",
-            2,
-        ],
-    }
-
-
-    shift = (
-        _productivity_v119_text(
-            filters.get(
-                "shift"
-            )
-        )
-    )
-
-
-    if shift:
-
-        hourly_filters[
-            "shift"
-        ] = shift
-
-
-    parents = frappe.get_all(
-        "Hourly Production",
-
-        filters=
-            hourly_filters,
-
-        pluck=
-            "name",
-
-        limit_page_length=0,
-    )
-
-
-    if not parents:
-
-        return []
-
-
-    return frappe.get_all(
-        "Truck Loads",
-
-        filters={
-            "parent": [
-                "in",
-                parents,
-            ],
-
-            "asset_name_shoval": [
-                "in",
-                machines,
-            ],
-
-            "bcms": [
-                ">",
-                0,
-            ],
-        },
-
-        fields=[
-            "parent",
-            "asset_name_shoval",
-            "asset_name_truck",
-            "mat_type",
-            "geo_mat_layer_truck",
-            "exc_hauling_distance_meter",
-            "mining_areas_trucks",
-            "exc_to_area",
-            "bcms",
-        ],
-
-        limit_page_length=0,
-    )
-
-
-def _productivity_v119_report(
-    filters,
-):
-
-    from collections import defaultdict
-
-
-    filters = frappe._dict(
-        filters
-        or {}
-    )
-
-
-    columns, rows = (
-        _productivity_v119_report_before_row_adts_v119q(
-            filters
-        )
-    )
-
-
-    # ========================================================
-    # TALLIES PATH STAYS EXACTLY AS BEFORE.
-    # ========================================================
-
-    if not (
-        _productivity_v119o_is_actual(
-            filters
-        )
-    ):
-
-        return (
-            columns,
-            rows,
-        )
-
-
-    machine_rows = [
-        row
-        for row in (
-            rows
-            or []
-        )
-        if (
-            hasattr(
-                row,
-                "get",
-            )
-            and row.get(
-                "truck_benchmark_machine_row"
-            )
-            and row.get(
-                "_productivity_v119o_actual_survey"
-            )
-        )
-    ]
-
-
-    if not machine_rows:
-
-        return (
-            columns,
-            rows,
-        )
-
-
-    ref_map = (
-        _productivity_v119q_survey_ref_map(
-            filters
-        )
-    )
-
-
-    scopes = {}
-
-
-    signature_counts = defaultdict(
-        int
-    )
-
-
-    for row in machine_rows:
-
-        scope = (
-            _productivity_v119q_row_scope(
-                row,
-                ref_map,
-            )
-        )
-
-
-        scopes[
-            id(
-                row
-            )
-        ] = scope
-
-
-        signature = (
-            scope[
-                "machine"
-            ],
-            scope[
-                "broad_norm"
-            ],
-            scope[
-                "distance_signature"
-            ],
-        )
-
-
-        if (
-            scope[
-                "machine"
-            ]
-            and scope[
-                "broad_norm"
-            ]
-            and scope[
-                "distance_signature"
-            ]
-        ):
-
-            signature_counts[
-                signature
-            ] += 1
-
-
-    machines = sorted({
-        scope[
-            "machine"
-        ]
-        for scope in (
-            scopes.values()
-        )
-        if scope[
-            "machine"
-        ]
-    })
-
-
-    truck_rows = (
-        _productivity_v119q_truck_rows(
-            filters,
-            machines,
-        )
-    )
-
-
-    truck_rows_by_machine = defaultdict(
-        list
-    )
-
-
-    for truck_row in truck_rows:
-
-        machine = (
-            _productivity_v119_text(
-                truck_row.asset_name_shoval
-            )
-        )
-
-
-        if machine:
-
-            truck_rows_by_machine[
-                machine
-            ].append(
-                truck_row
-            )
-
-
-    # ========================================================
-    # REMOVE V119P MACHINE-TOTAL ADTs AND REPLACE WITH
-    # MATERIAL + HAULING DISTANCE SCOPED ADTs ONLY.
-    # ========================================================
-
-    for row in machine_rows:
-
-        scope = scopes[
-            id(
-                row
-            )
-        ]
-
-
-        machine = scope[
-            "machine"
-        ]
-
-
-        broad_norm = scope[
-            "broad_norm"
-        ]
-
-
-        distance = scope[
-            "distance"
-        ]
-
-
-        distance_signature = scope[
-            "distance_signature"
-        ]
-
-
-        # Remove the V119P machine-wide values first.
-
-        row[
-            "unique_actual_adts"
-        ] = ""
-
-
-        row[
-            "avg_actual_adts"
-        ] = ""
-
-
-        row[
-            "adt_details"
-        ] = ""
-
-
-        row[
-            "_actual_adt_assets"
-        ] = []
-
-
-        row[
-            "_adt_count_sum"
-        ] = 0
-
-
-        row[
-            "_productivity_v119q_row_adt_available"
-        ] = 0
-
-
-        row[
-            "_productivity_v119q_row_adt_unavailable_reason"
-        ] = ""
-
-
-        row[
-            "_adt_scope"
-        ] = (
-            "Selected Material + Hauling Distance"
-        )
-
-
-        row[
-            "_adt_scope_material"
-        ] = scope[
-            "material"
-        ]
-
-
-        row[
-            "_adt_scope_broad_material"
-        ] = scope[
-            "broad_material"
-        ]
-
-
-        row[
-            "_adt_scope_distance"
-        ] = distance
-
-
-        row[
-            "_adt_scope_routes"
-        ] = scope[
-            "routes"
-        ]
-
-
-        # ----------------------------------------------------
-        # Survey row itself must have a usable Material family.
-        # ----------------------------------------------------
-
-        if not broad_norm:
-
-            row[
-                "_productivity_v119q_row_adt_unavailable_reason"
-            ] = (
-                "Survey Material family could not be "
-                "determined."
-            )
-
-            continue
-
-
-        # ----------------------------------------------------
-        # Survey row must have a hauling distance.
-        # ----------------------------------------------------
-
-        if not distance_signature:
-
-            row[
-                "_productivity_v119q_row_adt_unavailable_reason"
-            ] = (
-                "Survey Hauling Distance is not captured."
-            )
-
-            continue
-
-
-        signature = (
-            machine,
-            broad_norm,
-            distance_signature,
-        )
-
-
-        # ----------------------------------------------------
-        # If two different Survey material rows share the same
-        # Machine + Broad Material + Hauling Distance, Truck
-        # Loads cannot tell us which row owns the ADTs.
-        #
-        # Do not duplicate them.
-        # ----------------------------------------------------
-
-        if (
-            signature_counts[
-                signature
-            ]
-            != 1
-        ):
-
-            row[
-                "_productivity_v119q_row_adt_unavailable_reason"
-            ] = (
-                "More than one Survey Material row uses "
-                "this Material family and Hauling Distance. "
-                "Truck Load detail is not sufficient to "
-                "separate the ADTs safely."
-            )
-
-            continue
-
-
-        trucks = set()
-
-
-        parent_trucks = defaultdict(
-            set
-        )
-
-
-        matched_rows = 0
-
-
-        for truck_row in (
-            truck_rows_by_machine.get(
-                machine,
-                []
-            )
-        ):
-
-            truck = (
-                _productivity_v119_text(
-                    truck_row.asset_name_truck
-                )
-            )
-
-
-            if not truck:
-
-                continue
-
-
-            truck_broad = (
-                _productivity_v119q_norm(
-                    truck_row.mat_type
-                )
-            )
-
-
-            if truck_broad != broad_norm:
-
-                continue
-
-
-            truck_distance = (
-                _productivity_v119_text(
-                    truck_row.exc_hauling_distance_meter
-                )
-            )
-
-
-            if not (
-                _productivity_v119q_distance_matches(
-                    distance,
-                    truck_distance,
-                )
-            ):
-
-                continue
-
-
-            trucks.add(
-                truck
-            )
-
-
-            parent_trucks[
-                truck_row.parent
-            ].add(
-                truck
-            )
-
-
-            matched_rows += 1
-
-
-        if not trucks:
-
-            row[
-                "_productivity_v119q_row_adt_unavailable_reason"
-            ] = (
-                "No Truck Load ADT records contain a "
-                "matching Material + Hauling Distance "
-                "for this row."
-            )
-
-            continue
-
-
-        adt_hour_count = sum(
-            len(
-                assets
-            )
-            for assets in (
-                parent_trucks.values()
-            )
-        )
-
-
-        row_hours = (
-            _productivity_v119_number(
-                row.get(
-                    "working_hours"
-                )
-            )
-        )
-
-
-        average = (
-            adt_hour_count
-            / row_hours
-            if row_hours > 0
-            else 0.0
-        )
-
-
-        row[
-            "unique_actual_adts"
-        ] = len(
-            trucks
-        )
-
-
-        row[
-            "avg_actual_adts"
-        ] = average
-
-
-        row[
-            "adt_details"
-        ] = "View ADTs"
-
-
-        row[
-            "_actual_adt_assets"
-        ] = sorted(
-            trucks
-        )
-
-
-        row[
-            "_adt_count_sum"
-        ] = adt_hour_count
-
-
-        row[
-            "_adt_row_working_hours"
-        ] = row_hours
-
-
-        row[
-            "_adt_row_matching_hour_count"
-        ] = len(
-            parent_trucks
-        )
-
-
-        row[
-            "_adt_row_truck_load_rows"
-        ] = matched_rows
-
-
-        row[
-            "_productivity_v119q_row_adt_available"
-        ] = 1
-
-
-    # ========================================================
-    # SUMMARY ROWS MUST NEVER SHOW ADT VALUES.
-    # ========================================================
-
-    for row in (
-        rows
-        or []
-    ):
-
-        if not (
-            hasattr(
-                row,
-                "get",
-            )
-            and row.get(
-                "truck_benchmark_summary_row"
-            )
-        ):
-
-            continue
-
-
-        row[
-            "unique_actual_adts"
-        ] = ""
-
-
-        row[
-            "avg_actual_adts"
-        ] = ""
-
-
-        row[
-            "adt_details"
-        ] = ""
-
-
-    # ========================================================
-    # CLEAR COLUMN LABELS
-    # ========================================================
-
-    for column in (
-        columns
-        or []
-    ):
-
-        if not hasattr(
-            column,
-            "get",
-        ):
-
-            continue
-
-
-        fieldname = column.get(
-            "fieldname"
-        )
-
-
-        if fieldname == "unique_actual_adts":
-
-            column[
-                "label"
-            ] = (
-                "Unique ADTs "
-                "(Material + HD)"
-            )
-
-
-        elif fieldname == "avg_actual_adts":
-
-            column[
-                "label"
-            ] = (
-                "Avg ADTs / "
-                "Row Working Hr"
-            )
-
-
-    return (
-        columns,
-        rows,
-    )
-
-
-# END KOSI_PRODUCTIVITY_ROW_ADTS_V119Q
-
-
-# ============================================================
 # KOSI_PRODUCTIVITY_ACTUAL_MATERIAL_ADTS_V119R
 #
 # ACTUAL BCM TRUCK BENCHMARK
@@ -81635,10 +79670,6 @@ def _productivity_v119_report(
 #
 # ============================================================
 
-
-_productivity_v119_report_before_material_adts_v119r = (
-    _productivity_v119_report
-)
 
 
 def _productivity_v119r_norm(
@@ -82354,7 +80385,7 @@ def _productivity_v119r_material_adt_stats(
     return stats
 
 
-def _productivity_v119_report(
+def _productivity_v119_actual_material_report(
     filters,
 ):
 
@@ -82365,7 +80396,7 @@ def _productivity_v119_report(
 
 
     columns, rows = (
-        _productivity_v119_report_before_material_adts_v119r(
+        _productivity_v119o_actual_report(
             filters
         )
     )
@@ -82526,7 +80557,7 @@ def _productivity_v119_report(
 
 
     # ========================================================
-    # REPLACE MACHINE-TOTAL V119P ADTs WITH MATERIAL ADTs.
+    # APPLY FINAL MATERIAL-LEVEL ADT DATA.
     # ========================================================
 
     for row in machine_rows:
@@ -82550,7 +80581,7 @@ def _productivity_v119_report(
         ]
 
 
-        # Clear V119P whole-machine values.
+        # Clear provisional ADT values before material matching.
 
         row[
             "unique_actual_adts"
@@ -82822,261 +80853,6 @@ def _productivity_v119_report(
 # END KOSI_PRODUCTIVITY_ACTUAL_MATERIAL_ADTS_V119R
 
 
-# ============================================================
-# KOSI_PRODUCTIVITY_ADT_ACTIVE_HOURS_V119S
-#
-# ADT average correction.
-#
-# Survey remains authoritative for:
-#
-#     Actual Material
-#     Hauling Distance
-#     Route
-#     BCM
-#     Report Working Hours
-#
-# Tallies / Truck Loads remain authoritative for:
-#
-#     Actual ADT assets
-#     ADT-hour count
-#     Active loading hours by Excavator + Material
-#
-#
-# OLD ADT AVERAGE
-# ------------------------------------------------------------
-#
-#     Tallies ADT-Hour Count
-#     ----------------------
-#     Survey Material Hours
-#
-# This mixes two different time bases and can inflate the
-# average.
-#
-#
-# NEW ADT AVERAGE
-# ------------------------------------------------------------
-#
-#     Tallies ADT-Hour Count
-#     ----------------------
-#     Tallies Active Loading Hours for same
-#     Excavator + Material
-#
-#
-# Example concept:
-#
-#     450 ADT-hour observations
-#     76 active loading hours
-#
-#     450 / 76 = 5.92
-#
-# Displayed at 0 decimals:
-#
-#     6
-#
-# No values are hard-coded in report logic.
-# ============================================================
-
-
-_productivity_v119_report_before_adt_active_hours_v119s = (
-    _productivity_v119_report
-)
-
-
-def _productivity_v119_report(
-    filters,
-):
-
-    filters = frappe._dict(
-        filters
-        or {}
-    )
-
-
-    columns, rows = (
-        _productivity_v119_report_before_adt_active_hours_v119s(
-            filters
-        )
-    )
-
-
-    # Tallies benchmark path remains unchanged.
-
-    if not (
-        _productivity_v119o_is_actual(
-            filters
-        )
-    ):
-
-        return (
-            columns,
-            rows,
-        )
-
-
-    for row in (
-        rows
-        or []
-    ):
-
-        if not (
-            hasattr(
-                row,
-                "get",
-            )
-            and row.get(
-                "truck_benchmark_machine_row"
-            )
-            and row.get(
-                "_productivity_v119o_actual_survey"
-            )
-            and row.get(
-                "_productivity_v119r_material_adt_available"
-            )
-        ):
-
-            continue
-
-
-        adt_hour_count = (
-            _productivity_v119_number(
-                row.get(
-                    "_adt_count_sum"
-                )
-            )
-        )
-
-
-        active_loading_hours = (
-            _productivity_v119_number(
-                row.get(
-                    "_adt_material_active_hour_records"
-                )
-            )
-        )
-
-
-        if active_loading_hours <= 0:
-
-            frappe.throw(
-                "Actual ADT material data exists for "
-                + _productivity_v119_text(
-                    row.get(
-                        "label"
-                    )
-                )
-                + " but Tallies Active Loading Hours "
-                + "are zero."
-            )
-
-
-        avg_actual_adts = (
-            adt_hour_count
-            / active_loading_hours
-        )
-
-
-        row[
-            "avg_actual_adts"
-        ] = avg_actual_adts
-
-
-        row[
-            "_adt_average_active_loading_hours"
-        ] = active_loading_hours
-
-
-        row[
-            "_adt_average_denominator"
-        ] = (
-            "Tallies Active Loading Hours"
-        )
-
-
-    # Summary rows stay blank.
-
-    for row in (
-        rows
-        or []
-    ):
-
-        if not (
-            hasattr(
-                row,
-                "get",
-            )
-            and row.get(
-                "truck_benchmark_summary_row"
-            )
-        ):
-
-            continue
-
-
-        row[
-            "unique_actual_adts"
-        ] = ""
-
-
-        row[
-            "avg_actual_adts"
-        ] = ""
-
-
-        row[
-            "adt_details"
-        ] = ""
-
-
-    # Clearer column wording.
-
-    for column in (
-        columns
-        or []
-    ):
-
-        if not hasattr(
-            column,
-            "get",
-        ):
-
-            continue
-
-
-        fieldname = column.get(
-            "fieldname"
-        )
-
-
-        if fieldname == "unique_actual_adts":
-
-            column[
-                "label"
-            ] = (
-                "Unique Actual ADTs "
-                "(Material)"
-            )
-
-
-        elif fieldname == "avg_actual_adts":
-
-            column[
-                "label"
-            ] = (
-                "Avg Actual ADTs / "
-                "Active Loading Hr"
-            )
-
-
-    return (
-        columns,
-        rows,
-    )
-
-
-# END KOSI_PRODUCTIVITY_ADT_ACTIVE_HOURS_V119S
-
-
-# ============================================================
 # KOSI_PRODUCTIVITY_ACTUAL_POPUP_ALIGNMENT_V119T
 #
 # Actual BCM benchmark:
@@ -83104,12 +80880,8 @@ def _productivity_v119_report(
 # ============================================================
 
 
-_productivity_v119_report_before_actual_popup_alignment_v119t = (
-    _productivity_v119_report
-)
 
-
-def _productivity_v119_report(filters):
+def _productivity_v119_actual_popup_report(filters):
 
     filters = frappe._dict(
         filters
@@ -83118,7 +80890,7 @@ def _productivity_v119_report(filters):
 
 
     columns, rows = (
-        _productivity_v119_report_before_actual_popup_alignment_v119t(
+        _productivity_v119_actual_material_report(
             filters
         )
     )
@@ -83314,7 +81086,6 @@ def _productivity_v119_report(filters):
 # END KOSI_PRODUCTIVITY_ACTUAL_POPUP_ALIGNMENT_V119T
 
 
-# ============================================================
 # KOSI_PRODUCTIVITY_ACTUAL_MATERIAL_HOURS_V119U
 #
 # Correct Actual ADT denominator.
@@ -83353,12 +81124,8 @@ def _productivity_v119_report(filters):
 # ============================================================
 
 
-_productivity_v119_report_before_material_hours_v119u = (
-    _productivity_v119_report
-)
 
-
-def _productivity_v119_report(filters):
+def _productivity_v119_actual_final_report(filters):
 
     filters = frappe._dict(
         filters
@@ -83367,7 +81134,7 @@ def _productivity_v119_report(filters):
 
 
     columns, rows = (
-        _productivity_v119_report_before_material_hours_v119u(
+        _productivity_v119_actual_popup_report(
             filters
         )
     )
@@ -83553,3 +81320,32 @@ def _productivity_v119_report(filters):
 
 
 # END KOSI_PRODUCTIVITY_ACTUAL_MATERIAL_HOURS_V119U
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_TRUCK_BENCHMARK_FINAL_DISPATCH
+#
+# One explicit entry point for the final benchmark pipeline.
+# ============================================================
+
+def _productivity_v119_report(filters):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+
+    if _productivity_v119o_is_actual(filters):
+
+        return _productivity_v119_actual_final_report(
+            filters
+        )
+
+
+    return _productivity_v119_tallies_final_report(
+        filters
+    )
+
+
+# END KOSI_PRODUCTIVITY_TRUCK_BENCHMARK_FINAL_DISPATCH
