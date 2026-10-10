@@ -89,11 +89,12 @@ frappe.query_reports["Productivity"] = {
             options: "Tallies BCMs\nActual BCMs",
             default: "Tallies BCMs"
         },
+        // KOSI_PRODUCTIVITY_TRUCK_BENCHMARK_FILTER_V119
         {
             fieldname: "summary_view",
             label: __("Summary"),
             fieldtype: "Select",
-            options: "Summary Per Machine\nHours and Material",
+            options: "Summary Per Machine\nHours and Material\nTRUCK BENCHMARK ANALYSIS",
             default: "Summary Per Machine"
         }
     ],
@@ -22650,3 +22651,434 @@ if (
 
 
 // END KOSI_PRODUCTIVITY_DIRECT_IMAGE_V120
+
+
+// ============================================================
+// KOSI_PRODUCTIVITY_TRUCK_BENCHMARK_FINAL
+//
+// Consolidated TRUCK BENCHMARK ANALYSIS presentation layer.
+// Replaces the historical V119 formatter/dialog wrappers.
+// No CSS is embedded here.
+// ============================================================
+
+(function () {
+    const report = frappe.query_reports["Productivity"];
+
+    if (!report || report._productivity_truck_benchmark_final_applied) {
+        return;
+    }
+
+    report._productivity_truck_benchmark_final_applied = true;
+
+    const previous_formatter = report.formatter;
+
+    const numeric_fields = new Set([
+        "working_hours",
+        "output",
+        "productivity",
+        "benchmark_bcm_hr",
+        "unique_actual_adts",
+        "avg_actual_adts",
+        "variance_bcm_hr",
+        "source_rows"
+    ]);
+
+    const summary_blank_fields = new Set([
+        "unique_actual_adts",
+        "avg_actual_adts",
+        "adt_details"
+    ]);
+
+    function get_fieldname(column) {
+        return (
+            (column && column.fieldname)
+            || (column && column.df && column.df.fieldname)
+            || ""
+        );
+    }
+
+    function whole_number(value) {
+        if (value === null || value === undefined || value === "") {
+            return "";
+        }
+
+        let raw = value;
+
+        if (typeof raw === "string") {
+            raw = raw.replace(/,/g, "").trim();
+        }
+
+        const number = Number(raw);
+
+        if (!Number.isFinite(number)) {
+            return "";
+        }
+
+        const rounded = number < 0
+            ? -Math.round(Math.abs(number))
+            : Math.round(number);
+
+        return rounded.toLocaleString("en-US", {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 0
+        });
+    }
+
+    function delegate(value, row, column, data, default_formatter) {
+        if (typeof previous_formatter === "function") {
+            return previous_formatter(
+                value,
+                row,
+                column,
+                data,
+                default_formatter
+            );
+        }
+
+        return default_formatter(
+            value,
+            row,
+            column,
+            data
+        );
+    }
+
+    function encode_payload(payload) {
+        return encodeURIComponent(JSON.stringify(payload));
+    }
+
+    function button_html(css_class, payload) {
+        return (
+            '<button type="button" '
+            + 'class="btn btn-xs btn-default '
+            + css_class
+            + '" data-payload="'
+            + encode_payload(payload)
+            + '">'
+            + __('View ADTs')
+            + '</button>'
+        );
+    }
+
+    report.formatter = function (
+        value,
+        row,
+        column,
+        data,
+        default_formatter
+    ) {
+        if (!data) {
+            return delegate(
+                value,
+                row,
+                column,
+                data,
+                default_formatter
+            );
+        }
+
+        const fieldname = get_fieldname(column);
+        const is_group_header = !!data.truck_benchmark_group_header;
+        const is_route_row = !!data.truck_benchmark_route_row;
+        const is_machine_row = !!data.truck_benchmark_machine_row;
+        const is_summary_row = !!data.truck_benchmark_summary_row;
+        const is_benchmark_row = (
+            is_group_header
+            || is_route_row
+            || is_machine_row
+            || is_summary_row
+        );
+
+        if (!is_benchmark_row) {
+            return delegate(
+                value,
+                row,
+                column,
+                data,
+                default_formatter
+            );
+        }
+
+        if (is_group_header || is_route_row) {
+            if (fieldname !== "label") {
+                return "";
+            }
+
+            const rendered = default_formatter(
+                value,
+                row,
+                column,
+                data
+            );
+
+            return is_route_row
+                ? "<em>" + rendered + "</em>"
+                : "<strong>" + rendered + "</strong>";
+        }
+
+        if (
+            is_summary_row
+            && summary_blank_fields.has(fieldname)
+        ) {
+            return "";
+        }
+
+        if (
+            fieldname === "adt_details"
+            && is_machine_row
+            && data._productivity_v119o_actual_survey
+        ) {
+            if (!data._productivity_v119r_material_adt_available) {
+                return "";
+            }
+
+            const adts = Array.isArray(data._actual_adt_assets)
+                ? data._actual_adt_assets
+                : [];
+
+            if (!adts.length) {
+                return "";
+            }
+
+            return button_html(
+                "productivity-truck-benchmark-actual-adts",
+                {
+                    type: "actual",
+                    excavator: data.label || "",
+                    material: data._benchmark_material || "",
+                    hauling_distance: data._benchmark_distance || "",
+                    routes: data._benchmark_routes || [],
+                    excavator_total_hours:
+                        data._adt_popup_excavator_total_working_hours || 0,
+                    material_excavator_hours:
+                        data._adt_popup_material_excavator_working_hours
+                        || data.working_hours
+                        || 0,
+                    total_hourly_adt_count: data._adt_count_sum || 0,
+                    unique_actual_adts: adts.length,
+                    adts: adts
+                }
+            );
+        }
+
+        if (
+            fieldname === "adt_details"
+            && is_machine_row
+        ) {
+            const adts = Array.isArray(data._actual_adt_assets)
+                ? data._actual_adt_assets
+                : [];
+
+            if (!adts.length) {
+                return (
+                    '<button type="button" '
+                    + 'class="btn btn-xs btn-default" disabled>'
+                    + __('No ADTs')
+                    + '</button>'
+                );
+            }
+
+            return button_html(
+                "productivity-truck-benchmark-tallies-adts",
+                {
+                    type: "tallies",
+                    excavator: data.label || "",
+                    material: data._benchmark_material || "",
+                    hauling_distance: data._benchmark_distance || "",
+                    excavator_total_hours:
+                        data._reconciled_machine_hours || 0,
+                    material_excavator_hours:
+                        data._reconciled_group_hours
+                        || data.working_hours
+                        || 0,
+                    total_hourly_adt_count: data._adt_count_sum || 0,
+                    unique_actual_adts: adts.length,
+                    adts: adts
+                }
+            );
+        }
+
+        if (numeric_fields.has(fieldname)) {
+            return whole_number(data[fieldname]);
+        }
+
+        if (fieldname === "performance_pct") {
+            const performance = String(
+                data.performance_pct || ""
+            ).trim();
+
+            if (performance.endsWith("%")) {
+                const raw = Number(
+                    performance.slice(0, -1).trim()
+                );
+
+                if (Number.isFinite(raw)) {
+                    return whole_number(raw) + "%";
+                }
+            }
+        }
+
+        return delegate(
+            value,
+            row,
+            column,
+            data,
+            default_formatter
+        );
+    };
+
+    function read_payload(button) {
+        try {
+            return JSON.parse(
+                decodeURIComponent(
+                    $(button).attr("data-payload") || ""
+                )
+            );
+        } catch (error) {
+            frappe.msgprint(__("Unable to read ADT details."));
+            return null;
+        }
+    }
+
+    function show_adt_dialog(payload) {
+        if (!payload) {
+            return;
+        }
+
+        const adts = Array.isArray(payload.adts)
+            ? payload.adts
+            : [];
+
+        const excavator_hours = Number(
+            payload.excavator_total_hours || 0
+        );
+        const material_hours = Number(
+            payload.material_excavator_hours || 0
+        );
+        const adt_count = Number(
+            payload.total_hourly_adt_count || 0
+        );
+        const average = material_hours > 0
+            ? adt_count / material_hours
+            : 0;
+
+        const dialog = new frappe.ui.Dialog({
+            title: __("Actual ADTs Loaded"),
+            fields: [
+                {
+                    fieldtype: "HTML",
+                    fieldname: "details"
+                }
+            ]
+        });
+
+        const wrapper = dialog.fields_dict.details.$wrapper;
+        const content = $("<div>");
+
+        function line(label, line_value) {
+            $("<p>")
+                .text(label + ": " + line_value)
+                .appendTo(content);
+        }
+
+        line(__("Excavator"), payload.excavator || "");
+        line(__("Material"), payload.material || "");
+
+        if (payload.hauling_distance) {
+            line(
+                __("Hauling Distance"),
+                payload.hauling_distance
+            );
+        }
+
+        if (
+            payload.type === "actual"
+            && Array.isArray(payload.routes)
+            && payload.routes.length
+        ) {
+            line(__("Route(s)"), payload.routes.join(" / "));
+        }
+
+        $("<hr>").appendTo(content);
+
+        line(__("Unique Actual ADTs Loaded"), adts.length);
+        line(
+            __("Avg Actual ADTs / Working Hour"),
+            whole_number(average)
+        );
+
+        $("<hr>").appendTo(content);
+
+        line(
+            __("Excavator Total Working Hours"),
+            whole_number(excavator_hours)
+        );
+        line(
+            __("This Material / Excavator Working Hours"),
+            whole_number(material_hours)
+        );
+        line(
+            __("Total Hourly ADT Count"),
+            whole_number(adt_count)
+        );
+        line(
+            __("Calculation"),
+            whole_number(adt_count)
+            + " ÷ "
+            + whole_number(material_hours)
+            + " = "
+            + whole_number(average)
+        );
+
+        $("<hr>").appendTo(content);
+
+        line(__("ADT Machine Numbers"), adts.length);
+
+        const list = $('<ul class="list-group">');
+
+        adts.forEach(function (asset) {
+            $("<li>")
+                .addClass("list-group-item")
+                .text(asset)
+                .appendTo(list);
+        });
+
+        wrapper
+            .empty()
+            .append(content)
+            .append(list);
+
+        dialog.show();
+    }
+
+    $(document)
+        .off(
+            "click.productivityTruckBenchmarkActual",
+            ".productivity-truck-benchmark-actual-adts"
+        )
+        .on(
+            "click.productivityTruckBenchmarkActual",
+            ".productivity-truck-benchmark-actual-adts",
+            function (event) {
+                event.preventDefault();
+                show_adt_dialog(read_payload(this));
+            }
+        );
+
+    $(document)
+        .off(
+            "click.productivityTruckBenchmarkTallies",
+            ".productivity-truck-benchmark-tallies-adts"
+        )
+        .on(
+            "click.productivityTruckBenchmarkTallies",
+            ".productivity-truck-benchmark-tallies-adts",
+            function (event) {
+                event.preventDefault();
+                show_adt_dialog(read_payload(this));
+            }
+        );
+
+})();
+
+// END KOSI_PRODUCTIVITY_TRUCK_BENCHMARK_FINAL
