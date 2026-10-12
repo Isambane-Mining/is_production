@@ -12,7 +12,6 @@ class DailyLostHoursRecon(Document):
         self.set_day_of_week_if_missing()
         self.calculate_parent_total_general_lost_hours()
         self.copy_parent_general_hours_to_child_rows()
-        self.validate_child_rows_hours()
         # Restore full General Lost Hours totals after legacy logic
         sync_general_lost_hours_table(self)
 
@@ -55,25 +54,6 @@ class DailyLostHoursRecon(Document):
                 + (row.blasting_child or 0)
             )
 
-    def validate_child_rows_hours(self):
-        if self.day_of_week in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]:
-            required_hours = self.weekday_required_hours or 0
-        elif self.day_of_week == "Saturday":
-            required_hours = self.sat_required_shift_hours or 0
-        else:
-            required_hours = 9999  # Sunday / disable validation
-
-        for row in self.daily_lost_hours_assets_table:
-            plant_specific = row.total_plant_specific_lost_hours or 0
-            child_general = row.total_general_lost_hours_child or 0
-            total_for_row = plant_specific + child_general
-
-            if total_for_row > required_hours:
-                frappe.throw(
-                    f"Row #{row.idx}: (Plant Specific Lost Hours: {plant_specific} "
-                    f"+ General Lost Hours Child: {child_general}) = {total_for_row} "
-                    f"exceeds the required hours ({required_hours}) on {self.day_of_week}."
-                )
 
 
 # ------------------------------------------------------------------
