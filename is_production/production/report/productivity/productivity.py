@@ -72462,3 +72462,8890 @@ def execute(filters=None):
 
 
 # END KOSI_PRODUCTIVITY_TALLIES_GEO_GENERIC_CLEANUP_V118H
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_TRUCK_BENCHMARK_ANALYSIS_V119
+# KOSI_PRODUCTIVITY_TRUCK_BENCHMARK_ACTUAL_ADTS_V119A
+# KOSI_PRODUCTIVITY_TRUCK_BENCHMARK_AVG_ACTUAL_ADTS_V119B
+#
+# V119B calculation:
+#
+#   For each Hourly Production record:
+#       count DISTINCT asset_name_truck values
+#       for Excavator + Material + Hauling Distance.
+#
+#   Average Actual ADTs =
+#       sum(hourly actual ADT counts)
+#       / active hourly records
+#
+# No BCM/hr-derived truck estimate is used.
+
+#
+# Actual ADT count comes directly from:
+#
+#     Truck Loads.asset_name_truck
+#
+# Count rule:
+#
+#     DISTINCT ADT assets with positive BCM
+#     for the exact:
+#
+#         Excavator
+#         + Material
+#         + Hauling Distance
+#
+# No BCM/hr calculation is used to determine ADT count.
+#
+#
+# New Productivity Summary option:
+#
+#     TRUCK BENCHMARK ANALYSIS
+#
+# GROUPING
+# ------------------------------------------------------------
+#
+#     Detailed Excavator Material
+#     +
+#     Hauling Distance
+#
+# Source:
+#
+#     Hourly Production
+#       -> Truck Loads
+#
+# Dozer Production is NOT queried.
+#
+#
+# BENCHMARK
+# ------------------------------------------------------------
+#
+# No hard-coded 220 BCM/hr.
+#
+# Per-excavator benchmark:
+#
+#     MPP Target BCM/Hour
+#     -------------------
+#     Planned Excavators
+#
+#
+# Benchmark truck count:
+#
+#     MPP Production Trucks
+#     ---------------------
+#     Planned Excavators
+#
+# rounded to nearest whole truck.
+#
+#
+# WORKING HOURS
+# ------------------------------------------------------------
+#
+# One Hourly Production document represents one operating hour.
+#
+# If an excavator has more than one Material + Hauling Distance
+# grouping during the same hour, that one hour is allocated
+# proportionally according to BCM.
+#
+# This prevents double-counting operating hours.
+#
+#
+# EXISTING REPORTS
+# ------------------------------------------------------------
+#
+# Summary Per Machine:
+#     untouched
+#
+# Hours and Material:
+#     untouched
+#
+# Actual / Tallies existing logic:
+#     untouched
+#
+# ============================================================
+
+
+_productivity_execute_before_truck_benchmark_v119 = execute
+
+
+def _productivity_v119_text(value):
+
+    return str(
+        value
+        or ""
+    ).strip()
+
+
+def _productivity_v119_number(value):
+
+    try:
+
+        return float(
+            value
+            or 0
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+
+        return 0.0
+
+
+def _productivity_v119_selected_mpps(filters):
+
+    import json
+
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+
+    value = filters.get(
+        "monthly_production_plans"
+    )
+
+
+    if not value:
+
+        value = filters.get(
+            "monthly_production_plan"
+        )
+
+
+    if not value:
+
+        return []
+
+
+    if isinstance(
+        value,
+        str,
+    ):
+
+        raw = value.strip()
+
+
+        if not raw:
+
+            return []
+
+
+        if raw.startswith(
+            "["
+        ):
+
+            try:
+
+                value = json.loads(
+                    raw
+                )
+
+            except Exception:
+
+                value = [
+                    raw
+                ]
+
+        else:
+
+            value = [
+                raw
+            ]
+
+
+    if not isinstance(
+        value,
+        (
+            list,
+            tuple,
+            set,
+        ),
+    ):
+
+        value = [
+            value
+        ]
+
+
+    result = []
+
+    seen = set()
+
+
+    for item in value:
+
+        item = (
+            _productivity_v119_text(
+                item
+            )
+        )
+
+
+        if not item:
+
+            continue
+
+
+        if item in seen:
+
+            continue
+
+
+        seen.add(
+            item
+        )
+
+
+        result.append(
+            item
+        )
+
+
+    return result
+
+
+def _productivity_v119_benchmark_base(filters):
+
+    plans = (
+        _productivity_v119_selected_mpps(
+            filters
+        )
+    )
+
+
+    if len(
+        plans
+    ) != 1:
+
+        frappe.throw(
+            "TRUCK BENCHMARK ANALYSIS requires exactly "
+            "one Monthly Production Planning record."
+        )
+
+
+    plan_name = plans[
+        0
+    ]
+
+
+    doc = frappe.get_doc(
+        "Monthly Production Planning",
+        plan_name,
+    )
+
+
+    assignments = (
+        doc.get(
+            "excavator_truck_assignments"
+        )
+        or []
+    )
+
+
+    excavators = sorted({
+        _productivity_v119_text(
+            row.get(
+                "excavator"
+            )
+        )
+        for row in assignments
+        if _productivity_v119_text(
+            row.get(
+                "excavator"
+            )
+        )
+    })
+
+
+    if not excavators:
+
+        frappe.throw(
+            "No planned excavators were found in "
+            f"Monthly Production Planning {plan_name}."
+        )
+
+
+    target_bcm_hour = (
+        _productivity_v119_number(
+            doc.get(
+                "target_bcm_hour"
+            )
+        )
+    )
+
+
+    if target_bcm_hour <= 0:
+
+        frappe.throw(
+            "Target BCM/Hour must be greater than zero "
+            f"on Monthly Production Planning {plan_name}."
+        )
+
+
+    benchmark_bcm_hour = (
+        target_bcm_hour
+        / len(
+            excavators
+        )
+    )
+
+
+    return frappe._dict({
+        "plan":
+            plan_name,
+
+        "target_bcm_hour":
+            target_bcm_hour,
+
+        "planned_excavators":
+            len(
+                excavators
+            ),
+
+        "benchmark_bcm_hour":
+            benchmark_bcm_hour,
+    })
+
+def _productivity_v119_material(
+    geo_layer,
+    material_group,
+):
+
+    import re
+
+
+    value = (
+        _productivity_v119_text(
+            geo_layer
+        )
+        or
+        _productivity_v119_text(
+            material_group
+        )
+    )
+
+
+    if not value:
+
+        return "Not Captured"
+
+
+    # Examples:
+    #
+    #     1 - Topsoil
+    #         -> Topsoil
+    #
+    #     9 - BL# Interburden
+    #         -> BL# Interburden
+    #
+    # A value such as "2COAL" remains unchanged.
+
+    cleaned = re.sub(
+        r"^\s*\d+\s*[-.)]\s*",
+        "",
+        value,
+    ).strip()
+
+
+    return (
+        cleaned
+        or value
+    )
+
+
+def _productivity_v119_distance(value):
+
+    value = (
+        _productivity_v119_text(
+            value
+        )
+    )
+
+
+    if not value:
+
+        return "Not Captured"
+
+
+    return value
+
+
+def _productivity_v119_distance_title(
+    value,
+):
+
+    value = (
+        _productivity_v119_distance(
+            value
+        )
+    )
+
+
+    if (
+        value != "Not Captured"
+        and "m" not in value.lower()
+    ):
+
+        return (
+            value
+            + " m"
+        )
+
+
+    return value
+
+
+def _productivity_v119_route(
+    from_area,
+    to_area,
+):
+
+    from_area = (
+        _productivity_v119_text(
+            from_area
+        )
+    )
+
+
+    to_area = (
+        _productivity_v119_text(
+            to_area
+        )
+    )
+
+
+    if not (
+        from_area
+        or to_area
+    ):
+
+        return ""
+
+
+    return (
+        f"{from_area or 'Not Captured'}"
+        f" -> "
+        f"{to_area or 'Not Captured'}"
+    )
+
+
+def _productivity_v119_source_rows(filters):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+
+    start_date = filters.get(
+        "start_date"
+    )
+
+
+    end_date = filters.get(
+        "end_date"
+    )
+
+
+    site = filters.get(
+        "site"
+    )
+
+
+    shift = (
+        _productivity_v119_text(
+            filters.get(
+                "shift"
+            )
+        )
+    )
+
+
+    asset = (
+        _productivity_v119_text(
+            filters.get(
+                "asset"
+            )
+        )
+    )
+
+
+    if not (
+        start_date
+        and end_date
+        and site
+    ):
+
+        frappe.throw(
+            "Start Date, End Date and Site are required "
+            "for TRUCK BENCHMARK ANALYSIS."
+        )
+
+
+    conditions = [
+        "hp.location = %(site)s",
+        (
+            "hp.prod_date BETWEEN "
+            "%(start_date)s AND %(end_date)s"
+        ),
+        "hp.docstatus < 2",
+        (
+            "COALESCE("
+            "tl.asset_name_shoval, "
+            "''"
+            ") != ''"
+        ),
+        (
+            "COALESCE("
+            "tl.bcms, "
+            "0"
+            ") > 0"
+        ),
+    ]
+
+
+    values = {
+        "site":
+            site,
+
+        "start_date":
+            start_date,
+
+        "end_date":
+            end_date,
+    }
+
+
+    if shift:
+
+        conditions.append(
+            "hp.shift = %(shift)s"
+        )
+
+
+        values[
+            "shift"
+        ] = shift
+
+
+    if asset:
+
+        conditions.append(
+            "tl.asset_name_shoval = %(asset)s"
+        )
+
+
+        values[
+            "asset"
+        ] = asset
+
+
+    return frappe.db.sql(
+        f"""
+        SELECT
+            hp.name
+                AS hourly_production,
+
+            hp.prod_date,
+
+            hp.shift,
+
+            tl.name
+                AS source_row,
+
+            tl.asset_name_shoval
+                AS excavator,
+
+            tl.asset_name_truck
+                AS truck,
+
+            tl.mat_type
+                AS material_group,
+
+            tl.geo_mat_layer_truck
+                AS geo_layer,
+
+            tl.mining_areas_trucks
+                AS from_area,
+
+            tl.exc_to_area
+                AS to_area,
+
+            tl.exc_hauling_distance_meter
+                AS hauling_distance,
+
+            tl.bcms
+                AS bcm
+
+        FROM `tabTruck Loads` tl
+
+        INNER JOIN `tabHourly Production` hp
+            ON hp.name = tl.parent
+
+        WHERE
+            {" AND ".join(conditions)}
+
+        ORDER BY
+            hp.prod_date,
+            hp.hour_sort_key,
+            hp.name,
+            tl.idx
+        """,
+        values,
+        as_dict=True,
+    )
+
+
+def _productivity_v119_group_data(
+    filters,
+):
+
+    from collections import defaultdict
+
+
+    rows = (
+        _productivity_v119_source_rows(
+            filters
+        )
+    )
+
+
+    # Total BCM for each Excavator in each hourly record.
+    #
+    # This keeps Working Hours reconcilable if one Excavator
+    # handled multiple material/distance groups in one hour.
+
+    hourly_machine_total = defaultdict(
+        float
+    )
+
+
+    # Exact hourly group:
+    #
+    # Hourly Production
+    # + Excavator
+    # + Material
+    # + Hauling Distance
+
+    hourly_group = {}
+
+
+    for source in rows:
+
+        excavator = (
+            _productivity_v119_text(
+                source.get(
+                    "excavator"
+                )
+            )
+        )
+
+
+        if not excavator:
+
+            continue
+
+
+        bcm = (
+            _productivity_v119_number(
+                source.get(
+                    "bcm"
+                )
+            )
+        )
+
+
+        if bcm <= 0:
+
+            continue
+
+
+        hourly_production = (
+            _productivity_v119_text(
+                source.get(
+                    "hourly_production"
+                )
+            )
+        )
+
+
+        material = (
+            _productivity_v119_material(
+                source.get(
+                    "geo_layer"
+                ),
+                source.get(
+                    "material_group"
+                ),
+            )
+        )
+
+
+        distance = (
+            _productivity_v119_distance(
+                source.get(
+                    "hauling_distance"
+                )
+            )
+        )
+
+
+        machine_hour_key = (
+            hourly_production,
+            excavator,
+        )
+
+
+        hourly_machine_total[
+            machine_hour_key
+        ] += bcm
+
+
+        group_key = (
+            hourly_production,
+            excavator,
+            material,
+            distance,
+        )
+
+
+        if group_key not in hourly_group:
+
+            hourly_group[
+                group_key
+            ] = {
+                "bcm":
+                    0.0,
+
+                "source_rows":
+                    0,
+
+                "routes":
+                    set(),
+
+                "trucks":
+                    set(),
+            }
+
+
+        target = hourly_group[
+            group_key
+        ]
+
+
+        target[
+            "bcm"
+        ] += bcm
+
+
+        target[
+            "source_rows"
+        ] += 1
+
+
+        route = (
+            _productivity_v119_route(
+                source.get(
+                    "from_area"
+                ),
+                source.get(
+                    "to_area"
+                ),
+            )
+        )
+
+
+        if route:
+
+            target[
+                "routes"
+            ].add(
+                route
+            )
+
+
+        truck = (
+            _productivity_v119_text(
+                source.get(
+                    "truck"
+                )
+            )
+        )
+
+
+        if truck:
+
+            target[
+                "trucks"
+            ].add(
+                truck
+            )
+
+
+    final = {}
+
+
+    for (
+        hourly_production,
+        excavator,
+        material,
+        distance,
+    ), source in hourly_group.items():
+
+        machine_hour_total = (
+            hourly_machine_total.get(
+                (
+                    hourly_production,
+                    excavator,
+                ),
+                0.0,
+            )
+        )
+
+
+        if machine_hour_total <= 0:
+
+            continue
+
+
+        allocated_hours = (
+            source[
+                "bcm"
+            ]
+            / machine_hour_total
+        )
+
+
+        group_key = (
+            material,
+            distance,
+        )
+
+
+        if group_key not in final:
+
+            final[
+                group_key
+            ] = {}
+
+
+        if excavator not in final[
+            group_key
+        ]:
+
+            final[
+                group_key
+            ][
+                excavator
+            ] = {
+                "working_hours":
+                    0.0,
+
+                "output":
+                    0.0,
+
+                "source_rows":
+                    0,
+
+                "routes":
+                    set(),
+
+                # Union used only for the View ADTs dialog.
+                "trucks":
+                    set(),
+
+                # Actual hourly observations used for the
+                # average truck count.
+                "active_hour_count":
+                    0,
+
+                "adt_count_sum":
+                    0,
+            }
+
+
+        result = final[
+            group_key
+        ][
+            excavator
+        ]
+
+
+        result[
+            "working_hours"
+        ] += allocated_hours
+
+
+        result[
+            "output"
+        ] += source[
+            "bcm"
+        ]
+
+
+        result[
+            "source_rows"
+        ] += source[
+            "source_rows"
+        ]
+
+
+        result[
+            "routes"
+        ].update(
+            source[
+                "routes"
+            ]
+        )
+
+
+        result[
+            "trucks"
+        ].update(
+            source[
+                "trucks"
+            ]
+        )
+
+
+        # One exact group in one Hourly Production document
+        # equals one actual hourly observation.
+
+        result[
+            "active_hour_count"
+        ] += 1
+
+
+        # Count DISTINCT trucks actually captured during
+        # this specific hour.
+
+        result[
+            "adt_count_sum"
+        ] += len(
+            source[
+                "trucks"
+            ]
+        )
+
+
+    return final
+
+def _productivity_v119_columns():
+
+    return [
+        {
+            "fieldname":
+                "label",
+
+            "label":
+                "Excavator",
+
+            "fieldtype":
+                "Data",
+
+            "width":
+                300,
+        },
+        {
+            "fieldname":
+                "working_hours",
+
+            "label":
+                "Working Hours",
+
+            "fieldtype":
+                "Float",
+
+            "precision":
+                1,
+
+            "width":
+                115,
+        },
+        {
+            "fieldname":
+                "output",
+
+            "label":
+                "Output BCM",
+
+            "fieldtype":
+                "Float",
+
+            "precision":
+                1,
+
+            "width":
+                120,
+        },
+        {
+            "fieldname":
+                "productivity",
+
+            "label":
+                "Reported BCM/Hr",
+
+            "fieldtype":
+                "Float",
+
+            "precision":
+                1,
+
+            "width":
+                130,
+        },
+        {
+            "fieldname":
+                "benchmark_bcm_hr",
+
+            "label":
+                "Benchmark BCM/Hr",
+
+            "fieldtype":
+                "Float",
+
+            "precision":
+                1,
+
+            "width":
+                135,
+        },
+        {
+            "fieldname":
+                "avg_actual_adts",
+
+            "label":
+                "Avg Actual ADTs Loaded",
+
+            "fieldtype":
+                "Float",
+
+            "precision":
+                1,
+
+            "width":
+                145,
+        },
+        {
+            "fieldname":
+                "adt_details",
+
+            "label":
+                "ADT Machines",
+
+            "fieldtype":
+                "Data",
+
+            "width":
+                110,
+        },
+        {
+            "fieldname":
+                "performance_pct",
+
+            "label":
+                "Performance %",
+
+            "fieldtype":
+                "Data",
+
+            "width":
+                110,
+        },
+        {
+            "fieldname":
+                "variance_bcm_hr",
+
+            "label":
+                "Variance BCM/Hr",
+
+            "fieldtype":
+                "Float",
+
+            "precision":
+                1,
+
+            "width":
+                125,
+        },
+        {
+            "fieldname":
+                "status",
+
+            "label":
+                "Status",
+
+            "fieldtype":
+                "Data",
+
+            "width":
+                145,
+        },
+        {
+            "fieldname":
+                "source_rows",
+
+            "label":
+                "Source Row(s)",
+
+            "fieldtype":
+                "Int",
+
+            "width":
+                100,
+        },
+    ]
+
+def _productivity_v119_machine_metrics(
+    source,
+    benchmark,
+):
+
+    working_hours = (
+        _productivity_v119_number(
+            source.get(
+                "working_hours"
+            )
+        )
+    )
+
+
+    output = (
+        _productivity_v119_number(
+            source.get(
+                "output"
+            )
+        )
+    )
+
+
+    reported = (
+        output
+        / working_hours
+        if working_hours > 0
+        else 0.0
+    )
+
+
+    benchmark_rate = (
+        benchmark[
+            "benchmark_bcm_hour"
+        ]
+    )
+
+
+    performance = (
+        reported
+        / benchmark_rate
+        * 100
+        if benchmark_rate > 0
+        else 0.0
+    )
+
+
+    variance = (
+        reported
+        - benchmark_rate
+    )
+
+
+    active_hour_count = int(
+        source.get(
+            "active_hour_count"
+        )
+        or 0
+    )
+
+
+    adt_count_sum = int(
+        source.get(
+            "adt_count_sum"
+        )
+        or 0
+    )
+
+
+    avg_actual_adts = (
+        adt_count_sum
+        / active_hour_count
+        if active_hour_count > 0
+        else 0.0
+    )
+
+
+    return frappe._dict({
+        "working_hours":
+            working_hours,
+
+        "output":
+            output,
+
+        "reported":
+            reported,
+
+        "benchmark":
+            benchmark_rate,
+
+        "avg_actual_adts":
+            avg_actual_adts,
+
+        "active_hour_count":
+            active_hour_count,
+
+        "adt_count_sum":
+            adt_count_sum,
+
+        "performance":
+            performance,
+
+        "variance":
+            variance,
+
+        "meets":
+            (
+                reported
+                >= benchmark_rate
+            ),
+    })
+
+def _productivity_v119_tallies_base_report(filters):
+
+    benchmark = (
+        _productivity_v119_benchmark(
+            filters
+        )
+    )
+
+
+    grouped = (
+        _productivity_v119_group_data(
+            filters
+        )
+    )
+
+
+    result = []
+
+
+    def distance_sort(value):
+
+        import re
+
+
+        numbers = re.findall(
+            r"\d+(?:\.\d+)?",
+            value
+            or "",
+        )
+
+
+        if numbers:
+
+            return float(
+                numbers[
+                    0
+                ]
+            )
+
+
+        return 999999999.0
+
+
+    group_keys = sorted(
+        grouped.keys(),
+        key=lambda item: (
+            item[
+                0
+            ].casefold(),
+            distance_sort(
+                item[
+                    1
+                ]
+            ),
+            item[
+                1
+            ].casefold(),
+        ),
+    )
+
+
+    for group_number, (
+        material,
+        distance,
+    ) in enumerate(
+        group_keys,
+        start=1,
+    ):
+
+        machines = grouped[
+            (
+                material,
+                distance,
+            )
+        ]
+
+
+        if not machines:
+
+            continue
+
+
+        result.append({
+            "label":
+                (
+                    f"{group_number}. "
+                    f"{material.upper()} - LOAD & HAUL"
+                    f" | Hauling Distance: "
+                    f"{_productivity_v119_distance_title(distance)}"
+                ),
+
+            "truck_benchmark_group_header":
+                1,
+        })
+
+
+        all_routes = set()
+
+
+        for source in machines.values():
+
+            all_routes.update(
+                source.get(
+                    "routes"
+                )
+                or set()
+            )
+
+
+        result.append({
+            "label":
+                (
+                    "Routes included: "
+                    + (
+                        " / ".join(
+                            sorted(
+                                all_routes
+                            )
+                        )
+                        if all_routes
+                        else
+                        "Not Captured"
+                    )
+                ),
+
+            "truck_benchmark_route_row":
+                1,
+        })
+
+
+        machine_results = []
+
+
+        for excavator in sorted(
+            machines.keys()
+        ):
+
+            source = machines[
+                excavator
+            ]
+
+
+            metrics = (
+                _productivity_v119_machine_metrics(
+                    source,
+                    benchmark,
+                )
+            )
+
+
+            actual_adt_assets = sorted(
+                source.get(
+                    "trucks"
+                )
+                or set()
+            )
+
+
+            row = {
+                "label":
+                    excavator,
+
+                "working_hours":
+                    round(
+                        metrics.working_hours,
+                        3,
+                    ),
+
+                "output":
+                    round(
+                        metrics.output,
+                        3,
+                    ),
+
+                "productivity":
+                    round(
+                        metrics.reported,
+                        3,
+                    ),
+
+                "benchmark_bcm_hr":
+                    round(
+                        metrics.benchmark,
+                        3,
+                    ),
+
+                "avg_actual_adts":
+                    round(
+                        metrics.avg_actual_adts,
+                        3,
+                    ),
+
+                "adt_details":
+                    "View ADTs",
+
+                "performance_pct":
+                    f"{metrics.performance:.1f}%",
+
+                "variance_bcm_hr":
+                    round(
+                        metrics.variance,
+                        3,
+                    ),
+
+                "status":
+                    (
+                        "MEETS BENCHMARK"
+                        if metrics.meets
+                        else
+                        "BELOW BENCHMARK"
+                    ),
+
+                "source_rows":
+                    int(
+                        source.get(
+                            "source_rows"
+                        )
+                        or 0
+                    ),
+
+                "truck_benchmark_machine_row":
+                    1,
+
+                "_reported":
+                    metrics.reported,
+
+                "_meets":
+                    metrics.meets,
+
+                "_actual_adt_assets":
+                    actual_adt_assets,
+
+                "_active_hour_count":
+                    metrics.active_hour_count,
+
+                "_adt_count_sum":
+                    metrics.adt_count_sum,
+
+                "_benchmark_material":
+                    material,
+
+                "_benchmark_distance":
+                    distance,
+            }
+
+
+            machine_results.append(
+                row
+            )
+
+
+            result.append(
+                row
+            )
+
+
+        count = len(
+            machine_results
+        )
+
+
+        if not count:
+
+            continue
+
+
+        average_hours = (
+            sum(
+                row[
+                    "working_hours"
+                ]
+                for row in machine_results
+            )
+            / count
+        )
+
+
+        average_output = (
+            sum(
+                row[
+                    "output"
+                ]
+                for row in machine_results
+            )
+            / count
+        )
+
+
+        average_reported = (
+            sum(
+                row[
+                    "_reported"
+                ]
+                for row in machine_results
+            )
+            / count
+        )
+
+
+        average_performance = (
+            average_reported
+            / benchmark.benchmark_bcm_hour
+            * 100
+            if benchmark.benchmark_bcm_hour > 0
+            else 0.0
+        )
+
+
+        average_variance = (
+            average_reported
+            - benchmark.benchmark_bcm_hour
+        )
+
+
+        meet_count = sum(
+            1
+            for row in machine_results
+            if row[
+                "_meets"
+            ]
+        )
+
+
+        result.append({
+            "label":
+                "AVERAGE",
+
+            "working_hours":
+                round(
+                    average_hours,
+                    3,
+                ),
+
+            "output":
+                round(
+                    average_output,
+                    3,
+                ),
+
+            "productivity":
+                round(
+                    average_reported,
+                    3,
+                ),
+
+            "benchmark_bcm_hr":
+                round(
+                    benchmark.benchmark_bcm_hour,
+                    3,
+                ),
+
+            "performance_pct":
+                f"{average_performance:.1f}%",
+
+            "variance_bcm_hr":
+                round(
+                    average_variance,
+                    3,
+                ),
+
+            "status":
+                (
+                    f"{meet_count} of "
+                    f"{count} meet"
+                ),
+
+            "source_rows":
+                sum(
+                    int(
+                        row.get(
+                            "source_rows"
+                        )
+                        or 0
+                    )
+                    for row in machine_results
+                ),
+
+            "truck_benchmark_summary_row":
+                1,
+        })
+
+
+        total_hours = sum(
+            row[
+                "working_hours"
+            ]
+            for row in machine_results
+        )
+
+
+        total_output = sum(
+            row[
+                "output"
+            ]
+            for row in machine_results
+        )
+
+
+        weighted_reported = (
+            total_output
+            / total_hours
+            if total_hours > 0
+            else 0.0
+        )
+
+
+        weighted_performance = (
+            weighted_reported
+            / benchmark.benchmark_bcm_hour
+            * 100
+            if benchmark.benchmark_bcm_hour > 0
+            else 0.0
+        )
+
+
+        weighted_variance = (
+            weighted_reported
+            - benchmark.benchmark_bcm_hour
+        )
+
+
+        result.append({
+            "label":
+                "WEIGHTED BY HOURS",
+
+            "working_hours":
+                round(
+                    total_hours,
+                    3,
+                ),
+
+            "output":
+                round(
+                    total_output,
+                    3,
+                ),
+
+            "productivity":
+                round(
+                    weighted_reported,
+                    3,
+                ),
+
+            "benchmark_bcm_hr":
+                round(
+                    benchmark.benchmark_bcm_hour,
+                    3,
+                ),
+
+            "performance_pct":
+                f"{weighted_performance:.1f}%",
+
+            "variance_bcm_hr":
+                round(
+                    weighted_variance,
+                    3,
+                ),
+
+            "status":
+                (
+                    "MEETS BENCHMARK"
+                    if weighted_reported
+                    >= benchmark.benchmark_bcm_hour
+                    else
+                    "BELOW BENCHMARK"
+                ),
+
+            "source_rows":
+                sum(
+                    int(
+                        row.get(
+                            "source_rows"
+                        )
+                        or 0
+                    )
+                    for row in machine_results
+                ),
+
+            "truck_benchmark_summary_row":
+                1,
+        })
+
+
+    return (
+        _productivity_v119_columns(),
+        result,
+    )
+
+def execute(filters=None):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+
+    if (
+        _productivity_v119_text(
+            filters.get(
+                "summary_view"
+            )
+        )
+        == "TRUCK BENCHMARK ANALYSIS"
+    ):
+
+        return (
+            _productivity_v119_report(
+                filters
+            )
+        )
+
+
+    return (
+        _productivity_execute_before_truck_benchmark_v119(
+            filters
+        )
+    )
+
+
+# END KOSI_PRODUCTIVITY_TRUCK_BENCHMARK_ANALYSIS_V119
+
+
+# KOSI_PRODUCTIVITY_UNIQUE_ACTUAL_ADTS_V119D
+#
+# TRUCK BENCHMARK ANALYSIS
+#
+# Shows BOTH:
+#
+#   1. Unique Actual ADTs Loaded
+#
+#      Distinct Truck Loads.asset_name_truck assets used
+#      during the selected period for the exact:
+#
+#          Excavator
+#          + Material
+#          + Hauling Distance
+#
+#   2. Avg Actual ADTs / Active Hour
+#
+#      Sum of distinct actual ADTs observed per active hour
+#      --------------------------------------------------
+#                    Active Hours Observed
+#
+# These are intentionally separate metrics.
+#
+# No ADT number is derived from BCM/hr.
+#
+# Existing Productivity views remain untouched.
+# ============================================================
+
+
+
+def _productivity_v119_tallies_unique_adts_report(filters):
+
+    columns, rows = (
+        _productivity_v119_tallies_base_report(
+            filters
+        )
+    )
+
+
+    new_columns = []
+
+    inserted_unique_column = False
+
+
+    for column in (
+        columns
+        or []
+    ):
+
+        if hasattr(
+            column,
+            "items",
+        ):
+
+            column = dict(
+                column
+            )
+
+
+        fieldname = (
+            column.get(
+                "fieldname"
+            )
+            if hasattr(
+                column,
+                "get",
+            )
+            else ""
+        )
+
+
+        if (
+            fieldname
+            == "avg_actual_adts"
+        ):
+
+            new_columns.append({
+                "fieldname":
+                    "unique_actual_adts",
+
+                "label":
+                    "Unique Actual ADTs Loaded",
+
+                "fieldtype":
+                    "Int",
+
+                "width":
+                    145,
+            })
+
+
+            column[
+                "label"
+            ] = (
+                "Avg Actual ADTs / Active Hour"
+            )
+
+
+            column[
+                "width"
+            ] = 155
+
+
+            inserted_unique_column = True
+
+
+        new_columns.append(
+            column
+        )
+
+
+    if not inserted_unique_column:
+
+        frappe.throw(
+            "Truck Benchmark Analysis could not find "
+            "the Avg Actual ADTs column."
+        )
+
+
+    for row in (
+        rows
+        or []
+    ):
+
+        if not hasattr(
+            row,
+            "get",
+        ):
+
+            continue
+
+
+        if row.get(
+            "truck_benchmark_machine_row"
+        ):
+
+            assets = (
+                row.get(
+                    "_actual_adt_assets"
+                )
+                or []
+            )
+
+
+            unique_assets = sorted({
+                _productivity_v119_text(
+                    asset
+                )
+                for asset in assets
+                if _productivity_v119_text(
+                    asset
+                )
+            })
+
+
+            row[
+                "_actual_adt_assets"
+            ] = unique_assets
+
+
+            row[
+                "unique_actual_adts"
+            ] = len(
+                unique_assets
+            )
+
+
+        else:
+
+            # Do not invent an aggregate unique-truck count
+            # for AVERAGE / WEIGHTED BY HOURS rows.
+            row.pop(
+                "unique_actual_adts",
+                None,
+            )
+
+
+    return (
+        new_columns,
+        rows,
+    )
+
+
+# END KOSI_PRODUCTIVITY_UNIQUE_ACTUAL_ADTS_V119D
+
+
+# KOSI_PRODUCTIVITY_TRUCK_BENCHMARK_ZERO_DECIMAL_V119G
+#
+# TRUCK BENCHMARK ANALYSIS display precision only.
+#
+# Examples:
+#
+#     86.0      -> 86
+#     17260.0   -> 17260
+#     200.7     -> 201
+#     212.0     -> 212
+#     5.2       -> 5
+#     228.4     -> 228
+#
+# Underlying calculations remain unchanged.
+#
+# Existing Productivity views remain untouched.
+# ============================================================
+
+
+
+def _productivity_v119_tallies_zero_decimal_report(filters):
+
+    columns, rows = (
+        _productivity_v119_tallies_unique_adts_report(
+            filters
+        )
+    )
+
+
+    zero_decimal_fields = {
+        "working_hours",
+        "output",
+        "productivity",
+        "benchmark_bcm_hr",
+        "avg_actual_adts",
+        "variance_bcm_hr",
+    }
+
+
+    integer_fields = {
+        "unique_actual_adts",
+        "source_rows",
+    }
+
+
+    for column in (
+        columns
+        or []
+    ):
+
+        if not hasattr(
+            column,
+            "get",
+        ):
+
+            continue
+
+
+        fieldname = column.get(
+            "fieldname"
+        )
+
+
+        if fieldname in zero_decimal_fields:
+
+            column[
+                "fieldtype"
+            ] = "Float"
+
+            column[
+                "precision"
+            ] = 0
+
+
+        elif fieldname in integer_fields:
+
+            column[
+                "fieldtype"
+            ] = "Int"
+
+            column.pop(
+                "precision",
+                None,
+            )
+
+
+    # Performance % is a Data field, therefore precision
+    # cannot be controlled by the column definition.
+    #
+    # Round its DISPLAY string only.
+
+    for row in (
+        rows
+        or []
+    ):
+
+        if not hasattr(
+            row,
+            "get",
+        ):
+
+            continue
+
+
+        performance = str(
+            row.get(
+                "performance_pct"
+            )
+            or ""
+        ).strip()
+
+
+        if not performance.endswith(
+            "%"
+        ):
+
+            continue
+
+
+        try:
+
+            numeric = float(
+                performance[
+                    :-1
+                ].strip()
+            )
+
+        except (
+            TypeError,
+            ValueError,
+        ):
+
+            continue
+
+
+        row[
+            "performance_pct"
+        ] = (
+            f"{int(round(numeric))}%"
+        )
+
+
+    return (
+        columns,
+        rows,
+    )
+
+
+# END KOSI_PRODUCTIVITY_TRUCK_BENCHMARK_ZERO_DECIMAL_V119G
+
+
+# KOSI_PRODUCTIVITY_PROPORTIONAL_RECONCILED_HOURS_V119J
+#
+# TRUCK BENCHMARK ANALYSIS
+#
+# All Excavators use the SAME hour reconciliation rule.
+#
+#
+# MACHINE TOTAL HOURS
+# ------------------------------------------------------------
+#
+# Source:
+#
+#     Productivity
+#     -> Summary Per Machine
+#     -> reconciled Excavator Working Hours
+#
+#
+# MATERIAL / DISTANCE BREAKDOWN
+# ------------------------------------------------------------
+#
+# Existing Truck Benchmark hourly allocation is used only
+# as the DISTRIBUTION WEIGHT.
+#
+# For each Excavator:
+#
+#     Reconciled Group Hours
+#
+#       Original Group Hours
+#     = -------------------- x Reconciled Machine Hours
+#       Original Total Hours
+#
+#
+# Example:
+#
+#     Original benchmark machine hours = 322
+#     Reconciled Summary hours         = 283
+#
+#     Scale factor:
+#
+#         283 / 322
+#
+#     Every Material + Hauling Distance group is scaled by
+#     the same factor.
+#
+#     Sum of all breakdown rows = 283.
+#
+#
+# REPORTED BCM/HR
+# ------------------------------------------------------------
+#
+#     Group Output BCM
+#     ----------------------
+#     Reconciled Group Hours
+#
+#
+# AVG ACTUAL ADTs / WORKING HOUR
+# ------------------------------------------------------------
+#
+#     Group Total Hourly ADT Count
+#     ----------------------------
+#     Reconciled Group Hours
+#
+#
+# No machine-specific hours are hard-coded.
+#
+# ============================================================
+
+
+def _productivity_v119j_reconciled_machine_hours(
+    filters,
+    benchmark_rows,
+):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+
+    benchmark_machines = sorted({
+        _productivity_v119_text(
+            row.get(
+                "label"
+            )
+        )
+        for row in (
+            benchmark_rows
+            or []
+        )
+        if (
+            hasattr(
+                row,
+                "get",
+            )
+            and row.get(
+                "truck_benchmark_machine_row"
+            )
+            and _productivity_v119_text(
+                row.get(
+                    "label"
+                )
+            )
+        )
+    })
+
+
+    if not benchmark_machines:
+
+        return {}
+
+
+    summary_filters = frappe._dict(
+        dict(
+            filters
+        )
+    )
+
+
+    summary_filters[
+        "summary_view"
+    ] = "Summary Per Machine"
+
+
+    summary_filters[
+        "bcm_basis"
+    ] = "Tallies BCMs"
+
+
+    summary_filters[
+        "machine_type"
+    ] = [
+        "Excavator"
+    ]
+
+
+    summary_result = (
+        _productivity_execute_before_truck_benchmark_v119(
+            summary_filters
+        )
+    )
+
+
+    summary_rows = (
+        summary_result[
+            1
+        ]
+        if (
+            summary_result
+            and len(
+                summary_result
+            ) > 1
+        )
+        else []
+    )
+
+
+    hours_by_machine = {}
+
+
+    for row in (
+        summary_rows
+        or []
+    ):
+
+        if not hasattr(
+            row,
+            "get",
+        ):
+
+            continue
+
+
+        machine = (
+            _productivity_v119_text(
+                row.get(
+                    "label"
+                )
+            )
+        )
+
+
+        if machine not in benchmark_machines:
+
+            continue
+
+
+        working_hours = (
+            _productivity_v119_number(
+                row.get(
+                    "working_hours"
+                )
+            )
+        )
+
+
+        if working_hours <= 0:
+
+            working_hours = (
+                _productivity_v119_number(
+                    row.get(
+                        "hours"
+                    )
+                )
+            )
+
+
+        if working_hours <= 0:
+
+            continue
+
+
+        existing = (
+            hours_by_machine.get(
+                machine,
+                0.0,
+            )
+        )
+
+
+        # Machine rows should occur once, but keeping the
+        # highest value protects against duplicate display
+        # representations.
+
+        if working_hours > existing:
+
+            hours_by_machine[
+                machine
+            ] = working_hours
+
+
+    missing = [
+        machine
+        for machine in benchmark_machines
+        if (
+            _productivity_v119_number(
+                hours_by_machine.get(
+                    machine
+                )
+            )
+            <= 0
+        )
+    ]
+
+
+    if missing:
+
+        frappe.throw(
+            "TRUCK BENCHMARK ANALYSIS could not find "
+            "reconciled Summary Per Machine Working Hours "
+            "for: "
+            + ", ".join(
+                missing
+            )
+        )
+
+
+    return hours_by_machine
+
+
+def _productivity_v119j_recalculate_group_summaries(
+    rows,
+):
+
+    current_machine_rows = []
+
+
+    for row in (
+        rows
+        or []
+    ):
+
+        if not hasattr(
+            row,
+            "get",
+        ):
+
+            continue
+
+
+        if row.get(
+            "truck_benchmark_group_header"
+        ):
+
+            current_machine_rows = []
+
+            continue
+
+
+        if row.get(
+            "truck_benchmark_machine_row"
+        ):
+
+            current_machine_rows.append(
+                row
+            )
+
+            continue
+
+
+        if not row.get(
+            "truck_benchmark_summary_row"
+        ):
+
+            continue
+
+
+        if not current_machine_rows:
+
+            continue
+
+
+        label = (
+            _productivity_v119_text(
+                row.get(
+                    "label"
+                )
+            )
+        )
+
+
+        machine_count = len(
+            current_machine_rows
+        )
+
+
+        total_hours = sum(
+            _productivity_v119_number(
+                machine.get(
+                    "working_hours"
+                )
+            )
+            for machine in current_machine_rows
+        )
+
+
+        total_output = sum(
+            _productivity_v119_number(
+                machine.get(
+                    "output"
+                )
+            )
+            for machine in current_machine_rows
+        )
+
+
+        benchmark = (
+            _productivity_v119_number(
+                current_machine_rows[
+                    0
+                ].get(
+                    "benchmark_bcm_hr"
+                )
+            )
+        )
+
+
+        source_rows = sum(
+            int(
+                _productivity_v119_number(
+                    machine.get(
+                        "source_rows"
+                    )
+                )
+            )
+            for machine in current_machine_rows
+        )
+
+
+        meet_count = sum(
+            1
+            for machine in current_machine_rows
+            if (
+                _productivity_v119_number(
+                    machine.get(
+                        "productivity"
+                    )
+                )
+                >= benchmark
+            )
+        )
+
+
+        if label == "AVERAGE":
+
+            average_hours = (
+                total_hours
+                / machine_count
+                if machine_count > 0
+                else 0.0
+            )
+
+
+            average_output = (
+                total_output
+                / machine_count
+                if machine_count > 0
+                else 0.0
+            )
+
+
+            average_productivity = (
+                sum(
+                    _productivity_v119_number(
+                        machine.get(
+                            "productivity"
+                        )
+                    )
+                    for machine
+                    in current_machine_rows
+                )
+                / machine_count
+                if machine_count > 0
+                else 0.0
+            )
+
+
+            row[
+                "working_hours"
+            ] = average_hours
+
+
+            row[
+                "output"
+            ] = average_output
+
+
+            row[
+                "productivity"
+            ] = average_productivity
+
+
+            row[
+                "benchmark_bcm_hr"
+            ] = benchmark
+
+
+            row[
+                "performance_pct"
+            ] = (
+                f"{(
+                    average_productivity
+                    / benchmark
+                    * 100
+                    if benchmark > 0
+                    else 0
+                ):.3f}%"
+            )
+
+
+            row[
+                "variance_bcm_hr"
+            ] = (
+                average_productivity
+                - benchmark
+            )
+
+
+            row[
+                "status"
+            ] = (
+                f"{meet_count} of "
+                f"{machine_count} meet"
+            )
+
+
+            row[
+                "source_rows"
+            ] = source_rows
+
+
+        elif label == "WEIGHTED BY HOURS":
+
+            weighted_productivity = (
+                total_output
+                / total_hours
+                if total_hours > 0
+                else 0.0
+            )
+
+
+            row[
+                "working_hours"
+            ] = total_hours
+
+
+            row[
+                "output"
+            ] = total_output
+
+
+            row[
+                "productivity"
+            ] = weighted_productivity
+
+
+            row[
+                "benchmark_bcm_hr"
+            ] = benchmark
+
+
+            row[
+                "performance_pct"
+            ] = (
+                f"{(
+                    weighted_productivity
+                    / benchmark
+                    * 100
+                    if benchmark > 0
+                    else 0
+                ):.3f}%"
+            )
+
+
+            row[
+                "variance_bcm_hr"
+            ] = (
+                weighted_productivity
+                - benchmark
+            )
+
+
+            row[
+                "status"
+            ] = (
+                "MEETS BENCHMARK"
+                if (
+                    weighted_productivity
+                    >= benchmark
+                )
+                else
+                "BELOW BENCHMARK"
+            )
+
+
+            row[
+                "source_rows"
+            ] = source_rows
+
+
+        # Never manufacture ADT values for aggregate rows.
+
+        row.pop(
+            "unique_actual_adts",
+            None,
+        )
+
+
+        row.pop(
+            "avg_actual_adts",
+            None,
+        )
+
+
+        row.pop(
+            "adt_details",
+            None,
+        )
+
+
+    return rows
+
+
+def _productivity_v119_tallies_reconciled_report(
+    filters,
+):
+
+    from collections import defaultdict
+
+
+    columns, rows = (
+        _productivity_v119_tallies_zero_decimal_report(
+            filters
+        )
+    )
+
+
+    reconciled_hours = (
+        _productivity_v119j_reconciled_machine_hours(
+            filters,
+            rows,
+        )
+    )
+
+
+    # --------------------------------------------------------
+    # Step 1:
+    #
+    # Sum the ORIGINAL benchmark hours across all groups for
+    # every Excavator.
+    # --------------------------------------------------------
+
+    original_hours_by_machine = defaultdict(
+        float
+    )
+
+
+    for row in (
+        rows
+        or []
+    ):
+
+        if not (
+            hasattr(
+                row,
+                "get",
+            )
+            and row.get(
+                "truck_benchmark_machine_row"
+            )
+        ):
+
+            continue
+
+
+        machine = (
+            _productivity_v119_text(
+                row.get(
+                    "label"
+                )
+            )
+        )
+
+
+        original_hours_by_machine[
+            machine
+        ] += (
+            _productivity_v119_number(
+                row.get(
+                    "working_hours"
+                )
+            )
+        )
+
+
+    # --------------------------------------------------------
+    # Step 2:
+    #
+    # Scale every group by the SAME machine-specific factor.
+    #
+    # This guarantees:
+    #
+    #     Sum of breakdown hours
+    #     =
+    #     Summary Per Machine hours
+    # --------------------------------------------------------
+
+    for row in (
+        rows
+        or []
+    ):
+
+        if not (
+            hasattr(
+                row,
+                "get",
+            )
+            and row.get(
+                "truck_benchmark_machine_row"
+            )
+        ):
+
+            continue
+
+
+        machine = (
+            _productivity_v119_text(
+                row.get(
+                    "label"
+                )
+            )
+        )
+
+
+        original_machine_hours = (
+            _productivity_v119_number(
+                original_hours_by_machine.get(
+                    machine
+                )
+            )
+        )
+
+
+        reconciled_machine_hours = (
+            _productivity_v119_number(
+                reconciled_hours.get(
+                    machine
+                )
+            )
+        )
+
+
+        original_group_hours = (
+            _productivity_v119_number(
+                row.get(
+                    "working_hours"
+                )
+            )
+        )
+
+
+        if original_machine_hours <= 0:
+
+            frappe.throw(
+                "Truck Benchmark original Working Hours "
+                "are zero for "
+                + machine
+            )
+
+
+        if reconciled_machine_hours <= 0:
+
+            frappe.throw(
+                "Reconciled Working Hours are zero for "
+                + machine
+            )
+
+
+        if original_group_hours <= 0:
+
+            frappe.throw(
+                "Truck Benchmark group Working Hours "
+                "are zero for "
+                + machine
+            )
+
+
+        scale_factor = (
+            reconciled_machine_hours
+            / original_machine_hours
+        )
+
+
+        reconciled_group_hours = (
+            original_group_hours
+            * scale_factor
+        )
+
+
+        output = (
+            _productivity_v119_number(
+                row.get(
+                    "output"
+                )
+            )
+        )
+
+
+        benchmark = (
+            _productivity_v119_number(
+                row.get(
+                    "benchmark_bcm_hr"
+                )
+            )
+        )
+
+
+        total_hourly_adt_count = (
+            _productivity_v119_number(
+                row.get(
+                    "_adt_count_sum"
+                )
+            )
+        )
+
+
+        reported_bcm_hr = (
+            output
+            / reconciled_group_hours
+        )
+
+
+        avg_actual_adts = (
+            total_hourly_adt_count
+            / reconciled_group_hours
+        )
+
+
+        performance = (
+            reported_bcm_hr
+            / benchmark
+            * 100
+            if benchmark > 0
+            else 0.0
+        )
+
+
+        variance = (
+            reported_bcm_hr
+            - benchmark
+        )
+
+
+        row[
+            "working_hours"
+        ] = reconciled_group_hours
+
+
+        row[
+            "productivity"
+        ] = reported_bcm_hr
+
+
+        row[
+            "avg_actual_adts"
+        ] = avg_actual_adts
+
+
+        row[
+            "performance_pct"
+        ] = (
+            f"{performance:.3f}%"
+        )
+
+
+        row[
+            "variance_bcm_hr"
+        ] = variance
+
+
+        row[
+            "status"
+        ] = (
+            "MEETS BENCHMARK"
+            if (
+                reported_bcm_hr
+                >= benchmark
+            )
+            else
+            "BELOW BENCHMARK"
+        )
+
+
+        # ----------------------------------------------------
+        # Audit information for View ADTs.
+        # ----------------------------------------------------
+
+        row[
+            "_original_group_hours"
+        ] = original_group_hours
+
+
+        row[
+            "_original_machine_hours"
+        ] = original_machine_hours
+
+
+        row[
+            "_reconciled_machine_hours"
+        ] = reconciled_machine_hours
+
+
+        row[
+            "_hours_scale_factor"
+        ] = scale_factor
+
+
+        row[
+            "_reconciled_group_hours"
+        ] = reconciled_group_hours
+
+
+        row[
+            "_working_hours_source"
+        ] = "Summary Per Machine"
+
+
+        row[
+            "_adt_average_denominator"
+        ] = "Reconciled Group Working Hours"
+
+
+    # --------------------------------------------------------
+    # Rename ADT column.
+    # --------------------------------------------------------
+
+    for column in (
+        columns
+        or []
+    ):
+
+        if not hasattr(
+            column,
+            "get",
+        ):
+
+            continue
+
+
+        if (
+            column.get(
+                "fieldname"
+            )
+            == "avg_actual_adts"
+        ):
+
+            column[
+                "label"
+            ] = (
+                "Avg Actual ADTs / Working Hour"
+            )
+
+
+    rows = (
+        _productivity_v119j_recalculate_group_summaries(
+            rows
+        )
+    )
+
+
+    return (
+        columns,
+        rows,
+    )
+
+
+# END KOSI_PRODUCTIVITY_PROPORTIONAL_RECONCILED_HOURS_V119J
+
+
+# KOSI_PRODUCTIVITY_UNALLOCATED_DETAIL_V119K
+#
+# TRUCK BENCHMARK ANALYSIS
+#
+# PURPOSE
+# ------------------------------------------------------------
+#
+# Keep captured Truck Load detail truthful while still
+# reconciling every Excavator to Summary Per Machine.
+#
+#
+# MACHINE CONTROL TOTAL
+# ------------------------------------------------------------
+#
+# Source:
+#
+#     Tallies BCMs
+#     Summary Per Machine
+#
+# Provides:
+#
+#     Full Machine Working Hours
+#     Full Machine Output BCM
+#
+#
+# CAPTURED DETAIL
+# ------------------------------------------------------------
+#
+# Material / Hauling Distance / Route / ADTs remain sourced
+# from actual Hourly Production -> Truck Loads.
+#
+# Captured Working Hours are NOT the old V119 raw active-hour
+# total.
+#
+# Instead:
+#
+# 1. Determine the exact dates where each Excavator has
+#    positive Truck Load detail.
+#
+# 2. Ask Summary Per Machine for the reconciled machine hours
+#    covering only those captured dates.
+#
+# 3. Distribute those covered reconciled hours across that
+#    Excavator's captured Material + Hauling Distance groups
+#    using the existing V119 group-hour proportions.
+#
+#
+# UNALLOCATED BALANCE
+# ------------------------------------------------------------
+#
+# Remaining Hours:
+#
+#     Full Machine Hours
+#     - Captured Coverage Hours
+#
+# Remaining BCM:
+#
+#     Full Machine BCM
+#     - Captured Truck Load BCM
+#
+# This balance is shown as:
+#
+#     UNALLOCATED / DETAIL NOT CAPTURED
+#
+# Material, Hauling Distance, Routes and ADTs are NOT invented.
+#
+# ============================================================
+
+
+
+def _productivity_v119k_summary_map_base(
+    filters,
+    machines,
+    start_date=None,
+    end_date=None,
+):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+
+    machines = {
+        _productivity_v119_text(
+            machine
+        )
+        for machine in (
+            machines
+            or []
+        )
+        if _productivity_v119_text(
+            machine
+        )
+    }
+
+
+    if not machines:
+
+        return {}
+
+
+    summary_filters = frappe._dict(
+        dict(
+            filters
+        )
+    )
+
+
+    summary_filters[
+        "summary_view"
+    ] = "Summary Per Machine"
+
+
+    summary_filters[
+        "bcm_basis"
+    ] = "Tallies BCMs"
+
+
+    summary_filters[
+        "machine_type"
+    ] = [
+        "Excavator"
+    ]
+
+
+    if start_date:
+
+        summary_filters[
+            "start_date"
+        ] = start_date
+
+
+    if end_date:
+
+        summary_filters[
+            "end_date"
+        ] = end_date
+
+
+    result = (
+        _productivity_execute_before_truck_benchmark_v119(
+            summary_filters
+        )
+    )
+
+
+    rows = (
+        result[
+            1
+        ]
+        if (
+            result
+            and len(
+                result
+            ) > 1
+        )
+        else []
+    )
+
+
+    output = {}
+
+
+    for row in (
+        rows
+        or []
+    ):
+
+        if not hasattr(
+            row,
+            "get",
+        ):
+
+            continue
+
+
+        machine = (
+            _productivity_v119_text(
+                row.get(
+                    "label"
+                )
+            )
+        )
+
+
+        if machine not in machines:
+
+            continue
+
+
+        working_hours = (
+            _productivity_v119_number(
+                row.get(
+                    "working_hours"
+                )
+            )
+        )
+
+
+        if working_hours <= 0:
+
+            working_hours = (
+                _productivity_v119_number(
+                    row.get(
+                        "hours"
+                    )
+                )
+            )
+
+
+        bcm_value = row.get(
+            "tallies_bcm"
+        )
+
+
+        if bcm_value in (
+            None,
+            "",
+        ):
+
+            bcm_value = row.get(
+                "output"
+            )
+
+
+        bcm = (
+            _productivity_v119_number(
+                bcm_value
+            )
+        )
+
+
+        current = output.get(
+            machine
+        )
+
+
+        # Summary Per Machine should contain one control row
+        # per Excavator.
+        #
+        # If duplicate display representations exist, retain
+        # the row with the greatest reconciled Working Hours.
+
+        if (
+            current is None
+            or working_hours
+            > current[
+                "hours"
+            ]
+        ):
+
+            output[
+                machine
+            ] = {
+                "hours":
+                    working_hours,
+
+                "bcm":
+                    bcm,
+            }
+
+
+    return output
+
+
+def _productivity_v119k_contiguous_spans(
+    dates,
+):
+
+    from datetime import timedelta
+
+    from frappe.utils import getdate
+
+
+    values = sorted({
+        getdate(
+            value
+        )
+        for value in (
+            dates
+            or []
+        )
+        if value
+    })
+
+
+    if not values:
+
+        return []
+
+
+    spans = []
+
+
+    span_start = values[
+        0
+    ]
+
+
+    previous = values[
+        0
+    ]
+
+
+    for current in values[
+        1:
+    ]:
+
+        if current == (
+            previous
+            + timedelta(
+                days=1
+            )
+        ):
+
+            previous = current
+
+            continue
+
+
+        spans.append(
+            (
+                span_start.isoformat(),
+                previous.isoformat(),
+            )
+        )
+
+
+        span_start = current
+        previous = current
+
+
+    spans.append(
+        (
+            span_start.isoformat(),
+            previous.isoformat(),
+        )
+    )
+
+
+    return spans
+
+
+def _productivity_v119k_machine_coverage_dates(
+    filters,
+    machines,
+):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+
+    machines = sorted({
+        _productivity_v119_text(
+            machine
+        )
+        for machine in (
+            machines
+            or []
+        )
+        if _productivity_v119_text(
+            machine
+        )
+    })
+
+
+    output = {
+        machine:
+            set()
+        for machine in machines
+    }
+
+
+    if not machines:
+
+        return output
+
+
+    start_date = filters.get(
+        "start_date"
+    )
+
+
+    end_date = filters.get(
+        "end_date"
+    )
+
+
+    site = (
+        _productivity_v119_text(
+            filters.get(
+                "site"
+            )
+        )
+    )
+
+
+    if not (
+        start_date
+        and end_date
+        and site
+    ):
+
+        frappe.throw(
+            "TRUCK BENCHMARK ANALYSIS requires "
+            "Start Date, End Date and Site."
+        )
+
+
+    hourly_filters = {
+        "prod_date": [
+            "between",
+            [
+                start_date,
+                end_date,
+            ],
+        ],
+
+        "location":
+            site,
+
+        "docstatus": [
+            "<",
+            2,
+        ],
+    }
+
+
+    shift = (
+        _productivity_v119_text(
+            filters.get(
+                "shift"
+            )
+        )
+    )
+
+
+    if shift:
+
+        hourly_filters[
+            "shift"
+        ] = shift
+
+
+    hourly_docs = frappe.get_all(
+        "Hourly Production",
+
+        filters=
+            hourly_filters,
+
+        fields=[
+            "name",
+            "prod_date",
+        ],
+
+        limit_page_length=0,
+    )
+
+
+    if not hourly_docs:
+
+        return output
+
+
+    parent_date = {
+        row.name:
+            row.prod_date
+        for row in hourly_docs
+    }
+
+
+    parents = list(
+        parent_date
+    )
+
+
+    truck_rows = frappe.get_all(
+        "Truck Loads",
+
+        filters={
+            "parent": [
+                "in",
+                parents,
+            ],
+
+            "asset_name_shoval": [
+                "in",
+                machines,
+            ],
+        },
+
+        fields=[
+            "parent",
+            "asset_name_shoval",
+            "bcms",
+        ],
+
+        limit_page_length=0,
+    )
+
+
+    for row in truck_rows:
+
+        bcm = (
+            _productivity_v119_number(
+                row.bcms
+            )
+        )
+
+
+        if bcm <= 0:
+
+            continue
+
+
+        machine = (
+            _productivity_v119_text(
+                row.asset_name_shoval
+            )
+        )
+
+
+        if machine not in output:
+
+            continue
+
+
+        prod_date = parent_date.get(
+            row.parent
+        )
+
+
+        if not prod_date:
+
+            continue
+
+
+        output[
+            machine
+        ].add(
+            prod_date
+        )
+
+
+    return output
+
+
+def _productivity_v119k_covered_hours(
+    filters,
+    machines,
+    coverage_dates,
+):
+
+    machines = sorted({
+        _productivity_v119_text(
+            machine
+        )
+        for machine in (
+            machines
+            or []
+        )
+        if _productivity_v119_text(
+            machine
+        )
+    })
+
+
+    spans_by_machine = {
+        machine:
+            _productivity_v119k_contiguous_spans(
+                coverage_dates.get(
+                    machine,
+                    []
+                )
+            )
+        for machine in machines
+    }
+
+
+    unique_spans = sorted({
+        span
+        for spans in (
+            spans_by_machine.values()
+        )
+        for span in spans
+    })
+
+
+    span_maps = {}
+
+
+    for span in unique_spans:
+
+        span_maps[
+            span
+        ] = (
+            _productivity_v119k_summary_map(
+                filters,
+                machines,
+                start_date=
+                    span[
+                        0
+                    ],
+                end_date=
+                    span[
+                        1
+                    ],
+            )
+        )
+
+
+    hours_by_machine = {
+        machine:
+            0.0
+        for machine in machines
+    }
+
+
+    for machine in machines:
+
+        for span in (
+            spans_by_machine.get(
+                machine,
+                []
+            )
+        ):
+
+            info = (
+                span_maps.get(
+                    span,
+                    {}
+                )
+                .get(
+                    machine,
+                    {}
+                )
+            )
+
+
+            hours_by_machine[
+                machine
+            ] += (
+                _productivity_v119_number(
+                    info.get(
+                        "hours"
+                    )
+                )
+            )
+
+
+    return (
+        hours_by_machine,
+        spans_by_machine,
+    )
+
+
+def _productivity_v119_tallies_coverage_report(
+    filters,
+):
+
+    columns, rows = (
+        _productivity_v119_tallies_reconciled_report(
+            filters
+        )
+    )
+
+
+    machine_rows = [
+        row
+        for row in (
+            rows
+            or []
+        )
+        if (
+            hasattr(
+                row,
+                "get",
+            )
+            and row.get(
+                "truck_benchmark_machine_row"
+            )
+        )
+    ]
+
+
+    if not machine_rows:
+
+        return (
+            columns,
+            rows,
+        )
+
+
+    machines = sorted({
+        _productivity_v119_text(
+            row.get(
+                "label"
+            )
+        )
+        for row in machine_rows
+        if _productivity_v119_text(
+            row.get(
+                "label"
+            )
+        )
+    })
+
+
+    # ========================================================
+    # FULL MACHINE CONTROL
+    # ========================================================
+
+    controls = (
+        _productivity_v119k_summary_map(
+            filters,
+            machines,
+        )
+    )
+
+
+    missing_controls = [
+        machine
+        for machine in machines
+        if machine not in controls
+    ]
+
+
+    if missing_controls:
+
+        frappe.throw(
+            "TRUCK BENCHMARK ANALYSIS could not find "
+            "Summary Per Machine control totals for: "
+            + ", ".join(
+                missing_controls
+            )
+        )
+
+
+    # ========================================================
+    # EXACT DATES WITH CAPTURED TRUCK LOAD DETAIL
+    # ========================================================
+
+    coverage_dates = (
+        _productivity_v119k_machine_coverage_dates(
+            filters,
+            machines,
+        )
+    )
+
+
+    (
+        covered_hours,
+        spans_by_machine,
+    ) = (
+        _productivity_v119k_covered_hours(
+            filters,
+            machines,
+            coverage_dates,
+        )
+    )
+
+
+    # ========================================================
+    # ORIGINAL V119 GROUP-HOUR WEIGHTS
+    #
+    # These are used only to distribute the reconciled hours
+    # from the captured date coverage.
+    #
+    # They are NOT used as machine Working Hour totals.
+    # ========================================================
+
+    original_hours_by_machine = {
+        machine:
+            0.0
+        for machine in machines
+    }
+
+
+    template_by_machine = {}
+
+
+    for row in machine_rows:
+
+        machine = (
+            _productivity_v119_text(
+                row.get(
+                    "label"
+                )
+            )
+        )
+
+
+        original_hours = (
+            _productivity_v119_number(
+                row.get(
+                    "_original_group_hours"
+                )
+            )
+        )
+
+
+        if original_hours <= 0:
+
+            frappe.throw(
+                "TRUCK BENCHMARK ANALYSIS is missing "
+                "the original captured group-hour weight "
+                "for "
+                + machine
+                + "."
+            )
+
+
+        original_hours_by_machine[
+            machine
+        ] += original_hours
+
+
+        if machine not in template_by_machine:
+
+            template_by_machine[
+                machine
+            ] = row
+
+
+    # ========================================================
+    # VALIDATE COVERAGE HOURS BEFORE USING THEM
+    # ========================================================
+
+    for machine in machines:
+
+        full_hours = (
+            _productivity_v119_number(
+                controls[
+                    machine
+                ][
+                    "hours"
+                ]
+            )
+        )
+
+
+        capture_hours = (
+            _productivity_v119_number(
+                covered_hours.get(
+                    machine
+                )
+            )
+        )
+
+
+        if capture_hours < -0.01:
+
+            frappe.throw(
+                "Invalid captured coverage hours for "
+                + machine
+            )
+
+
+        if capture_hours > (
+            full_hours
+            + 0.01
+        ):
+
+            frappe.throw(
+                "Captured coverage hours exceed the "
+                "Summary Per Machine control for "
+                + machine
+                + ". "
+                + f"Captured = {capture_hours:,.3f}, "
+                + f"Control = {full_hours:,.3f}."
+            )
+
+
+        if (
+            original_hours_by_machine[
+                machine
+            ] > 0
+            and capture_hours <= 0
+        ):
+
+            frappe.throw(
+                "Truck Load detail exists for "
+                + machine
+                + " but no reconciled Working Hours "
+                + "could be found for the captured dates."
+            )
+
+
+    # ========================================================
+    # REBUILD CAPTURED GROUP HOURS
+    # ========================================================
+
+    for row in machine_rows:
+
+        machine = (
+            _productivity_v119_text(
+                row.get(
+                    "label"
+                )
+            )
+        )
+
+
+        original_machine_hours = (
+            original_hours_by_machine[
+                machine
+            ]
+        )
+
+
+        original_group_hours = (
+            _productivity_v119_number(
+                row.get(
+                    "_original_group_hours"
+                )
+            )
+        )
+
+
+        machine_covered_hours = (
+            _productivity_v119_number(
+                covered_hours.get(
+                    machine
+                )
+            )
+        )
+
+
+        scale_factor = (
+            machine_covered_hours
+            / original_machine_hours
+            if original_machine_hours > 0
+            else 0.0
+        )
+
+
+        captured_group_hours = (
+            original_group_hours
+            * scale_factor
+        )
+
+
+        output_bcm = (
+            _productivity_v119_number(
+                row.get(
+                    "output"
+                )
+            )
+        )
+
+
+        benchmark = (
+            _productivity_v119_number(
+                row.get(
+                    "benchmark_bcm_hr"
+                )
+            )
+        )
+
+
+        total_hourly_adt_count = (
+            _productivity_v119_number(
+                row.get(
+                    "_adt_count_sum"
+                )
+            )
+        )
+
+
+        reported_bcm_hr = (
+            output_bcm
+            / captured_group_hours
+            if captured_group_hours > 0
+            else 0.0
+        )
+
+
+        avg_actual_adts = (
+            total_hourly_adt_count
+            / captured_group_hours
+            if captured_group_hours > 0
+            else 0.0
+        )
+
+
+        performance = (
+            reported_bcm_hr
+            / benchmark
+            * 100
+            if benchmark > 0
+            else 0.0
+        )
+
+
+        variance = (
+            reported_bcm_hr
+            - benchmark
+            if benchmark > 0
+            else 0.0
+        )
+
+
+        row[
+            "working_hours"
+        ] = captured_group_hours
+
+
+        row[
+            "productivity"
+        ] = reported_bcm_hr
+
+
+        row[
+            "avg_actual_adts"
+        ] = avg_actual_adts
+
+
+        row[
+            "performance_pct"
+        ] = (
+            f"{performance:.3f}%"
+            if benchmark > 0
+            else ""
+        )
+
+
+        row[
+            "variance_bcm_hr"
+        ] = (
+            variance
+            if benchmark > 0
+            else ""
+        )
+
+
+        row[
+            "status"
+        ] = (
+            (
+                "MEETS BENCHMARK"
+                if reported_bcm_hr
+                >= benchmark
+                else
+                "BELOW BENCHMARK"
+            )
+            if benchmark > 0
+            else ""
+        )
+
+
+        # Existing V119J dialog reads this field.
+        #
+        # It must now reflect the CAPTURED GROUP hours,
+        # not the old full-machine scaling.
+
+        row[
+            "_reconciled_group_hours"
+        ] = captured_group_hours
+
+
+        row[
+            "_reconciled_machine_hours"
+        ] = (
+            _productivity_v119_number(
+                controls[
+                    machine
+                ][
+                    "hours"
+                ]
+            )
+        )
+
+
+        row[
+            "_hours_scale_factor"
+        ] = scale_factor
+
+
+        row[
+            "_working_hours_source"
+        ] = (
+            "Summary Per Machine hours for "
+            "captured Truck Load dates"
+        )
+
+
+        row[
+            "_adt_average_denominator"
+        ] = (
+            "Captured Working Hours"
+        )
+
+
+        row[
+            "_productivity_v119k_captured"
+        ] = 1
+
+
+        row[
+            "_productivity_v119k_coverage_spans"
+        ] = [
+            list(
+                span
+            )
+            for span in (
+                spans_by_machine.get(
+                    machine,
+                    []
+                )
+            )
+        ]
+
+
+    # ========================================================
+    # REBUILD EXISTING GROUP SUMMARY ROWS USING CAPTURED HOURS
+    # ========================================================
+
+    rows = (
+        _productivity_v119j_recalculate_group_summaries(
+            rows
+        )
+    )
+
+
+    # ========================================================
+    # CAPTURED TOTALS PER MACHINE
+    # ========================================================
+
+    captured_totals = {
+        machine: {
+            "hours": 0.0,
+            "bcm": 0.0,
+        }
+        for machine in machines
+    }
+
+
+    for row in (
+        rows
+        or []
+    ):
+
+        if not (
+            hasattr(
+                row,
+                "get",
+            )
+            and row.get(
+                "truck_benchmark_machine_row"
+            )
+            and row.get(
+                "_productivity_v119k_captured"
+            )
+        ):
+
+            continue
+
+
+        machine = (
+            _productivity_v119_text(
+                row.get(
+                    "label"
+                )
+            )
+        )
+
+
+        captured_totals[
+            machine
+        ][
+            "hours"
+        ] += (
+            _productivity_v119_number(
+                row.get(
+                    "working_hours"
+                )
+            )
+        )
+
+
+        captured_totals[
+            machine
+        ][
+            "bcm"
+        ] += (
+            _productivity_v119_number(
+                row.get(
+                    "output"
+                )
+            )
+        )
+
+
+    # ========================================================
+    # BUILD UNALLOCATED BALANCES
+    # ========================================================
+
+    unallocated_rows = []
+
+
+    for machine in machines:
+
+        full_hours = (
+            _productivity_v119_number(
+                controls[
+                    machine
+                ][
+                    "hours"
+                ]
+            )
+        )
+
+
+        full_bcm = (
+            _productivity_v119_number(
+                controls[
+                    machine
+                ][
+                    "bcm"
+                ]
+            )
+        )
+
+
+        captured_hours = (
+            _productivity_v119_number(
+                captured_totals[
+                    machine
+                ][
+                    "hours"
+                ]
+            )
+        )
+
+
+        captured_bcm = (
+            _productivity_v119_number(
+                captured_totals[
+                    machine
+                ][
+                    "bcm"
+                ]
+            )
+        )
+
+
+        missing_hours = (
+            full_hours
+            - captured_hours
+        )
+
+
+        missing_bcm = (
+            full_bcm
+            - captured_bcm
+        )
+
+
+        if missing_hours < -0.01:
+
+            frappe.throw(
+                "Captured Truck Benchmark Working Hours "
+                "exceed the Summary Per Machine control "
+                "for "
+                + machine
+                + "."
+            )
+
+
+        if missing_bcm < -0.01:
+
+            frappe.throw(
+                "Captured Truck Benchmark BCM exceeds "
+                "the Summary Per Machine Tallies control "
+                "for "
+                + machine
+                + "."
+            )
+
+
+        if abs(
+            missing_hours
+        ) <= 0.01:
+
+            missing_hours = 0.0
+
+
+        if abs(
+            missing_bcm
+        ) <= 0.01:
+
+            missing_bcm = 0.0
+
+
+        if (
+            missing_hours <= 0
+            and missing_bcm <= 0
+        ):
+
+            continue
+
+
+        template = dict(
+            template_by_machine[
+                machine
+            ]
+        )
+
+
+        residual_productivity = (
+            missing_bcm
+            / missing_hours
+            if missing_hours > 0
+            else ""
+        )
+
+
+        template.update({
+            "label":
+                machine,
+
+            "working_hours":
+                missing_hours,
+
+            "output":
+                missing_bcm,
+
+            "productivity":
+                residual_productivity,
+
+            "benchmark_bcm_hr":
+                "",
+
+            "unique_actual_adts":
+                "",
+
+            "avg_actual_adts":
+                "",
+
+            "adt_details":
+                "",
+
+            "performance_pct":
+                "",
+
+            "variance_bcm_hr":
+                "",
+
+            "status":
+                "DETAIL NOT CAPTURED",
+
+            "source_rows":
+                "",
+
+            "_actual_adt_assets":
+                [],
+
+            "_adt_count_sum":
+                0,
+
+            "_benchmark_material":
+                "DETAIL NOT CAPTURED",
+
+            "_benchmark_distance":
+                "Not Captured",
+
+            "_benchmark_routes":
+                [],
+
+            "_original_group_hours":
+                0.0,
+
+            "_original_machine_hours":
+                0.0,
+
+            "_reconciled_group_hours":
+                missing_hours,
+
+            "_reconciled_machine_hours":
+                full_hours,
+
+            "_hours_scale_factor":
+                0.0,
+
+            "_working_hours_source":
+                (
+                    "Summary Per Machine balance "
+                    "outside captured Truck Load detail"
+                ),
+
+            "_adt_average_denominator":
+                "",
+
+            "_productivity_v119k_captured":
+                0,
+
+            "_productivity_v119k_unallocated":
+                1,
+
+            "truck_benchmark_machine_row":
+                1,
+        })
+
+
+        unallocated_rows.append(
+            template
+        )
+
+
+    # ========================================================
+    # APPEND ONE CLEAR UNALLOCATED GROUP
+    # ========================================================
+
+    if unallocated_rows:
+
+        group_count = sum(
+            1
+            for row in (
+                rows
+                or []
+            )
+            if (
+                hasattr(
+                    row,
+                    "get",
+                )
+                and row.get(
+                    "truck_benchmark_group_header"
+                )
+            )
+        )
+
+
+        rows.append({
+            "label":
+                (
+                    f"{group_count + 1}. "
+                    "UNALLOCATED / DETAIL NOT CAPTURED "
+                    "| Hauling Distance: Not Captured"
+                ),
+
+            "truck_benchmark_group_header":
+                1,
+
+            "_productivity_v119k_unallocated_header":
+                1,
+        })
+
+
+        rows.append({
+            "label":
+                (
+                    "Balance required to reconcile to "
+                    "Summary Per Machine control totals. "
+                    "Material, Hauling Distance, Route "
+                    "and ADTs were not captured."
+                ),
+
+            "truck_benchmark_route_row":
+                1,
+
+            "_productivity_v119k_unallocated_route":
+                1,
+        })
+
+
+        rows.extend(
+            unallocated_rows
+        )
+
+
+    # ========================================================
+    # COLUMN LABEL
+    # ========================================================
+
+    for column in (
+        columns
+        or []
+    ):
+
+        if not hasattr(
+            column,
+            "get",
+        ):
+
+            continue
+
+
+        if (
+            column.get(
+                "fieldname"
+            )
+            == "avg_actual_adts"
+        ):
+
+            column[
+                "label"
+            ] = (
+                "Avg Actual ADTs / "
+                "Captured Working Hour"
+            )
+
+
+    return (
+        columns,
+        rows,
+    )
+
+
+# END KOSI_PRODUCTIVITY_UNALLOCATED_DETAIL_V119K
+
+
+# KOSI_PRODUCTIVITY_CAPTURED_DATE_MPP_FIX_V119L
+#
+# V119K captured-date reconciliation fix.
+#
+#
+# PROBLEM
+# ------------------------------------------------------------
+#
+# V119K asks Summary Per Machine for Working Hours covering
+# only dates where Truck Load detail exists.
+#
+# The original V119K helper retained:
+#
+#     monthly_production_plans
+#
+# while replacing:
+#
+#     start_date
+#     end_date
+#
+# Some existing Productivity logic resolves the MPP period
+# before the supplied sub-range.
+#
+# Therefore multiple captured date spans can each return the
+# FULL machine hours.
+#
+# Example failure:
+#
+#     Control hours  = 269
+#     Two spans      = 269 + 269
+#     Captured hours = 538
+#
+#
+# FIX
+# ------------------------------------------------------------
+#
+# Full machine control query:
+#
+#     Keep Monthly Production Plan.
+#
+# Captured span query:
+#
+#     Remove Monthly Production Plan filter.
+#     Use Site + exact captured Start/End Date.
+#
+# No asset, site, date, hours or BCM values are hard-coded.
+# ============================================================
+
+
+
+def _productivity_v119k_summary_map(
+    filters,
+    machines,
+    start_date=None,
+    end_date=None,
+):
+
+    safe_filters = frappe._dict(
+        dict(
+            frappe._dict(
+                filters
+                or {}
+            )
+        )
+    )
+
+
+    is_span_query = bool(
+        start_date
+        or end_date
+    )
+
+
+    if is_span_query:
+
+        # ----------------------------------------------------
+        # IMPORTANT:
+        #
+        # Captured detail hours must be date scoped.
+        #
+        # Do not let the Monthly Production Plan expand the
+        # requested captured date span back to the full plan.
+        # ----------------------------------------------------
+
+        safe_filters.pop(
+            "monthly_production_plans",
+            None,
+        )
+
+
+        safe_filters.pop(
+            "monthly_production_plan",
+            None,
+        )
+
+
+    return (
+        _productivity_v119k_summary_map_base(
+            safe_filters,
+            machines,
+            start_date=
+                start_date,
+            end_date=
+                end_date,
+        )
+    )
+
+
+# END KOSI_PRODUCTIVITY_CAPTURED_DATE_MPP_FIX_V119L
+
+
+# KOSI_PRODUCTIVITY_DISTRIBUTE_BALANCE_V119M
+#
+# Remove the separate:
+#
+#     UNALLOCATED / DETAIL NOT CAPTURED
+#
+# section.
+#
+# For every Excavator:
+#
+#     Summary Per Machine Working Hours
+#     Summary Per Machine Tallies BCM
+#
+# remain the control totals.
+#
+# Any balance not represented by captured Truck Benchmark
+# rows is proportionally allocated across the Excavator's
+# EXISTING captured Material + Hauling Distance rows.
+#
+#
+# HOURS
+# ------------------------------------------------------------
+#
+# Each captured group's hours retain their relative proportion:
+#
+#     Final Group Hours
+#       =
+#     Captured Group Hours
+#       x
+#     Full Machine Hours / Captured Machine Hours
+#
+#
+# BCM
+# ------------------------------------------------------------
+#
+# Each captured group's BCM retains its relative proportion:
+#
+#     Final Group BCM
+#       =
+#     Captured Group BCM
+#       x
+#     Full Machine BCM / Captured Machine BCM
+#
+#
+# This guarantees:
+#
+#     Sum Group Hours = Summary Per Machine Hours
+#     Sum Group BCM   = Summary Per Machine BCM
+#
+#
+# ADT COUNT
+# ------------------------------------------------------------
+#
+# Actual ADT count remains sourced from real Truck Loads.
+#
+# Average:
+#
+#     Total Hourly ADT Count
+#     ----------------------
+#     Allocated Working Hours
+#
+# No new Material, Hauling Distance, Route or ADT is created.
+#
+# ============================================================
+
+
+
+def _productivity_v119_tallies_final_report(
+    filters,
+):
+
+    columns, rows = (
+        _productivity_v119_tallies_coverage_report(
+            filters
+        )
+    )
+
+
+    # ========================================================
+    # FIND CAPTURED AND UNALLOCATED ROWS
+    # ========================================================
+
+    captured_by_machine = {}
+
+
+    unallocated_by_machine = {}
+
+
+    for row in (
+        rows
+        or []
+    ):
+
+        if not (
+            hasattr(
+                row,
+                "get",
+            )
+            and row.get(
+                "truck_benchmark_machine_row"
+            )
+        ):
+
+            continue
+
+
+        machine = (
+            _productivity_v119_text(
+                row.get(
+                    "label"
+                )
+            )
+        )
+
+
+        if not machine:
+
+            continue
+
+
+        if row.get(
+            "_productivity_v119k_unallocated"
+        ):
+
+            unallocated_by_machine[
+                machine
+            ] = row
+
+            continue
+
+
+        if row.get(
+            "_productivity_v119k_captured"
+        ):
+
+            captured_by_machine.setdefault(
+                machine,
+                []
+            ).append(
+                row
+            )
+
+
+    # ========================================================
+    # DISTRIBUTE BALANCE
+    # ========================================================
+
+    for machine, balance_row in (
+        unallocated_by_machine.items()
+    ):
+
+        machine_rows = (
+            captured_by_machine.get(
+                machine,
+                []
+            )
+        )
+
+
+        if not machine_rows:
+
+            frappe.throw(
+                "Cannot distribute Truck Benchmark balance "
+                "for "
+                + machine
+                + " because there are no captured "
+                "Material / Hauling Distance rows."
+            )
+
+
+        captured_hours = sum(
+            _productivity_v119_number(
+                row.get(
+                    "working_hours"
+                )
+            )
+            for row in machine_rows
+        )
+
+
+        captured_bcm = sum(
+            _productivity_v119_number(
+                row.get(
+                    "output"
+                )
+            )
+            for row in machine_rows
+        )
+
+
+        balance_hours = (
+            _productivity_v119_number(
+                balance_row.get(
+                    "working_hours"
+                )
+            )
+        )
+
+
+        balance_bcm = (
+            _productivity_v119_number(
+                balance_row.get(
+                    "output"
+                )
+            )
+        )
+
+
+        full_hours = (
+            captured_hours
+            + balance_hours
+        )
+
+
+        full_bcm = (
+            captured_bcm
+            + balance_bcm
+        )
+
+
+        if captured_hours <= 0:
+
+            frappe.throw(
+                "Cannot distribute Working Hours for "
+                + machine
+                + " because captured Working Hours are zero."
+            )
+
+
+        if captured_bcm <= 0:
+
+            frappe.throw(
+                "Cannot distribute BCM for "
+                + machine
+                + " because captured BCM is zero."
+            )
+
+
+        hours_factor = (
+            full_hours
+            / captured_hours
+        )
+
+
+        bcm_factor = (
+            full_bcm
+            / captured_bcm
+        )
+
+
+        # ----------------------------------------------------
+        # Apply proportional allocation.
+        #
+        # Last row receives the arithmetic remainder so totals
+        # reconcile exactly despite floating point rounding.
+        # ----------------------------------------------------
+
+        accumulated_hours = 0.0
+        accumulated_bcm = 0.0
+
+
+        for index, row in enumerate(
+            machine_rows
+        ):
+
+            old_hours = (
+                _productivity_v119_number(
+                    row.get(
+                        "working_hours"
+                    )
+                )
+            )
+
+
+            old_bcm = (
+                _productivity_v119_number(
+                    row.get(
+                        "output"
+                    )
+                )
+            )
+
+
+            if (
+                index
+                == len(
+                    machine_rows
+                )
+                - 1
+            ):
+
+                new_hours = (
+                    full_hours
+                    - accumulated_hours
+                )
+
+
+                new_bcm = (
+                    full_bcm
+                    - accumulated_bcm
+                )
+
+
+            else:
+
+                new_hours = (
+                    old_hours
+                    * hours_factor
+                )
+
+
+                new_bcm = (
+                    old_bcm
+                    * bcm_factor
+                )
+
+
+                accumulated_hours += (
+                    new_hours
+                )
+
+
+                accumulated_bcm += (
+                    new_bcm
+                )
+
+
+            benchmark = (
+                _productivity_v119_number(
+                    row.get(
+                        "benchmark_bcm_hr"
+                    )
+                )
+            )
+
+
+            total_hourly_adt_count = (
+                _productivity_v119_number(
+                    row.get(
+                        "_adt_count_sum"
+                    )
+                )
+            )
+
+
+            productivity = (
+                new_bcm
+                / new_hours
+                if new_hours > 0
+                else 0.0
+            )
+
+
+            avg_actual_adts = (
+                total_hourly_adt_count
+                / new_hours
+                if new_hours > 0
+                else 0.0
+            )
+
+
+            performance = (
+                productivity
+                / benchmark
+                * 100
+                if benchmark > 0
+                else 0.0
+            )
+
+
+            variance = (
+                productivity
+                - benchmark
+                if benchmark > 0
+                else 0.0
+            )
+
+
+            row[
+                "working_hours"
+            ] = new_hours
+
+
+            row[
+                "output"
+            ] = new_bcm
+
+
+            row[
+                "productivity"
+            ] = productivity
+
+
+            row[
+                "avg_actual_adts"
+            ] = avg_actual_adts
+
+
+            row[
+                "performance_pct"
+            ] = (
+                f"{performance:.3f}%"
+                if benchmark > 0
+                else ""
+            )
+
+
+            row[
+                "variance_bcm_hr"
+            ] = (
+                variance
+                if benchmark > 0
+                else ""
+            )
+
+
+            row[
+                "status"
+            ] = (
+                (
+                    "MEETS BENCHMARK"
+                    if productivity
+                    >= benchmark
+                    else
+                    "BELOW BENCHMARK"
+                )
+                if benchmark > 0
+                else ""
+            )
+
+
+            row[
+                "_reconciled_group_hours"
+            ] = new_hours
+
+
+            row[
+                "_reconciled_machine_hours"
+            ] = full_hours
+
+
+            row[
+                "_productivity_v119m_allocated_balance"
+            ] = 1
+
+
+            row[
+                "_productivity_v119m_original_captured_hours"
+            ] = old_hours
+
+
+            row[
+                "_productivity_v119m_original_captured_bcm"
+            ] = old_bcm
+
+
+            row[
+                "_productivity_v119m_hours_factor"
+            ] = hours_factor
+
+
+            row[
+                "_productivity_v119m_bcm_factor"
+            ] = bcm_factor
+
+
+            row[
+                "_working_hours_source"
+            ] = (
+                "Summary Per Machine total proportionally "
+                "allocated across captured "
+                "Material / Hauling Distance rows"
+            )
+
+
+            row[
+                "_adt_average_denominator"
+            ] = (
+                "Allocated Working Hours"
+            )
+
+
+    # ========================================================
+    # REMOVE UNALLOCATED SECTION COMPLETELY
+    # ========================================================
+
+    rows = [
+        row
+        for row in (
+            rows
+            or []
+        )
+        if not (
+            hasattr(
+                row,
+                "get",
+            )
+            and (
+                row.get(
+                    "_productivity_v119k_unallocated"
+                )
+                or row.get(
+                    "_productivity_v119k_unallocated_header"
+                )
+                or row.get(
+                    "_productivity_v119k_unallocated_route"
+                )
+            )
+        )
+    ]
+
+
+    # ========================================================
+    # RECALCULATE AVERAGE / WEIGHTED ROWS
+    # ========================================================
+
+    rows = (
+        _productivity_v119j_recalculate_group_summaries(
+            rows
+        )
+    )
+
+
+    # ========================================================
+    # COLUMN LABEL
+    # ========================================================
+
+    for column in (
+        columns
+        or []
+    ):
+
+        if not hasattr(
+            column,
+            "get",
+        ):
+
+            continue
+
+
+        if (
+            column.get(
+                "fieldname"
+            )
+            == "avg_actual_adts"
+        ):
+
+            column[
+                "label"
+            ] = (
+                "Avg Actual ADTs / Working Hour"
+            )
+
+
+    return (
+        columns,
+        rows,
+    )
+
+
+# END KOSI_PRODUCTIVITY_DISTRIBUTE_BALANCE_V119M
+
+
+# KOSI_PRODUCTIVITY_TS_TEMPO_BENCHMARK_V119N
+#
+# TRUCK BENCHMARK ANALYSIS
+#
+# OLD:
+#
+#     Benchmark BCM/Hr
+#       =
+#     MPP Target BCM/Hour
+#       /
+#     Planned Excavators
+#
+# This can produce values such as:
+#
+#     212 BCM/Hr
+#
+#
+# NEW:
+#
+#     Benchmark BCM/Hr
+#       =
+#     Monthly Production Planning
+#     -> TS Tempo
+#
+# Field:
+#
+#     ts_tempo
+#
+# The benchmark therefore comes from configuration and is NOT
+# hard-coded in this report.
+#
+# Example:
+#
+#     TS Tempo = 220 BCM/Hour
+#
+#     Benchmark BCM/Hr = 220
+#
+# ============================================================
+
+
+
+def _productivity_v119_benchmark(
+    filters,
+):
+
+    benchmark = (
+        _productivity_v119_benchmark_base(
+            filters
+        )
+    )
+
+
+    plan = (
+        _productivity_v119_text(
+            benchmark.get(
+                "plan"
+            )
+        )
+    )
+
+
+    if not plan:
+
+        frappe.throw(
+            "TRUCK BENCHMARK ANALYSIS could not determine "
+            "the Monthly Production Planning record."
+        )
+
+
+    plan_values = frappe.db.get_value(
+        "Monthly Production Planning",
+        plan,
+        [
+            "ts_tempo",
+            "ts_tempo_uom",
+        ],
+        as_dict=True,
+    )
+
+
+    if not plan_values:
+
+        frappe.throw(
+            "Monthly Production Planning record not found: "
+            + plan
+        )
+
+
+    ts_tempo = (
+        _productivity_v119_number(
+            plan_values.get(
+                "ts_tempo"
+            )
+        )
+    )
+
+
+    if ts_tempo <= 0:
+
+        frappe.throw(
+            "Monthly Production Planning "
+            + plan
+            + " has no valid TS Tempo. "
+            + "Configure TS Tempo before running "
+            + "TRUCK BENCHMARK ANALYSIS."
+        )
+
+
+    tempo_uom = (
+        _productivity_v119_text(
+            plan_values.get(
+                "ts_tempo_uom"
+            )
+        )
+    )
+
+
+    # TS Tempo is the configured per-excavator
+    # Truck-and-Shovel production benchmark.
+
+    benchmark[
+        "benchmark_bcm_hour"
+    ] = ts_tempo
+
+
+    benchmark[
+        "benchmark_source"
+    ] = (
+        "Monthly Production Planning TS Tempo"
+    )
+
+
+    benchmark[
+        "benchmark_uom"
+    ] = (
+        tempo_uom
+        or "BCM/Hour"
+    )
+
+
+    return benchmark
+
+
+# END KOSI_PRODUCTIVITY_TS_TEMPO_BENCHMARK_V119N
+
+
+# KOSI_PRODUCTIVITY_ACTUAL_SURVEY_BENCHMARK_V119O
+#
+# TRUCK BENCHMARK ANALYSIS
+#
+# BCM Basis is now respected:
+#
+#     Tallies BCMs
+#         -> existing V119 Truck Load / Tallies path
+#
+#     Actual BCMs
+#         -> existing Productivity
+#            Summary Per Machine
+#            Actual BCMs
+#         -> Survey / Surveyed Values
+#
+#
+# ACTUAL SOURCE
+# ------------------------------------------------------------
+#
+# Existing Productivity already allocates:
+#
+#     Survey BCM
+#     Pre-Use Working Hours
+#
+# down to machine-level Survey detail rows.
+#
+# Those rows already contain:
+#
+#     productivity_summary_parent_machine_v34
+#     productivity_summary_parent_material_v34
+#     productivity_summary_survey_name_v34
+#     productivity_summary_survey_idx_v34
+#
+# V89 then populates:
+#
+#     from_area
+#     to_area
+#     hauling_distance_m
+#
+# from Surveyed Values.
+#
+#
+# ADTs
+# ------------------------------------------------------------
+#
+# Actual ADT machines continue to come from Truck Loads.
+#
+# They are matched to Survey detail using:
+#
+#     Excavator
+#     Broad Material
+#     Hauling Distance
+#     From Area
+#     To Area
+#
+# If a safe match cannot be made, ADT information is left
+# blank rather than guessed.
+#
+#
+# BENCHMARK
+# ------------------------------------------------------------
+#
+# Benchmark BCM/Hr continues to use:
+#
+#     Monthly Production Planning -> TS Tempo
+#
+# ============================================================
+
+
+
+def _productivity_v119o_is_actual(
+    filters,
+):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+
+    return (
+        _productivity_v119_text(
+            filters.get(
+                "bcm_basis"
+            )
+        ).casefold()
+        == "actual bcms"
+    )
+
+
+def _productivity_v119o_norm(
+    value,
+):
+
+    import re
+
+
+    return re.sub(
+        r"[^a-z0-9]+",
+        "",
+        _productivity_v119_text(
+            value
+        ).casefold(),
+    )
+
+
+def _productivity_v119o_bcm(
+    row,
+):
+
+    if not hasattr(
+        row,
+        "get",
+    ):
+
+        return 0.0
+
+
+    # Existing Actual presentation keeps BCM in output /
+    # adjusted_bcm. Coal tonnes are held separately.
+
+    if row.get(
+        "adjusted_bcm"
+    ) not in (
+        None,
+        "",
+    ):
+
+        return (
+            _productivity_v119_number(
+                row.get(
+                    "adjusted_bcm"
+                )
+            )
+        )
+
+
+    return (
+        _productivity_v119_number(
+            row.get(
+                "output"
+            )
+        )
+    )
+
+
+def _productivity_v119o_actual_source(
+    filters,
+):
+
+    source_filters = frappe._dict(
+        dict(
+            frappe._dict(
+                filters
+                or {}
+            )
+        )
+    )
+
+
+    source_filters[
+        "bcm_basis"
+    ] = "Actual BCMs"
+
+
+    source_filters[
+        "summary_view"
+    ] = "Summary Per Machine"
+
+
+    # Truck Benchmark is Excavator analysis only.
+
+    source_filters[
+        "machine_type"
+    ] = [
+        "Excavator"
+    ]
+
+
+    result = (
+        _productivity_execute_before_truck_benchmark_v119(
+            source_filters
+        )
+    )
+
+
+    return (
+        result[
+            1
+        ]
+        if (
+            result
+            and len(
+                result
+            ) > 1
+        )
+        else []
+    )
+
+
+def _productivity_v119o_actual_controls(
+    rows,
+):
+
+    controls = {}
+
+
+    current_category = ""
+
+
+    for row in (
+        rows
+        or []
+    ):
+
+        if not hasattr(
+            row,
+            "get",
+        ):
+
+            continue
+
+
+        label = (
+            _productivity_v119_text(
+                row.get(
+                    "label"
+                )
+            )
+        )
+
+
+        material = (
+            _productivity_v119_text(
+                row.get(
+                    "material"
+                )
+            )
+        )
+
+
+        if (
+            label
+            in (
+                "Excavator",
+                "ADT",
+                "Dozer",
+            )
+            and not material
+        ):
+
+            current_category = label
+
+            continue
+
+
+        if current_category != "Excavator":
+
+            continue
+
+
+        is_machine = bool(
+            int(
+                row.get(
+                    "is_machine_total"
+                )
+                or 0
+            )
+            or int(
+                row.get(
+                    "productivity_is_machine_total"
+                )
+                or 0
+            )
+            or int(
+                row.get(
+                    "productivity_summary_machine_total_v32"
+                )
+                or 0
+            )
+        )
+
+
+        if not (
+            is_machine
+            and label
+            and not material
+        ):
+
+            continue
+
+
+        controls[
+            label
+        ] = {
+            "hours":
+                _productivity_v119_number(
+                    row.get(
+                        "working_hours"
+                    )
+                ),
+
+            "bcm":
+                _productivity_v119o_bcm(
+                    row
+                ),
+        }
+
+
+    return controls
+
+
+def _productivity_v119o_survey_details(
+    rows,
+):
+
+    details = []
+
+
+    current_category = ""
+
+
+    for row in (
+        rows
+        or []
+    ):
+
+        if not hasattr(
+            row,
+            "get",
+        ):
+
+            continue
+
+
+        label = (
+            _productivity_v119_text(
+                row.get(
+                    "label"
+                )
+            )
+        )
+
+
+        material = (
+            _productivity_v119_text(
+                row.get(
+                    "material"
+                )
+            )
+        )
+
+
+        if (
+            label
+            in (
+                "Excavator",
+                "ADT",
+                "Dozer",
+            )
+            and not material
+        ):
+
+            current_category = label
+
+            continue
+
+
+        category = (
+            _productivity_v119_text(
+                row.get(
+                    "productivity_summary_category_v34"
+                )
+            )
+            or current_category
+        )
+
+
+        if category != "Excavator":
+
+            continue
+
+
+        survey_name = (
+            _productivity_v119_text(
+                row.get(
+                    "productivity_summary_survey_name_v34"
+                )
+                or row.get(
+                    "productivity_survey_name_v89"
+                )
+            )
+        )
+
+
+        survey_idx = row.get(
+            "productivity_summary_survey_idx_v34"
+        )
+
+
+        if survey_idx in (
+            None,
+            "",
+        ):
+
+            survey_idx = row.get(
+                "productivity_survey_idx_v89"
+            )
+
+
+        machine = (
+            _productivity_v119_text(
+                row.get(
+                    "productivity_summary_parent_machine_v34"
+                )
+                or row.get(
+                    "productivity_excavator_parent_machine_v71"
+                )
+                or row.get(
+                    "productivity_tallies_parent_machine_v99"
+                )
+            )
+        )
+
+
+        if not (
+            survey_name
+            and survey_idx not in (
+                None,
+                "",
+            )
+            and machine
+        ):
+
+            continue
+
+
+        bcm = (
+            _productivity_v119o_bcm(
+                row
+            )
+        )
+
+
+        hours = (
+            _productivity_v119_number(
+                row.get(
+                    "working_hours"
+                )
+            )
+        )
+
+
+        if bcm <= 0:
+
+            continue
+
+
+        detail_material = (
+            material
+            or label
+            or "Not Captured"
+        )
+
+
+        broad_material = (
+            _productivity_v119_text(
+                row.get(
+                    "productivity_summary_parent_material_v34"
+                )
+                or row.get(
+                    "productivity_summary_area_parent_material_v51"
+                )
+                or row.get(
+                    "productivity_parent_material_v21"
+                )
+            )
+        )
+
+
+        distance = (
+            _productivity_v119_text(
+                row.get(
+                    "hauling_distance_m"
+                )
+            )
+            or "Not Captured"
+        )
+
+
+        from_area = (
+            _productivity_v119_text(
+                row.get(
+                    "from_area"
+                )
+            )
+            or "Not Captured"
+        )
+
+
+        to_area = (
+            _productivity_v119_text(
+                row.get(
+                    "to_area"
+                )
+            )
+            or "Not Captured"
+        )
+
+
+        details.append({
+            "machine":
+                machine,
+
+            "material":
+                detail_material,
+
+            "broad_material":
+                broad_material,
+
+            "distance":
+                distance,
+
+            "from_area":
+                from_area,
+
+            "to_area":
+                to_area,
+
+            "hours":
+                hours,
+
+            "bcm":
+                bcm,
+
+            "survey_name":
+                survey_name,
+
+            "survey_idx":
+                int(
+                    survey_idx
+                ),
+        })
+
+
+    return details
+
+
+def _productivity_v119o_truck_adt_maps(
+    filters,
+    machines,
+):
+
+    from collections import defaultdict
+
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+
+    machines = sorted({
+        _productivity_v119_text(
+            machine
+        )
+        for machine in (
+            machines
+            or []
+        )
+        if _productivity_v119_text(
+            machine
+        )
+    })
+
+
+    exact = defaultdict(
+        lambda: {
+            "trucks":
+                set(),
+
+            "hour_trucks":
+                defaultdict(
+                    set
+                ),
+
+            "rows":
+                0,
+        }
+    )
+
+
+    fallback = defaultdict(
+        lambda: {
+            "trucks":
+                set(),
+
+            "hour_trucks":
+                defaultdict(
+                    set
+                ),
+
+            "rows":
+                0,
+        }
+    )
+
+
+    if not machines:
+
+        return (
+            exact,
+            fallback,
+        )
+
+
+    hourly_filters = {
+        "prod_date": [
+            "between",
+            [
+                filters.get(
+                    "start_date"
+                ),
+                filters.get(
+                    "end_date"
+                ),
+            ],
+        ],
+
+        "location":
+            filters.get(
+                "site"
+            ),
+
+        "docstatus": [
+            "<",
+            2,
+        ],
+    }
+
+
+    shift = (
+        _productivity_v119_text(
+            filters.get(
+                "shift"
+            )
+        )
+    )
+
+
+    if shift:
+
+        hourly_filters[
+            "shift"
+        ] = shift
+
+
+    hourly_docs = frappe.get_all(
+        "Hourly Production",
+
+        filters=
+            hourly_filters,
+
+        fields=[
+            "name",
+        ],
+
+        limit_page_length=0,
+    )
+
+
+    parents = [
+        row.name
+        for row in hourly_docs
+    ]
+
+
+    if not parents:
+
+        return (
+            exact,
+            fallback,
+        )
+
+
+    truck_rows = frappe.get_all(
+        "Truck Loads",
+
+        filters={
+            "parent": [
+                "in",
+                parents,
+            ],
+
+            "asset_name_shoval": [
+                "in",
+                machines,
+            ],
+        },
+
+        fields=[
+            "parent",
+            "asset_name_shoval",
+            "asset_name_truck",
+            "mat_type",
+            "geo_mat_layer_truck",
+            "exc_hauling_distance_meter",
+            "mining_areas_trucks",
+            "exc_to_area",
+            "bcms",
+        ],
+
+        limit_page_length=0,
+    )
+
+
+    for row in truck_rows:
+
+        if (
+            _productivity_v119_number(
+                row.bcms
+            )
+            <= 0
+        ):
+
+            continue
+
+
+        machine = (
+            _productivity_v119_text(
+                row.asset_name_shoval
+            )
+        )
+
+
+        truck = (
+            _productivity_v119_text(
+                row.asset_name_truck
+            )
+        )
+
+
+        if not (
+            machine
+            and truck
+        ):
+
+            continue
+
+
+        broad = (
+            _productivity_v119o_norm(
+                row.mat_type
+            )
+        )
+
+
+        distance = (
+            _productivity_v119o_norm(
+                row.exc_hauling_distance_meter
+            )
+        )
+
+
+        from_area = (
+            _productivity_v119o_norm(
+                row.mining_areas_trucks
+            )
+        )
+
+
+        to_area = (
+            _productivity_v119o_norm(
+                row.exc_to_area
+            )
+        )
+
+
+        exact_key = (
+            machine,
+            broad,
+            distance,
+            from_area,
+            to_area,
+        )
+
+
+        fallback_key = (
+            machine,
+            broad,
+            distance,
+        )
+
+
+        exact[
+            exact_key
+        ][
+            "trucks"
+        ].add(
+            truck
+        )
+
+
+        exact[
+            exact_key
+        ][
+            "hour_trucks"
+        ][
+            row.parent
+        ].add(
+            truck
+        )
+
+
+        exact[
+            exact_key
+        ][
+            "rows"
+        ] += 1
+
+
+        fallback[
+            fallback_key
+        ][
+            "trucks"
+        ].add(
+            truck
+        )
+
+
+        fallback[
+            fallback_key
+        ][
+            "hour_trucks"
+        ][
+            row.parent
+        ].add(
+            truck
+        )
+
+
+        fallback[
+            fallback_key
+        ][
+            "rows"
+        ] += 1
+
+
+    return (
+        exact,
+        fallback,
+    )
+
+
+def _productivity_v119o_actual_report(
+    filters,
+):
+
+    from collections import defaultdict
+
+
+    source_rows = (
+        _productivity_v119o_actual_source(
+            filters
+        )
+    )
+
+
+    controls = (
+        _productivity_v119o_actual_controls(
+            source_rows
+        )
+    )
+
+
+    details = (
+        _productivity_v119o_survey_details(
+            source_rows
+        )
+    )
+
+
+    if not details:
+
+        frappe.throw(
+            "TRUCK BENCHMARK ANALYSIS / Actual BCMs "
+            "could not find machine-level Survey detail "
+            "from Summary Per Machine."
+        )
+
+
+    machines = sorted({
+        detail[
+            "machine"
+        ]
+        for detail in details
+    })
+
+
+    missing_controls = [
+        machine
+        for machine in machines
+        if machine not in controls
+    ]
+
+
+    if missing_controls:
+
+        frappe.throw(
+            "Actual Survey benchmark is missing "
+            "Summary Per Machine controls for: "
+            + ", ".join(
+                missing_controls
+            )
+        )
+
+
+    # ========================================================
+    # RECONCILE EXISTING ACTUAL SOURCE BEFORE BUILDING REPORT
+    # ========================================================
+
+    detail_totals = defaultdict(
+        lambda: {
+            "hours": 0.0,
+            "bcm": 0.0,
+        }
+    )
+
+
+    for detail in details:
+
+        machine = detail[
+            "machine"
+        ]
+
+
+        detail_totals[
+            machine
+        ][
+            "hours"
+        ] += detail[
+            "hours"
+        ]
+
+
+        detail_totals[
+            machine
+        ][
+            "bcm"
+        ] += detail[
+            "bcm"
+        ]
+
+
+    for machine in machines:
+
+        control_hours = (
+            _productivity_v119_number(
+                controls[
+                    machine
+                ][
+                    "hours"
+                ]
+            )
+        )
+
+
+        control_bcm = (
+            _productivity_v119_number(
+                controls[
+                    machine
+                ][
+                    "bcm"
+                ]
+            )
+        )
+
+
+        detail_hours = (
+            detail_totals[
+                machine
+            ][
+                "hours"
+            ]
+        )
+
+
+        detail_bcm = (
+            detail_totals[
+                machine
+            ][
+                "bcm"
+            ]
+        )
+
+
+        if abs(
+            detail_hours
+            - control_hours
+        ) > 0.05:
+
+            frappe.throw(
+                "Actual Survey Working Hours do not "
+                "reconcile for "
+                + machine
+                + ". "
+                + f"Detail = {detail_hours:,.3f}, "
+                + f"Control = {control_hours:,.3f}."
+            )
+
+
+        if abs(
+            detail_bcm
+            - control_bcm
+        ) > 1.01:
+
+            frappe.throw(
+                "Actual Survey BCM does not reconcile for "
+                + machine
+                + ". "
+                + f"Detail = {detail_bcm:,.3f}, "
+                + f"Control = {control_bcm:,.3f}."
+            )
+
+
+    # ========================================================
+    # BUILD SURVEY MATERIAL + HAUL DISTANCE GROUPS
+    # ========================================================
+
+    groups = {}
+
+
+    fallback_group_count = defaultdict(
+        int
+    )
+
+
+    for detail in details:
+
+        group_key = (
+            detail[
+                "material"
+            ],
+            detail[
+                "distance"
+            ],
+        )
+
+
+        if group_key not in groups:
+
+            groups[
+                group_key
+            ] = {
+                "material":
+                    detail[
+                        "material"
+                    ],
+
+                "distance":
+                    detail[
+                        "distance"
+                    ],
+
+                "routes":
+                    set(),
+
+                "machines":
+                    {},
+            }
+
+
+        group = groups[
+            group_key
+        ]
+
+
+        route = (
+            detail[
+                "from_area"
+            ]
+            + " -> "
+            + detail[
+                "to_area"
+            ]
+        )
+
+
+        group[
+            "routes"
+        ].add(
+            route
+        )
+
+
+        machine = detail[
+            "machine"
+        ]
+
+
+        if machine not in group[
+            "machines"
+        ]:
+
+            group[
+                "machines"
+            ][
+                machine
+            ] = {
+                "hours":
+                    0.0,
+
+                "bcm":
+                    0.0,
+
+                "survey_refs":
+                    set(),
+
+                "exact_adt_keys":
+                    set(),
+
+                "fallback_adt_keys":
+                    set(),
+            }
+
+
+        machine_data = group[
+            "machines"
+        ][
+            machine
+        ]
+
+
+        machine_data[
+            "hours"
+        ] += detail[
+            "hours"
+        ]
+
+
+        machine_data[
+            "bcm"
+        ] += detail[
+            "bcm"
+        ]
+
+
+        machine_data[
+            "survey_refs"
+        ].add(
+            (
+                detail[
+                    "survey_name"
+                ],
+                detail[
+                    "survey_idx"
+                ],
+            )
+        )
+
+
+        broad = (
+            _productivity_v119o_norm(
+                detail[
+                    "broad_material"
+                ]
+            )
+        )
+
+
+        distance = (
+            _productivity_v119o_norm(
+                detail[
+                    "distance"
+                ]
+            )
+        )
+
+
+        from_area = (
+            _productivity_v119o_norm(
+                detail[
+                    "from_area"
+                ]
+            )
+        )
+
+
+        to_area = (
+            _productivity_v119o_norm(
+                detail[
+                    "to_area"
+                ]
+            )
+        )
+
+
+        exact_key = (
+            machine,
+            broad,
+            distance,
+            from_area,
+            to_area,
+        )
+
+
+        fallback_key = (
+            machine,
+            broad,
+            distance,
+        )
+
+
+        machine_data[
+            "exact_adt_keys"
+        ].add(
+            exact_key
+        )
+
+
+        machine_data[
+            "fallback_adt_keys"
+        ].add(
+            fallback_key
+        )
+
+
+    # Count how many final Survey groups share each fallback
+    # key. Fallback is only allowed when it identifies one
+    # group unambiguously.
+
+    seen_fallback = set()
+
+
+    for group_key, group in groups.items():
+
+        for machine, machine_data in (
+            group[
+                "machines"
+            ].items()
+        ):
+
+            for fallback_key in (
+                machine_data[
+                    "fallback_adt_keys"
+                ]
+            ):
+
+                marker = (
+                    group_key,
+                    fallback_key,
+                )
+
+
+                if marker in seen_fallback:
+
+                    continue
+
+
+                seen_fallback.add(
+                    marker
+                )
+
+
+                fallback_group_count[
+                    fallback_key
+                ] += 1
+
+
+    (
+        exact_adt,
+        fallback_adt,
+    ) = (
+        _productivity_v119o_truck_adt_maps(
+            filters,
+            machines,
+        )
+    )
+
+
+    benchmark_info = (
+        _productivity_v119_benchmark(
+            filters
+        )
+    )
+
+
+    benchmark = (
+        _productivity_v119_number(
+            benchmark_info.get(
+                "benchmark_bcm_hour"
+            )
+        )
+    )
+
+
+    if benchmark <= 0:
+
+        frappe.throw(
+            "TRUCK BENCHMARK ANALYSIS has no valid "
+            "Benchmark BCM/Hr."
+        )
+
+
+    # ========================================================
+    # COLUMNS
+    # ========================================================
+
+    columns = (
+        _productivity_v119_columns()
+    )
+
+
+    for column in (
+        columns
+        or []
+    ):
+
+        if not hasattr(
+            column,
+            "get",
+        ):
+
+            continue
+
+
+        if (
+            column.get(
+                "fieldname"
+            )
+            == "avg_actual_adts"
+        ):
+
+            column[
+                "label"
+            ] = (
+                "Avg Actual ADTs / Working Hour"
+            )
+
+
+    # ========================================================
+    # FINAL ROWS
+    # ========================================================
+
+    final_rows = []
+
+
+    sorted_groups = sorted(
+        groups.values(),
+        key=lambda item: (
+            _productivity_v119_text(
+                item[
+                    "material"
+                ]
+            ).casefold(),
+            _productivity_v119_text(
+                item[
+                    "distance"
+                ]
+            ).casefold(),
+        ),
+    )
+
+
+    for group_number, group in enumerate(
+        sorted_groups,
+        1,
+    ):
+
+        material = group[
+            "material"
+        ]
+
+
+        distance = group[
+            "distance"
+        ]
+
+
+        final_rows.append({
+            "label":
+                (
+                    f"{group_number}. "
+                    f"{material} "
+                    f"| Hauling Distance: "
+                    f"{distance}"
+                ),
+
+            "truck_benchmark_group_header":
+                1,
+
+            "_productivity_v119o_actual_survey":
+                1,
+        })
+
+
+        routes = sorted(
+            route
+            for route in (
+                group[
+                    "routes"
+                ]
+            )
+            if route
+        )
+
+
+        final_rows.append({
+            "label":
+                (
+                    "Routes included: "
+                    + (
+                        " / ".join(
+                            routes
+                        )
+                        if routes
+                        else "Not Captured"
+                    )
+                ),
+
+            "truck_benchmark_route_row":
+                1,
+
+            "_productivity_v119o_actual_survey":
+                1,
+        })
+
+
+        for machine in sorted(
+            group[
+                "machines"
+            ]
+        ):
+
+            machine_data = (
+                group[
+                    "machines"
+                ][
+                    machine
+                ]
+            )
+
+
+            hours = (
+                machine_data[
+                    "hours"
+                ]
+            )
+
+
+            bcm = (
+                machine_data[
+                    "bcm"
+                ]
+            )
+
+
+            productivity = (
+                bcm
+                / hours
+                if hours > 0
+                else 0.0
+            )
+
+
+            performance = (
+                productivity
+                / benchmark
+                * 100
+                if benchmark > 0
+                else 0.0
+            )
+
+
+            variance = (
+                productivity
+                - benchmark
+            )
+
+
+            # ==================================================
+            # ACTUAL ADTs
+            # ==================================================
+
+            trucks = set()
+
+
+            hour_trucks = defaultdict(
+                set
+            )
+
+
+            matched_rows = 0
+
+
+            for exact_key in (
+                machine_data[
+                    "exact_adt_keys"
+                ]
+            ):
+
+                source = (
+                    exact_adt.get(
+                        exact_key
+                    )
+                )
+
+
+                if not source:
+
+                    continue
+
+
+                trucks.update(
+                    source[
+                        "trucks"
+                    ]
+                )
+
+
+                matched_rows += (
+                    source[
+                        "rows"
+                    ]
+                )
+
+
+                for parent, assets in (
+                    source[
+                        "hour_trucks"
+                    ].items()
+                ):
+
+                    hour_trucks[
+                        parent
+                    ].update(
+                        assets
+                    )
+
+
+            # Exact route match unavailable:
+            # only use Material + HD fallback where that key
+            # maps to ONE Survey group.
+
+            if not trucks:
+
+                for fallback_key in (
+                    machine_data[
+                        "fallback_adt_keys"
+                    ]
+                ):
+
+                    if (
+                        fallback_group_count[
+                            fallback_key
+                        ]
+                        != 1
+                    ):
+
+                        continue
+
+
+                    source = (
+                        fallback_adt.get(
+                            fallback_key
+                        )
+                    )
+
+
+                    if not source:
+
+                        continue
+
+
+                    trucks.update(
+                        source[
+                            "trucks"
+                        ]
+                    )
+
+
+                    matched_rows += (
+                        source[
+                            "rows"
+                        ]
+                    )
+
+
+                    for parent, assets in (
+                        source[
+                            "hour_trucks"
+                        ].items()
+                    ):
+
+                        hour_trucks[
+                            parent
+                        ].update(
+                            assets
+                        )
+
+
+            adt_count_sum = sum(
+                len(
+                    assets
+                )
+                for assets in (
+                    hour_trucks.values()
+                )
+            )
+
+
+            avg_actual_adts = (
+                adt_count_sum
+                / hours
+                if (
+                    trucks
+                    and hours > 0
+                )
+                else ""
+            )
+
+
+            final_rows.append({
+                "label":
+                    machine,
+
+                "working_hours":
+                    hours,
+
+                "output":
+                    bcm,
+
+                "productivity":
+                    productivity,
+
+                "benchmark_bcm_hr":
+                    benchmark,
+
+                "unique_actual_adts":
+                    (
+                        len(
+                            trucks
+                        )
+                        if trucks
+                        else ""
+                    ),
+
+                "avg_actual_adts":
+                    avg_actual_adts,
+
+                "adt_details":
+                    (
+                        "View ADTs"
+                        if trucks
+                        else ""
+                    ),
+
+                "performance_pct":
+                    f"{performance:.3f}%",
+
+                "variance_bcm_hr":
+                    variance,
+
+                "status":
+                    (
+                        "MEETS BENCHMARK"
+                        if productivity
+                        >= benchmark
+                        else
+                        "BELOW BENCHMARK"
+                    ),
+
+                "source_rows":
+                    len(
+                        machine_data[
+                            "survey_refs"
+                        ]
+                    ),
+
+                "truck_benchmark_machine_row":
+                    1,
+
+                "_actual_adt_assets":
+                    sorted(
+                        trucks
+                    ),
+
+                "_adt_count_sum":
+                    adt_count_sum,
+
+                "_benchmark_material":
+                    material,
+
+                "_benchmark_distance":
+                    distance,
+
+                "_benchmark_routes":
+                    routes,
+
+                "_reconciled_group_hours":
+                    hours,
+
+                "_reconciled_machine_hours":
+                    controls[
+                        machine
+                    ][
+                        "hours"
+                    ],
+
+                "_working_hours_source":
+                    (
+                        "Actual BCMs / Summary Per Machine "
+                        "/ Survey allocation"
+                    ),
+
+                "_adt_average_denominator":
+                    "Actual Working Hours",
+
+                "_productivity_v119o_actual_survey":
+                    1,
+
+                "_productivity_v119o_survey_refs":
+                    sorted(
+                        machine_data[
+                            "survey_refs"
+                        ]
+                    ),
+
+                "_productivity_v119o_adt_match_rows":
+                    matched_rows,
+            })
+
+
+        final_rows.append({
+            "label":
+                "AVERAGE",
+
+            "truck_benchmark_summary_row":
+                1,
+
+            "_productivity_v119o_actual_survey":
+                1,
+        })
+
+
+        final_rows.append({
+            "label":
+                "WEIGHTED BY HOURS",
+
+            "truck_benchmark_summary_row":
+                1,
+
+            "_productivity_v119o_actual_survey":
+                1,
+        })
+
+
+    # Existing summary recalculation is reusable because all
+    # machine rows now contain correct Survey Actual values.
+
+    final_rows = (
+        _productivity_v119j_recalculate_group_summaries(
+            final_rows
+        )
+    )
+
+
+    return (
+        columns,
+        final_rows,
+    )
+
+
+
+# END KOSI_PRODUCTIVITY_ACTUAL_SURVEY_BENCHMARK_V119O
+
+
+# KOSI_PRODUCTIVITY_ACTUAL_MATERIAL_ADTS_V119R
+#
+# ACTUAL BCM TRUCK BENCHMARK
+#
+# Survey supplies:
+#
+#     Detailed Material
+#     Hauling Distance
+#     From Area
+#     To Area
+#     Actual BCM
+#     Working Hours
+#
+#
+# Truck Loads / Tallies supply:
+#
+#     Actual ADT assets
+#     Actual hourly ADT observations
+#     Material / Geo Material Layer
+#
+#
+# Historical Truck Loads may NOT have Hauling Distance.
+#
+# Therefore ADTs are matched to the Actual benchmark using
+# MATERIAL identity, not Truck Load Hauling Distance.
+#
+#
+# CANONICAL MATERIALS
+# ------------------------------------------------------------
+#
+# Examples:
+#
+# Survey:
+#     2COAL - LOAD & HAUL
+#
+# Truck Loads:
+#     4 - 2Seam Coal
+#
+# Both become:
+#     2seam_coal
+#
+#
+# Survey:
+#     4LCOAL - LOAD & HAUL
+#
+# Truck Loads:
+#     5 - 4Seam Coal
+#
+# Both become:
+#     4seam_coal
+#
+#
+# Survey Hards:
+#     From Area contains MID BURDEN
+#         -> midburden
+#
+#     From Area contains OVERBURDEN
+#         -> overburden
+#
+#
+# Softs:
+#     -> softs
+#
+#
+# The Actual Survey Hauling Distance remains displayed.
+# We do NOT manufacture a Truck Load Hauling Distance.
+#
+# ============================================================
+
+
+
+def _productivity_v119r_norm(
+    value,
+):
+
+    import re
+
+
+    return re.sub(
+        r"[^a-z0-9]+",
+        "",
+        _productivity_v119_text(
+            value
+        ).casefold(),
+    )
+
+
+def _productivity_v119r_canonical_tallies_material(
+    broad_material,
+    geo_material,
+):
+
+    broad = (
+        _productivity_v119r_norm(
+            broad_material
+        )
+    )
+
+
+    geo = (
+        _productivity_v119r_norm(
+            geo_material
+        )
+    )
+
+
+    combined = (
+        broad
+        + " "
+        + geo
+    )
+
+
+    if (
+        "2seam"
+        in combined
+        or "2coal"
+        in combined
+    ):
+
+        return "2seam_coal"
+
+
+    if (
+        "4seam"
+        in combined
+        or "4coal"
+        in combined
+    ):
+
+        return "4seam_coal"
+
+
+    if (
+        "midburden"
+        in combined
+        or "mid"
+        in geo
+        and "burden"
+        in geo
+    ):
+
+        return "midburden"
+
+
+    if (
+        "overburden"
+        in combined
+        or "over"
+        in geo
+        and "burden"
+        in geo
+    ):
+
+        return "overburden"
+
+
+    if (
+        "soft"
+        in combined
+        or "topsoil"
+        in combined
+    ):
+
+        return "softs"
+
+
+    if broad == "coal":
+
+        return "coal"
+
+
+    if broad == "hards":
+
+        return "hards"
+
+
+    if broad == "softs":
+
+        return "softs"
+
+
+    return (
+        geo
+        or broad
+    )
+
+
+def _productivity_v119r_canonical_survey_material(
+    detail,
+):
+
+    broad = (
+        _productivity_v119r_norm(
+            detail.get(
+                "broad_material"
+            )
+        )
+    )
+
+
+    material = (
+        _productivity_v119r_norm(
+            detail.get(
+                "material"
+            )
+        )
+    )
+
+
+    from_area = (
+        _productivity_v119r_norm(
+            detail.get(
+                "from_area"
+            )
+        )
+    )
+
+
+    to_area = (
+        _productivity_v119r_norm(
+            detail.get(
+                "to_area"
+            )
+        )
+    )
+
+
+    combined = (
+        material
+        + " "
+        + from_area
+        + " "
+        + to_area
+    )
+
+
+    # --------------------------------------------------------
+    # COAL
+    # --------------------------------------------------------
+
+    if broad == "coal":
+
+        if (
+            "2coal"
+            in material
+            or "2seam"
+            in material
+        ):
+
+            return "2seam_coal"
+
+
+        if (
+            "4coal"
+            in material
+            or "4lcoal"
+            in material
+            or "4seam"
+            in material
+        ):
+
+            return "4seam_coal"
+
+
+        return "coal"
+
+
+    # --------------------------------------------------------
+    # HARDS
+    #
+    # Actual Survey gives richer location descriptions.
+    # Use those to distinguish Midburden / Overburden.
+    # --------------------------------------------------------
+
+    if broad == "hards":
+
+        if (
+            "midburden"
+            in combined
+            or "midburden"
+            in from_area
+        ):
+
+            return "midburden"
+
+
+        if (
+            "overburden"
+            in combined
+            or "overburden"
+            in from_area
+        ):
+
+            return "overburden"
+
+
+        return "hards"
+
+
+    # --------------------------------------------------------
+    # SOFTS
+    # --------------------------------------------------------
+
+    if broad == "softs":
+
+        return "softs"
+
+
+    return (
+        material
+        or broad
+    )
+
+
+def _productivity_v119r_survey_detail_map(
+    filters,
+):
+
+    details = (
+        _productivity_v119o_survey_details(
+            _productivity_v119o_actual_source(
+                filters
+            )
+        )
+    )
+
+
+    output = {}
+
+
+    for detail in (
+        details
+        or []
+    ):
+
+        survey_name = (
+            _productivity_v119_text(
+                detail.get(
+                    "survey_name"
+                )
+            )
+        )
+
+
+        survey_idx = detail.get(
+            "survey_idx"
+        )
+
+
+        if (
+            not survey_name
+            or survey_idx
+            in (
+                None,
+                "",
+            )
+        ):
+
+            continue
+
+
+        output[
+            (
+                survey_name,
+                int(
+                    survey_idx
+                ),
+            )
+        ] = detail
+
+
+    return output
+
+
+def _productivity_v119r_row_material_key(
+    row,
+    detail_map,
+):
+
+    refs = (
+        row.get(
+            "_productivity_v119o_survey_refs"
+        )
+        or []
+    )
+
+
+    keys = set()
+
+
+    details = []
+
+
+    for ref in refs:
+
+        if not (
+            isinstance(
+                ref,
+                (
+                    tuple,
+                    list,
+                ),
+            )
+            and len(
+                ref
+            ) >= 2
+        ):
+
+            continue
+
+
+        survey_name = (
+            _productivity_v119_text(
+                ref[
+                    0
+                ]
+            )
+        )
+
+
+        try:
+
+            survey_idx = int(
+                ref[
+                    1
+                ]
+            )
+
+        except Exception:
+
+            continue
+
+
+        detail = detail_map.get(
+            (
+                survey_name,
+                survey_idx,
+            )
+        )
+
+
+        if not detail:
+
+            continue
+
+
+        details.append(
+            detail
+        )
+
+
+        key = (
+            _productivity_v119r_canonical_survey_material(
+                detail
+            )
+        )
+
+
+        if key:
+
+            keys.add(
+                key
+            )
+
+
+    if len(
+        keys
+    ) == 1:
+
+        material_key = next(
+            iter(
+                keys
+            )
+        )
+
+    else:
+
+        material_key = ""
+
+
+    return (
+        material_key,
+        details,
+    )
+
+
+def _productivity_v119r_material_adt_stats(
+    filters,
+    machines,
+):
+
+    from collections import defaultdict
+
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+
+    machines = sorted({
+        _productivity_v119_text(
+            machine
+        )
+        for machine in (
+            machines
+            or []
+        )
+        if _productivity_v119_text(
+            machine
+        )
+    })
+
+
+    stats = defaultdict(
+        lambda: {
+            "trucks":
+                set(),
+
+            "parent_trucks":
+                defaultdict(
+                    set
+                ),
+
+            "rows":
+                0,
+
+            "bcm":
+                0.0,
+
+            "geo_materials":
+                set(),
+
+            "broad_materials":
+                set(),
+        }
+    )
+
+
+    if not machines:
+
+        return stats
+
+
+    hourly_filters = {
+        "prod_date": [
+            "between",
+            [
+                filters.get(
+                    "start_date"
+                ),
+                filters.get(
+                    "end_date"
+                ),
+            ],
+        ],
+
+        "location":
+            filters.get(
+                "site"
+            ),
+
+        "docstatus": [
+            "<",
+            2,
+        ],
+    }
+
+
+    shift = (
+        _productivity_v119_text(
+            filters.get(
+                "shift"
+            )
+        )
+    )
+
+
+    if shift:
+
+        hourly_filters[
+            "shift"
+        ] = shift
+
+
+    parents = frappe.get_all(
+        "Hourly Production",
+
+        filters=
+            hourly_filters,
+
+        pluck=
+            "name",
+
+        limit_page_length=0,
+    )
+
+
+    if not parents:
+
+        return stats
+
+
+    truck_rows = frappe.get_all(
+        "Truck Loads",
+
+        filters={
+            "parent": [
+                "in",
+                parents,
+            ],
+
+            "asset_name_shoval": [
+                "in",
+                machines,
+            ],
+
+            "bcms": [
+                ">",
+                0,
+            ],
+        },
+
+        fields=[
+            "parent",
+            "asset_name_shoval",
+            "asset_name_truck",
+            "mat_type",
+            "geo_mat_layer_truck",
+            "bcms",
+        ],
+
+        limit_page_length=0,
+    )
+
+
+    for truck_row in truck_rows:
+
+        machine = (
+            _productivity_v119_text(
+                truck_row.asset_name_shoval
+            )
+        )
+
+
+        truck = (
+            _productivity_v119_text(
+                truck_row.asset_name_truck
+            )
+        )
+
+
+        if not (
+            machine
+            and truck
+        ):
+
+            continue
+
+
+        material_key = (
+            _productivity_v119r_canonical_tallies_material(
+                truck_row.mat_type,
+                truck_row.geo_mat_layer_truck,
+            )
+        )
+
+
+        if not material_key:
+
+            continue
+
+
+        key = (
+            machine,
+            material_key,
+        )
+
+
+        stats[
+            key
+        ][
+            "trucks"
+        ].add(
+            truck
+        )
+
+
+        stats[
+            key
+        ][
+            "parent_trucks"
+        ][
+            truck_row.parent
+        ].add(
+            truck
+        )
+
+
+        stats[
+            key
+        ][
+            "rows"
+        ] += 1
+
+
+        stats[
+            key
+        ][
+            "bcm"
+        ] += (
+            _productivity_v119_number(
+                truck_row.bcms
+            )
+        )
+
+
+        broad = (
+            _productivity_v119_text(
+                truck_row.mat_type
+            )
+        )
+
+
+        geo = (
+            _productivity_v119_text(
+                truck_row.geo_mat_layer_truck
+            )
+        )
+
+
+        if broad:
+
+            stats[
+                key
+            ][
+                "broad_materials"
+            ].add(
+                broad
+            )
+
+
+        if geo:
+
+            stats[
+                key
+            ][
+                "geo_materials"
+            ].add(
+                geo
+            )
+
+
+    for value in (
+        stats.values()
+    ):
+
+        value[
+            "adt_hour_count"
+        ] = sum(
+            len(
+                trucks
+            )
+            for trucks in (
+                value[
+                    "parent_trucks"
+                ].values()
+            )
+        )
+
+
+        value[
+            "active_hour_records"
+        ] = len(
+            value[
+                "parent_trucks"
+            ]
+        )
+
+
+    return stats
+
+
+def _productivity_v119_actual_material_report(
+    filters,
+):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+
+    columns, rows = (
+        _productivity_v119o_actual_report(
+            filters
+        )
+    )
+
+
+    # ========================================================
+    # TALLIES VIEW REMAINS UNCHANGED.
+    # ========================================================
+
+    if not (
+        _productivity_v119o_is_actual(
+            filters
+        )
+    ):
+
+        return (
+            columns,
+            rows,
+        )
+
+
+    machine_rows = [
+        row
+        for row in (
+            rows
+            or []
+        )
+        if (
+            hasattr(
+                row,
+                "get",
+            )
+            and row.get(
+                "truck_benchmark_machine_row"
+            )
+            and row.get(
+                "_productivity_v119o_actual_survey"
+            )
+        )
+    ]
+
+
+    if not machine_rows:
+
+        return (
+            columns,
+            rows,
+        )
+
+
+    machines = sorted({
+        _productivity_v119_text(
+            row.get(
+                "label"
+            )
+        )
+        for row in machine_rows
+        if _productivity_v119_text(
+            row.get(
+                "label"
+            )
+        )
+    })
+
+
+    detail_map = (
+        _productivity_v119r_survey_detail_map(
+            filters
+        )
+    )
+
+
+    material_stats = (
+        _productivity_v119r_material_adt_stats(
+            filters,
+            machines,
+        )
+    )
+
+
+    # ========================================================
+    # TOTAL ACTUAL WORKING HOURS PER MACHINE + MATERIAL
+    #
+    # Important:
+    #
+    # Truck Loads do not have historical Hauling Distance.
+    #
+    # Therefore the ADT average denominator is the total
+    # Actual Working Hours for that MACHINE + MATERIAL,
+    # not one individual Survey HD row.
+    #
+    # This prevents us from duplicating the material ADT count
+    # and dividing it by every HD row independently.
+    # ========================================================
+
+    material_hours = {}
+
+
+    row_material_keys = {}
+
+
+    for row in machine_rows:
+
+        machine = (
+            _productivity_v119_text(
+                row.get(
+                    "label"
+                )
+            )
+        )
+
+
+        (
+            material_key,
+            details,
+        ) = (
+            _productivity_v119r_row_material_key(
+                row,
+                detail_map,
+            )
+        )
+
+
+        row_material_keys[
+            id(
+                row
+            )
+        ] = (
+            material_key,
+            details,
+        )
+
+
+        if not material_key:
+
+            continue
+
+
+        key = (
+            machine,
+            material_key,
+        )
+
+
+        material_hours[
+            key
+        ] = (
+            material_hours.get(
+                key,
+                0.0,
+            )
+            + _productivity_v119_number(
+                row.get(
+                    "working_hours"
+                )
+            )
+        )
+
+
+    # ========================================================
+    # APPLY FINAL MATERIAL-LEVEL ADT DATA.
+    # ========================================================
+
+    for row in machine_rows:
+
+        machine = (
+            _productivity_v119_text(
+                row.get(
+                    "label"
+                )
+            )
+        )
+
+
+        (
+            material_key,
+            details,
+        ) = row_material_keys[
+            id(
+                row
+            )
+        ]
+
+
+        # Clear provisional ADT values before material matching.
+
+        row[
+            "unique_actual_adts"
+        ] = ""
+
+
+        row[
+            "avg_actual_adts"
+        ] = ""
+
+
+        row[
+            "adt_details"
+        ] = ""
+
+
+        row[
+            "_actual_adt_assets"
+        ] = []
+
+
+        row[
+            "_adt_count_sum"
+        ] = 0
+
+
+        row[
+            "_productivity_v119r_material_adt_available"
+        ] = 0
+
+
+        row[
+            "_productivity_v119r_material_key"
+        ] = material_key
+
+
+        if not material_key:
+
+            continue
+
+
+        stat_key = (
+            machine,
+            material_key,
+        )
+
+
+        stat = (
+            material_stats.get(
+                stat_key
+            )
+        )
+
+
+        if not stat:
+
+            continue
+
+
+        trucks = sorted(
+            stat[
+                "trucks"
+            ]
+        )
+
+
+        if not trucks:
+
+            continue
+
+
+        working_hours = (
+            _productivity_v119_number(
+                material_hours.get(
+                    stat_key
+                )
+            )
+        )
+
+
+        adt_hour_count = (
+            _productivity_v119_number(
+                stat.get(
+                    "adt_hour_count"
+                )
+            )
+        )
+
+
+        average = (
+            adt_hour_count
+            / working_hours
+            if working_hours > 0
+            else 0.0
+        )
+
+
+        row[
+            "unique_actual_adts"
+        ] = len(
+            trucks
+        )
+
+
+        row[
+            "avg_actual_adts"
+        ] = average
+
+
+        row[
+            "adt_details"
+        ] = "View ADTs"
+
+
+        row[
+            "_actual_adt_assets"
+        ] = trucks
+
+
+        row[
+            "_adt_count_sum"
+        ] = adt_hour_count
+
+
+        row[
+            "_adt_material_working_hours"
+        ] = working_hours
+
+
+        row[
+            "_adt_material_active_hour_records"
+        ] = int(
+            stat.get(
+                "active_hour_records"
+            )
+            or 0
+        )
+
+
+        row[
+            "_adt_material_truck_load_rows"
+        ] = int(
+            stat.get(
+                "rows"
+            )
+            or 0
+        )
+
+
+        row[
+            "_adt_material_tallies_bcm"
+        ] = (
+            _productivity_v119_number(
+                stat.get(
+                    "bcm"
+                )
+            )
+        )
+
+
+        row[
+            "_adt_material_geo_layers"
+        ] = sorted(
+            stat.get(
+                "geo_materials"
+            )
+            or []
+        )
+
+
+        row[
+            "_adt_scope"
+        ] = (
+            "Actual Survey row with ADTs "
+            "matched from Tallies material"
+        )
+
+
+        row[
+            "_productivity_v119r_material_adt_available"
+        ] = 1
+
+
+    # ========================================================
+    # SUMMARY ROWS STAY BLANK FOR ADTs.
+    # ========================================================
+
+    for row in (
+        rows
+        or []
+    ):
+
+        if not (
+            hasattr(
+                row,
+                "get",
+            )
+            and row.get(
+                "truck_benchmark_summary_row"
+            )
+        ):
+
+            continue
+
+
+        row[
+            "unique_actual_adts"
+        ] = ""
+
+
+        row[
+            "avg_actual_adts"
+        ] = ""
+
+
+        row[
+            "adt_details"
+        ] = ""
+
+
+    # ========================================================
+    # COLUMN LABELS
+    # ========================================================
+
+    for column in (
+        columns
+        or []
+    ):
+
+        if not hasattr(
+            column,
+            "get",
+        ):
+
+            continue
+
+
+        fieldname = column.get(
+            "fieldname"
+        )
+
+
+        if fieldname == "unique_actual_adts":
+
+            column[
+                "label"
+            ] = (
+                "Unique Actual ADTs "
+                "(Material)"
+            )
+
+
+        elif fieldname == "avg_actual_adts":
+
+            column[
+                "label"
+            ] = (
+                "Avg Actual ADTs / "
+                "Material Working Hr"
+            )
+
+
+    return (
+        columns,
+        rows,
+    )
+
+
+# END KOSI_PRODUCTIVITY_ACTUAL_MATERIAL_ADTS_V119R
+
+
+# KOSI_PRODUCTIVITY_ACTUAL_POPUP_ALIGNMENT_V119T
+#
+# Actual BCM benchmark:
+#
+# Keep Survey authoritative for:
+#
+#     Material
+#     Hauling Distance
+#     Route
+#     BCM
+#     Working Hours
+#
+# Keep Tallies / Truck Loads authoritative for:
+#
+#     Actual ADT assets
+#     Total Hourly ADT Count
+#
+# Popup calculation:
+#
+#     Total Hourly ADT Count
+#     ----------------------
+#     This Material / Excavator Working Hours
+#
+# Tallies BCM view is not changed by this wrapper.
+# ============================================================
+
+
+
+def _productivity_v119_actual_popup_report(filters):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+
+    columns, rows = (
+        _productivity_v119_actual_material_report(
+            filters
+        )
+    )
+
+
+    # Tallies stays unchanged.
+
+    if not _productivity_v119o_is_actual(
+        filters
+    ):
+
+        return (
+            columns,
+            rows,
+        )
+
+
+    controls = (
+        _productivity_v119o_actual_controls(
+            _productivity_v119o_actual_source(
+                filters
+            )
+        )
+    )
+
+
+    for row in (
+        rows
+        or []
+    ):
+
+        if not (
+            hasattr(
+                row,
+                "get",
+            )
+            and row.get(
+                "truck_benchmark_machine_row"
+            )
+            and row.get(
+                "_productivity_v119o_actual_survey"
+            )
+            and row.get(
+                "_productivity_v119r_material_adt_available"
+            )
+        ):
+
+            continue
+
+
+        machine = (
+            _productivity_v119_text(
+                row.get(
+                    "label"
+                )
+            )
+        )
+
+
+        excavator_total_hours = (
+            _productivity_v119_number(
+                controls.get(
+                    machine,
+                    {}
+                ).get(
+                    "hours"
+                )
+            )
+        )
+
+
+        material_excavator_hours = (
+            _productivity_v119_number(
+                row.get(
+                    "working_hours"
+                )
+            )
+        )
+
+
+        total_hourly_adt_count = (
+            _productivity_v119_number(
+                row.get(
+                    "_adt_count_sum"
+                )
+            )
+        )
+
+
+        avg_actual_adts = (
+            total_hourly_adt_count
+            / material_excavator_hours
+            if material_excavator_hours > 0
+            else 0.0
+        )
+
+
+        row[
+            "avg_actual_adts"
+        ] = avg_actual_adts
+
+
+        row[
+            "_adt_popup_excavator_total_working_hours"
+        ] = excavator_total_hours
+
+
+        row[
+            "_adt_popup_material_excavator_working_hours"
+        ] = material_excavator_hours
+
+
+        row[
+            "_adt_average_denominator"
+        ] = (
+            "This Material / Excavator Working Hours"
+        )
+
+
+        row[
+            "_productivity_v119t_actual_popup"
+        ] = 1
+
+
+    # Aggregate rows must remain blank for ADTs.
+
+    for row in (
+        rows
+        or []
+    ):
+
+        if not (
+            hasattr(
+                row,
+                "get",
+            )
+            and row.get(
+                "truck_benchmark_summary_row"
+            )
+        ):
+
+            continue
+
+
+        row[
+            "unique_actual_adts"
+        ] = ""
+
+
+        row[
+            "avg_actual_adts"
+        ] = ""
+
+
+        row[
+            "adt_details"
+        ] = ""
+
+
+    for column in (
+        columns
+        or []
+    ):
+
+        if not hasattr(
+            column,
+            "get",
+        ):
+
+            continue
+
+
+        if (
+            column.get(
+                "fieldname"
+            )
+            == "avg_actual_adts"
+        ):
+
+            column[
+                "label"
+            ] = (
+                "Avg Actual ADTs / Working Hour"
+            )
+
+
+    return (
+        columns,
+        rows,
+    )
+
+
+# END KOSI_PRODUCTIVITY_ACTUAL_POPUP_ALIGNMENT_V119T
+
+
+# KOSI_PRODUCTIVITY_ACTUAL_MATERIAL_HOURS_V119U
+#
+# Correct Actual ADT denominator.
+#
+# A Tallies material ADT numerator belongs to:
+#
+#     Excavator + Material
+#
+# It does NOT belong independently to each Survey
+# Hauling Distance row.
+#
+#
+# Example:
+#
+# IS0331 / 2Seam:
+#
+#     HD 2500-3000 = 173 hours
+#     HD 3500-4000 = 218 hours
+#
+#     Material Hours = 391
+#
+#     ADT-Hour Count = 2610
+#
+#     Avg = 2610 / 391
+#
+#
+# All Survey values remain unchanged:
+#
+#     Material
+#     HD
+#     Route
+#     BCM
+#     row Working Hours
+#
+# Tallies path remains unchanged.
+# ============================================================
+
+
+
+def _productivity_v119_actual_final_report(filters):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+
+    columns, rows = (
+        _productivity_v119_actual_popup_report(
+            filters
+        )
+    )
+
+
+    if not _productivity_v119o_is_actual(
+        filters
+    ):
+
+        return (
+            columns,
+            rows,
+        )
+
+
+    machine_rows = [
+        row
+        for row in (
+            rows
+            or []
+        )
+        if (
+            hasattr(
+                row,
+                "get",
+            )
+            and row.get(
+                "truck_benchmark_machine_row"
+            )
+            and row.get(
+                "_productivity_v119o_actual_survey"
+            )
+        )
+    ]
+
+
+    material_hours = {}
+
+
+    # ========================================================
+    # TOTAL WORKING HOURS FOR EACH EXCAVATOR + MATERIAL
+    # ACROSS ALL SURVEY HAULING DISTANCE ROWS
+    # ========================================================
+
+    for row in machine_rows:
+
+        machine = (
+            _productivity_v119_text(
+                row.get(
+                    "label"
+                )
+            )
+        )
+
+
+        material_key = (
+            _productivity_v119_text(
+                row.get(
+                    "_productivity_v119r_material_key"
+                )
+            )
+        )
+
+
+        if not (
+            machine
+            and material_key
+        ):
+
+            continue
+
+
+        key = (
+            machine,
+            material_key,
+        )
+
+
+        material_hours[
+            key
+        ] = (
+            material_hours.get(
+                key,
+                0.0,
+            )
+            + _productivity_v119_number(
+                row.get(
+                    "working_hours"
+                )
+            )
+        )
+
+
+    # ========================================================
+    # APPLY MATERIAL-LEVEL DENOMINATOR
+    # ========================================================
+
+    for row in machine_rows:
+
+        if not row.get(
+            "_productivity_v119r_material_adt_available"
+        ):
+
+            continue
+
+
+        machine = (
+            _productivity_v119_text(
+                row.get(
+                    "label"
+                )
+            )
+        )
+
+
+        material_key = (
+            _productivity_v119_text(
+                row.get(
+                    "_productivity_v119r_material_key"
+                )
+            )
+        )
+
+
+        key = (
+            machine,
+            material_key,
+        )
+
+
+        total_material_hours = (
+            _productivity_v119_number(
+                material_hours.get(
+                    key
+                )
+            )
+        )
+
+
+        adt_hour_count = (
+            _productivity_v119_number(
+                row.get(
+                    "_adt_count_sum"
+                )
+            )
+        )
+
+
+        average = (
+            adt_hour_count
+            / total_material_hours
+            if total_material_hours > 0
+            else 0.0
+        )
+
+
+        row[
+            "avg_actual_adts"
+        ] = average
+
+
+        row[
+            "_adt_popup_material_excavator_working_hours"
+        ] = total_material_hours
+
+
+        row[
+            "_adt_average_denominator"
+        ] = (
+            "Excavator + Material Working Hours"
+        )
+
+
+        row[
+            "_productivity_v119u_material_hours"
+        ] = total_material_hours
+
+
+    return (
+        columns,
+        rows,
+    )
+
+
+# END KOSI_PRODUCTIVITY_ACTUAL_MATERIAL_HOURS_V119U
+
+
+# ============================================================
+# KOSI_PRODUCTIVITY_TRUCK_BENCHMARK_FINAL_DISPATCH
+#
+# One explicit entry point for the final benchmark pipeline.
+# ============================================================
+
+def _productivity_v119_report(filters):
+
+    filters = frappe._dict(
+        filters
+        or {}
+    )
+
+
+    if _productivity_v119o_is_actual(filters):
+
+        return _productivity_v119_actual_final_report(
+            filters
+        )
+
+
+    return _productivity_v119_tallies_final_report(
+        filters
+    )
+
+
+# END KOSI_PRODUCTIVITY_TRUCK_BENCHMARK_FINAL_DISPATCH
