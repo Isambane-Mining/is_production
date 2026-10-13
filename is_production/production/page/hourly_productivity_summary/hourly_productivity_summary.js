@@ -54,15 +54,25 @@
       ${data.warnings.map(w => `<div class="hps-warning">${escape(w)}</div>`).join('')}
       <div class="hps-table-wrap"><table class="hps-table"><caption>Hourly performance</caption>
         <thead><tr><th scope="col">Hour</th><th scope="col">Actual BCM</th><th scope="col">Target BCM</th>
-          <th scope="col">Achievement %</th><th scope="col">ADTs Available</th><th scope="col">ADTs Utilised</th></tr></thead>
+          <th scope="col">Achievement %</th><th scope="col">ADTs Available</th><th scope="col">ADTs Utilised</th>
+          <th scope="col">Excavators Available</th><th scope="col">Excavators Utilised</th><th scope="col">Excavators PBM</th></tr></thead>
         <tbody>${data.hours.map(h => `<tr class="hps-${escape(['green', 'orange', 'red'].includes(h.colour) ? h.colour : 'neutral')}">
           <th scope="row">${escape(h.label)}<small>${escape(status[h.record_status] || h.record_status)}</small></th>
           <td>${number(h.actual_bcm, 1)}</td><td>${number(h.target_bcm)}</td>
           <td>${h.achievement == null ? '—' : `${number(h.achievement, 2)}%`}</td>
           <td class="hps-available">${number(h.available, 2)}<small>Δ ${number(h.difference, 2)}</small></td>
-          <td class="hps-utilised">${number(h.utilised)}</td></tr>`).join('')}</tbody></table></div>
+          <td class="hps-utilised">${number(h.utilised)}</td><td>${number(h.excavator_available, 2)}</td>
+          <td>${number(h.excavator_utilised)}</td><td>${number(h.excavator_unavailable, 2)}
+            <small>${number(h.excavator_pbm_count)} affected</small></td></tr>`).join('')}</tbody></table></div>
       <p class="hps-footnote">Available ADTs are weighted by available minutes. An ADT is utilised once it records at least one load.
         Δ = available − utilised; it can be negative with partial-hour availability.</p>
+      <p class="hps-footnote">Production excavator availability and PBM unavailability use the same minute weighting.
+        “Affected” counts excavators with any PBM overlap; utilised counts distinct excavators with at least one load.
+        Unknown MPP classifications show —. Missing records do not verify zero utilisation.</p>
+      <details class="hps-details"><summary>Unpaired excavator availability · production/spare unknown</summary>
+        <div class="hps-table-wrap"><table class="hps-table"><thead><tr><th>Hour</th><th>Available</th><th>Utilised</th><th>PBM unavailable</th></tr></thead>
+        <tbody>${data.hours.map(h => `<tr><th>${escape(h.label)}</th><td>${number(h.unpaired_available, 2)}</td>
+          <td>${number(h.unpaired_utilised)}</td><td>${number(h.unpaired_unavailable, 2)}</td></tr>`).join('')}</tbody></table></div></details>
       <details class="hps-details"><summary>ADT availability detail</summary><div class="hps-table-wrap">
         <table class="hps-table"><thead><tr><th>ADT</th><th>Hour</th><th>Available minutes</th><th>Status</th><th>Loads</th></tr></thead>
         <tbody>${(data.details || []).map(r => `<tr><td>${escape(r.adt)}</td><td>${escape(r.hour)}</td>
@@ -71,11 +81,14 @@
         ${(data.excavators || []).map(r => `<article><strong>${escape(r.excavator)}</strong><div>
           <span>First <b>${escape(r.first_load_time || '—')}</b></span>
           <span>Last <b>${escape(r.last_load_time || '—')}</b></span></div></article>`).join('') || '<p>No load times recorded.</p>'}</div>
-      <p class="hps-footnote">Times use recorded excavator first/last fields, including the latest corrections; blank times remain unknown.</p>
-      ${fleet('MPP production teams', data.production_excavators || [])}
-      ${fleet('Spare excavators · excluded from targets', data.spare_excavators || [])}
-      ${(data.unplanned_excavators || []).length ? fleet('Other recorded excavators · excluded from targets', data.unplanned_excavators) : ''}
-      <p class="hps-footnote">Spare and other recorded output is included in Actual BCM. Colours: green ≥ ${number(data.thresholds.green)}%,
+      <p class="hps-footnote">First is the earliest captured First Load; Last is the latest captured Last Load within the shift.
+        Restart times do not replace the first load. Missing or invalid times remain —.</p>
+      ${fleet('MPP truck-assigned production teams', data.production_excavators || [])}
+      ${fleet('Unpaired excavators · production/spare unknown', data.unpaired_excavators || [])}
+      <p class="hps-footnote">Spare classification is unavailable from the original saved MPP rows. Empty production
+        assignments are stored only in browser localStorage; the page does not infer their identities.</p>
+      ${(data.unplanned_excavators || []).length ? fleet('Other recorded excavators · MPP classification unknown', data.unplanned_excavators) : ''}
+      <p class="hps-footnote">All recorded excavator output is included in Actual BCM; targets use the saved MPP production count. Colours: green ≥ ${number(data.thresholds.green)}%,
         orange ≥ ${number(data.thresholds.orange)}%, red below ${number(data.thresholds.orange)}%. Missing and unfinished hours are neutral.</p>`;
   }
 

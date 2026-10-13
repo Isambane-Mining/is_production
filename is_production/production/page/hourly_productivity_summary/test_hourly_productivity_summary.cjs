@@ -42,3 +42,18 @@ test('render no-target data has no achievement colour or misleading pie', () => 
   data.summary.achievement = null;
   assert.ok(renderSummary(data).includes('No completed-hour target'));
 });
+
+test('render production metrics and explicitly unclassified unpaired availability', () => {
+  const data = fixture();
+  Object.assign(data.hours[0], {excavator_available: 1.25, excavator_utilised: 1,
+    excavator_unavailable: .75, excavator_pbm_count: 1, unpaired_available: 1, unpaired_utilised: 1, unpaired_unavailable: 0});
+  data.unpaired_excavators = [{label: 'EX2', actual_bcm: 20, classification: 'Production/spare unknown'}];
+  const html = renderSummary(data);
+  assert.ok(html.includes('Excavators Available'));
+  assert.ok(html.includes('Excavators Utilised'));
+  assert.ok(html.includes('Excavators PBM'));
+  assert.ok(html.includes('1.25'));
+  assert.ok(html.includes('Unpaired excavator availability'));
+  assert.ok(html.includes('Production/spare unknown'));
+  assert.ok(!html.includes('Spare excavators · excluded from targets'));
+});
