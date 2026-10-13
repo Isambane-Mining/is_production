@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, time, timedelta
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -26,17 +26,19 @@ class TestHourlyProductivitySummary(TestCase):
                                     self.assets, breakdowns, docs,
                                     now=now or datetime(2026, 10, 14), **kw)
 
-    def test_fixed_mpp_target_deduplicates_teams_and_excludes_spares(self):
+    def test_fixed_mpp_target_deduplicates_teams_without_classifying_unpaired(self):
         data = self.build()
         self.assertEqual(data["summary"]["target_bcm"], 4840)
         self.assertEqual([data["hours"][i]["target_bcm"] for i in (0, 1, 11)], [110, 440, 330])
-        self.assertEqual(data["spare_excavators"][0]["asset"], "SPARE")
+        self.assertEqual(data["unpaired_excavators"][0]["asset"], "SPARE")
+        self.assertEqual(data["unpaired_excavators"][0]["classification"], "Production/spare unknown")
+        self.assertEqual(data["spare_excavators"], [])
 
     def test_spare_output_contributes_without_an_additional_target(self):
         data = self.build([self.doc(rows=[self.row(bcm=50), self.row("SPARE", "T2", bcm=60)])])
         self.assertEqual(data["hours"][0]["actual_bcm"], 110)
         self.assertEqual(data["hours"][0]["achievement"], 100)
-        self.assertEqual(data["spare_excavators"][0]["actual_bcm"], 60)
+        self.assertEqual(data["unpaired_excavators"][0]["actual_bcm"], 60)
 
     def test_missing_and_recorded_zero_have_distinct_statuses(self):
         data = self.build([self.doc(rows=[self.row(bcm=0, loads=0)])])
@@ -137,6 +139,92 @@ class TestHourlyProductivitySummary(TestCase):
         by_label = {r["excavator"]: r for r in data["excavators"]}
         self.assertEqual(by_label["EX001"]["first_load_time"], "06:15")
 
+    def test_saved_count_cannot_identify_unpaired_production_excavator(self):
+        self.plan["num_excavators"] = 3
+        data = self.build([self.doc()])
+        self.assertFalse(data["roster_complete"])
+        self.assertEqual(len(data["production_excavators"]), 2)
+        self.assertEqual(data["unpaired_excavators"][0]["classification"], "Production/spare unknown")
+        self.assertEqual(data["spare_excavators"], [])
+        self.assertEqual(data["hours"][0]["target_bcm"], 165)
+        self.assertIsNone(data["hours"][0]["excavator_available"])
+        self.assertEqual(data["pie"]["availability_estimate"], 0)
+
+    def test_excavator_availability_merges_pbm_and_deduplicates_utilisation(self):
+        pbm = [{"asset_name": "EX1", "breakdown_start_datetime": "2026-10-12 06:00:00",
+                "resolved_datetime": "2026-10-12 06:30:00"},
+               {"asset_name": "EX1", "breakdown_start_datetime": "2026-10-12 06:15:00",
+                "resolved_datetime": "2026-10-12 06:45:00"}]
+        data = self.build([self.doc(rows=[self.row(), self.row(truck="T2"), self.row("SPARE", "T3")])], pbm)
+        hour = data["hours"][0]
+        self.assertEqual(hour["excavator_available"], 1.25)
+        self.assertEqual(hour["excavator_unavailable"], .75)
+        self.assertEqual(hour["excavator_pbm_count"], 1)
+        self.assertEqual(hour["excavator_utilised"], 1)
+        self.assertEqual(hour["unpaired_available"], 1)
+        self.assertEqual(hour["unpaired_utilised"], 1)
+        self.assertIsNone(hour["spare_available"])
+        self.assertEqual(hour["target_bcm"], 110)
+
+    def test_repeated_document_and_named_child_count_once(self):
+        row = self.row(name="LOAD1", bcm=50)
+        doc = self.doc(rows=[row, dict(row)])
+        data = self.build([doc, dict(doc)])
+        self.assertEqual(data["hours"][0]["actual_bcm"], 50)
+        self.assertEqual(data["hours"][0]["utilised"], 1)
+
+    def test_unresolved_roster_cannot_claim_full_excavator_availability(self):
+        self.plan["num_excavators"] = 3
+        data = self.build()
+        self.assertIsNone(data["hours"][0]["excavator_available"])
+
+    def test_breakdown_restart_keeps_earliest_first_and_latest_last(self):
+        docs = [self.doc(rows=[self.row(exc_start_load_time="06:18", exc_end_load_time="09:45")]),
+                self.doc("11:00-12:00", rows=[self.row(exc_start_load_time="11:20", exc_end_load_time="17:35")]),
+                self.doc("17:00-18:00", rows=[self.row(exc_start_load_time="11:20", exc_end_load_time="16:50")])]
+        pbm = [{"asset_name": "EX1", "breakdown_start_datetime": "2026-10-12 09:45:00",
+                "resolved_datetime": "2026-10-12 11:20:00"}]
+        data = self.build(docs, pbm)
+        exc = next(row for row in data["excavators"] if row["excavator"] == "EX1")
+        self.assertEqual(exc["first_load_time"], "06:18")
+        self.assertEqual(exc["last_load_time"], "17:35")
+        self.assertEqual(data["hours"][0]["first_load_events"], [{"excavator": "EX1", "time": "06:18"}])
+        self.assertEqual(data["hours"][11]["last_load_events"], [{"excavator": "EX1", "time": "17:35"}])
+        self.assertEqual(sum(len(h["first_load_events"]) for h in data["hours"]), 1)
+
+    def test_night_restarts_compare_times_in_shift_order_not_clock_order(self):
+        docs = [self.doc("18:00-19:00", rows=[self.row(exc_start_load_time=time(18, 25), exc_end_load_time="23:40")]),
+                self.doc("00:00-01:00", "2026-10-13", [self.row(exc_start_load_time=timedelta(minutes=10), exc_end_load_time="05:40")]),
+                self.doc("05:00-06:00", "2026-10-13", [self.row(exc_start_load_time="01:15", exc_end_load_time="02:10")])]
+        exc = next(row for row in self.build(list(reversed(docs)), shift="Night")["excavators"] if row["excavator"] == "EX1")
+        self.assertEqual(exc["first_load_time"], "18:25")
+        self.assertEqual(exc["last_load_time"], "05:40")
+
+    def test_invalid_and_outside_shift_times_are_not_inferred_from_bcm(self):
+        docs = [self.doc(rows=[self.row(bcm=400, exc_start_load_time="invalid", exc_end_load_time="05:59")]),
+                self.doc("17:00-18:00", rows=[self.row(exc_start_load_time="18:30", exc_end_load_time="bad")])]
+        exc = next(row for row in self.build(docs)["excavators"] if row["excavator"] == "EX1")
+        self.assertIsNone(exc["first_load_time"])
+        self.assertIsNone(exc["last_load_time"])
+
+    def test_captured_midnight_is_valid_and_last_at_shift_end_is_retained(self):
+        docs = [self.doc("00:00-01:00", "2026-10-13", [self.row(exc_start_load_time=timedelta(0), exc_end_load_time="05:50")]),
+                self.doc("05:00-06:00", "2026-10-13", [self.row(exc_end_load_time="06:00")])]
+        data = self.build(docs, shift="Night")
+        exc = next(row for row in data["excavators"] if row["excavator"] == "EX1")
+        self.assertEqual(exc["first_load_time"], "00:00")
+        self.assertEqual(exc["last_load_time"], "06:00")
+        self.assertEqual(exc["last_load_hour"], "05:00–06:00")
+
+    def test_multiple_excavators_and_row_order_do_not_mix_times(self):
+        docs = [self.doc(rows=[self.row(exc_start_load_time="06:30", exc_end_load_time="17:10"),
+                              self.row("EX2", "T3", exc_start_load_time="07:20", exc_end_load_time="16:40")]),
+                self.doc("09:00-10:00", rows=[self.row(exc_start_load_time="06:10", exc_end_load_time="17:50"),
+                                              self.row("EX2", "T3", exc_start_load_time="08:10", exc_end_load_time="15:20")])]
+        rows = {r["excavator"]: r for r in self.build(docs)["excavators"]}
+        self.assertEqual((rows["EX1"]["first_load_time"], rows["EX1"]["last_load_time"]), ("06:10", "17:50"))
+        self.assertEqual((rows["EX2"]["first_load_time"], rows["EX2"]["last_load_time"]), ("07:20", "16:40"))
+
 
 class TestLoaderPermissions(TestCase):
     def test_guest_denied_before_reading_sources(self):
@@ -181,6 +269,7 @@ class TestLoaderPermissions(TestCase):
     def test_loader_uses_calendar_window_and_permission_checked_parents(self):
         fixture = TestHourlyProductivitySummary()
         fixture.setUp()
+        fixture.plan.update(location="Koppie", prod_month_start_date="2026-10-01", prod_month_end_date="2026-10-31")
         docs = {
             ("Location", "Koppie"): {"name": "Koppie"},
             ("Monthly Production Planning", "MPP"): fixture.plan,
