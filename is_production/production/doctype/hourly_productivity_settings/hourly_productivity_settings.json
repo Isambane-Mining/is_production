@@ -1,0 +1,19 @@
+{
+ "doctype": "DocType",
+ "name": "Hourly Productivity Settings",
+ "module": "Production",
+ "issingle": 1,
+ "engine": "InnoDB",
+ "field_order": ["green_threshold", "orange_threshold"],
+ "fields": [
+  {"fieldname": "green_threshold", "fieldtype": "Percent", "label": "Green Achievement Threshold", "default": "100", "reqd": 1},
+  {"fieldname": "orange_threshold", "fieldtype": "Percent", "label": "Orange Achievement Threshold", "default": "80", "reqd": 1,
+   "description": "Achievement below this threshold is red. Missing and unfinished hours are neutral."}
+ ],
+ "permissions": [
+  {"role": "System Manager", "read": 1, "write": 1, "create": 1},
+  {"role": "Production Manager", "read": 1},
+  {"role": "Production User", "read": 1}
+ ],
+ "track_changes": 1
+}

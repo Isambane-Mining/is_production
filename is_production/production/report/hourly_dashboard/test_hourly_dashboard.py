@@ -76,16 +76,18 @@ class TestHourlyDashboard(unittest.TestCase):
             ("a", "Koppie", "2026-09-29", "6:00-7:00"),
             ("b", "Gwab", "2026-09-29", "6:00-7:00"),
             ("c", "Koppie", "2026-09-30", "6:00-7:00"),
-            ("d", "Koppie", "2026-09-29", "5:00-6:00"),
+            ("d", "Koppie", "2026-09-30", "5:00-6:00"),
             ("e", "Koppie", "2026-09-29", "unknown"),
+            ("previous-night", "Koppie", "2026-09-29", "5:00-6:00"),
         ])
         db.executemany('INSERT INTO "tabTruck Loads" VALUES (?, ?, ?)', [
             ("a", "EX-1", 100), ("a", "EX-1", 130), ("a", "EX-2", 50),
             ("b", "EX-1", 70), ("c", "EX-1", 900), ("d", "EX-1", 40),
             ("e", "EX-1", 999),
+            ("previous-night", "EX-1", 777),
         ])
-        def sql(query, prod_date, **kwargs):
-            return [frappe._dict(dict(row)) for row in db.execute(query.replace("%s", "?"), (str(prod_date),))]
+        def sql(query, dates, **kwargs):
+            return [frappe._dict(dict(row)) for row in db.execute(query.replace("%s", "?"), tuple(map(str, dates)))]
         with patch.object(frappe.local, "db", create=True) as frappe_db:
             frappe_db.sql.side_effect = sql
             result = dashboard.get_all_hourly_data(date(2026, 9, 29))
