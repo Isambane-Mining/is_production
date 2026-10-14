@@ -59,14 +59,12 @@ is_production.ui.HourlyProductionUI = class {
             const rowName = this.getAttribute('data-row-name');
             const value = parseFloat(this.value) || 0;
             me.updateTruckField(rowName, 'loads', value);
-            me.refreshLoadingRequirements();
         });
 
         $(document).on(`change.${ns}`, '.truck-geo-layer', function(e) {
             const rowName = this.getAttribute('data-row-name');
             const value = this.value;
             me.updateTruckField(rowName, 'geo_mat_layer_truck', value);
-            me.refreshLoadingRequirements();
         });
 
         $(document).on(`change.${ns}`, '.dozer-production', function(e) {
@@ -435,7 +433,6 @@ is_production.ui.HourlyProductionUI = class {
         this.frm.fields_dict.dnd_html_excavator_ui.$wrapper.find('.excavator-ui-section').html(fullHtml);
         this.setupDragAndDrop();
         this.setupAreaSelectors();
-        this.refreshLoadingRequirements();
     }
 
     loadDozersUI(dozerNames) {
@@ -586,7 +583,6 @@ is_production.ui.HourlyProductionUI = class {
     `;
 
     this.frm.fields_dict.dnd_html_excavator_ui.$wrapper.find('.dozer-ui-section').html(dozersHtml);
-    this.refreshDozerRequirements();
 
     const wrapper = this.frm.fields_dict.dnd_html_excavator_ui.$wrapper;
 
@@ -1037,25 +1033,7 @@ is_production.ui.HourlyProductionUI = class {
     document.addEventListener('dragend', stopAutoScroll);
 }
 
-       refreshDozerRequirements() {
-        const rows = this.frm.doc.dozer_production || [];
-        this.frm.fields_dict.dnd_html_excavator_ui.$wrapper.find('.dozer-block').each(function() {
-            const block = $(this);
-            const row = rows.find(item => item.asset_name === block.attr('data-dozer-name'));
-            const required = Boolean(row && (Number(row.bcm_hour) > 0 || row.dozer_service === 'Tip Dozing') && row.dozer_geo_mat_layer);
-            for (const selector of ['.dozer-area-to', '.dozer-hauling-distance']) {
-                const input = block.find(selector);
-                input.prop('required', required).attr('aria-required', String(required));
-                const label = input.siblings('label');
-                label.find('.dozer-required-marker').remove();
-                if (required) {
-                    $('<span>', {class: 'dozer-required-marker text-danger', text: ' *'}).appendTo(label);
-                }
-            }
-        });
-    }
-
-updateDozerField(dozerName, fieldname, value) {
+   updateDozerField(dozerName, fieldname, value) {
     const row = this.frm.doc.dozer_production?.find(d => d.asset_name === dozerName);
     if (row) {
         frappe.model.set_value(row.doctype, row.name, fieldname, value);
@@ -1471,32 +1449,6 @@ updateDozerField(dozerName, fieldname, value) {
         }
     }
 
-    refreshLoadingRequirements() {
-        const finalHour = typeof hpLoadingFinalHour === 'function' && hpLoadingFinalHour(this.frm.doc);
-        const rows = this.frm.doc.truck_loads || [];
-        this.frm.fields_dict.dnd_html_excavator_ui.$wrapper.find('.excavator-block').each(function() {
-            const block = $(this);
-            const assigned = rows.filter(row => row.asset_name_shoval === block.attr('data-excavator-name'));
-            const loading = assigned.some(row => Number(row.loads) > 0 && row.geo_mat_layer_truck);
-            const started = assigned.some(row => row.exc_start_load_time);
-            const requirements = [
-                ['.exc-to-area', loading],
-                ['.exc-hauling-distance', loading],
-                ['.exc-start-load-time', loading],
-                ['.exc-end-load-time', Boolean(finalHour && (loading || started))]
-            ];
-            requirements.forEach(([selector, required]) => {
-                const input = block.find(selector);
-                input.prop('required', required).attr('aria-required', String(required));
-                const label = input.siblings('label');
-                label.find('.loading-required-marker').remove();
-                if (required) {
-                    $('<span>', {class: 'loading-required-marker text-danger', text: ' *'}).appendTo(label);
-                }
-            });
-        });
-    }
-
     updateExcavatorLoadTimes(
         excavatorName,
         startLoadTime,
@@ -1546,8 +1498,6 @@ updateDozerField(dozerName, fieldname, value) {
         if (this.frm.toolbar) {
             this.frm.toolbar.refresh();
         }
-
-        this.refreshLoadingRequirements();
 
         console.log(
             'Saved Load Times to Truck Loads:',
@@ -1712,7 +1662,6 @@ updateDozerField(dozerName, fieldname, value) {
 
             // Refresh the child table field to show changes
             this.frm.refresh_field('dozer_production');
-            this.refreshDozerRequirements();
 
             // Update the toolbar to show save button
             this.frm.toolbar.refresh();
@@ -1820,8 +1769,6 @@ async handleDozerServiceChange(row) {
             .val('')
             .attr('data-current-value', '')
             .removeData('current-value');
-
-        this.refreshDozerRequirements();
     }
 
     // Apply BCM/hour
