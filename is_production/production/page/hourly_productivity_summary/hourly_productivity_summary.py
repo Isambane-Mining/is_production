@@ -251,12 +251,14 @@ def _read_document(doctype, name):
     calculation_fields = {
         "Location": ("name",),
         "Monthly Production Planning": ("location", "prod_month_start_date", "prod_month_end_date",
-                                        "num_excavators", "excavator_truck_assignments"),
+                                        "num_excavators", "excavator_truck_assignments", "month_prod_days", "shift_system"),
         "Hourly Production": ("location", "prod_date", "hour_slot", "truck_loads"),
         "Asset": ("name", "asset_name", "location", "asset_category"),
         "Plant Breakdown or Maintenance": ("asset_name", "breakdown_start_datetime", "resolved_datetime",
                                            "exclude_from_au", "breakdown_reason"),
         "Hourly Productivity Settings": ("green_threshold", "orange_threshold"),
+        "Startup and Fatigue spesification": ("site", "shift", "day_type", "startup_start", "startup_end",
+                                               "fatigue_start", "fatigue_end"),
     }
     if any(before.get(field) != result.get(field) for field in calculation_fields.get(doctype, ())):
         raise frappe.PermissionError("Access to calculation fields is required for this summary")
