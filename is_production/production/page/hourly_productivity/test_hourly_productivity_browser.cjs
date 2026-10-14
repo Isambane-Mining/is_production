@@ -67,6 +67,10 @@ const analysis=JSON.parse(fs.readFileSync(path.join(baseline,'hpa-fixture.json')
   let state=await host();
   assert.deepEqual(state.filters.analysis,state.filters.summary,'First opening synchronises three filters');
   assert.equal(await page.locator('.hpa-cell').count(),48);
+  const dashboardMethods=await page.evaluate(()=>calls.filter(request=>request.method.endsWith('get_dashboard')).map(request=>request.method));
+  assert.ok(dashboardMethods.length>0);
+  assert.ok(dashboardMethods.every(method=>method==='is_production.production.page.hourly_productivity_summary.hourly_productivity_summary.get_dashboard'),
+    'Summary calls its standard Page endpoint directly');
   await page.evaluate(async()=>{
    const a=wrapper.hourlyProductivity.controllers.analysis;
    await a.site.set_value('Gwab');await a.from_date.set_value('2026-10-01');

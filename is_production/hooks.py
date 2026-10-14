@@ -29,9 +29,6 @@ after_install = "is_production.setup.asset_categories.ensure_asset_categories"
 after_migrate = "is_production.setup.asset_categories.ensure_asset_categories"
 
 override_whitelisted_methods = {
-    # Preserve the legacy HTTP endpoint after retiring its Python import module.
-    "is_production.production.page.hourly_productivity_summary.summary_dashboard.get_dashboard":
-        "is_production.production.page.hourly_productivity_summary.hourly_productivity_summary.get_dashboard",
     # Override the PDF‐body renderer
     "frappe.utils.pdf.pdf_body_html": "is_production.utils.pdf.pdf_body_html"
 }
