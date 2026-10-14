@@ -312,9 +312,10 @@ class HourlyProduction(Document):
         self.populate_truck_material_types()
         self.apply_planning_tub_factors()
         self.validate_truck_loads()
-        self.validate_dozer_production()
+        self.validate_excavator_loading()
         # self.validate_and_apply_tub_factors()
         self.before_save_logic()  # <-- NOW RUNS AUTOMATICALLY
+        self.validate_dozer_production()
 
     def populate_truck_loads_if_blank(self):
         """Populate truck_loads from Asset if the form only has blank/default rows."""
@@ -472,6 +473,69 @@ class HourlyProduction(Document):
                         _("Row {0}: Please select a Mining Area for truck {1}")
                         .format(row.idx, row.asset_name_truck or "")
                     )
+
+    def _loading_shift_hour_count(self):
+        """Use the shift configuration, never a fixed final-hour number."""
+        import re
+        from frappe.utils import flt
+
+        field = {"Day": "total_working_hours", "Night": "total_working_hour"}.get(self.shift)
+        count = flt(self.get(field)) if field else 0
+        if count <= 0:
+            match = re.fullmatch(r"\d+x(\d+)Hour", self.get("shift_system") or "")
+            count = int(match.group(1)) if match else 0
+        if count <= 0 or count != int(count):
+            frappe.throw(_("Configure a positive whole number of shift hours before recording loading."))
+        return int(count)
+
+    def validate_excavator_loading(self):
+        """Require setup only for loading rows; close open sessions at shift end."""
+        from frappe.utils import flt
+
+        def blank(value):
+            # A Time value of midnight can be timedelta(0), which is valid.
+            return value is None or (isinstance(value, str) and not value.strip())
+
+        rows = self.get("truck_loads") or []
+        relevant = [row for row in rows if (
+            (flt(row.get("loads")) > 0 and row.get("geo_mat_layer_truck"))
+            or not blank(row.get("exc_start_load_time"))
+            or not blank(row.get("exc_end_load_time"))
+        )]
+        if not relevant:
+            return
+        count = self._loading_shift_hour_count()
+        try:
+            shift, index = (self.get("shift_num_hour") or "").rsplit("-", 1)
+            index = int(index)
+        except (ValueError, AttributeError):
+            frappe.throw(_("Select a valid Shift Number of Hour before recording loading."))
+        if shift != self.shift or not 1 <= index <= count:
+            frappe.throw(_("Shift Number of Hour is outside the configured shift."))
+
+        required = (
+            ("exc_to_area", "To Area"),
+            ("exc_hauling_distance_meter", "Hauling Distance Meter"),
+            ("exc_start_load_time", "Start Load Time"),
+        )
+        for row in relevant:
+            missing = []
+            loading = flt(row.get("loads")) > 0 and row.get("geo_mat_layer_truck")
+            if loading:
+                missing = [_(label) for field, label in required if blank(row.get(field))]
+            if not blank(row.get("exc_end_load_time")) and blank(row.get("exc_start_load_time")):
+                if _("Start Load Time") not in missing:
+                    missing.append(_("Start Load Time"))
+            if index == count and (loading or not blank(row.get("exc_start_load_time"))):
+                if blank(row.get("exc_end_load_time")):
+                    missing.append(_("End Load Time"))
+            if missing:
+                machine = row.get("excavator_plant_no") or row.get("asset_name_shoval") or ""
+                frappe.throw(
+                    _("Row {0}, excavator {1}: Please complete {2}.").format(
+                        row.idx, escape(str(machine)), ", ".join(missing)
+                    ), title=_("Loading details required"),
+                )
 
     def validate_and_apply_tub_factors(self):
         """
@@ -645,7 +709,7 @@ class HourlyProduction(Document):
 
     def validate_dozer_production(self):
         for row in getattr(self, "dozer_production", []):
-            if (row.bcm_hour or 0) > 0:
+            if (row.bcm_hour or 0) > 0 or row.get("dozer_service") == "Tip Dozing":
                 if not row.dozer_geo_mat_layer:
                     frappe.throw(
                         _("Row {0}: Please select a Geo Material Layer for dozer {1}")
@@ -655,6 +719,22 @@ class HourlyProduction(Document):
                     frappe.throw(
                         _("Row {0}: Please select a Mining Area for dozer {1}")
                         .format(row.idx, row.asset_name or "")
+                    )
+
+                required = (
+                    ("area_to", "Area To"),
+                    ("dozer_hauling_distance_meter", "Hauling Distance Meter"),
+                )
+                missing = [
+                    _(label) for field, label in required
+                    if not str(row.get(field) or "").strip()
+                ]
+                if missing:
+                    machine = row.get("dozer_plant_no") or row.get("asset_name") or ""
+                    frappe.throw(
+                        _("Row {0}, dozer {1}: Please complete {2}.").format(
+                            row.idx, escape(str(machine)), ", ".join(missing)
+                        ), title=_("Dozer details required"),
                     )
 
     # -------------------------------------------------------------------------
@@ -1771,7 +1851,7 @@ def get_user_whatsapp_number(user):
 
 
 @frappe.whitelist()
-def get_previous_hour_defaults(location, prod_date, current_hour_sort_key=None, current_name=None):
+def get_previous_hour_defaults(location, prod_date, current_hour_sort_key=None, current_name=None, current_shift=None):
     """
     Return the latest previous Hourly Production record for same site/date.
     Copies setup only: truck/excavator assignment, areas, geo/material layer,
@@ -1786,6 +1866,9 @@ def get_previous_hour_defaults(location, prod_date, current_hour_sort_key=None, 
         ["prod_date", "=", prod_date],
         ["docstatus", "<", 2],
     ]
+
+    if current_shift:
+        filters.append(["shift", "=", current_shift])
 
     if current_name and not str(current_name).startswith("new-"):
         filters.append(["name", "!=", current_name])
