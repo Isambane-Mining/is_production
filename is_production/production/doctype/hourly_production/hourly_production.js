@@ -357,7 +357,8 @@ function get_previous_hour_excavator_assignments(frm) {
                 location: frm.doc.location,
                 prod_date: frm.doc.prod_date,
                 current_hour_sort_key: frm.doc.hour_sort_key,
-                current_name: frm.doc.name
+                current_name: frm.doc.name,
+                current_shift: frm.doc.shift
             },
             callback: function(r) {
                 const data = r.message;
@@ -1185,7 +1186,7 @@ frappe.ui.form.on('Hourly Production', {
     // The table is built from shift_num_hour() once hour_sort_key
     // and the previous-hour lookup context are available.
 
-    if (frm.is_new() || !frm.doc.dozer_production || frm.doc.dozer_production.length === 0) {
+    if (!frm.doc.dozer_production || frm.doc.dozer_production.length === 0) {
         populate_dozer_production_table(frm);
     }
         loadHourlyProductionOffline().then(offline => {
@@ -1277,7 +1278,10 @@ frappe.ui.form.on('Hourly Production', {
         if (frm.doc.location && frm.doc.prod_date && frm.doc.shift && frm.doc.shift_num_hour) {
         // Only populate if new doc or no data exists
         if (frm.is_new() || !frm.doc.truck_loads || frm.doc.truck_loads.length === 0) {
-            populate_truck_loads_and_lookup(frm).then(() => {
+            Promise.all([
+                populate_truck_loads_and_lookup(frm),
+                populate_dozer_production_table(frm)
+            ]).then(() => {
                 // Truck Loads are now fully populated with the
                 // previous-hour setup. Always rebuild the custom
                 // Excavator UI from the final child-row values.
@@ -1714,13 +1718,13 @@ function populate_truck_loads_and_lookup(frm) {
                     setChildValue(
                         row,
                         'exc_start_load_time',
-                        prev.start_load_time || ''
+                        prev.end_load_time ? '' : (prev.start_load_time || '')
                     );
 
                     setChildValue(
                         row,
                         'exc_end_load_time',
-                        prev.end_load_time || ''
+                        '' // A previous end time closes the previous loading session.
                     );
 
                     setChildValue(
@@ -1862,45 +1866,86 @@ function calculate_day_total(frm) {
  // DOZER PRODUCTION
 // ——————————————————————
 
-function populate_dozer_production_table(frm) {
-    if (!frm.doc.location) return;
-
-    frappe.call({
-        method: 'frappe.client.get_list',
-        args: {
-            doctype: 'Asset',
-            fields: ['name', 'asset_name', 'item_name'],
-            filters: { location: frm.doc.location, asset_category: 'Dozer', docstatus: 1 },
-            order_by: 'asset_name asc',
-            limit_page_length: 500
-        },
-        callback: r => {
-            frm.clear_table('dozer_production');
-
-            (r.message || []).forEach(asset => {
-                const row = frm.add_child('dozer_production');
-
-                // ✅ Link must store Asset.name
-                row.asset_name = asset.name;
-
-                // ✅ Plant No display (Data) if you added it
-                if (row.dozer_plant_no !== undefined) row.dozer_plant_no = asset.asset_name || '';
-
-                row.item_name = asset.item_name || '';
-                row.bcm_hour = 0;
-                row.dozer_service = 'No Dozing';
-
-                // Default mining area if only one exists
-                if (frm.doc.mining_areas_options && frm.doc.mining_areas_options.length === 1) {
-                    row.mining_areas_dozer_child = frm.doc.mining_areas_options[0].mining_areas;
-                }
-            });
-
-            frm.refresh_field('dozer_production');
-            update_mining_area_dozer_options(frm);
-            update_dozer_geo_options(frm);
-        }
+async function populate_dozer_production_table(frm) {
+    const contextKey = () => JSON.stringify([
+        frm.doc.location, frm.doc.prod_date, frm.doc.shift, frm.doc.shift_num_hour
+    ]);
+    if (!frm.doc.location || !frm.doc.prod_date || !frm.doc.shift || !frm.doc.shift_num_hour) return;
+    if (!frm.is_new() && (frm.doc.dozer_production || []).length) return;
+    const key = contextKey();
+    if (frm.__dozer_population_key === key && (frm.doc.dozer_production || []).length) return;
+    if (frm.__dozer_population_promise) {
+        await frm.__dozer_population_promise;
+        if (frm.__dozer_population_key === key) return;
+        return populate_dozer_production_table(frm);
+    }
+    const slot = /^(.*)-(\d+)$/.exec(frm.doc.shift_num_hour);
+    if (!slot || slot[1] !== frm.doc.shift) return;
+    const hourIndex = Number(slot[2]);
+    const location = frm.doc.location;
+    const prodDate = frm.doc.prod_date;
+    const shift = frm.doc.shift;
+    const call = (method, args) => new Promise((resolve, reject) => {
+        frappe.call({method, args, callback: r => resolve(r.message), error: reject});
     });
+    const pending = (async () => {
+        const [assets, previous] = await Promise.all([
+            call('frappe.client.get_list', {
+                doctype: 'Asset', fields: ['name', 'asset_name', 'item_name'],
+                filters: {location, asset_category: 'Dozer', docstatus: 1},
+                order_by: 'asset_name asc', limit_page_length: 500
+            }),
+            call('frappe.client.get_list', {
+                doctype: 'Hourly Production', fields: ['name'],
+                filters: [
+                    ['location', '=', location], ['prod_date', '=', prodDate],
+                    ['shift', '=', shift], ['hour_sort_key', '<', hourIndex],
+                    ['docstatus', '<', 2]
+                ],
+                order_by: 'hour_sort_key desc, modified desc', limit_page_length: 1
+            })
+        ]);
+        const previousDoc = previous && previous.length ? await call('frappe.client.get', {
+            doctype: 'Hourly Production', name: previous[0].name
+        }) : null;
+        // Discard a late response if the user selected another site/date/hour.
+        if (contextKey() !== key) return;
+        const defaults = new Map();
+        for (const row of previousDoc?.dozer_production || []) {
+            if (row.asset_name) defaults.set(row.asset_name, row);
+            if (row.dozer_plant_no) defaults.set(row.dozer_plant_no, row);
+        }
+        frm.clear_table('dozer_production');
+        for (const asset of assets || []) {
+            const prior = defaults.get(asset.name) || defaults.get(asset.asset_name);
+            const row = frm.add_child('dozer_production');
+            row.asset_name = asset.name;
+            row.dozer_plant_no = asset.asset_name || '';
+            row.item_name = asset.item_name || '';
+            row.dozer_service = prior?.dozer_service || 'No Dozing';
+            row.bcm_hour = prior?.bcm_hour || 0;
+            row.mining_areas_dozer_child = prior?.mining_areas_dozer_child || '';
+            row.area_to = prior?.area_to || '';
+            row.dozer_geo_mat_layer = prior?.dozer_geo_mat_layer || '';
+            row.dozer_hauling_distance_meter = prior?.dozer_hauling_distance_meter || '';
+            if (!prior && frm.doc.mining_areas_options?.length === 1) {
+                row.mining_areas_dozer_child = frm.doc.mining_areas_options[0].mining_areas;
+            }
+        }
+        frm.refresh_field('dozer_production');
+        update_mining_area_dozer_options(frm);
+        update_dozer_geo_options(frm);
+        frm.__dozer_population_key = key;
+        if (typeof frm.dirty === 'function') frm.dirty();
+        else frm.doc.__unsaved = 1;
+        initializeOrRefreshUI(frm);
+    })();
+    frm.__dozer_population_promise = pending;
+    try {
+        await pending;
+    } finally {
+        if (frm.__dozer_population_promise === pending) frm.__dozer_population_promise = null;
+    }
 }
 function calculate_geo_mat_bcm_totals(frm) {
     // Get all truck loads and group by geo material layer
@@ -2730,3 +2775,62 @@ frappe.ui.form.on('Dozer Production', {
 // ============================================================
 // Hauling Distance Meter - mandatory per assigned excavator
 // ============================================================
+
+// Loading setup is conditional; existing DocType fields remain reusable.
+function hpLoadingFinalHour(doc) {
+    const countField = {Day: 'total_working_hours', Night: 'total_working_hour'}[doc.shift];
+    const system = /^(\d+)x(\d+)Hour$/.exec(doc.shift_system || '');
+    const configured = Number(countField ? doc[countField] : 0);
+    const count = configured > 0 ? configured : (system ? Number(system[2]) : 0);
+    const slot = /^(.*)-(\d+)$/.exec(doc.shift_num_hour || '');
+    return count > 0 && slot && slot[1] === doc.shift && Number(slot[2]) === count;
+}
+
+function hpValidateLoading(frm) {
+    const finalHour = hpLoadingFinalHour(frm.doc);
+    const fields = [
+        ['exc_to_area', 'To Area'],
+        ['exc_hauling_distance_meter', 'Hauling Distance Meter'],
+        ['exc_start_load_time', 'Start Load Time']
+    ];
+    const blank = value => value == null || String(value).trim() === '';
+    for (const row of frm.doc.truck_loads || []) {
+        const loading = Number(row.loads) > 0 && row.geo_mat_layer_truck;
+        const missing = loading ? fields.filter(([field]) => blank(row[field])).map(([, label]) => __(label)) : [];
+        if (!blank(row.exc_end_load_time) && blank(row.exc_start_load_time) && !missing.includes(__('Start Load Time'))) {
+            missing.push(__('Start Load Time'));
+        }
+        if (finalHour && (loading || !blank(row.exc_start_load_time)) && blank(row.exc_end_load_time)) {
+            missing.push(__('End Load Time'));
+        }
+        if (missing.length) {
+            frappe.throw(__('Row {0}, excavator {1}: Please complete {2}.', [
+                row.idx,
+                frappe.utils.escape_html(row.excavator_plant_no || row.asset_name_shoval || ''),
+                missing.join(', ')
+            ]));
+        }
+    }
+}
+
+frappe.ui.form.on('Hourly Production', {validate: hpValidateLoading});
+
+function hpValidateDozerSetup(frm) {
+    const fields = [
+        ['area_to', 'Area To'],
+        ['dozer_hauling_distance_meter', 'Hauling Distance Meter']
+    ];
+    for (const row of frm.doc.dozer_production || []) {
+        if (!((Number(row.bcm_hour) > 0 || row.dozer_service === 'Tip Dozing') && row.dozer_geo_mat_layer)) continue;
+        const missing = fields.filter(([field]) => !String(row[field] || '').trim())
+            .map(([, label]) => __(label));
+        if (missing.length) {
+            frappe.throw(__('Row {0}, dozer {1}: Please complete {2}.', [
+                row.idx,
+                frappe.utils.escape_html(row.dozer_plant_no || row.asset_name || ''),
+                missing.join(', ')
+            ]));
+        }
+    }
+}
+frappe.ui.form.on('Hourly Production', {validate: hpValidateDozerSetup});
