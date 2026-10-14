@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const {renderAnalysis, HourlyProductivityAnalysisPage} = require('../../../public/js/hourly_productivity_analysis.js');
+const {renderAnalysis, HourlyProductivityAnalysisPage} = require('../hourly_productivity/hourly_productivity.js');
 
 function fixture() {
   const cells = Array.from({length: 24}, (_, i) => ({label: `${(i+6)%24}:00`, category: 'unclassified',
@@ -74,7 +74,7 @@ test('investigation uses Frappe internal navigation to the production Summary pa
 });
 
 test('displayed percentage rounding reconciles to 100 without assigning empty slices', () => {
-  const {displayPercentages} = require('../../../public/js/hourly_productivity_analysis.js');
+  const {displayPercentages} = require('../hourly_productivity/hourly_productivity.js');
   const percentages = displayPercentages({total_hours:3, categories:Object.fromEntries(
     ['green','amber','red','bright_red','grey'].map((key,i)=>[key,{hours:i<3?1:0}]))});
   assert.equal(Object.values(percentages).reduce((a,b)=>a+Math.round(b*10),0),1000);

@@ -11,9 +11,7 @@ const root=path.resolve(__dirname,'../../..');
 const baseline=process.env.HP_BASELINE||'/tmp/hp-structure-baselines';
 const summary=JSON.parse(fs.readFileSync(path.join(baseline,'hps-dashboard.json'),'utf8'));
 const analysis=JSON.parse(fs.readFileSync(path.join(baseline,'hpa-fixture.json'),'utf8'));
-const bundle='/tmp/hourly-productivity.bundle.js';
-require(path.resolve(__dirname,'../../../../../frappe/node_modules/esbuild')).buildSync({
- entryPoints:[path.join(root,'public/js/hourly_productivity.bundle.js')],bundle:true,platform:'browser',outfile:bundle});
+
 
 (async()=>{
  const browser=await chromium.launch({headless:true,...(process.env.HPS_CHROMIUM?{executablePath:process.env.HPS_CHROMIUM}:{}),args:['--no-sandbox']});
@@ -48,7 +46,6 @@ require(path.resolve(__dirname,'../../../../../frappe/node_modules/esbuild')).bu
       return {message:request.method.endsWith('get_analysis')?analysis:summary};
      }};
    },{summary,analysis,tab,defer});
-   await page.addScriptTag({path:bundle});
    await page.addScriptTag({path:path.join(__dirname,'hourly_productivity.js')});
    await page.evaluate(()=>frappe.pages['hourly-productivity'].on_page_load(wrapper));
    if(!defer) await page.evaluate(()=>wrapper.hourlyProductivity.ready);
@@ -59,6 +56,7 @@ require(path.resolve(__dirname,'../../../../../frappe/node_modules/esbuild')).bu
   await setup();
   assert.equal((await host()).active,'summary');
   assert.equal(await page.locator('[role=tab]').count(),2);
+  assert.deepEqual(await page.evaluate(()=>assets),[],'No extra runtime bundle is requested');
   assert.equal(await page.locator('.hpa-shell').count(),0,'Second tab is lazy');
   assert.equal(await page.locator('style').count(),1,'Only the externally loaded application stylesheet');
   await page.evaluate(async()=>{
@@ -163,6 +161,6 @@ require(path.resolve(__dirname,'../../../../../frappe/node_modules/esbuild')).bu
   await page.locator('[data-tab=analysis]').focus();await page.keyboard.press('Home');
   await page.waitForFunction(()=>wrapper.hourlyProductivity.activeTab==='summary');
   assert.deepEqual(errors,[]);
-  console.log('PASS: default order, lazy tabs, bidirectional initial sync, independent filters, cached date navigation, no switch reload, investigation, cached aliases, latest-switch wins, built bundle/CSS loading, six visual comparisons with unchanged report dimensions');
+  console.log('PASS: default order, lazy tabs, bidirectional initial sync, independent filters, cached date navigation, no switch reload, investigation, cached aliases, latest-switch wins, standard Page script/CSS loading, six visual comparisons with unchanged report dimensions');
  } finally {await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

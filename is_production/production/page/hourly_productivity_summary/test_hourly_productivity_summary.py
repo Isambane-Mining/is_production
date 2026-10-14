@@ -556,9 +556,21 @@ def browser_fixture():
 
 
 class TestLegacyDashboardCompatibility(TestCase):
-    def test_original_imports_and_api_resolve_to_standard_page_functions(self):
-        from . import summary_dashboard as legacy
-        self.assertIs(legacy.build_dashboard, report.build_dashboard)
-        self.assertIs(legacy.planned_schedule, report.planned_schedule)
-        self.assertIs(legacy.get_dashboard, report.get_dashboard)
-        self.assertIn(legacy.get_dashboard, report.frappe.whitelisted)
+    legacy_method = "is_production.production.page.hourly_productivity_summary.summary_dashboard.get_dashboard"
+    current_method = "is_production.production.page.hourly_productivity_summary.hourly_productivity_summary.get_dashboard"
+
+    def test_legacy_http_method_resolves_before_import_and_remains_whitelisted(self):
+        from is_production import hooks
+        with patch.object(report.frappe, "get_hooks", return_value={
+                key: [value] for key, value in hooks.override_whitelisted_methods.items()}):
+            method = report.frappe.override_whitelisted_method(self.legacy_method)
+        self.assertEqual(method, self.current_method)
+        from importlib import import_module
+        module, name = method.rsplit(".", 1)
+        function = getattr(import_module(module), name)
+        self.assertIs(function, report.get_dashboard)
+        self.assertIn(function, report.frappe.whitelisted)
+
+    def test_direct_python_import_path_is_retired_as_approved(self):
+        from importlib.util import find_spec
+        self.assertIsNone(find_spec(self.legacy_method.rsplit(".", 1)[0]))

@@ -28,7 +28,7 @@ const fixture = JSON.parse(fs.readFileSync(process.env.HPA_FIXTURE, 'utf8'));
           return {message:request.method.endsWith('get_defaults')?{from_date:fixture.from_date,to_date:fixture.to_date}:fixture};
         }};
     },fixture);
-    await page.addScriptTag({path:path.resolve(__dirname,'../../../public/js/hourly_productivity_analysis.js')});
+    await page.addScriptTag({path:path.resolve(__dirname,'../hourly_productivity/hourly_productivity.js')});
     await page.evaluate(()=>wrapper.hourlyProductivityAnalysis = new is_production.hourly_productivity.Analysis(wrapper));
     await page.waitForFunction(()=>wrapper.hourlyProductivityAnalysis.initializing===false);
     await page.evaluate(()=>wrapper.hourlyProductivityAnalysis.site.set_value('Koppie'));

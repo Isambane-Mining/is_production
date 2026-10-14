@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {chromium} = require(process.env.HPS_PLAYWRIGHT || 'playwright-core');
 const fixture = JSON.parse(fs.readFileSync(process.env.HPS_FIXTURE, 'utf8'));
-const script = path.resolve(__dirname, '../../../public/js/hourly_productivity_summary.js');
+const script = path.resolve(__dirname, '../hourly_productivity/hourly_productivity.js');
 const jquery = path.resolve(__dirname, '../../../../../frappe/node_modules/jquery/dist/jquery.js');
 
 (async () => {
