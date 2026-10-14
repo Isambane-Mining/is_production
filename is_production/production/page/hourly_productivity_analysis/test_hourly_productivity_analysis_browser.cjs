@@ -12,8 +12,9 @@ const fixture = JSON.parse(fs.readFileSync(process.env.HPA_FIXTURE, 'utf8'));
     const page = await browser.newPage();
     const errors = [];
     page.on('pageerror',e=>errors.push(e.message));
-    await page.setContent('<html><body style="margin:0;padding:12px;font-family:Arial"><main id="main"></main></body></html>');
+    await page.setContent('<html><body style="margin:0;padding:12px;font-family:Arial"><main id="main" class="hourly-productivity"></main></body></html>');
     await page.addScriptTag({path:path.resolve(__dirname,'../../../../../frappe/node_modules/jquery/dist/jquery.js')});
+    await page.addStyleTag({path:path.resolve(__dirname,'../../../public/css/dashboards.css')});
     await page.evaluate(data => {
       window.fixture=data;window.wrapper={};window.calls=[];window.routes=[];
       window.frappe={set_route:route=>routes.push(route),pages:{'hourly-productivity-analysis':{}},
@@ -27,8 +28,8 @@ const fixture = JSON.parse(fs.readFileSync(process.env.HPA_FIXTURE, 'utf8'));
           return {message:request.method.endsWith('get_defaults')?{from_date:fixture.from_date,to_date:fixture.to_date}:fixture};
         }};
     },fixture);
-    await page.addScriptTag({path:path.join(__dirname,'hourly_productivity_analysis.js')});
-    await page.evaluate(()=>frappe.pages['hourly-productivity-analysis'].on_page_load(wrapper));
+    await page.addScriptTag({path:path.resolve(__dirname,'../../../public/js/hourly_productivity_analysis.js')});
+    await page.evaluate(()=>wrapper.hourlyProductivityAnalysis = new is_production.hourly_productivity.Analysis(wrapper));
     await page.waitForFunction(()=>wrapper.hourlyProductivityAnalysis.initializing===false);
     await page.evaluate(()=>wrapper.hourlyProductivityAnalysis.site.set_value('Koppie'));
     assert.equal(await page.locator('.hpa-cell').count(),fixture.rows.length*24);

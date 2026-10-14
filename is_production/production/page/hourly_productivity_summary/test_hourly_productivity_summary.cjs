@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const {renderSummary, selectedIndex, HourlyProductivitySummaryPage} = require('./hourly_productivity_summary.js');
+const {renderSummary, selectedIndex, HourlyProductivitySummaryPage} = require('../../../public/js/hourly_productivity_summary.js');
 
 function fixture() {
   const hour = {shift: 'Day', label: '06:00–07:00', schedule: 'working', has_record: false,

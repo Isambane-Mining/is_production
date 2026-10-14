@@ -7,7 +7,7 @@ from frappe.utils import getdate, now_datetime
 
 from is_production.production.controllers.production_summary_periods import source_hour
 from is_production.production.page.hourly_productivity_summary import hourly_productivity_summary as summary
-from is_production.production.page.hourly_productivity_summary.summary_dashboard import planned_schedule
+from is_production.production.page.hourly_productivity_summary.hourly_productivity_summary import planned_schedule
 
 CATEGORIES = ("green", "amber", "red", "bright_red", "grey")
 

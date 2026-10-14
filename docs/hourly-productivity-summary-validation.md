@@ -5,7 +5,7 @@ The existing Summary page has been redesigned in the LAB checkout on `juan-hourl
 ## Changes and calculation definitions
 
 - Filters: Site, From Date, To Date, Day/Night/Full Day. A production day runs from 06:00 to the following 06:00. Maximum range is 366 dates. Navigation changes selected-day details without refetching or changing range KPIs/chart. Refresh preserves the selected day when it is still in the result.
-- `summary_dashboard.py` composes the existing `build_summary`, `load_sources`, latest-covering-MPP selector and Engineering ADT builder. It buckets source documents once by operational date, retaining the original parent/child deduplication. Stored Truck Loads BCM is summed; dozer production is excluded. All recorded excavator output remains in Actual BCM.
+- `hourly_productivity_summary.py` contains the range dashboard and composes the existing `build_summary`, `load_sources`, latest-covering-MPP selector and Engineering ADT builder. It buckets source documents once by operational date, retaining the original parent/child deduplication. Stored Truck Loads BCM is summed; dozer production is excluded. All recorded excavator output remains in Actual BCM.
 - Saved MPP `num_excavators` sets targets. Each standard planned shift uses 55 + 10 × 220 + 165 = 2,420 BCM per excavator. Full Day adds the two shifts. PBM never reduces the target. The saved child `production_excavators` daily count is not substituted for the requested parent count.
 - Saved MPP `month_prod_days` rows supply each date's Day/Night required hours. An unambiguous saved zero-hour shift has zero target and the not-planned category. A saved 12-hour shift uses the fixed target profile. No weekday/weekend defaults are regenerated or inferred.
 - **Reduced hours remain unclassified by user approval.** MPP stores shift-hour totals, not start/end windows for a shortened shift. Missing/duplicate date rows, missing required-hour values, non-12-hour positive schedules and incompatible 3×8-hour plans cannot safely locate hourly targets. Their targets/achievement are unavailable rather than guessed. Startup/fatigue configuration and captured production times do not prove planned work windows.
@@ -32,7 +32,7 @@ The existing Summary page has been redesigned in the LAB checkout on `juan-hourl
 Reproduce fixture generation without a database:
 
 ```sh
-/home/juan/juan-bench/env/bin/python -m is_production.production.page.hourly_productivity_summary.dashboard_browser_fixture /tmp/hps-dashboard.json
+/home/juan/juan-bench/env/bin/python -c 'import json; from pathlib import Path; from is_production.production.page.hourly_productivity_summary.test_hourly_productivity_summary import browser_fixture; Path("/tmp/hps-dashboard.json").write_text(json.dumps(browser_fixture()))'
 ```
 
 Run the browser test with the installed Playwright core and Chromium paths supplied through `HPS_PLAYWRIGHT`, `HPS_CHROMIUM` and the generated `HPS_FIXTURE`. The script is `test_hourly_productivity_browser.cjs` in the Summary page directory.
@@ -54,3 +54,14 @@ MySQLdb.OperationalError: (1045, "Access denied for user 'juan'@'localhost' (usi
 No secrets were printed, and credentials/configuration/permissions were not changed. The authorised administrator should verify the intended MariaDB instance, account host matching and authentication plugin, then privately compare the existing site credentials with approved LAB configuration. Repeat the read-only connection test before migration/deployment.
 
 Still unvalidated: actual saved LAB MPP schedule coverage, real production/PBM parity, live user permissions, saved startup/fatigue records and the logged-in Desk route. These require restored LAB connectivity. Reduced schedules and incomplete saved excavator identities remain explicit data-model limitations; this task introduces no fields or guesses to resolve them.
+
+
+## Combined-page structural refactor, 14 October 2026
+
+Canonical Page: `/app/hourly-productivity`, Summary first/default and Analysis second. Old Page JSON/roles remain; old Page scripts redirect internally with a tab selection, including cached route revisits. Report UI classes live in `public/js/hourly_productivity_summary.js` and `public/js/hourly_productivity_analysis.js`, loaded through `hourly_productivity.bundle.js`. All report styles are scoped in the existing `public/css/dashboards.css` Desk asset; only data-dependent pie stops are supplied as CSS property values.
+
+Each report mounts once. The second report copies Site/From/To only on first opening after the entry report finishes initialising its filters (without waiting for its data request); subsequent tab switches retain controls, cached DOM and Summary date navigation without another data request. The Analysis investigation button selects the cached Summary tab.
+
+Range calculations moved unchanged into the standard Summary Page Python module. `summary_dashboard.py` is retained strictly as a deprecated import/HTTP API compatibility shim, because deleting it could break existing callers. Its functions refer to the standard Page implementation, with no copied calculations. Test cases and browser-fixture generation moved into the standard Summary test module without removing coverage.
+
+Synthetic baselines: `/tmp/hp-structure-baselines`. Visual comparisons align report viewport origin (excluding the new tab strip) and match the baseline's button interaction state. Report dimensions remain unchanged at 390/768/1280px. Summary captures are byte-identical; Analysis comparisons have no perceptual differences, with minor antialias rasterisation differences. Full combined-page screenshots retain the tab strip. Live Page registration, real routes, permissions and asset delivery still require restored LAB connectivity and separately authorised registration/deployment; none was performed here.
