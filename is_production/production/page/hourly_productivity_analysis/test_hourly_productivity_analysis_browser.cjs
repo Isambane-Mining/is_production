@@ -7,16 +7,17 @@ const {chromium} = require(process.env.HPS_PLAYWRIGHT || 'playwright-core');
 const fixture = JSON.parse(fs.readFileSync(process.env.HPA_FIXTURE, 'utf8'));
 
 (async () => {
-  const browser = await chromium.launch({headless:true,args:['--no-sandbox']});
+  const browser = await chromium.launch({headless:true,...(process.env.HPS_CHROMIUM ? {executablePath:process.env.HPS_CHROMIUM} : {}),args:['--no-sandbox']});
   try {
     const page = await browser.newPage();
     const errors = [];
     page.on('pageerror',e=>errors.push(e.message));
-    await page.setContent('<html><body style="margin:0;padding:12px;font-family:Arial"><main id="main"></main></body></html>');
+    await page.setContent('<html><body style="margin:0;padding:12px;font-family:Arial"><main id="main" class="hourly-productivity"></main></body></html>');
     await page.addScriptTag({path:path.resolve(__dirname,'../../../../../frappe/node_modules/jquery/dist/jquery.js')});
+    await page.addStyleTag({path:path.resolve(__dirname,'../../../public/css/dashboards.css')});
     await page.evaluate(data => {
-      window.fixture=data;window.wrapper={};window.calls=[];
-      window.frappe={pages:{'hourly-productivity-analysis':{}},
+      window.fixture=data;window.wrapper={};window.calls=[];window.routes=[];
+      window.frappe={set_route:route=>routes.push(route),pages:{'hourly-productivity-analysis':{}},
         ui:{make_app_page:()=>({main:window.$('#main')}),form:{make_control:({parent,df})=>{
           const input=window.$('<input>').css({width:'100%',boxSizing:'border-box',height:'32px'});
           parent.append(window.$('<label>').text(df.label),input);
@@ -27,13 +28,29 @@ const fixture = JSON.parse(fs.readFileSync(process.env.HPA_FIXTURE, 'utf8'));
           return {message:request.method.endsWith('get_defaults')?{from_date:fixture.from_date,to_date:fixture.to_date}:fixture};
         }};
     },fixture);
-    await page.addScriptTag({path:path.join(__dirname,'hourly_productivity_analysis.js')});
-    await page.evaluate(()=>frappe.pages['hourly-productivity-analysis'].on_page_load(wrapper));
+    await page.addScriptTag({path:path.resolve(__dirname,'../hourly_productivity/hourly_productivity.js')});
+    await page.evaluate(()=>wrapper.hourlyProductivityAnalysis = new is_production.hourly_productivity.Analysis(wrapper));
     await page.waitForFunction(()=>wrapper.hourlyProductivityAnalysis.initializing===false);
     await page.evaluate(()=>wrapper.hourlyProductivityAnalysis.site.set_value('Koppie'));
     assert.equal(await page.locator('.hpa-cell').count(),fixture.rows.length*24);
     assert.equal(await page.locator('.hpa-legend>div').count(),5);
     assert.equal(await page.locator('.hpa-hour').count(),24);
+    assert.equal(await page.locator('.hpa-warning').count(),0);
+    assert.equal(await page.locator('.hpa-note').count(),0);
+    assert.ok((await page.locator('.hpa-targets').innerText()).includes('Normal hourly target: 440 BCM'));
+    assert.ok((await page.locator('.hpa-legend').innerText()).includes('Not planned to work'));
+    await page.locator('.hpa-investigate').click();
+    assert.deepEqual(await page.evaluate(()=>routes), ['/desk/production/hourly-productivity-summary']);
+    const classification = await page.evaluate(() => {
+      const expected = {green:'rgb(216, 239, 223)',amber:'rgb(255, 240, 199)',red:'rgb(251, 225, 227)',
+        bright_red:'rgb(255, 185, 192)',grey:'rgb(247, 248, 250)',unclassified:'rgb(238, 242, 247)'};
+      const cells=[...document.querySelectorAll('.hpa-cell')];
+      return cells.every((cell,index) => {
+        const category=fixture.rows[Math.floor(index/24)].cells[index%24].category;
+        return cell.classList.contains('hpa-'+category) && getComputedStyle(cell).backgroundColor === expected[category];
+      });
+    });
+    assert.ok(classification, 'Table colours must match backend categories');
     for (const width of [390,768,1280]) {
       await page.setViewportSize({width,height:1000});
       assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
@@ -68,6 +85,6 @@ const fixture = JSON.parse(fs.readFileSync(process.env.HPA_FIXTURE, 'utf8'));
     assert.equal(await page.locator('.hpa-cell').count(),0);
     assert.ok((await page.locator('.hpa-message').innerText()).includes('Unable to load'));
     assert.deepEqual(errors,[]);
-    console.log('PASS: 24-hour matrix, 5-category pie, responsive 390/768/1280px, frozen date column, invalid range, stale response, access-error clearing');
+    console.log('PASS: 24-hour matrix, targets, warnings removed, internal investigation navigation, classification colours, 5-category pie, responsive 390/768/1280px, frozen date column, invalid range, stale response, access-error clearing');
   } finally {await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});
