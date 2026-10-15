@@ -7,7 +7,6 @@ from frappe.utils import getdate, now_datetime
 
 from is_production.production.controllers.production_summary_periods import source_hour
 from is_production.production.page.hourly_productivity_summary import hourly_productivity_summary as summary
-from is_production.production.page.hourly_productivity_summary.hourly_productivity_summary import planned_schedule
 
 CATEGORIES = ("green", "amber", "red", "bright_red", "grey")
 
@@ -23,13 +22,12 @@ def validate_range(from_date, to_date):
 
 def category(hour):
     target, actual = hour["target_bcm"], hour["actual_bcm"]
-    if hour['schedule'] == 'off':
-        return 'grey'
-    if (not hour['completed'] or hour['schedule'] != 'working' or not hour['has_record']
-            or target is None or target <= 0):
-        return 'unclassified'
-    if actual == 0 and (hour['excavator_available'] or 0) > 0:
-        return 'bright_red'
+    if target is None:
+        raise ValueError("Hourly target is unavailable; a covering MPP is required")
+    if target == 0:
+        return "grey"
+    if actual == 0 and hour["completed"] and (hour["excavator_available"] or 0) > 0:
+        return "bright_red"
     if actual >= target:
         return "green"
     if actual >= target * .85:
@@ -57,7 +55,6 @@ def build_analysis(from_date, to_date, site, plans, assets, breakdowns, document
     rows = []
     counts = dict.fromkeys(CATEGORIES, 0)
     missing = pending = 0
-    excluded = dict(missing=0, pending=0, schedule_unknown=0, no_target=0)
     for offset in range((last - first).days + 1):
         date = first + timedelta(days=offset)
         plan = summary.select_plan(plans, site, date)
@@ -70,39 +67,24 @@ def build_analysis(from_date, to_date, site, plans, assets, breakdowns, document
                                                now=now, estimate_availability=False)
             warnings.extend(shift_data["warnings"])
             load_times[shift] = shift_data["excavators"]
-            schedule = planned_schedule(plan, date, shift)
-            for hour in shift_data['hours']:
-                target = 0 if schedule == 'off' else hour['target_bcm'] if schedule == 'working' else None
-                hour.update(schedule=schedule, target_bcm=target,
-                            achievement=hour['actual_bcm'] / target * 100 if target else None)
+            for hour in shift_data["hours"]:
                 colour = category(hour)
-                if not hour['completed']:
-                    excluded['pending'] += 1
-                elif colour in counts:
-                    counts[colour] += 1
-                elif schedule == 'unknown':
-                    excluded['schedule_unknown'] += 1
-                elif not target:
-                    excluded['no_target'] += 1
-                else:
-                    excluded['missing'] += 1
+                counts[colour] += 1
                 missing += int(hour["record_status"] == "missing")
                 pending += int(not hour["completed"])
                 cells.append({key: hour[key] for key in ("label", "start", "end", "actual_bcm", "target_bcm",
                               "achievement", "has_record", "record_status", "excavator_available",
-                              "excavator_utilised", "excavator_unavailable", "completed", "schedule")} | {"category": colour})
+                              "excavator_utilised", "excavator_unavailable", "completed")} | {"category": colour})
         rows.append({"date": date.isoformat(), "day": date.strftime("%a"), "month": date.strftime("%B %Y"),
-                     "month_key": date.strftime("%Y-%m"), "plan_name": plan["name"],
-                     "production_excavator_count": shift_data["production_excavator_count"], "cells": cells, "load_times": load_times})
-    total = sum(counts.values())
+                     "month_key": date.strftime("%Y-%m"), "plan_name": plan["name"], "cells": cells, "load_times": load_times})
+    total = len(rows) * 24
     if missing:
-        warnings.append(f"{missing} completed hourly cells have no production record. Displayed zero is unverified; missing working cells are excluded from the pie.")
+        warnings.append(f"{missing} completed hourly cells have no production record. Displayed zero is unverified; missing cells remain in the pie denominator.")
     if pending:
-        warnings.append(f"{pending} hourly cells are unfinished or future. They are excluded from completed performance percentages.")
+        warnings.append(f"{pending} hourly cells are unfinished or future. They remain in the pie denominator; bright-red availability claims require a completed hour.")
     return {"site": site, "from_date": first.isoformat(), "to_date": last.isoformat(), "rows": rows,
-            "excluded": excluded, "total_cells": len(rows) * 24,
             "hours": [cell["label"] for cell in rows[0]["cells"]], "warnings": list(dict.fromkeys(warnings)),
-            "pie": {"total_hours": total, "categories": {key: {"hours": value, "percent": value / total * 100 if total else 0}
+            "pie": {"total_hours": total, "categories": {key: {"hours": value, "percent": value / total * 100}
                                                         for key, value in counts.items()}},
             "missing_hours": missing, "pending_hours": pending}
 
