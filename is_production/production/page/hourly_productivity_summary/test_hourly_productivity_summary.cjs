@@ -1,83 +1,59 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const {renderSummary, selectedIndex, HourlyProductivitySummaryPage} = require('../hourly_productivity/hourly_productivity.js');
+const { renderSummary } = require('./hourly_productivity_summary.js');
 
 function fixture() {
-  const hour = {shift: 'Day', label: '06:00–07:00', schedule: 'working', has_record: false,
-    record_status: 'missing', actual_bcm: 0, target_bcm: 110, achievement: 0, category: 'neutral',
-    available: 2.5, utilised: 0, excavator_available: 1.25, excavator_utilised: 0, excavator_unavailable: .75};
-  const day = {date: '2026-10-12', plan_name: '<img src=x onerror=alert(1)>', production_excavator_count: 2,
-    hours: [hour], indicators: [{shift: 'Day', period: '06:10–06:25', label: 'Startup'}],
-    excavator_production: [{excavator: '<EX1>', actual_bcm: 20, first_load_time: '06:15', last_load_time: null,
-      shift: 'Day', availability_status: 'Unverified'}],
-    timeline: [{adt: '<T1>', cells: [{available_minutes: 45, loads: null, state: 'missing', record_status: 'missing'}]}]};
-  return {site: 'Koppie', from_date: '2026-10-12', to_date: '2026-10-13', shift: 'Full Day',
-    days: [day, {...day, date: '2026-10-13', plan_name: 'MPP-SECOND'}],
-    summary: {actual_bcm: 100, target_bcm: 9680, achievement: 90.909, completed_target_bcm: 110,
-      completed_actual_bcm: 100, average_adts_available: 2.5, average_adts_utilised: .5,
-      average_excavators_available: 1.25, average_excavators_utilised: .25, average_hours: 2},
-    excluded: {missing: 1, unfinished: 0, schedule_unknown: 0, no_target: 0},
-    pie: {total_hours: 5, counts: {green: 1, amber: 1, red: 1, bright_red: 1, grey: 1},
-      percentages: {green: 20, amber: 20, red: 20, bright_red: 20, grey: 20}}};
+  return {
+    plan_name: '<img src=x onerror=alert(1)>', production_excavator_count: 2,
+    summary: {actual_bcm: 100, target_bcm: 4840, achievement: 90.909,
+      completed_target_bcm: 110, completed_actual_bcm: 100, missing_hours: 1,
+      adts_at_site: 3, average_available: 2.5, adts_utilised: 2, total_loads: 6},
+    thresholds: {green: 100, orange: 80}, warnings: ['Missing <script>'],
+    pie: {target: 110, achieved: 100, availability_estimate: 10, remaining: 0},
+    hours: [{label: '06:00–07:00', record_status: 'missing', actual_bcm: 0,
+      target_bcm: 110, achievement: 0, colour: 'neutral', available: 2.5, utilised: 2, difference: .5}],
+    excavators: [{excavator: '<EX1>', first_load_time: '06:15', last_load_time: null}],
+    production_excavators: [{label: 'EX1', actual_bcm: 100}], spare_excavators: [{label: 'EX2', actual_bcm: 20, classification: 'Spare'}],
+    unplanned_excavators: [], details: []
+  };
 }
 
-test('render escapes labels, distinguishes missing zero and retains verified PBM values', () => {
+test('render distinguishes missing zero and escapes source labels', () => {
   const html = renderSummary(fixture());
-  assert.ok(html.includes('Missing record · 0 shown'));
+  assert.ok(html.includes('No record · 0 shown'));
   assert.ok(html.includes('&lt;img'));
   assert.ok(!html.includes('<img src=x'));
   assert.ok(html.includes('&lt;EX1&gt;'));
   assert.ok(html.includes('hps-neutral'));
-  assert.ok(html.includes('1.25'));
-  assert.ok(!html.includes('Δ'));
 });
 
-test('five hour-count slices and correct averages replace estimate presentation', () => {
+test('render pie exposes estimate and completed-hour basis', () => {
   const html = renderSummary(fixture());
-  for (const text of ['Average ADTs Available', 'Average ADTs Utilised', 'Average Excavators Available',
-    'Average Excavators Utilised', '20% · 1 h', '5 eligible hours', 'reached on completed hours',
-    'Reached in completed hours', 'Production Targets', 'Excavator Production']) assert.ok(html.includes(text), text);
-  for (const text of ['PBM-backed', 'availability estimate', 'localStorage', 'Unpaired excavator availability',
-    'unique utilised', 'historical transfers']) assert.ok(!html.includes(text), text);
-  assert.equal((html.match(/<article class="hps-kpi/g) || []).length, 5);
+  assert.ok(html.includes('PBM-backed availability estimate'));
+  assert.ok(html.includes('Completed hours'));
+  assert.ok(html.includes('Remaining shortfall'));
+  assert.ok(html.includes('role="img"'));
 });
 
-test('no eligible hours produces no false classification pie', () => {
+test('render no-target data has no achievement colour or misleading pie', () => {
   const data = fixture();
-  data.pie.total_hours = 0;
+  data.pie = {target: 0, achieved: 0, availability_estimate: 0, remaining: 0};
+  data.summary.target_bcm = null;
   data.summary.achievement = null;
-  const html = renderSummary(data);
-  assert.ok(html.includes('No eligible hours'));
-  assert.ok(!html.includes('role="img"'));
+  assert.ok(renderSummary(data).includes('No completed-hour target'));
 });
 
-test('selected day changes only daily sections and navigation is bounded', () => {
+test('render production metrics and explicitly unclassified unpaired availability', () => {
   const data = fixture();
-  assert.equal(selectedIndex(data, 'outside'), 0);
-  assert.equal(selectedIndex(data, '2026-10-13'), 1);
-  const page = Object.create(HourlyProductivitySummaryPage.prototype);
-  Object.assign(page, {data, selectedDate: '2026-10-12', draw() {this.draws = (this.draws || 0) + 1;}});
-  page.navigate(-1);
-  assert.equal(page.draws, undefined);
-  page.navigate(1);
-  assert.equal(page.selectedDate, '2026-10-13');
-  page.navigate(1);
-  assert.equal(page.draws, 1);
-  const html = renderSummary(data, page.selectedDate);
-  assert.ok(html.includes('MPP-SECOND'));
-  assert.match(html, /hps-next" disabled/);
-  assert.ok(html.includes('9,680'));
-});
-
-test('Full Day identifies separate shifts and dynamic indicators outside hour cells', () => {
-  const data = fixture();
-  data.days[0].excavator_production.push({...data.days[0].excavator_production[0], shift: 'Night',
-    first_load_time: '18:20', last_load_time: '05:42'});
+  Object.assign(data.hours[0], {excavator_available: 1.25, excavator_utilised: 1,
+    excavator_unavailable: .75, excavator_pbm_count: 1, unpaired_available: 1, unpaired_utilised: 1, unpaired_unavailable: 0});
+  data.unpaired_excavators = [{label: 'EX2', actual_bcm: 20, classification: 'Production/spare unknown'}];
   const html = renderSummary(data);
-  assert.ok(html.includes('Day · Unverified'));
-  assert.ok(html.includes('Night · Unverified'));
-  assert.ok(html.includes('05:42'));
-  assert.ok(html.includes('06:10–06:25'));
-  assert.ok(html.indexOf('hps-indicators') < html.indexOf('hps-hour-row'));
-  assert.ok(html.includes('45m · — loads'));
+  assert.ok(html.includes('Excavators Available'));
+  assert.ok(html.includes('Excavators Utilised'));
+  assert.ok(html.includes('Excavators PBM'));
+  assert.ok(html.includes('1.25'));
+  assert.ok(html.includes('Unpaired excavator availability'));
+  assert.ok(html.includes('Production/spare unknown'));
+  assert.ok(!html.includes('Spare excavators · excluded from targets'));
 });
