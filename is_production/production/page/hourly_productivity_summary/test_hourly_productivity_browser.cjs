@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {chromium} = require(process.env.HPS_PLAYWRIGHT || 'playwright-core');
 const fixture = JSON.parse(fs.readFileSync(process.env.HPS_FIXTURE, 'utf8'));
-const script = path.resolve(__dirname, '../hourly_productivity/hourly_productivity.js');
+const script = path.join(__dirname, 'hourly_productivity_summary.js');
 const jquery = path.resolve(__dirname, '../../../../../frappe/node_modules/jquery/dist/jquery.js');
 
 (async () => {
@@ -15,9 +15,8 @@ const jquery = path.resolve(__dirname, '../../../../../frappe/node_modules/jquer
     const page = await browser.newPage();
     const errors = [];
     page.on('pageerror', e => errors.push(e.message));
-    await page.setContent('<html><body style="margin:0;padding:12px;font-family:Arial"><main id="main" class="hourly-productivity"></main></body></html>');
+    await page.setContent('<html><body style="margin:0;padding:12px;font-family:Arial"><main id="main"></main></body></html>');
     await page.addScriptTag({path: jquery});
-    await page.addStyleTag({path: path.resolve(__dirname, '../../../public/css/dashboards.css')});
     await page.evaluate(data => {
       window.__ = text => text;
       window.fixture = data;
@@ -42,7 +41,7 @@ const jquery = path.resolve(__dirname, '../../../../../frappe/node_modules/jquer
       };
     }, fixture);
     await page.addScriptTag({path: script});
-    await page.evaluate(() => wrapper.hourlyProductivitySummary = new is_production.hourly_productivity.Summary(wrapper));
+    await page.evaluate(() => frappe.pages['hourly-productivity-summary'].on_page_load(wrapper));
     await page.waitForFunction(() => wrapper.hourlyProductivitySummary.initializing === false);
     await page.evaluate(async () => {
       await wrapper.hourlyProductivitySummary.to_date.set_value('2026-10-13');
