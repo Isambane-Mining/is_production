@@ -2,6 +2,8 @@ from datetime import datetime, time, timedelta
 from unittest import TestCase
 from unittest.mock import patch
 
+from frappe.utils import getdate
+
 from is_production.production.page.hourly_productivity_summary import hourly_productivity_summary as report
 
 
@@ -226,6 +228,69 @@ class TestHourlyProductivitySummary(TestCase):
         self.assertEqual((rows["EX2"]["first_load_time"], rows["EX2"]["last_load_time"]), ("07:20", "16:40"))
 
 
+    def test_fatigue_presentation_keeps_all_bcm_availability_and_pie_values(self):
+        from copy import deepcopy
+        data = self.build([self.doc("13:00-14:00", rows=[self.row(bcm=440)])])
+        original = deepcopy(data)
+        fatigue = [{"site": "Koppie", "shift": "Day", "day_type": "Weekday",
+                    "fatigue_start": "13:00", "fatigue_end": "13:30"}]
+        report.apply_schedule_presentation(data, self.plan, getdate("2026-10-12"), "Day", "Koppie", fatigue)
+        cell = data["hours"][7]
+        self.assertEqual(cell["presentation_segments"], [
+            {"start_percent": 0, "end_percent": 50, "category": "blue"},
+            {"start_percent": 50, "end_percent": 100, "category": "green"}])
+        self.assertEqual(cell["fatigue_minutes"], 30)
+        self.assertEqual(data["pie"], original["pie"])
+        self.assertEqual(data["summary"], original["summary"])
+        for hour, before in zip(data["hours"], original["hours"]):
+            self.assertEqual({key: hour[key] for key in before}, before)
+
+    def test_confirmed_zero_shift_hours_are_grey_even_with_fatigue(self):
+        self.plan["month_prod_days"] = [{"shift_start_date":"2026-10-12", "shift_day_hours":0,
+                                        "shift_night_hours":12}]
+        data = self.build()
+        report.apply_schedule_presentation(data, self.plan, getdate("2026-10-12"), "Day", "Koppie", [
+            {"site":"Koppie", "shift":"Day", "day_type":"Weekday", "fatigue_start":"13:00", "fatigue_end":"13:30"}])
+        self.assertTrue(all(hour["presentation_colour"] == "grey" for hour in data["hours"]))
+        self.assertTrue(all(hour["non_working_minutes"] == 60 for hour in data["hours"]))
+        self.assertTrue(all(hour["fatigue_minutes"] == 0 for hour in data["hours"]))
+        self.assertEqual(data["summary"]["target_bcm"],4840)
+
+    def test_missing_plan_is_never_confirmed_non_working(self):
+        data = self.build(plan={})
+        report.apply_schedule_presentation(data, None, getdate("2026-10-12"), "Day", "Koppie", [])
+        self.assertTrue(all(hour["presentation_colour"] == "neutral" for hour in data["hours"]))
+        self.assertTrue(all(hour["non_working_minutes"] == 0 for hour in data["hours"]))
+
+    def test_night_fatigue_is_split_at_midnight_without_changing_targets(self):
+        data = self.build(shift="Night")
+        report.apply_schedule_presentation(data, self.plan, getdate("2026-10-12"), "Night", "Koppie", [
+            {"site":"Koppie", "shift":"Night", "day_type":"Weekday", "fatigue_start":"23:45", "fatigue_end":"00:15"}])
+        self.assertEqual([data["hours"][i]["fatigue_minutes"] for i in (5,6)], [15,15])
+        self.assertEqual(data["hours"][5]["target_bcm"],440)
+
+    def test_working_presentation_is_binary_despite_configured_thresholds(self):
+        docs=[self.doc(rows=[self.row(bcm=110)]),self.doc("07:00-08:00",rows=[self.row(bcm=400)])]
+        data=self.build(docs,green_threshold=105,orange_threshold=80)
+        report.apply_schedule_presentation(data,self.plan,getdate("2026-10-12"),"Day","Koppie",[])
+        self.assertEqual([h["presentation_colour"] for h in data["hours"][:3]], ["green","red","red"])
+
+
+    def test_fatigue_access_denial_preserves_report_with_explicit_warning(self):
+        plan = dict(self.plan,location="Koppie",prod_month_start_date="2026-10-01",prod_month_end_date="2026-10-31")
+        docs = [self.doc(rows=[self.row(bcm=110)])]
+        with patch.object(report.frappe,"session",report.frappe._dict(user="user@example.com")), \
+                patch.object(report,"load_sources",return_value=([plan],docs,self.assets,[])), \
+                patch.object(report,"_read_document",return_value={"green_threshold":100,"orange_threshold":80}), \
+                patch.object(report,"load_fatigue",side_effect=report.frappe.PermissionError), \
+                patch.object(report,"now_datetime",return_value=datetime(2026,10,14)):
+            data=report.get_summary("2026-10-12","Day","Koppie")
+        self.assertEqual(data["summary"]["actual_bcm"],110)
+        self.assertEqual(data["summary"]["target_bcm"],4840)
+        self.assertTrue(any("Fatigue colouring is unavailable" in warning for warning in data["warnings"]))
+        self.assertEqual(sum(hour["fatigue_minutes"] for hour in data["hours"]),0)
+
+
 class TestLoaderPermissions(TestCase):
     def test_guest_denied_before_reading_sources(self):
         with patch.object(report.frappe, "session", report.frappe._dict(user="Guest")):
@@ -274,7 +339,9 @@ class TestLoaderPermissions(TestCase):
             ("Location", "Koppie"): {"name": "Koppie"},
             ("Monthly Production Planning", "MPP"): fixture.plan,
             ("Hourly Production", "HP1"): fixture.doc("00:00-01:00", "2026-10-13", [fixture.row(bcm=100)]),
-            ("Hourly Productivity Settings", "Hourly Productivity Settings"): {"green_threshold": 100, "orange_threshold": 80}
+            ("Hourly Productivity Settings", "Hourly Productivity Settings"): {"green_threshold": 100, "orange_threshold": 80},
+            ("Startup and Fatigue spesification", "FAT"): {"site":"Koppie", "shift":"Night", "day_type":"Weekday",
+                                                         "fatigue_start":"01:00", "fatigue_end":"01:30"}
         }
         docs.update({("Asset", a["name"]): a for a in fixture.assets})
         reads = []
@@ -289,6 +356,9 @@ class TestLoaderPermissions(TestCase):
                 return docs[self.key]
         def database_list(doctype, **kwargs):
             filters = kwargs["filters"]
+            if doctype == "Startup and Fatigue spesification":
+                self.assertEqual(filters, {"site": "Koppie", "shift":"Night"})
+                return [report.frappe._dict(name="FAT")]
             if doctype == "Hourly Production":
                 self.assertEqual(filters["prod_date"], ["between", [report.getdate("2026-10-12"), report.getdate("2026-10-13")]])
                 self.assertNotIn("shift", filters)
@@ -311,3 +381,34 @@ class TestLoaderPermissions(TestCase):
             data = report.get_summary("2026-10-12", "Night", "Koppie")
         self.assertEqual(data["hours"][6]["actual_bcm"], 100)
         self.assertIn((("Hourly Production", "HP1"), "read"), reads)
+        self.assertIn((("Startup and Fatigue spesification", "FAT"), "read"), reads)
+        self.assertEqual(data["hours"][7]["fatigue_minutes"],30)
+
+
+    def test_hidden_mpp_hours_cannot_establish_non_working_shift(self):
+        class RestrictedDocument:
+            restricted = False
+            def check_permission(self, permission):
+                pass
+            def apply_fieldlevel_read_permissions(self):
+                self.restricted = True
+            def as_dict(self):
+                return {"name":"MPP", "month_prod_days":[{"shift_start_date":"2026-10-12",
+                                                         "shift_day_hours":0 if self.restricted else 12}]}
+        with patch.object(report.frappe,"get_doc",return_value=RestrictedDocument()):
+            plan=report._read_document("Monthly Production Planning","MPP")
+        self.assertEqual(plan["month_prod_days"],[])
+
+    def test_restricted_fatigue_fields_cannot_be_used_for_colouring(self):
+        class RestrictedDocument:
+            restricted = False
+            def check_permission(self, permission):
+                pass
+            def apply_fieldlevel_read_permissions(self):
+                self.restricted = True
+            def as_dict(self):
+                return {"site":"Koppie", "shift":"Day", "day_type":"Weekday",
+                        "fatigue_start":None if self.restricted else "13:00", "fatigue_end":"13:30"}
+        with patch.object(report.frappe,"get_doc",return_value=RestrictedDocument()):
+            with self.assertRaises(report.frappe.PermissionError):
+                report._read_document("Startup and Fatigue spesification","FAT")
