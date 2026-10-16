@@ -9,6 +9,7 @@ from frappe.utils import get_datetime, getdate, now_datetime
 
 from engineering.engineering.page.adt_hourly_productivity import adt_hourly_productivity as adt
 from is_production.production.controllers.production_summary_periods import source_hour
+from is_production.production.controllers.hourly_productivity_schedule import hour_segments, shift_windows
 
 
 def _roster(plan):
@@ -242,6 +243,30 @@ def build_summary(date, shift, site, plan, assets, breakdowns, documents, *, now
     return data
 
 
+def apply_schedule_presentation(data, plan, date, shift, site, fatigue):
+    """Decorate hours without changing any production, capacity or target calculation."""
+    windows, kind = shift_windows(plan, date, shift, site, fatigue, data["warnings"])
+    for hour in data["hours"]:
+        target = hour["target_bcm"]
+        colour = "neutral" if target is None else "green" if hour["actual_bcm"] >= target else "red"
+        excluded_colour = "grey" if kind == "non_working" else "blue"
+        segments, minutes = hour_segments(hour, windows, colour, excluded_category=excluded_colour)
+        hour.update(presentation_segments=segments, presentation_colour=excluded_colour if minutes == 60 else colour,
+                    fatigue_minutes=minutes if kind == "fatigue" else 0,
+                    non_working_minutes=minutes if kind == "non_working" else 0)
+    data["warnings"] = list(dict.fromkeys(data["warnings"]))
+
+
+def load_fatigue(site, shift=None):
+    doctype = "Startup and Fatigue spesification"  # Persisted DocType spelling.
+    frappe.has_permission(doctype, "read", throw=True)
+    filters = {"site": site}
+    if shift:
+        filters["shift"] = shift
+    return [_read_document(doctype, row.name) for row in
+            _permitted_rows(doctype, filters, order_by="modified desc, name desc")]
+
+
 def _read_document(doctype, name):
     doc = frappe.get_doc(doctype, name)
     doc.check_permission("read")
@@ -250,6 +275,7 @@ def _read_document(doctype, name):
     result = doc.as_dict()
     calculation_fields = {
         "Location": ("name",),
+        "Startup and Fatigue spesification": ("site", "shift", "day_type", "fatigue_start", "fatigue_end"),
         "Monthly Production Planning": ("location", "prod_month_start_date", "prod_month_end_date",
                                         "num_excavators", "excavator_truck_assignments"),
         "Hourly Production": ("location", "prod_date", "hour_slot", "truck_loads"),
@@ -260,6 +286,9 @@ def _read_document(doctype, name):
     }
     if any(before.get(field) != result.get(field) for field in calculation_fields.get(doctype, ())):
         raise frappe.PermissionError("Access to calculation fields is required for this summary")
+    if doctype == "Monthly Production Planning" and before.get("month_prod_days") != result.get("month_prod_days"):
+        # Redacted child fields cannot establish a zero-hour shift; retain the numeric report.
+        result["month_prod_days"] = []
     return result
 
 
@@ -302,6 +331,13 @@ def get_summary(date=None, shift="Day", site=None):
     data = build_summary(date, shift, site, plan, assets, breakdowns, documents,
                          green_threshold=float(settings.get("green_threshold") or 100),
                          orange_threshold=float(settings["orange_threshold"]) if settings.get("orange_threshold") is not None else 80)
+    try:
+        fatigue = load_fatigue(site, shift)
+    except frappe.PermissionError:
+        fatigue = []
+        data["warnings"].append("Fatigue colouring is unavailable: read access to Startup and Fatigue Specification "
+                                "and its scheduling fields is required.")
+    apply_schedule_presentation(data, plan, date, shift, site, fatigue)
     data["warnings"].append("ADT fleet uses current Asset site assignments; historical transfers are not reconstructed.")
     return data
 
@@ -314,8 +350,8 @@ def select_plan(plans, site, date):
     return max(candidates, key=lambda p: (str(p.get("modified") or ""), p["name"])) if candidates else None
 
 
-def load_sources(site, start, end):
-    """Fetch once for a bounded date range; all consumers remain read-only."""
+def load_sources(site, start, end, *, plans=None):
+    """Fetch read-only sources; supplied plans must already be permission-checked."""
     if frappe.session.user == "Guest":
         raise frappe.PermissionError("Login required")
     _read_document("Location", site)
@@ -323,9 +359,10 @@ def load_sources(site, start, end):
         frappe.has_permission(doctype, "read", throw=True)
     first_date = (start - timedelta(hours=6)).date()
     last_date = (end - timedelta(hours=6, microseconds=1)).date()
-    plans = [_read_document("Monthly Production Planning", row.name) for row in _permitted_rows(
-        "Monthly Production Planning", {"location": site, "prod_month_start_date": ["<=", last_date],
-        "prod_month_end_date": [">=", first_date], "docstatus": ["<", 2]}, order_by="modified desc, name desc")]
+    if plans is None:
+        plans = [_read_document("Monthly Production Planning", row.name) for row in _permitted_rows(
+            "Monthly Production Planning", {"location": site, "prod_month_start_date": ["<=", last_date],
+            "prod_month_end_date": [">=", first_date], "docstatus": ["<", 2]}, order_by="modified desc, name desc")]
     documents = [_read_document("Hourly Production", row.name) for row in _permitted_rows(
         "Hourly Production", {"location": site, "prod_date": ["between", [start.date(), end.date()]], "docstatus": ["<", 2]})]
     assets = [_read_document("Asset", row.name) for row in _permitted_rows(

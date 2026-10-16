@@ -9,7 +9,8 @@ const fixture = JSON.parse(fs.readFileSync(process.env.HPA_FIXTURE, 'utf8'));
 (async () => {
   const browser = await chromium.launch({headless:true,args:['--no-sandbox']});
   try {
-    const page = await browser.newPage();
+    const page = await browser.newPage({hasTouch:true});
+    page.setDefaultTimeout(5000);
     const errors = [];
     page.on('pageerror',e=>errors.push(e.message));
     await page.setContent('<html><body style="margin:0;padding:12px;font-family:Arial"><main id="main"></main></body></html>');
@@ -38,17 +39,74 @@ const fixture = JSON.parse(fs.readFileSync(process.env.HPA_FIXTURE, 'utf8'));
       await page.setViewportSize({width,height:1000});
       assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
       if (width === 390) {
-        assert.equal(await page.locator('.hpa-shift-day span').count(),1);
-        const label=await page.locator('.hpa-shift-day span').boundingBox();
-        assert.ok(label.x < width,'Day shift label should remain visible on mobile');
+        assert.ok(await page.locator('.hpa-mobile').isVisible());
+        assert.equal(await page.locator('.hpa-mobile-cell').count(),24);
+        assert.equal(await page.locator('.hpa-mobile-grid').count(),2);
+        assert.equal(await page.locator('.hpa-key-item').count(),5);
+      } else {
+        const before=await page.locator('tbody .hpa-sticky-date').first().boundingBox();
+        await page.locator('.hpa-scroll').evaluate(el=>{el.scrollLeft=700;});
+        const after=await page.locator('tbody .hpa-sticky-date').first().boundingBox();
+        assert.ok(Math.abs(before.x-after.x)<1,JSON.stringify({before,after}));
+        await page.locator('.hpa-scroll').evaluate(el=>{el.scrollLeft=0;});
       }
-      const before=await page.locator('tbody .hpa-sticky-date').first().boundingBox();
-      await page.locator('.hpa-scroll').evaluate(el=>{el.scrollLeft=700;});
-      const after=await page.locator('tbody .hpa-sticky-date').first().boundingBox();
-      assert.ok(Math.abs(before.x-after.x)<1,JSON.stringify({before,after}));
-      await page.locator('.hpa-scroll').evaluate(el=>{el.scrollLeft=0;});
       await page.screenshot({path:`/tmp/hpa-preview-${width}.png`,fullPage:true});
     }
+    const partial = fixture.rows.flatMap(row=>row.cells).findIndex(cell=>cell.segments?.length > 1);
+    assert.ok(partial >= 0, 'Fixture must exercise a partial-hour cell');
+    const partialCell = page.locator('.hpa-cell').nth(partial);
+    assert.ok((await partialCell.evaluate(el=>getComputedStyle(el).backgroundImage)).includes('linear-gradient'));
+    assert.equal(await partialCell.getAttribute('title'),null);
+    await partialCell.hover();
+    const card = page.getByRole('dialog', {name:'Hourly production details'});
+    await card.waitFor({state:'visible'});
+    assert.ok((await card.innerText()).includes('30 minutes'));
+    for (const label of ['Actual Production','Production Target','Target Achieved','Excavators Available','Recording Status']) {
+      assert.ok((await card.innerText()).includes(label), label);
+    }
+    await card.hover();
+    await page.waitForTimeout(250);
+    assert.ok(await card.isVisible(), 'Card remains open while reading it');
+    await page.keyboard.press('Escape');
+    assert.ok(await card.isHidden());
+    assert.equal(await partialCell.getAttribute('aria-expanded'),'false');
+    await partialCell.focus();
+    await page.keyboard.press('Enter');
+    assert.ok(await card.isVisible());
+    await page.getByRole('button',{name:'Close hourly details'}).click();
+    assert.ok(await card.isHidden());
+    await page.setViewportSize({width:390,height:700});
+    await page.locator('.hpa-mobile-date').selectOption(String(Math.floor(partial/24)));
+    const phoneCell=page.locator(`.hpa-mobile-cell[data-hpa-hour="${partial%24}"]`);
+    await phoneCell.tap();
+    assert.equal(await phoneCell.getAttribute('aria-pressed'),'true');
+    assert.ok((await page.locator('.hpa-mobile-detail').innerText()).includes('30 minutes'));
+    assert.ok(await card.isHidden(), 'Phone uses inline detail rather than a floating popup');
+    await page.screenshot({path:'/tmp/hpa-hover-mobile.png'});
+    await page.setViewportSize({width:1280,height:1000});
+    await page.mouse.move(5,5);await page.mouse.move(30,20,{steps:3});
+    await partialCell.hover();
+    await card.waitFor({state:'visible'});
+    await page.screenshot({path:'/tmp/hpa-hover-desktop.png',fullPage:true});
+    await page.locator('.hpa-scroll').evaluate(el=>{el.scrollLeft+=100;});
+    await card.waitFor({state:'hidden'});
+    assert.ok(!(await page.locator('.hpa-content').innerText()).includes('Pie percentage ='));
+    const expectedActual = fixture.rows.flatMap(row=>row.cells)[partial].actual_bcm;
+    assert.equal((await partialCell.innerText()).replace(/[*†]/g,''),
+      Number(expectedActual).toLocaleString(undefined,{maximumFractionDigits:1}));
+    await page.evaluate(async()=>{
+      const original=frappe.call;
+      frappe.call=async()=>({message:{rows:[],planning_error:{title:'Monthly Production Planning Not Found',issues:[
+        {message:'No accessible production plan was found for Koppie for September 2026.'},
+        {message:'No accessible production plan was found for Koppie for October 2026.'}]}}});
+      await wrapper.hourlyProductivityAnalysis.load();
+      frappe.call=original;
+    });
+    assert.equal(await page.locator('.hpa-cell').count(),0);
+    assert.equal(await page.locator('.hpa-pie').count(),0);
+    assert.ok((await page.locator('.hpa-message').innerText()).includes('September 2026'));
+    assert.ok((await page.locator('.hpa-message').innerText()).includes('October 2026'));
+    await page.evaluate(()=>wrapper.hourlyProductivityAnalysis.load());
     const callsBefore=await page.evaluate(()=>calls.length);
     await page.evaluate(()=>wrapper.hourlyProductivityAnalysis.from_date.set_value('2026-12-31'));
     assert.ok((await page.locator('.hpa-message').innerText()).includes('From Date'));
@@ -68,6 +126,6 @@ const fixture = JSON.parse(fs.readFileSync(process.env.HPA_FIXTURE, 'utf8'));
     assert.equal(await page.locator('.hpa-cell').count(),0);
     assert.ok((await page.locator('.hpa-message').innerText()).includes('Unable to load'));
     assert.deepEqual(errors,[]);
-    console.log('PASS: 24-hour matrix, 5-category pie, responsive 390/768/1280px, frozen date column, invalid range, stale response, access-error clearing');
+    console.log('PASS: desktop 24-hour matrix, phone Day/Night heatmap and inline details, 5-category pie/key, responsive 390/768/1280px, frozen date column, hover/tap/keyboard, partial-hour gradient/BCM, missing-month message, invalid range, stale response, access-error clearing');
   } finally {await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});
