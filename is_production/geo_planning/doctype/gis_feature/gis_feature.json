@@ -85,7 +85,7 @@
   },
   {
    "default": "0",
-   "description": "Goes up by one each time the geometry or attributes change.",
+   "description": "Goes up by one each time the geometry, attributes or label change.",
    "fieldname": "revision",
    "fieldtype": "Int",
    "label": "Revision",
@@ -197,7 +197,7 @@
  ],
  "grid_page_length": 50,
  "links": [],
- "modified": "2026-10-20 12:12:19.569243",
+ "modified": "2026-10-20 17:47:27.639899",
  "modified_by": "Administrator",
  "module": "Geo Planning",
  "name": "GIS Feature",

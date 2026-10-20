@@ -67,7 +67,9 @@ class GISFeature(Document):
 
 		self._geometry_changed = parse_json_value(before.geometry, "") != parse_json_value(self.geometry, "")
 		attributes_changed = parse_json_value(before.attributes, "") != parse_json_value(self.attributes, "")
-		if self._geometry_changed or attributes_changed:
+		# the label counts too: the workstation's conflict check compares revisions
+		label_changed = (before.feature_label or "") != (self.feature_label or "")
+		if self._geometry_changed or attributes_changed or label_changed:
 			self.revision = (before.revision or 0) + 1
 
 	def on_update(self):

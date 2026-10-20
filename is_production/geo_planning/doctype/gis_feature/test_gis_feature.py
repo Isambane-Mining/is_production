@@ -98,13 +98,15 @@ class IntegrationTestGISFeature(IntegrationTestCase):
 
 	def test_edit_bumps_revision_and_rewrites_native_geometry(self):
 		feature = make_feature(self.polygons, SQUARE, attributes={"pit": "North"})
+		feature.save()  # nothing changed
+		self.assertEqual(feature.revision, 1)
 		feature.feature_label = "label only"
 		feature.save()
-		self.assertEqual(feature.revision, 1)
+		self.assertEqual(feature.revision, 2)
 
 		feature.geometry = {"type": "Polygon", "coordinates": [[[5, 5], [6, 5], [6, 6], [5, 5]]]}
 		feature.save()
-		self.assertEqual(feature.revision, 2)
+		self.assertEqual(feature.revision, 3)
 		self.assertEqual(native(feature.name)[0], "MULTIPOLYGON(((5 5,6 5,6 6,5 5)))")
 
 		reloaded = frappe.get_doc("GIS Feature", feature.name)

@@ -3,7 +3,7 @@ app_title = "Production"
 app_publisher = "Isambane Mining (Pty) Ltd"
 app_description = "Isambane Mining Frappe App for Production Records"
 app_email = "eben@isambane.co.za"
-app_license = "mit"
+app_license = "gpl-3.0"
 required_apps = ["frappe/erpnext", "shridarpatil/frappe_whatsapp"]
 source_link = "http://github.com/buff0k/is_production"
 app_logo_url = "/assets/is_production/images/is-logo.png"
@@ -33,6 +33,8 @@ after_migrate = [
     "is_production.setup.asset_categories.ensure_asset_categories",
     # GIS Feature's native GEOMETRY column + SPATIAL index are not Frappe fields.
     "is_production.geo_planning.services.gis_storage_service.ensure_geometry_schema",
+    "is_production.geo_planning.services.gis_map_service.ensure_default_map_services",
+    "is_production.geo_planning.services.gis_plugin_service.ensure_single_defaults",
 ]
 
 override_whitelisted_methods = {
