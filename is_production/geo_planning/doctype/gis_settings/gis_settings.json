@@ -1,0 +1,301 @@
+{
+ "actions": [],
+ "creation": "2026-10-20 12:16:13.766971",
+ "description": "QGIS Server, the PyQGIS runtime, the read-only database account QGIS uses, and the GIS Workstation defaults.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "section_health",
+  "health_status",
+  "last_check_on",
+  "column_break_hlth",
+  "health_summary",
+  "section_health_detail",
+  "qgis_server_status",
+  "qgis_version",
+  "pyqgis_status",
+  "gdal_version",
+  "proj_version",
+  "column_break_hdtl",
+  "ogr_mysql_driver",
+  "database_adapter_status",
+  "geometry_schema_status",
+  "processing_providers",
+  "health_report",
+  "section_qgis",
+  "qgis_server_url",
+  "qgis_python",
+  "column_break_qgis",
+  "qgis_project_directory",
+  "section_database",
+  "qgis_db_host",
+  "qgis_db_port",
+  "qgis_db_name",
+  "column_break_db",
+  "qgis_db_user",
+  "qgis_db_password",
+  "section_workstation",
+  "default_crs",
+  "basemap",
+  "max_features_per_request",
+  "column_break_wks",
+  "default_center_longitude",
+  "default_center_latitude",
+  "default_zoom"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_health",
+   "fieldtype": "Section Break",
+   "label": "Health"
+  },
+  {
+   "fieldname": "health_status",
+   "fieldtype": "Select",
+   "label": "Health Status",
+   "options": "\nOK\nWarning\nError",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_check_on",
+   "fieldtype": "Datetime",
+   "label": "Last Check On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_hlth",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "health_summary",
+   "fieldtype": "Small Text",
+   "label": "Problems Found",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_health_detail",
+   "fieldtype": "Section Break",
+   "label": "Health Details"
+  },
+  {
+   "fieldname": "qgis_server_status",
+   "fieldtype": "Data",
+   "label": "QGIS Server",
+   "read_only": 1
+  },
+  {
+   "fieldname": "qgis_version",
+   "fieldtype": "Data",
+   "label": "QGIS Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pyqgis_status",
+   "fieldtype": "Data",
+   "label": "PyQGIS",
+   "read_only": 1
+  },
+  {
+   "fieldname": "gdal_version",
+   "fieldtype": "Data",
+   "label": "GDAL Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "proj_version",
+   "fieldtype": "Data",
+   "label": "PROJ Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_hdtl",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "ogr_mysql_driver",
+   "fieldtype": "Data",
+   "label": "OGR MySQL Driver",
+   "read_only": 1
+  },
+  {
+   "fieldname": "database_adapter_status",
+   "fieldtype": "Small Text",
+   "label": "Database Adapter",
+   "read_only": 1
+  },
+  {
+   "fieldname": "geometry_schema_status",
+   "fieldtype": "Data",
+   "label": "Geometry Schema",
+   "read_only": 1
+  },
+  {
+   "fieldname": "processing_providers",
+   "fieldtype": "Small Text",
+   "label": "Processing Providers",
+   "read_only": 1
+  },
+  {
+   "fieldname": "health_report",
+   "fieldtype": "Code",
+   "label": "Full Report",
+   "options": "JSON",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_qgis",
+   "fieldtype": "Section Break",
+   "label": "QGIS"
+  },
+  {
+   "default": "http://127.0.0.1:8090/ows/",
+   "description": "The local QGIS Server endpoint. It must only listen on this host; browsers never reach it directly.",
+   "fieldname": "qgis_server_url",
+   "fieldtype": "Data",
+   "label": "QGIS Server URL",
+   "reqd": 1
+  },
+  {
+   "default": "/usr/bin/python3",
+   "description": "The system Python that has the python3-qgis bindings. PyQGIS work runs in a separate process with this interpreter, never in the bench.",
+   "fieldname": "qgis_python",
+   "fieldtype": "Data",
+   "label": "PyQGIS Python",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_qgis",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Where generated QGIS project files are written (from the layer-publishing phase on). The bench user must be able to write it and QGIS Server's user must be able to read it.",
+   "fieldname": "qgis_project_directory",
+   "fieldtype": "Data",
+   "label": "QGIS Project Directory"
+  },
+  {
+   "description": "The read-only MariaDB account QGIS uses to read GIS features. It only needs SELECT on tabGIS Feature.",
+   "fieldname": "section_database",
+   "fieldtype": "Section Break",
+   "label": "QGIS Database Account"
+  },
+  {
+   "default": "localhost",
+   "fieldname": "qgis_db_host",
+   "fieldtype": "Data",
+   "label": "Host",
+   "reqd": 1
+  },
+  {
+   "default": "3306",
+   "fieldname": "qgis_db_port",
+   "fieldtype": "Int",
+   "label": "Port"
+  },
+  {
+   "description": "Leave empty for this site's own database.",
+   "fieldname": "qgis_db_name",
+   "fieldtype": "Data",
+   "label": "Database"
+  },
+  {
+   "fieldname": "column_break_db",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "qgis_ro",
+   "fieldname": "qgis_db_user",
+   "fieldtype": "Data",
+   "label": "User"
+  },
+  {
+   "fieldname": "qgis_db_password",
+   "fieldtype": "Password",
+   "label": "Password"
+  },
+  {
+   "fieldname": "section_workstation",
+   "fieldtype": "Section Break",
+   "label": "GIS Workstation"
+  },
+  {
+   "default": "EPSG:2053",
+   "description": "The CRS the workstation shows coordinates in by default (EPSG:2053 = Hartebeesthoek94 / Lo29).",
+   "fieldname": "default_crs",
+   "fieldtype": "Data",
+   "label": "Default Display CRS",
+   "reqd": 1
+  },
+  {
+   "default": "OpenStreetMap",
+   "description": "OpenStreetMap tiles are loaded by the browser from openstreetmap.org.",
+   "fieldname": "basemap",
+   "fieldtype": "Select",
+   "label": "Basemap",
+   "options": "OpenStreetMap\nNone"
+  },
+  {
+   "default": "5000",
+   "description": "The most features sent to the browser for one layer in one view (1 to 20000).",
+   "fieldname": "max_features_per_request",
+   "fieldtype": "Int",
+   "label": "Max Features per Request"
+  },
+  {
+   "fieldname": "column_break_wks",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "29.23",
+   "description": "Where the map opens when no layer is loaded (WGS 84 degrees).",
+   "fieldname": "default_center_longitude",
+   "fieldtype": "Float",
+   "label": "Default Centre Longitude"
+  },
+  {
+   "default": "-25.87",
+   "fieldname": "default_center_latitude",
+   "fieldtype": "Float",
+   "label": "Default Centre Latitude"
+  },
+  {
+   "default": "11",
+   "fieldname": "default_zoom",
+   "fieldtype": "Int",
+   "label": "Default Zoom"
+  }
+ ],
+ "grid_page_length": 50,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-10-20 12:16:13.766971",
+ "modified_by": "Administrator",
+ "module": "Geo Planning",
+ "name": "GIS Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "print": 1,
+   "read": 1,
+   "role": "Production Manager",
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
