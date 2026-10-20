@@ -22,6 +22,21 @@ class GISSettings(Document):
 		self.max_features_per_request = min(max(cint(self.max_features_per_request) or 5000, 1), 20000)
 		self.default_zoom = min(max(cint(self.default_zoom), 1), 22)
 
+	def on_update(self):
+		"""The QGIS projects embed the database account and live in the project directory: republish all."""
+		fields = ("qgis_db_host", "qgis_db_port", "qgis_db_name", "qgis_db_user", "qgis_db_password", "qgis_project_directory")
+		if any(self.has_value_changed(f) for f in fields) and self.qgis_db_user and self.qgis_project_directory:
+			from is_production.geo_planning.services.gis_publish_service import publish_all
+
+			publish_all()
+
+	@frappe.whitelist()
+	def publish_all_datasets(self):
+		frappe.has_permission("GIS Settings", "write", throw=True)
+		from is_production.geo_planning.services.gis_publish_service import publish_all
+
+		return publish_all()
+
 	@frappe.whitelist()
 	def run_health_check(self):
 		frappe.has_permission("GIS Settings", "write", throw=True)

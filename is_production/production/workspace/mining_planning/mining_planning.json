@@ -46,7 +46,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "GIS",
-   "link_count": 3,
+   "link_count": 9,
    "link_type": "DocType",
    "onboard": 0,
    "type": "Card Break"
@@ -74,15 +74,75 @@
   {
    "hidden": 0,
    "is_query_report": 0,
+   "label": "GIS Projects",
+   "link_count": 0,
+   "link_to": "GIS Project",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Import / Export Jobs",
+   "link_count": 0,
+   "link_to": "GIS Import Export Job",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Processing Jobs",
+   "link_count": 0,
+   "link_to": "GIS Processing Job",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
    "label": "GIS Settings",
    "link_count": 0,
    "link_to": "GIS Settings",
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Map Services",
+   "link_count": 0,
+   "link_to": "GIS Map Service",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Plugins",
+   "link_count": 0,
+   "link_to": "GIS Plugin",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Plugin Settings",
+   "link_count": 0,
+   "link_to": "GIS Plugin Settings",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
   }
  ],
- "modified": "2026-10-20 15:54:51.162287",
+ "modified": "2026-10-20 22:42:14.759153",
  "modified_by": "Administrator",
  "module": "Production",
  "name": "Mining Planning",

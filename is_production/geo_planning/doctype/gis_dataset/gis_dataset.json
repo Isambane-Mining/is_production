@@ -45,7 +45,12 @@
   "storage_provider",
   "column_break_strg",
   "qgis_layer_name",
-  "qgis_provider"
+  "qgis_provider",
+  "qgis_publish_status",
+  "qgis_published_on",
+  "qgis_project_file",
+  "qgis_publish_message",
+  "qgis_publish_signature"
  ],
  "fields": [
   {
@@ -170,7 +175,6 @@
    "default": "0",
    "fieldname": "feature_count",
    "fieldtype": "Int",
-   "in_list_view": 1,
    "label": "Feature Count",
    "read_only": 1
   },
@@ -291,6 +295,42 @@
    "fieldtype": "Data",
    "label": "QGIS Provider",
    "read_only": 1
+  },
+  {
+   "default": "Not Published",
+   "fieldname": "qgis_publish_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "QGIS Publish Status",
+   "options": "Not Published\nQueued\nPublished\nError",
+   "read_only": 1
+  },
+  {
+   "fieldname": "qgis_published_on",
+   "fieldtype": "Datetime",
+   "label": "QGIS Published On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "qgis_project_file",
+   "fieldtype": "Data",
+   "label": "QGIS Project File",
+   "read_only": 1
+  },
+  {
+   "depends_on": "qgis_publish_message",
+   "fieldname": "qgis_publish_message",
+   "fieldtype": "Small Text",
+   "label": "QGIS Publish Message",
+   "read_only": 1
+  },
+  {
+   "fieldname": "qgis_publish_signature",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "QGIS Publish Signature",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
@@ -300,7 +340,7 @@
    "link_fieldname": "dataset"
   }
  ],
- "modified": "2026-10-20 12:12:19.569243",
+ "modified": "2026-10-20 17:23:45.882653",
  "modified_by": "Administrator",
  "module": "Geo Planning",
  "name": "GIS Dataset",

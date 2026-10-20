@@ -1,0 +1,206 @@
+{
+ "actions": [],
+ "creation": "2026-10-20 18:18:18.146828",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "source_layer",
+  "action",
+  "dataset",
+  "layer_status",
+  "column_break_src",
+  "source_geometry_type",
+  "feature_count",
+  "source_crs",
+  "has_z",
+  "section_target",
+  "new_dataset_name",
+  "new_title",
+  "new_geometry_type",
+  "column_break_tgt",
+  "dataset_crs",
+  "reproject",
+  "csv_x",
+  "csv_y",
+  "csv_z",
+  "section_result",
+  "imported",
+  "failed",
+  "column_break_res",
+  "output_name",
+  "field_mapping",
+  "project_style",
+  "source_path"
+ ],
+ "fields": [
+  {
+   "fieldname": "source_layer",
+   "fieldtype": "Data",
+   "label": "Source Layer",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "action",
+   "fieldtype": "Select",
+   "label": "Action",
+   "options": "Create Dataset\nAppend\nSkip\nExport",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "dataset",
+   "fieldtype": "Link",
+   "label": "Dataset",
+   "options": "GIS Dataset",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "layer_status",
+   "fieldtype": "Data",
+   "label": "Status",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_src",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "source_geometry_type",
+   "fieldtype": "Data",
+   "label": "Source Geometry",
+   "read_only": 1
+  },
+  {
+   "fieldname": "feature_count",
+   "fieldtype": "Int",
+   "label": "Source Features",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_crs",
+   "fieldtype": "Data",
+   "label": "Source CRS",
+   "description": "Detected from the file; type it in when the file has none (e.g. CSV, DXF)."
+  },
+  {
+   "fieldname": "has_z",
+   "fieldtype": "Check",
+   "label": "Has Z",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_target",
+   "fieldtype": "Section Break",
+   "label": "Target"
+  },
+  {
+   "fieldname": "new_dataset_name",
+   "fieldtype": "Data",
+   "label": "New Dataset Name"
+  },
+  {
+   "fieldname": "new_title",
+   "fieldtype": "Data",
+   "label": "New Dataset Title"
+  },
+  {
+   "fieldname": "new_geometry_type",
+   "fieldtype": "Select",
+   "label": "New Dataset Geometry Type",
+   "options": "Point\nMultiPoint\nLineString\nMultiLineString\nPolygon\nMultiPolygon\nGeometry\nNo Geometry"
+  },
+  {
+   "fieldname": "column_break_tgt",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "dataset_crs",
+   "fieldtype": "Data",
+   "label": "Dataset CRS"
+  },
+  {
+   "fieldname": "reproject",
+   "fieldtype": "Check",
+   "label": "Reproject",
+   "description": "Transform coordinates from the source CRS to the dataset CRS. Required when they differ; never done silently."
+  },
+  {
+   "fieldname": "csv_x",
+   "fieldtype": "Data",
+   "label": "CSV X Column",
+   "description": "South African Lo data: the Y column (westing) is x, the X column (southing) is y."
+  },
+  {
+   "fieldname": "csv_y",
+   "fieldtype": "Data",
+   "label": "CSV Y Column"
+  },
+  {
+   "fieldname": "csv_z",
+   "fieldtype": "Data",
+   "label": "CSV Z Column"
+  },
+  {
+   "fieldname": "section_result",
+   "fieldtype": "Section Break",
+   "label": "Result"
+  },
+  {
+   "fieldname": "imported",
+   "fieldtype": "Int",
+   "label": "Imported",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "failed",
+   "fieldtype": "Int",
+   "label": "Failed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_res",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "output_name",
+   "fieldtype": "Data",
+   "label": "Output Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "field_mapping",
+   "fieldtype": "JSON",
+   "label": "Field Mapping"
+  },
+  {
+   "fieldname": "project_style",
+   "fieldtype": "JSON",
+   "label": "Project Style",
+   "read_only": 1,
+   "description": "Visibility, opacity and colour from an imported QGIS project."
+  },
+  {
+   "fieldname": "source_path",
+   "fieldtype": "Small Text",
+   "label": "Source Path",
+   "hidden": 1,
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "links": [],
+ "modified": "2026-10-20 18:18:18.146828",
+ "modified_by": "Administrator",
+ "module": "Geo Planning",
+ "name": "GIS Import Export Layer",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "istable": 1,
+ "editable_grid": 1
+}
