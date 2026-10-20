@@ -91,6 +91,30 @@ class GISDataset(Document):
 					)
 				)
 
+	def on_update(self):
+		"""Republish the QGIS project in the background when what it is built from has changed."""
+		from is_production.geo_planning.services import gis_publish_service as publish
+
+		if not publish.is_publishable(self):
+			if self.qgis_project_file:
+				publish.unpublish(self.name)
+			return
+		if publish.can_publish() and publish.publish_signature(self) != self.qgis_publish_signature:
+			publish.enqueue_publish(self.name)
+
+	def on_trash(self):
+		from is_production.geo_planning.services.gis_publish_service import unpublish
+
+		unpublish(self.name)
+
+	@frappe.whitelist()
+	def publish_to_qgis(self):
+		"""Write the QGIS project now (the form's Publish to QGIS button)."""
+		frappe.has_permission("GIS Dataset", "write", self, throw=True)
+		from is_production.geo_planning.services.gis_publish_service import publish_dataset
+
+		return publish_dataset(self.name)
+
 	@frappe.whitelist()
 	def refresh_statistics(self):
 		frappe.has_permission("GIS Dataset", "write", self, throw=True)

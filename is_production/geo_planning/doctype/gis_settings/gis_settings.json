@@ -41,7 +41,13 @@
   "column_break_wks",
   "default_center_longitude",
   "default_center_latitude",
-  "default_zoom"
+  "default_zoom",
+  "section_processing",
+  "processing_timeout_minutes",
+  "processing_memory_limit_mb",
+  "column_break_proc",
+  "processing_nice",
+  "processing_algorithm_count"
  ],
  "fields": [
   {
@@ -169,10 +175,11 @@
    "fieldtype": "Column Break"
   },
   {
-   "description": "Where generated QGIS project files are written (from the layer-publishing phase on). The bench user must be able to write it and QGIS Server's user must be able to read it.",
+   "description": "Where the QGIS project of each published dataset is written (<dataset>.qgs). The bench user must be able to write it and QGIS Server's user must be able to read it; the files hold the read-only account's password, so keep the directory private (e.g. owner bench user, group www-data, mode 2750).",
    "fieldname": "qgis_project_directory",
    "fieldtype": "Data",
-   "label": "QGIS Project Directory"
+   "label": "QGIS Project Directory",
+   "default": "/var/lib/qgis-server/projects"
   },
   {
    "description": "The read-only MariaDB account QGIS uses to read GIS features. It only needs SELECT on tabGIS Feature.",
@@ -229,11 +236,11 @@
   },
   {
    "default": "OpenStreetMap",
-   "description": "OpenStreetMap tiles are loaded by the browser from openstreetmap.org.",
+   "description": "The basemap the map opens with (GIS Map Service, use: Basemap). Empty: no basemap.",
    "fieldname": "basemap",
-   "fieldtype": "Select",
+   "fieldtype": "Link",
    "label": "Basemap",
-   "options": "OpenStreetMap\nNone"
+   "options": "GIS Map Service"
   },
   {
    "default": "5000",
@@ -264,12 +271,48 @@
    "fieldname": "default_zoom",
    "fieldtype": "Int",
    "label": "Default Zoom"
+  },
+  {
+   "fieldname": "section_processing",
+   "fieldtype": "Section Break",
+   "label": "Processing"
+  },
+  {
+   "fieldname": "processing_timeout_minutes",
+   "fieldtype": "Int",
+   "label": "Timeout (minutes)",
+   "default": "60",
+   "description": "A processing job running longer than this is stopped."
+  },
+  {
+   "fieldname": "processing_memory_limit_mb",
+   "fieldtype": "Int",
+   "label": "Memory Limit (MB)",
+   "default": "0",
+   "description": "Address-space limit for one processing worker; 0 = no limit."
+  },
+  {
+   "fieldname": "column_break_proc",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "processing_nice",
+   "fieldtype": "Int",
+   "label": "CPU Priority (nice)",
+   "default": "10",
+   "description": "0-19: higher runs processing at lower priority than the web site."
+  },
+  {
+   "fieldname": "processing_algorithm_count",
+   "fieldtype": "Data",
+   "label": "Algorithms Available",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-20 12:16:13.766971",
+ "modified": "2026-10-20 18:56:37.128990",
  "modified_by": "Administrator",
  "module": "Geo Planning",
  "name": "GIS Settings",

@@ -1,0 +1,313 @@
+{
+ "actions": [],
+ "autoname": "field:title",
+ "naming_rule": "By fieldname",
+ "creation": "2026-10-20 18:56:37.128990",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "description": "A web map service (XYZ tiles, WMS or Google Map Tiles) offered in the GIS Workstation as a basemap or overlay, with its credentials.",
+ "field_order": [
+  "title",
+  "enabled",
+  "use_as",
+  "category",
+  "column_break_svc",
+  "service_type",
+  "delivery",
+  "sort_order",
+  "section_source",
+  "url",
+  "wms_layers",
+  "wms_styles",
+  "wms_format",
+  "wms_version",
+  "column_break_src",
+  "google_map_type",
+  "google_layer_types",
+  "google_region",
+  "google_language",
+  "section_auth",
+  "authentication",
+  "api_key",
+  "api_key_parameter",
+  "column_break_auth",
+  "header_name",
+  "header_value",
+  "username",
+  "password",
+  "section_display",
+  "attribution",
+  "column_break_disp",
+  "min_zoom",
+  "max_zoom",
+  "opacity",
+  "notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Title",
+   "reqd": 1,
+   "unique": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled",
+   "default": "1",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "use_as",
+   "fieldtype": "Select",
+   "label": "Use As",
+   "options": "Basemap\nOverlay",
+   "default": "Basemap",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "Basemap: one at a time under the data. Overlay: added to the map like a layer (e.g. place labels over imagery)."
+  },
+  {
+   "fieldname": "category",
+   "fieldtype": "Select",
+   "label": "Category",
+   "options": "Satellite\nStreet\nTopographic\nOther",
+   "default": "Other",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "column_break_svc",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "service_type",
+   "fieldtype": "Select",
+   "label": "Service Type",
+   "options": "XYZ Tiles\nWMS\nGoogle Map Tiles",
+   "default": "XYZ Tiles",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "delivery",
+   "fieldtype": "Select",
+   "label": "Delivery",
+   "options": "Direct\nThrough Frappe",
+   "default": "Direct",
+   "description": "Direct: browsers fetch the tiles themselves (an API key is then visible to them: restrict it to this site in the provider's console). Through Frappe: the server fetches the tiles and adds the credentials, which never reach the browser. HTTP header and basic authentication always go through Frappe."
+  },
+  {
+   "fieldname": "sort_order",
+   "fieldtype": "Int",
+   "label": "Sort Order",
+   "default": "0"
+  },
+  {
+   "fieldname": "section_source",
+   "fieldtype": "Section Break",
+   "label": "Source"
+  },
+  {
+   "fieldname": "url",
+   "fieldtype": "Small Text",
+   "label": "URL",
+   "description": "XYZ: a tile URL template with {z}, {x} and {y} ({-y} for TMS), e.g. https://tile.openstreetmap.org/{z}/{x}/{y}.png. Put {api_key} where the key goes, or set the key's query parameter below. WMS: the service URL without request parameters. Google Map Tiles: leave empty."
+  },
+  {
+   "fieldname": "wms_layers",
+   "fieldtype": "Data",
+   "label": "WMS Layers",
+   "depends_on": "eval:doc.service_type=='WMS'"
+  },
+  {
+   "fieldname": "wms_styles",
+   "fieldtype": "Data",
+   "label": "WMS Styles",
+   "depends_on": "eval:doc.service_type=='WMS'"
+  },
+  {
+   "fieldname": "wms_format",
+   "fieldtype": "Data",
+   "label": "WMS Image Format",
+   "default": "image/png",
+   "depends_on": "eval:doc.service_type=='WMS'"
+  },
+  {
+   "fieldname": "wms_version",
+   "fieldtype": "Select",
+   "label": "WMS Version",
+   "options": "1.3.0\n1.1.1",
+   "default": "1.3.0",
+   "depends_on": "eval:doc.service_type=='WMS'"
+  },
+  {
+   "fieldname": "column_break_src",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "google_map_type",
+   "fieldtype": "Select",
+   "label": "Google Map Type",
+   "options": "satellite\nroadmap\nterrain",
+   "default": "satellite",
+   "depends_on": "eval:doc.service_type=='Google Map Tiles'"
+  },
+  {
+   "fieldname": "google_layer_types",
+   "fieldtype": "Data",
+   "label": "Google Layer Types",
+   "depends_on": "eval:doc.service_type=='Google Map Tiles'",
+   "description": "Optional, comma separated, e.g. layerRoadmap for labels over satellite."
+  },
+  {
+   "fieldname": "google_region",
+   "fieldtype": "Data",
+   "label": "Google Region",
+   "default": "ZA",
+   "depends_on": "eval:doc.service_type=='Google Map Tiles'"
+  },
+  {
+   "fieldname": "google_language",
+   "fieldtype": "Data",
+   "label": "Google Language",
+   "default": "en-ZA",
+   "depends_on": "eval:doc.service_type=='Google Map Tiles'"
+  },
+  {
+   "fieldname": "section_auth",
+   "fieldtype": "Section Break",
+   "label": "Authentication"
+  },
+  {
+   "fieldname": "authentication",
+   "fieldtype": "Select",
+   "label": "Authentication",
+   "options": "None\nAPI Key\nHTTP Header\nBasic Auth",
+   "default": "None"
+  },
+  {
+   "fieldname": "api_key",
+   "fieldtype": "Password",
+   "label": "API Key",
+   "depends_on": "eval:doc.authentication=='API Key'"
+  },
+  {
+   "fieldname": "api_key_parameter",
+   "fieldtype": "Data",
+   "label": "API Key Query Parameter",
+   "depends_on": "eval:doc.authentication=='API Key'",
+   "description": "Used when the URL has no {api_key}: the key is added as ?<parameter>=<key> (e.g. key, apikey, access_token)."
+  },
+  {
+   "fieldname": "column_break_auth",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "header_name",
+   "fieldtype": "Data",
+   "label": "Header Name",
+   "depends_on": "eval:doc.authentication=='HTTP Header'",
+   "description": "e.g. Authorization or X-Api-Key"
+  },
+  {
+   "fieldname": "header_value",
+   "fieldtype": "Password",
+   "label": "Header Value",
+   "depends_on": "eval:doc.authentication=='HTTP Header'"
+  },
+  {
+   "fieldname": "username",
+   "fieldtype": "Data",
+   "label": "Username",
+   "depends_on": "eval:doc.authentication=='Basic Auth'"
+  },
+  {
+   "fieldname": "password",
+   "fieldtype": "Password",
+   "label": "Password",
+   "depends_on": "eval:doc.authentication=='Basic Auth'"
+  },
+  {
+   "fieldname": "section_display",
+   "fieldtype": "Section Break",
+   "label": "Display"
+  },
+  {
+   "fieldname": "attribution",
+   "fieldtype": "Small Text",
+   "label": "Attribution",
+   "description": "Shown on the map. Most providers require it; check their terms of use."
+  },
+  {
+   "fieldname": "column_break_disp",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "min_zoom",
+   "fieldtype": "Int",
+   "label": "Min Zoom",
+   "default": "0"
+  },
+  {
+   "fieldname": "max_zoom",
+   "fieldtype": "Int",
+   "label": "Max Zoom",
+   "default": "19",
+   "description": "The deepest zoom the provider has tiles for; the map keeps zooming in by enlarging them."
+  },
+  {
+   "fieldname": "opacity",
+   "fieldtype": "Float",
+   "label": "Opacity",
+   "default": "1"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  }
+ ],
+ "grid_page_length": 50,
+ "links": [],
+ "modified": "2026-10-20 18:58:56.775859",
+ "modified_by": "Administrator",
+ "module": "Geo Planning",
+ "name": "GIS Map Service",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "sort_order",
+ "sort_order": "ASC",
+ "states": [],
+ "title_field": "title",
+ "track_changes": 1
+}

@@ -1,0 +1,243 @@
+{
+ "actions": [],
+ "creation": "2026-10-20 18:18:18.146828",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "job_type",
+  "status",
+  "progress",
+  "status_message",
+  "column_break_job",
+  "started_on",
+  "finished_on",
+  "features_processed",
+  "features_failed",
+  "section_source",
+  "source_file",
+  "source_format",
+  "is_project",
+  "column_break_fmt",
+  "export_format",
+  "target_crs",
+  "selection_only",
+  "feature_ids",
+  "gis_project",
+  "section_layers",
+  "layers",
+  "section_output",
+  "output_file",
+  "log",
+  "options"
+ ],
+ "fields": [
+  {
+   "fieldname": "job_type",
+   "fieldtype": "Select",
+   "label": "Job Type",
+   "options": "Import\nExport",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Draft\nQueued\nRunning\nCompleted\nCompleted with Errors\nFailed",
+   "default": "Draft",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "progress",
+   "fieldtype": "Percent",
+   "label": "Progress",
+   "read_only": 1
+  },
+  {
+   "fieldname": "status_message",
+   "fieldtype": "Data",
+   "label": "Status Message",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_job",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "started_on",
+   "fieldtype": "Datetime",
+   "label": "Started On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "finished_on",
+   "fieldtype": "Datetime",
+   "label": "Finished On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "features_processed",
+   "fieldtype": "Int",
+   "label": "Features Processed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "features_failed",
+   "fieldtype": "Int",
+   "label": "Features Failed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_source",
+   "fieldtype": "Section Break",
+   "label": "Source and Format"
+  },
+  {
+   "fieldname": "source_file",
+   "fieldtype": "Attach",
+   "label": "Source File",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_format",
+   "fieldtype": "Data",
+   "label": "Source Format",
+   "read_only": 1
+  },
+  {
+   "fieldname": "is_project",
+   "fieldtype": "Check",
+   "label": "QGIS Project Package",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_fmt",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "export_format",
+   "fieldtype": "Select",
+   "label": "Export Format",
+   "options": "\nGeoPackage\nGeoJSON\nShapefile\nKML\nGML\nCSV\nQGIS Project",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "target_crs",
+   "fieldtype": "Data",
+   "label": "Export CRS",
+   "read_only": 1,
+   "description": "Empty: each dataset in its own CRS."
+  },
+  {
+   "fieldname": "selection_only",
+   "fieldtype": "Check",
+   "label": "Selected Features Only",
+   "read_only": 1
+  },
+  {
+   "fieldname": "feature_ids",
+   "fieldtype": "JSON",
+   "label": "Feature IDs",
+   "hidden": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "gis_project",
+   "fieldtype": "Link",
+   "label": "GIS Project",
+   "options": "GIS Project",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_layers",
+   "fieldtype": "Section Break",
+   "label": "Layers"
+  },
+  {
+   "fieldname": "layers",
+   "fieldtype": "Table",
+   "label": "Layers",
+   "options": "GIS Import Export Layer"
+  },
+  {
+   "fieldname": "section_output",
+   "fieldtype": "Section Break",
+   "label": "Output and Log"
+  },
+  {
+   "fieldname": "output_file",
+   "fieldtype": "Attach",
+   "label": "Output File",
+   "read_only": 1
+  },
+  {
+   "fieldname": "log",
+   "fieldtype": "Long Text",
+   "label": "Log",
+   "read_only": 1
+  },
+  {
+   "fieldname": "options",
+   "fieldtype": "JSON",
+   "hidden": 1,
+   "label": "Options",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "links": [],
+ "modified": "2026-10-20 18:21:53.784458",
+ "modified_by": "Administrator",
+ "module": "Geo Planning",
+ "name": "GIS Import Export Job",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production User",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "if_owner": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "autoname": "format:GIS-IO-{YYYY}-{#####}",
+ "naming_rule": "Expression",
+ "track_changes": 0,
+ "description": "Audit record of a GIS import or export: who, when, which datasets, format, CRS and the result."
+}

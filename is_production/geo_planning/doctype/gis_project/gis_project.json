@@ -1,0 +1,151 @@
+{
+ "actions": [],
+ "creation": "2026-10-20 18:18:18.146828",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "title",
+  "display_crs",
+  "basemap",
+  "column_break_prj",
+  "description",
+  "section_layers",
+  "layers",
+  "section_extent",
+  "extent_min_x",
+  "extent_min_y",
+  "column_break_ext",
+  "extent_max_x",
+  "extent_max_y"
+ ],
+ "fields": [
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Title",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "display_crs",
+   "fieldtype": "Data",
+   "label": "Display CRS",
+   "description": "CRS of the coordinate readout, e.g. EPSG:2053."
+  },
+  {
+   "fieldname": "basemap",
+   "fieldtype": "Link",
+   "label": "Basemap",
+   "options": "GIS Map Service",
+   "default": "OpenStreetMap",
+   "description": "The basemap the map opens with (GIS Map Service, use: Basemap). Empty: no basemap."
+  },
+  {
+   "fieldname": "column_break_prj",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  },
+  {
+   "fieldname": "section_layers",
+   "fieldtype": "Section Break",
+   "label": "Layers",
+   "description": "Top of the list is drawn on top, as in the QGIS layer tree."
+  },
+  {
+   "fieldname": "layers",
+   "fieldtype": "Table",
+   "label": "Layers",
+   "options": "GIS Project Layer"
+  },
+  {
+   "fieldname": "section_extent",
+   "fieldtype": "Section Break",
+   "label": "Map Extent (EPSG:3857)",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "extent_min_x",
+   "fieldtype": "Float",
+   "label": "Min X",
+   "precision": "3"
+  },
+  {
+   "fieldname": "extent_min_y",
+   "fieldtype": "Float",
+   "label": "Min Y",
+   "precision": "3"
+  },
+  {
+   "fieldname": "column_break_ext",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "extent_max_x",
+   "fieldtype": "Float",
+   "label": "Max X",
+   "precision": "3"
+  },
+  {
+   "fieldname": "extent_max_y",
+   "fieldtype": "Float",
+   "label": "Max Y",
+   "precision": "3"
+  }
+ ],
+ "grid_page_length": 50,
+ "links": [],
+ "modified": "2026-10-20 18:56:37.128990",
+ "modified_by": "Administrator",
+ "module": "Geo Planning",
+ "name": "GIS Project",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production User",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "autoname": "format:GISP-{#####}",
+ "naming_rule": "Expression",
+ "title_field": "title",
+ "show_title_field_in_link": 1,
+ "track_changes": 1,
+ "description": "A saved GIS Workstation map: its layers (order, visibility, opacity, colour), extent, display CRS and basemap. Exports to a QGIS project package."
+}

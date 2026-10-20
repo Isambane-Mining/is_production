@@ -26,6 +26,8 @@ DATASET_FIELDS = [
 	"has_z",
 	"feature_count",
 	"default_color",
+	"qgis_publish_status",
+	"qgis_layer_name",
 	"extent_min_x",
 	"extent_min_y",
 	"extent_max_x",
@@ -46,7 +48,7 @@ def get_workstation_config():
 	settings = frappe.get_cached_doc("GIS Settings")
 	return {
 		"default_crs": settings.default_crs or "EPSG:4326",
-		"basemap": settings.basemap or "None",
+		"basemap": settings.basemap or None,  # a GIS Map Service name
 		"center": [flt(settings.default_center_longitude), flt(settings.default_center_latitude)],
 		"zoom": cint(settings.default_zoom) or 11,
 		"max_features": cint(settings.max_features_per_request) or 5000,
@@ -58,6 +60,11 @@ def get_workstation_config():
 		},
 		"can_edit_features": bool(frappe.has_permission("GIS Feature", "write")),
 		"can_manage_settings": bool(frappe.has_permission("GIS Settings", "write")),
+		"can_manage_plugins": "System Manager" in frappe.get_roles(),
+		"can_manage_map_services": bool(frappe.has_permission("GIS Map Service", "write")),
+		"plugins": frappe.get_all(
+			"GIS Plugin", filters={"enabled": 1}, fields=["title", "category", "version", "status"], order_by="title asc"
+		) if frappe.db.table_exists("GIS Plugin") else [],
 	}
 
 
@@ -73,6 +80,7 @@ def list_datasets():
 	)
 	for dataset in datasets:
 		dataset["spatial"] = dataset.geometry_type not in NON_SPATIAL_TYPES
+		dataset["published"] = dataset.qgis_publish_status == "Published"
 		dataset["extent_3857"] = _extent_3857(dataset) if dataset["spatial"] and dataset.feature_count else None
 		for key in ("extent_min_x", "extent_min_y", "extent_max_x", "extent_max_y"):
 			dataset.pop(key)
