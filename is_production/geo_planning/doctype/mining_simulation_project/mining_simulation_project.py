@@ -6,8 +6,14 @@ import json
 import frappe
 from frappe import _
 from frappe.model.document import Document
+from frappe.utils import flt
 
-from is_production.geo_planning.services.mining_simulation_service import TABLE_MAP, new_project_id
+from is_production.geo_planning.services.mining_simulation_service import (
+	HOUR_FIELDS,
+	PRODUCTION_EQUIPMENT_KINDS,
+	TABLE_MAP,
+	new_project_id,
+)
 
 # id prefixes the simulator uses for rows it creates itself
 ID_PREFIX = {
@@ -20,6 +26,14 @@ ID_PREFIX = {
 	"overlays": "ovl",
 	"limits": "lim",
 	"pits": "pit",
+	"batters": "bat",
+	"oldDumps": "old",
+	"rehandles": "rh",
+	"fills": "fil",
+	"raises": "rse",
+	"drains": "drn",
+	"qrasters": "qr",
+	"teamList": "tm",
 }
 
 
@@ -32,9 +46,51 @@ class MiningSimulationProject(Document):
 		self.validate_json_fields()
 		self.set_row_ids()
 		self.set_block_geometry()
+		self.set_hours_per_day()
+		self.validate_teams()
+		self.validate_equipment()
 		self.block_count = len(self.blocks)
 		self.activity_count = len(self.activities)
-		self.equipment_count = len(self.fleet)
+
+	def set_hours_per_day(self):
+		"""The simulator takes one figure: the average over the working days (same hours a week)."""
+		working = [flt(self.get(f)) for f in HOUR_FIELDS if flt(self.get(f)) > 0]
+		if working:
+			self.hours_per_day = sum(working) / len(working)
+
+	def validate_teams(self):
+		seen = set()
+		for row in self.teams:
+			row.team_name = (row.team_name or "").strip()
+			if row.team_name in seen:
+				frappe.throw(_("Team {0} is listed twice").format(frappe.bold(row.team_name)))
+			seen.add(row.team_name)
+		self.team_rows = len(self.teams)
+
+	def validate_equipment(self):
+		"""Team equipment: production Asset Categories, their Items, and the teams of this project."""
+		teams = {row.team_name for row in self.teams}
+		for row in self.fleet:
+			if row.asset_category:
+				if row.asset_category not in PRODUCTION_EQUIPMENT_KINDS:
+					frappe.throw(
+						_("Team Equipment row {0}: {1} is not production equipment ({2})").format(
+							row.idx, row.asset_category, ", ".join(PRODUCTION_EQUIPMENT_KINDS)
+						)
+					)
+				row.equipment_kind = PRODUCTION_EQUIPMENT_KINDS[row.asset_category]
+			if row.item:
+				item = frappe.db.get_value("Item", row.item, ["asset_category", "item_name"], as_dict=True)
+				if row.asset_category and item.asset_category != row.asset_category:
+					frappe.throw(
+						_("Team Equipment row {0}: Item {1} is in Asset Category {2}, not {3}").format(
+							row.idx, row.item, item.asset_category or "-", row.asset_category
+						)
+					)
+				row.equipment_name = row.equipment_name or item.item_name
+			if row.team and row.team not in teams:
+				frappe.throw(_("Team Equipment row {0}: there is no team {1} in the Teams table").format(row.idx, frappe.bold(row.team)))
+		self.equipment_count = sum(flt(row.qty) for row in self.fleet if row.item)
 
 	def validate_json_fields(self):
 		for doc in [self, *self.get_all_children()]:

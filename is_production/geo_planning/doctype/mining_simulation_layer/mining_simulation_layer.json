@@ -16,6 +16,9 @@
   "layer_id",
   "color",
   "min_thickness",
+  "geological_loss",
+  "mining_loss",
+  "contamination",
   "density_field",
   "quality_fields",
   "json_meta"
@@ -87,6 +90,24 @@
    "description": "Seam cut-off: thinner coal is mined as waste"
   },
   {
+   "fieldname": "geological_loss",
+   "fieldtype": "Float",
+   "label": "Geological Loss (%)",
+   "description": "Blank: the project's"
+  },
+  {
+   "fieldname": "mining_loss",
+   "fieldtype": "Float",
+   "label": "Mining Loss (%)",
+   "description": "Blank: the project's"
+  },
+  {
+   "fieldname": "contamination",
+   "fieldtype": "Float",
+   "label": "Contamination (%)",
+   "description": "Blank: the project's"
+  },
+  {
    "fieldname": "density_field",
    "fieldtype": "Data",
    "label": "Density Attribute",
@@ -110,7 +131,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-08 08:53:51.972282",
+ "modified": "2026-10-20 09:20:31.604101",
  "modified_by": "Administrator",
  "module": "Geo Planning",
  "name": "Mining Simulation Layer",

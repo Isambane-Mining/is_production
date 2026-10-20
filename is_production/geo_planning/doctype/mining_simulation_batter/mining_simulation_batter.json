@@ -1,0 +1,83 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-10-20 09:20:31.604101",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "fields": [
+  {
+   "fieldname": "batter_name",
+   "fieldtype": "Data",
+   "label": "Batter",
+   "in_list_view": 1,
+   "reqd": 1,
+   "columns": 4
+  },
+  {
+   "fieldname": "wall_angle",
+   "fieldtype": "Float",
+   "label": "Angle (°)",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "side",
+   "fieldtype": "Select",
+   "label": "Side",
+   "options": "\nauto\nleft\nright",
+   "in_list_view": 1,
+   "columns": 2,
+   "description": "auto: the side mined later; left / right of the line as drawn"
+  },
+  {
+   "fieldname": "surface_id",
+   "fieldtype": "Data",
+   "label": "Down to Surface ID",
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "batter_id",
+   "fieldtype": "Data",
+   "label": "Batter ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "points",
+   "fieldtype": "Code",
+   "label": "Line Points",
+   "options": "JSON"
+  },
+  {
+   "fieldname": "json_meta",
+   "fieldtype": "Long Text",
+   "label": "JSON Meta",
+   "hidden": 1,
+   "read_only": 1,
+   "description": "Keys, nulls and unmapped values of the simulator object (keeps import/export lossless)"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified_by": "Administrator",
+ "module": "Geo Planning",
+ "name": "Mining Simulation Batter",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0,
+ "field_order": [
+  "batter_name",
+  "wall_angle",
+  "side",
+  "surface_id",
+  "batter_id",
+  "points",
+  "json_meta"
+ ],
+ "modified": "2026-10-20 09:20:31.604101"
+}

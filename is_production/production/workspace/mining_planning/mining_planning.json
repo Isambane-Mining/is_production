@@ -24,11 +24,11 @@
   },
   {
    "hidden": 0,
-   "is_query_report": 0,
-   "label": "Mining Simulation",
+   "is_query_report": 1,
+   "label": "Equipment Plan",
    "link_count": 0,
-   "link_to": "mining-simulation",
-   "link_type": "Page",
+   "link_to": "Mining Simulation Equipment Plan",
+   "link_type": "Report",
    "onboard": 0,
    "type": "Link"
   },
@@ -43,7 +43,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-10-08 12:48:29.398854",
+ "modified": "2026-10-20 13:09:12.188643",
  "modified_by": "Administrator",
  "module": "Production",
  "name": "Mining Planning",
@@ -59,8 +59,8 @@
    "color": "Orange",
    "doc_view": "",
    "label": "Mining Simulation",
-   "link_to": "mining-simulation",
-   "type": "Page"
+   "type": "URL",
+   "url": "/portal_mining_simulation"
   },
   {
    "color": "Grey",
