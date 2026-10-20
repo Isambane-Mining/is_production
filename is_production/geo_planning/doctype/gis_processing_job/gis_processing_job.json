@@ -1,0 +1,196 @@
+{
+ "actions": [],
+ "creation": "2026-10-20 18:39:13.835771",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "algorithm",
+  "algorithm_name",
+  "provider",
+  "column_break_alg",
+  "status",
+  "progress",
+  "status_message",
+  "section_times",
+  "started_on",
+  "finished_on",
+  "column_break_times",
+  "qgis_version",
+  "section_parameters",
+  "parameters",
+  "section_outputs",
+  "outputs",
+  "results",
+  "section_log",
+  "log"
+ ],
+ "fields": [
+  {
+   "fieldname": "algorithm",
+   "fieldtype": "Data",
+   "label": "Algorithm ID",
+   "reqd": 1,
+   "read_only": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "algorithm_name",
+   "fieldtype": "Data",
+   "label": "Algorithm",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "provider",
+   "fieldtype": "Data",
+   "label": "Provider",
+   "read_only": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "column_break_alg",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Queued\nRunning\nCancelling\nCancelled\nCompleted\nFailed",
+   "default": "Queued",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "progress",
+   "fieldtype": "Percent",
+   "label": "Progress",
+   "read_only": 1
+  },
+  {
+   "fieldname": "status_message",
+   "fieldtype": "Data",
+   "label": "Status Message",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_times",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "started_on",
+   "fieldtype": "Datetime",
+   "label": "Started On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "finished_on",
+   "fieldtype": "Datetime",
+   "label": "Finished On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_times",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "qgis_version",
+   "fieldtype": "Data",
+   "label": "QGIS Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_parameters",
+   "fieldtype": "Section Break",
+   "label": "Parameters"
+  },
+  {
+   "fieldname": "parameters",
+   "fieldtype": "JSON",
+   "label": "Parameters",
+   "read_only": 1,
+   "description": "As chosen in the toolbox; datasets are referred to by name."
+  },
+  {
+   "fieldname": "section_outputs",
+   "fieldtype": "Section Break",
+   "label": "Outputs"
+  },
+  {
+   "fieldname": "outputs",
+   "fieldtype": "Table",
+   "label": "Outputs",
+   "options": "GIS Processing Output",
+   "read_only": 1
+  },
+  {
+   "fieldname": "results",
+   "fieldtype": "JSON",
+   "label": "Other Results",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_log",
+   "fieldtype": "Section Break",
+   "label": "Log",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "log",
+   "fieldtype": "Long Text",
+   "label": "Log",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "links": [],
+ "modified": "2026-10-20 18:39:13.835771",
+ "modified_by": "Administrator",
+ "module": "Geo Planning",
+ "name": "GIS Processing Job",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production User",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "if_owner": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "autoname": "format:GIS-PR-{YYYY}-{#####}",
+ "naming_rule": "Expression",
+ "title_field": "algorithm_name",
+ "description": "One run of a QGIS Processing algorithm from the GIS Workstation: parameters, progress, log and outputs. Outputs become new datasets or files; inputs are never changed."
+}
