@@ -1,6 +1,6 @@
 {
  "charts": [],
- "content": "[{\"id\": \"4ceac6f80f\", \"type\": \"header\", \"data\": {\"text\": \"\\u003cspan class=\\\"h4\\\"\\u003e\\u003cb\\u003eMining Planning\\u003c/b\\u003e\\u003c/span\\u003e\", \"col\": 12}}, {\"id\": \"55cac2bff2\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Mining Simulation\", \"col\": 3}}, {\"id\": \"a8be43518a\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Simulation Projects\", \"col\": 3}}, {\"id\": \"88a6cdafec\", \"type\": \"spacer\", \"data\": {\"col\": 12}}, {\"id\": \"ff5498d6df\", \"type\": \"card\", \"data\": {\"card_name\": \"Mining Simulation\", \"col\": 4}}]",
+ "content": "[{\"id\": \"4ceac6f80f\", \"type\": \"header\", \"data\": {\"text\": \"\\u003cspan class=\\\"h4\\\"\\u003e\\u003cb\\u003eMining Planning\\u003c/b\\u003e\\u003c/span\\u003e\", \"col\": 12}}, {\"id\": \"55cac2bff2\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Mining Simulation\", \"col\": 3}}, {\"id\": \"a8be43518a\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Simulation Projects\", \"col\": 3}}, {\"id\": \"861e844252\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"GIS Workstation\", \"col\": 3}}, {\"id\": \"88a6cdafec\", \"type\": \"spacer\", \"data\": {\"col\": 12}}, {\"id\": \"ff5498d6df\", \"type\": \"card\", \"data\": {\"card_name\": \"Mining Simulation\", \"col\": 4}}, {\"id\": \"57cdaaf23f\", \"type\": \"card\", \"data\": {\"card_name\": \"GIS\", \"col\": 4}}]",
  "creation": "2026-10-08 12:47:50.791989",
  "custom_blocks": [],
  "docstatus": 0,
@@ -41,9 +41,48 @@
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "GIS",
+   "link_count": 3,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "GIS Dataset",
+   "link_count": 0,
+   "link_to": "GIS Dataset",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "GIS Feature",
+   "link_count": 0,
+   "link_to": "GIS Feature",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "GIS Settings",
+   "link_count": 0,
+   "link_to": "GIS Settings",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
   }
  ],
- "modified": "2026-10-20 13:09:12.188643",
+ "modified": "2026-10-20 15:54:51.162287",
  "modified_by": "Administrator",
  "module": "Production",
  "name": "Mining Planning",
@@ -68,6 +107,13 @@
    "label": "Simulation Projects",
    "link_to": "Mining Simulation Project",
    "type": "DocType"
+  },
+  {
+   "color": "Blue",
+   "doc_view": "",
+   "label": "GIS Workstation",
+   "type": "URL",
+   "url": "/portal_gis"
   }
  ],
  "standard": 1,

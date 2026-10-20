@@ -25,8 +25,15 @@ fixtures = [
 # Asset Categories (Dozer, ADT, Excavator) are not a fixture: they need
 # company-specific accounts. They are created against the site's default
 # company by is_production.setup.asset_categories instead.
-after_install = "is_production.setup.asset_categories.ensure_asset_categories"
-after_migrate = "is_production.setup.asset_categories.ensure_asset_categories"
+after_install = [
+    "is_production.setup.asset_categories.ensure_asset_categories",
+    "is_production.geo_planning.services.gis_storage_service.ensure_geometry_schema",
+]
+after_migrate = [
+    "is_production.setup.asset_categories.ensure_asset_categories",
+    # GIS Feature's native GEOMETRY column + SPATIAL index are not Frappe fields.
+    "is_production.geo_planning.services.gis_storage_service.ensure_geometry_schema",
+]
 
 override_whitelisted_methods = {
     # Override the PDF‐body renderer
@@ -61,6 +68,10 @@ page_js = {
 }
 
 scheduler_events = {
+    "daily": [
+        # GIS dependency health (QGIS Server, PyQGIS, database account), shown on GIS Settings.
+        "is_production.geo_planning.services.gis_health_service.scheduled_health_check",
+    ],
     "hourly": [
         "is_production.production.doctype.monthly_production_planning.monthly_production_planning.update_all_active_mpp_mtd",
     ],
