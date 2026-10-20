@@ -1,0 +1,90 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-10-20 09:20:31.604101",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "fields": [
+  {
+   "fieldname": "old_dump_name",
+   "fieldtype": "Data",
+   "label": "Existing Dump",
+   "in_list_view": 1,
+   "reqd": 1,
+   "columns": 3
+  },
+  {
+   "fieldname": "elevation",
+   "fieldtype": "Float",
+   "label": "Top Elevation",
+   "in_list_view": 1,
+   "columns": 1,
+   "description": "Blank: from the surface"
+  },
+  {
+   "fieldname": "start_date",
+   "fieldtype": "Date",
+   "label": "Rehandle From",
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "rate",
+   "fieldtype": "Float",
+   "label": "Rate (m³ loose / working day)",
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "destination_dump_id",
+   "fieldtype": "Data",
+   "label": "To Dump ID",
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "old_dump_id",
+   "fieldtype": "Data",
+   "label": "Existing Dump ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "points",
+   "fieldtype": "Code",
+   "label": "Footprint Points",
+   "options": "JSON"
+  },
+  {
+   "fieldname": "json_meta",
+   "fieldtype": "Long Text",
+   "label": "JSON Meta",
+   "hidden": 1,
+   "read_only": 1,
+   "description": "Keys, nulls and unmapped values of the simulator object (keeps import/export lossless)"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified_by": "Administrator",
+ "module": "Geo Planning",
+ "name": "Mining Simulation Old Dump",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0,
+ "field_order": [
+  "old_dump_name",
+  "elevation",
+  "start_date",
+  "rate",
+  "destination_dump_id",
+  "old_dump_id",
+  "points",
+  "json_meta"
+ ],
+ "modified": "2026-10-20 09:20:31.604101"
+}

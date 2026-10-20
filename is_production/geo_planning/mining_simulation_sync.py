@@ -1,7 +1,8 @@
 """Build the Mining Simulation web page from the planner's standalone simulator.html.
 
 The simulator is developed as one self-contained HTML file. This turns that file into
-www/mining_simulation.html without changing her code: the page keeps its markup, its
+the portal page templates/pages/portal_mining_simulation.html (route
+/portal_mining_simulation) without changing her code: the page keeps its markup, its
 <style id="app-style"> and its <script id="app-main"> inline (the Share feature copies
 them from the live page), the three CDN libraries are served from this app, and the
 Frappe storage adapter is loaded after her script so projects are kept in
@@ -17,10 +18,11 @@ or without a site: python apps/is_production/is_production/geo_planning/mining_s
 """
 
 import os
+import re
 import sys
 
 APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TARGET = os.path.join(APP_DIR, "www", "mining_simulation.html")
+TARGET = os.path.join(APP_DIR, "templates", "pages", "portal_mining_simulation.html")
 
 # The CDN tags in simulator.html and the local copy that replaces each (public/mining_simulation/vendor)
 LIBRARIES = [
@@ -68,8 +70,9 @@ def build(html):
 	if not 0 < head_end < start:
 		raise ValueError("</head> not found before the library tags")
 
-	head = html[:head_end].replace("<head>\n", "<head>\n" + NOTICE, 1)
+	head = re.sub(r"<head>\r?\n", lambda m: m.group(0) + NOTICE, html[:head_end], count=1)
 	theme_part = (
+		'<link rel="icon" href="{{ favicon }}" data-frappe-favicon>\n'
 		"<script>window.MINING_SIM = {{ mining_sim | tojson }};</script>\n"
 		f'<link rel="stylesheet" href="{ASSET_URL}frappe_theme.css?v={{{{ asset_version }}}}">\n'
 		f'<script src="{ASSET_URL}frappe_theme.js?v={{{{ asset_version }}}}"></script>\n'
@@ -88,10 +91,10 @@ def build(html):
 
 
 def sync(source):
-	with open(source, encoding="utf-8") as f:
+	with open(source, encoding="utf-8", newline="") as f:  # keep her line endings as they are
 		html = f.read()
 	out = build(html)
-	with open(TARGET, "w", encoding="utf-8") as f:
+	with open(TARGET, "w", encoding="utf-8", newline="") as f:
 		f.write(out)
 	print(f"Wrote {TARGET} ({len(out):,} characters) from {source}")
 	return TARGET

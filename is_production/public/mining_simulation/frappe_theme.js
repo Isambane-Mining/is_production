@@ -10,6 +10,8 @@
 (() => {
   const CFG = window.MINING_SIM || {};
   const root = document.documentElement;
+  // the site's favicon, not the simulator's own (kept in its Share copies)
+  for (const l of document.querySelectorAll('link[rel~="icon"]:not([data-frappe-favicon])')) l.remove();
   const os_dark = window.matchMedia('(prefers-color-scheme: dark)');
   root.classList.add('frappe-theme-loading');
 

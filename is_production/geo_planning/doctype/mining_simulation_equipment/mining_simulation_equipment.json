@@ -6,14 +6,18 @@
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
+  "team",
+  "asset_category",
+  "item",
+  "qty",
+  "column_break_team_equipment",
   "equipment_name",
   "equipment_kind",
+  "equipment_id",
+  "section_break_legacy",
   "activity_id",
-  "qty",
   "availability",
   "utilisation",
-  "column_break_equipment",
-  "equipment_id",
   "production_mode",
   "production_rate",
   "section_break_excavator",
@@ -34,28 +38,30 @@
  ],
  "fields": [
   {
-   "fieldname": "equipment_name",
-   "fieldtype": "Data",
-   "label": "Equipment",
+   "fieldname": "team",
+   "fieldtype": "Autocomplete",
+   "label": "Team",
    "in_list_view": 1,
-   "reqd": 1,
-   "columns": 3
+   "columns": 2,
+   "description": "A team from the Teams table"
   },
   {
-   "fieldname": "equipment_kind",
-   "fieldtype": "Select",
-   "label": "Kind",
-   "options": "\nexcavator\ntruck\ndozer",
+   "fieldname": "asset_category",
+   "fieldtype": "Link",
+   "label": "Asset Category",
+   "options": "Asset Category",
    "in_list_view": 1,
-   "reqd": 1,
-   "columns": 1
+   "columns": 2,
+   "link_filters": "[[\"Asset Category\", \"name\", \"in\", [\"ADT\", \"Rigid\", \"Excavator\", \"Dozer\"]]]"
   },
   {
-   "fieldname": "activity_id",
-   "fieldtype": "Data",
-   "label": "Activity ID",
+   "fieldname": "item",
+   "fieldtype": "Link",
+   "label": "Item",
+   "options": "Item",
    "in_list_view": 1,
-   "columns": 2
+   "columns": 3,
+   "description": "Equipment items of the Asset Category"
   },
   {
    "fieldname": "qty",
@@ -65,30 +71,52 @@
    "columns": 1
   },
   {
-   "fieldname": "availability",
-   "fieldtype": "Float",
-   "label": "Availability",
-   "in_list_view": 1,
-   "columns": 1,
-   "description": "Fraction, e.g. 0.85"
-  },
-  {
-   "fieldname": "utilisation",
-   "fieldtype": "Float",
-   "label": "Utilisation",
-   "in_list_view": 1,
-   "columns": 1,
-   "description": "Fraction, e.g. 0.8"
-  },
-  {
-   "fieldname": "column_break_equipment",
+   "fieldname": "column_break_team_equipment",
    "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "equipment_name",
+   "fieldtype": "Data",
+   "label": "Description",
+   "description": "Defaults to the Item's name"
+  },
+  {
+   "fieldname": "equipment_kind",
+   "fieldtype": "Select",
+   "label": "Simulator Kind",
+   "options": "\nexcavator\ntruck\ndozer",
+   "read_only": 1,
+   "description": "From the Asset Category"
   },
   {
    "fieldname": "equipment_id",
    "fieldtype": "Data",
    "label": "Equipment ID",
    "read_only": 1
+  },
+  {
+   "fieldname": "section_break_legacy",
+   "fieldtype": "Section Break",
+   "label": "Rates (Older Projects)",
+   "collapsible": 1,
+   "description": "Used only to work out teams for a project made before teams"
+  },
+  {
+   "fieldname": "activity_id",
+   "fieldtype": "Data",
+   "label": "Activity ID (Older Projects)"
+  },
+  {
+   "fieldname": "availability",
+   "fieldtype": "Float",
+   "label": "Availability",
+   "description": "Fraction, e.g. 0.85"
+  },
+  {
+   "fieldname": "utilisation",
+   "fieldtype": "Float",
+   "label": "Utilisation",
+   "description": "Fraction, e.g. 0.8"
   },
   {
    "fieldname": "production_mode",
@@ -107,8 +135,9 @@
   {
    "fieldname": "section_break_excavator",
    "fieldtype": "Section Break",
-   "label": "Excavator",
-   "depends_on": "eval:doc.equipment_kind=='excavator'"
+   "label": "Excavator Rates (Older Projects)",
+   "depends_on": "eval:doc.equipment_kind=='excavator'",
+   "collapsible": 1
   },
   {
    "fieldname": "bucket_size",
@@ -128,8 +157,9 @@
   {
    "fieldname": "section_break_truck",
    "fieldtype": "Section Break",
-   "label": "Truck",
-   "depends_on": "eval:doc.equipment_kind=='truck'"
+   "label": "Truck Rates (Older Projects)",
+   "depends_on": "eval:doc.equipment_kind=='truck'",
+   "collapsible": 1
   },
   {
    "fieldname": "payload",
@@ -187,7 +217,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-08 08:53:51.972282",
+ "modified": "2026-10-20 09:34:43.019558",
  "modified_by": "Administrator",
  "module": "Geo Planning",
  "name": "Mining Simulation Equipment",
