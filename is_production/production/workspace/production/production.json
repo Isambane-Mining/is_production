@@ -361,11 +361,11 @@
   },
   {
    "hidden": 0,
-   "is_query_report": 1,
-   "label": "Control Room Correction Dashboard",
+   "is_query_report": 0,
+   "label": "Downtime Correction Dashboard",
    "link_count": 0,
-   "link_to": "Downtime Correction Dashboard",
-   "link_type": "Report",
+   "link_to": "downtime-correction-dashboard",
+   "link_type": "Page",
    "onboard": 0,
    "type": "Link"
   },
