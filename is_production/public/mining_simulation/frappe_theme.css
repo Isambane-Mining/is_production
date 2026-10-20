@@ -150,6 +150,27 @@ html.frappe-theme-loading body {
 :root[data-theme] .lbl3d.pit {
 	border-color: var(--text-color);
 }
+:root[data-theme] .lbl3d.pit.box {
+	background: var(--overlay-bg);
+}
+
+/* surface water panel */
+:root[data-theme] .water-info {
+	background: var(--overlay-bg);
+	border: 1px solid var(--overlay-border);
+	box-shadow: var(--shadow);
+	color: var(--text-color);
+}
+:root[data-theme] .water-info .seg button,
+:root[data-theme] .water-info input.num {
+	border-color: var(--dark-border-color);
+}
+:root[data-theme] .water-info input.num {
+	background: var(--control-bg);
+}
+:root[data-theme] .water-info .gw-h {
+	border-top-color: var(--overlay-border);
+}
 :root[data-theme] .lbl3d.dump {
 	color: var(--text-color);
 }

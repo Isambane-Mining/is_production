@@ -1,6 +1,6 @@
 /* Frappe storage for the Mining Simulation page.
 
-   Loaded after the simulator's own script (www/mining_simulation.html) and before it starts.
+   Loaded after the simulator's own script (templates/pages/portal_mining_simulation.html) and before it starts.
    The simulator keeps projects through one Store object (list, load, save, remove and the
    binary grid / satellite blobs). This provides that Store on top of Mining Simulation
    Project documents and points the simulator's start-up at it; the simulator's code is

@@ -17,6 +17,10 @@
   "leave_in_blocks",
   "follows_pit",
   "spoil_dump_id",
+  "cut_blocks",
+  "toe_surface",
+  "use_from",
+  "use_to",
   "points",
   "json_meta"
  ],
@@ -91,6 +95,26 @@
    "label": "Spoil Dump ID"
   },
   {
+   "fieldname": "cut_blocks",
+   "fieldtype": "Check",
+   "label": "Cut Through Blocks Not Yet Mined"
+  },
+  {
+   "fieldname": "toe_surface",
+   "fieldtype": "Data",
+   "label": "Toe Surface ID"
+  },
+  {
+   "fieldname": "use_from",
+   "fieldtype": "Date",
+   "label": "In Use From"
+  },
+  {
+   "fieldname": "use_to",
+   "fieldtype": "Date",
+   "label": "In Use To"
+  },
+  {
    "fieldname": "points",
    "fieldtype": "Code",
    "label": "Centre Line Points",
@@ -108,7 +132,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-08 08:53:51.972282",
+ "modified": "2026-10-20 09:20:31.604101",
  "modified_by": "Administrator",
  "module": "Geo Planning",
  "name": "Mining Simulation Road",

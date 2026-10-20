@@ -4,8 +4,8 @@ Isambane Mining Frappe App for Production Records
 
 #### Mining Simulation
 
-The Mining Simulation page (Geo Planning) runs the mine planner's simulator on
-**Mining Simulation Project** documents. Import a `.rollover.json` project file from the
+The Mining Simulation portal page (`/portal_mining_simulation`, full screen, login required) runs the mine planner's simulator on
+**Mining Simulation Project** documents. Import a project file (`.isamiq.json`, or an older `.rollover.json`) from the
 Mining Simulation Project list (*Import Simulation File*); *Export Simulation File* on a
 project gives the same file back for the standalone simulator.
 
