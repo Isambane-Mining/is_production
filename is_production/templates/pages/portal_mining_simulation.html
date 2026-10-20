@@ -8707,7 +8707,8 @@ const Fin = (() => {
       f('cWaste', 'Waste load and haul', 'R/bcm', 30, { step: 1, cur: true }),
       f('cDoze', 'Waste dozed into the void', 'R/bcm', 12, { step: 1, cur: true }),
       f('cCoal', 'Coal mining', 'R/t mined (as received)', 45, { step: 1, cur: true }),
-      f('cDrillB', 'Drilling', 'R/bcm drilled and blasted', 4.5, { step: 0.1, cur: true }),
+      f('cDrillW', 'Drilling, waste', 'R/bcm waste drilled and blasted', 4.5, { step: 0.1, cur: true }),
+      f('cDrillC', 'Drilling, coal', 'R/bcm coal drilled and blasted', 4.5, { step: 0.1, cur: true }),
       f('cExpl', 'Explosives and accessories', 'R/kg', 19, { step: 0.5, cur: true }),
       f('cPresplit', 'Presplit', 'R/m² presplit', 0, { step: 1, cur: true }),
       f('presplitW', 'Presplit strip width', 'm', 40, { step: 1 }),
@@ -8742,6 +8743,8 @@ const Fin = (() => {
       else { const x = +v; o[q.k] = v != null && v !== '' && isFinite(x) ? x : q.def; }
     }
     o.capexMonths = Math.max(0, Math.round(o.capexMonths)); o.expShare = U.clamp(o.expShare, 0, 100); o.yieldFixed = U.clamp(o.yieldFixed, 1, 100); o.presplitW = Math.max(1, o.presplitW);
+    // (one drilling rate for waste and coal before: it stands for both until they are set)
+    for (const k of ['cDrillW', 'cDrillC']) if ((F[k] == null || F[k] === '') && F.cDrillB != null && F.cDrillB !== '' && isFinite(+F.cDrillB)) o[k] = +F.cDrillB;
     return o;
   }
   const unitOf = (q, cur) => (q.unit || '').replace(/^R(?=\/| |$)/, cur).replace(/^R a /, cur + ' a ').replace(/, after/, ', after');
@@ -8761,8 +8764,8 @@ const Fin = (() => {
     const B = ext.blast !== undefined ? ext.blast : typeof Blast !== 'undefined' ? Blast.compute(P, ws, res) : null;
     const BM = B ? Blast.monthly(B, mo.mOf, nM, mo.work) : null, HR = ext.hydro || null;
     const mk = () => new Float64Array(N), at = m => np + m; // (the model's months: np before mining, nM of mining, then closure)
-    const X = {}; for (const k of ['rom', 'insitu', 'topsoil', 'waste', 'dozed', 'drillM', 'blastB', 'explKg', 'presplitM2', 'reh', 'rehabHa', 'water', 'feed', 'product', 'discard', 'expT', 'domT', 'cv',
-      'revExp', 'revDom', 'rev', 'mkt', 'logi', 'logiExp', 'cTopsoil', 'cWaste', 'cDoze', 'cCoal', 'cDrill', 'cExpl', 'cPresplit', 'cRehandle', 'cRehab', 'cWater', 'mining', 'cCrush', 'cWash', 'cDiscard', 'process', 'over', 'opex',
+    const X = {}; for (const k of ['rom', 'insitu', 'topsoil', 'waste', 'dozed', 'drillM', 'blastB', 'blastW', 'blastC', 'explKg', 'presplitM2', 'reh', 'rehabHa', 'water', 'feed', 'product', 'discard', 'expT', 'domT', 'cv',
+      'revExp', 'revDom', 'rev', 'mkt', 'logi', 'logiExp', 'cTopsoil', 'cWaste', 'cDoze', 'cCoal', 'cDrill', 'cDrillW', 'cDrillC', 'cExpl', 'cPresplit', 'cRehandle', 'cRehab', 'cWater', 'mining', 'cCrush', 'cWash', 'cDiscard', 'process', 'over', 'opex',
       'ebitda', 'royalty', 'tax', 'capex', 'capInit', 'capSust', 'capClose', 'wc', 'dwc', 'fcf', 'cum', 'disc', 'pv', 'days']) X[k] = mk();
     X.cv.fill(NaN);
     // the physical figures of each month of mining
@@ -8774,7 +8777,7 @@ const Fin = (() => {
     for (let m = 0; m < nM; m++) {
       const t = at(m), rom = mo.coalAR[m];
       X.days[t] = mo.days[m]; X.rom[t] = rom; X.insitu[t] = mo.coalT[m]; X.topsoil[t] = top[m]; X.dozed[t] = doz[m]; X.waste[t] = Math.max(0, mo.wasteB[m] - top[m] - doz[m]);
-      X.drillM[t] = BM ? BM.waste.m[m] + BM.coal.m[m] : 0; X.blastB[t] = BM ? BM.waste.bcm[m] + BM.coal.bcm[m] : 0; X.explKg[t] = BM ? BM.waste.kg[m] + BM.coal.kg[m] : 0;
+      X.drillM[t] = BM ? BM.waste.m[m] + BM.coal.m[m] : 0; X.blastW[t] = BM ? BM.waste.bcm[m] : 0; X.blastC[t] = BM ? BM.coal.bcm[m] : 0; X.blastB[t] = X.blastW[t] + X.blastC[t]; X.explKg[t] = BM ? BM.waste.kg[m] + BM.coal.kg[m] : 0;
       X.presplitM2[t] = BM ? BM.waste.bcm[m] / o.presplitW : 0; // a presplit face per strip, as high as the waste blasted: its bcm ÷ the strip width
       X.reh[t] = mo.looseReh[m]; X.rehabHa[t] = mo.soil ? mo.soil[m] / soilTh / 1e4 : 0; X.water[t] = HR && HR.M.nM === nM ? HR.M.pumped[m] : 0;
       if (o.wash) {
@@ -8792,7 +8795,7 @@ const Fin = (() => {
       X.revExp[t] = X.expT[t] * o.expPrice * o.fx * cvf * eP; X.revDom[t] = X.domT[t] * o.domPrice * cvf * eP; X.rev[t] = X.revExp[t] + X.revDom[t];
       X.mkt[t] = X.rev[t] * o.mkt / 100; X.logiExp[t] = X.expT[t] * (o.rail + o.port) * eC; X.logi[t] = X.logiExp[t] + X.domT[t] * o.domTrans * eC;
       const c = (k, q) => { X[k][t] = q * eC; return X[k][t]; };
-      X.mining[t] = c('cTopsoil', X.topsoil[t] * o.cTopsoil) + c('cWaste', X.waste[t] * o.cWaste) + c('cDoze', X.dozed[t] * o.cDoze) + c('cCoal', X.rom[t] * o.cCoal) + c('cDrill', X.blastB[t] * o.cDrillB) + c('cExpl', X.explKg[t] * o.cExpl) + c('cPresplit', X.presplitM2[t] * o.cPresplit) + c('cRehandle', X.reh[t] * o.cRehandle) + c('cRehab', X.rehabHa[t] * o.cRehab) + c('cWater', X.water[t] * o.cWater);
+      X.mining[t] = c('cTopsoil', X.topsoil[t] * o.cTopsoil) + c('cWaste', X.waste[t] * o.cWaste) + c('cDoze', X.dozed[t] * o.cDoze) + c('cCoal', X.rom[t] * o.cCoal) + (X.cDrill[t] = c('cDrillW', X.blastW[t] * o.cDrillW) + c('cDrillC', X.blastC[t] * o.cDrillC)) + c('cExpl', X.explKg[t] * o.cExpl) + c('cPresplit', X.presplitM2[t] * o.cPresplit) + c('cRehandle', X.reh[t] * o.cRehandle) + c('cRehab', X.rehabHa[t] * o.cRehab) + c('cWater', X.water[t] * o.cWater);
       X.process[t] = c('cCrush', X.rom[t] * o.cCrush) + (o.wash ? c('cWash', X.feed[t] * o.cWash) + c('cDiscard', X.discard[t] * o.cDiscard) : 0);
       const mining = t >= np && t < np + nM;
       X.over[t] = mining ? (o.fixedM + o.corpM) * (X.days[t] / dpm) * eC : 0;
@@ -14095,7 +14098,7 @@ const Tabs = (() => {
       parts.push(...flds.reduce((a, x, i, arr) => (i % 2 ? a : a.concat(h('div', { class: 'grid2' }, x, arr[i + 1] || h('span')))), []));
       if (G.id === 'sales' && o.wash && o.yieldSrc === 'wash' && !(typeof Wash !== 'undefined' && Wash.product(P))) parts.push(msg('warn', `There is no washability data (Data tab), so the plant yield is the fixed ${U.fmtNum(o.yieldFixed, 1)}%.`));
       if (G.id === 'sales') parts.push(hint(o.wash ? 'Washing: the coal mined (as received) is the plant feed; the product is sold and the discard is dumped. Untick it to sell the coal as mined (crushed and screened only).' : 'Not washed: the coal mined (as received) is crushed, screened and sold as it is. Tick “Wash the coal” to add a coal washing plant: its yield, its cost a ton of feed and the discard.'));
-      if (G.id === 'mining') { const BL = Blast.settings(P); parts.push(hint(BL.on ? 'Drilling is priced on the bcm drilled and blasted, and the explosives on the kg, of the drill and blast (Production tab). Presplit is priced on the m² of presplit: one face per strip along its highwall, as high as the waste blasted, so the waste bcm drilled and blasted ÷ the strip width.' : 'Drill and blast is off (Production tab), so there are no drilling or explosives costs.')); }
+      if (G.id === 'mining') { const BL = Blast.settings(P); parts.push(hint(BL.on ? 'Drilling is priced on the bcm drilled and blasted, waste and coal at their own rates, and the explosives on the kg, of the drill and blast (Production tab). Presplit is priced on the m² of presplit: one face per strip along its highwall, as high as the waste blasted, so the waste bcm drilled and blasted ÷ the strip width.' : 'Drill and blast is off (Production tab), so there are no drilling or explosives costs.')); }
       if (G.id === 'econ') parts.push(hint('Prices and costs are in today’s money, escalated from the start of mining by the rates set (0: a real model). The SA royalty on unrefined minerals is 0.5% + EBIT ÷ (gross sales × 9) of the gross sales at the mine, at most 7%, worked out year by year; capital spending is deducted from the EBIT and, for the tax, in full against the mining income as it is spent, with assessed losses carried forward.'));
       body.append(sec(G.title, null, ...parts));
     }
@@ -16253,11 +16256,11 @@ const Report = (() => {
     row('Months in the year', 'months', 'months');
     title('PRODUCTION'); row('Coal mined (as received)', 't', 'rom'); if (o.wash) { row('Plant feed', 't', 'feed'); row('Product', 't', 'product'); row('Discard', 't', 'discard'); } else row('Coal sold (as mined)', 't', 'product');
     row('Exported', 't', 'expT'); row('Sold at home', 't', 'domT'); if (o.byCV) row('CV of the coal sold', 'MJ/kg', 'cv', { dp: true, total: null });
-    row('Topsoil', 'bcm', 'topsoil'); row('Waste hauled', 'bcm', 'waste'); row('Waste dozed', 'bcm', 'dozed'); row('Drilled and blasted', 'bcm', 'blastB'); row('Drill metres', 'm', 'drillM'); row('Explosives', 'kg', 'explKg'); row('Presplit', 'm²', 'presplitM2'); row('Rehandled', 'm³ loose', 'reh'); row('Rehabilitated', 'ha', 'rehabHa', { dp: true }); if (F.hydro) row('Water pumped from the pit', 'm³', 'water');
+    row('Topsoil', 'bcm', 'topsoil'); row('Waste hauled', 'bcm', 'waste'); row('Waste dozed', 'bcm', 'dozed'); row('Drilled and blasted', 'bcm', 'blastB'); row('Waste drilled and blasted', 'bcm', 'blastW'); row('Coal drilled and blasted', 'bcm', 'blastC'); row('Drill metres', 'm', 'drillM'); row('Explosives', 'kg', 'explKg'); row('Presplit', 'm²', 'presplitM2'); row('Rehandled', 'm³ loose', 'reh'); row('Rehabilitated', 'ha', 'rehabHa', { dp: true }); if (F.hydro) row('Water pumped from the pit', 'm³', 'water');
     gap(); title(`CASH FLOW (${cur})`);
     row('Revenue, export', cur, 'revExp'); row('Revenue, domestic', cur, 'revDom'); row('Revenue', cur, 'rev');
     row('Logistics (rail, port, transport)', cur, 'logi', { sign: -1 }); row('Marketing and commission', cur, 'mkt', { sign: -1 });
-    for (const [k, nm] of [['cTopsoil', 'Topsoil stripping'], ['cWaste', 'Waste load and haul'], ['cDoze', 'Waste dozed'], ['cCoal', 'Coal mining'], ['cDrill', 'Drilling'], ['cExpl', 'Explosives'], ['cPresplit', 'Presplit'], ['cRehandle', 'Rehandling'], ['cRehab', 'Rehabilitation'], ['cWater', 'Pit water']]) row(nm, cur, k, { sign: -1 });
+    for (const [k, nm] of [['cTopsoil', 'Topsoil stripping'], ['cWaste', 'Waste load and haul'], ['cDoze', 'Waste dozed'], ['cCoal', 'Coal mining'], ['cDrillW', 'Drilling, waste'], ['cDrillC', 'Drilling, coal'], ['cExpl', 'Explosives'], ['cPresplit', 'Presplit'], ['cRehandle', 'Rehandling'], ['cRehab', 'Rehabilitation'], ['cWater', 'Pit water']]) row(nm, cur, k, { sign: -1 });
     row('Mining costs', cur, 'mining', { sign: -1 });
     row('Crushing and screening', cur, 'cCrush', { sign: -1 }); if (o.wash) { row('Washing', cur, 'cWash', { sign: -1 }); row('Discard disposal', cur, 'cDiscard', { sign: -1 }); }
     row('Processing costs', cur, 'process', { sign: -1 }); row('Overheads', cur, 'over', { sign: -1 });
@@ -16280,7 +16283,7 @@ const Report = (() => {
     const head = ['Item', 'Unit', 'Total']; for (let t = 0; t < N; t++) head.push(F.label(t));
     const aoa = [head], row = (label, unit, k, sign = 1, noTot) => aoa.push([label, unit, noTot ? null : m0(X[k].reduce((a, b) => a + b, 0) * sign), ...Array.from(X[k], v => m0(v * sign))]);
     aoa.push(['Phase', '', null, ...Array.from({ length: N }, (_, t) => (t < F.np ? 'before mining' : t < F.np + F.nM ? 'mining' : 'closure'))]);
-    row('Coal mined (as received)', 't', 'rom'); row('Coal sold', 't', 'product'); row('Revenue', cur, 'rev'); row('Logistics', cur, 'logi', -1); row('Marketing', cur, 'mkt', -1); row('Mining costs', cur, 'mining', -1); row('Drilling', cur, 'cDrill', -1); row('Explosives', cur, 'cExpl', -1); row('Presplit', cur, 'cPresplit', -1);
+    row('Coal mined (as received)', 't', 'rom'); row('Coal sold', 't', 'product'); row('Revenue', cur, 'rev'); row('Logistics', cur, 'logi', -1); row('Marketing', cur, 'mkt', -1); row('Mining costs', cur, 'mining', -1); row('Drilling, waste', cur, 'cDrillW', -1); row('Drilling, coal', cur, 'cDrillC', -1); row('Explosives', cur, 'cExpl', -1); row('Presplit', cur, 'cPresplit', -1);
     row('Processing costs', cur, 'process', -1); row('Overheads', cur, 'over', -1); row('EBITDA', cur, 'ebitda'); row('Mineral royalty', cur, 'royalty', -1); row('Company tax', cur, 'tax', -1); row('Capital', cur, 'capex', -1); row('Working capital', cur, 'dwc', -1);
     row('Free cash flow', cur, 'fcf'); row('Cumulative free cash flow', cur, 'cum', 1, true); row('Present value', cur, 'pv');
     const sh = sheet(aoa, [30, 10, 16, ...Array.from({ length: N }, () => 13)]);
