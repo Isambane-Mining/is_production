@@ -1,0 +1,64 @@
+{
+ "actions": [],
+ "creation": "2026-10-20 18:39:13.835771",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "output_name",
+  "output_type",
+  "dataset",
+  "file",
+  "value"
+ ],
+ "fields": [
+  {
+   "fieldname": "output_name",
+   "fieldtype": "Data",
+   "label": "Output",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "output_type",
+   "fieldtype": "Data",
+   "label": "Type",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "dataset",
+   "fieldtype": "Link",
+   "label": "Dataset",
+   "options": "GIS Dataset",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "file",
+   "fieldtype": "Attach",
+   "label": "File",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "value",
+   "fieldtype": "Small Text",
+   "label": "Value",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "links": [],
+ "modified": "2026-10-20 18:39:13.835771",
+ "modified_by": "Administrator",
+ "module": "Geo Planning",
+ "name": "GIS Processing Output",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "istable": 1,
+ "editable_grid": 1
+}

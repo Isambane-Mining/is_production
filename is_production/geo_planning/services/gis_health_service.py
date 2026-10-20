@@ -77,12 +77,17 @@ def run_health_check():
 				)
 			)
 
+	if pyqgis.get("ok"):
+		refresh_processing_registry_if_outdated(pyqgis.get("version"), warnings)
+	plugins = plugin_status(warnings)
+
 	status = "Error" if problems else "Warning" if warnings else "OK"
 	report = {
 		"qgis_server": server,
 		"worker": worker,
 		"geometry_schema": schema,
 		"project_directory": directory,
+		"plugins": plugins,
 		"problems": problems,
 		"warnings": warnings,
 	}
@@ -109,6 +114,35 @@ def run_health_check():
 		},
 	)
 	return {"status": status, "problems": problems, "warnings": warnings}
+
+
+def refresh_processing_registry_if_outdated(qgis_version, warnings):
+	"""After a QGIS upgrade the cached Processing algorithm list is rebuilt."""
+	from is_production.geo_planning.services import gis_processing_service as proc
+
+	try:
+		path = proc.registry_path()
+		cached = None
+		if os.path.exists(path):
+			with open(path) as f:
+				cached = json.load(f).get("qgis_version")
+		if cached != qgis_version:
+			proc.refresh_registry()
+	except Exception as e:
+		warnings.append(_("The Processing algorithm list could not be refreshed: {0}").format(e))
+
+
+def plugin_status(warnings):
+	if not frappe.db.exists("DocType", "GIS Plugin Settings"):
+		return None
+	from is_production.geo_planning.services.gis_plugin_service import scan_plugins
+
+	result = scan_plugins()
+	if result["errors"]:
+		warnings.append(_("Plugins with errors: {0}.").format(", ".join(result["errors"])))
+	if frappe.db.get_single_value("GIS Plugin Settings", "server_restart_required"):
+		warnings.append(_("A QGIS Server plugin changed: restart QGIS Server (sudo systemctl restart qgis-server)."))
+	return result
 
 
 def scheduled_health_check():
@@ -166,7 +200,7 @@ def check_project_directory(path):
 	return {"ok": True}
 
 
-def run_worker(python, script, request):
+def run_worker(python, script, request, timeout=WORKER_TIMEOUT):
 	"""Run a qgis_worker script with the system Python; returns its JSON report or {"error": ...}."""
 	if not python or not os.path.isfile(python):
 		return {"error": _("PyQGIS Python {0} does not exist.").format(python)}
@@ -176,7 +210,7 @@ def run_worker(python, script, request):
 			input=json.dumps(request),
 			capture_output=True,
 			text=True,
-			timeout=WORKER_TIMEOUT,
+			timeout=timeout,
 			env={
 				"PATH": "/usr/local/bin:/usr/bin:/bin",
 				"HOME": os.environ.get("HOME", "/tmp"),
@@ -185,7 +219,7 @@ def run_worker(python, script, request):
 			},
 		)
 	except subprocess.TimeoutExpired:
-		return {"error": _("The PyQGIS worker did not finish within {0} seconds.").format(WORKER_TIMEOUT)}
+		return {"error": _("The PyQGIS worker did not finish within {0} seconds.").format(timeout)}
 
 	# QGIS prints log lines to stdout too; the report is the last line
 	lines = [line for line in completed.stdout.splitlines() if line.strip()]

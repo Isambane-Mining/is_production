@@ -1,0 +1,328 @@
+{
+ "actions": [],
+ "creation": "2026-10-20 19:06:53.651882",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "plugin_id",
+  "title",
+  "category",
+  "version",
+  "column_break_head",
+  "status",
+  "compatibility_status",
+  "enabled",
+  "experimental",
+  "section_package",
+  "package",
+  "source_url",
+  "column_break_pkg",
+  "checksum",
+  "package_size",
+  "section_about",
+  "description",
+  "author",
+  "license",
+  "column_break_about",
+  "homepage",
+  "repository",
+  "qgis_minimum_version",
+  "qgis_maximum_version",
+  "section_compat",
+  "compatibility_report",
+  "dependencies",
+  "section_install",
+  "installed_version",
+  "installed_path",
+  "installed_on",
+  "processing_providers",
+  "column_break_inst",
+  "last_error",
+  "history",
+  "section_request",
+  "requested_by",
+  "request_reason",
+  "column_break_req",
+  "rejection_reason"
+ ],
+ "fields": [
+  {
+   "fieldname": "plugin_id",
+   "fieldtype": "Data",
+   "label": "Plugin ID",
+   "read_only": 1,
+   "unique": 1,
+   "description": "The plugin's Python package name (from the package)."
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Title",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "category",
+   "fieldtype": "Select",
+   "label": "Kind",
+   "options": "QGIS Processing Plugin\nQGIS Server Plugin\nQGIS Desktop Plugin\nFrappe GIS Plugin",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "Set from the analysis; a Frappe GIS Plugin extends this app itself (registered only)."
+  },
+  {
+   "fieldname": "version",
+   "fieldtype": "Data",
+   "label": "Version",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Requested\nRegistered\nAnalysed\nInstalled\nEnabled\nError\nRejected",
+   "default": "Registered",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "compatibility_status",
+   "fieldtype": "Select",
+   "label": "Compatibility",
+   "options": "Not Analysed\nNative server-compatible\nProcessing-compatible\nBrowser-adapter compatible\nRequires manual adaptation\nUnsupported",
+   "default": "Not Analysed",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled",
+   "read_only": 1
+  },
+  {
+   "fieldname": "experimental",
+   "fieldtype": "Check",
+   "label": "Experimental",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_package",
+   "fieldtype": "Section Break",
+   "label": "Package"
+  },
+  {
+   "fieldname": "package",
+   "fieldtype": "Attach",
+   "label": "Package (.zip)",
+   "description": "Upload the plugin zip, or set a Source URL and use Download Package."
+  },
+  {
+   "fieldname": "source_url",
+   "fieldtype": "Data",
+   "label": "Source URL",
+   "description": "Download URL of the zip; must start with one of the allowed sources (GIS Plugin Settings)."
+  },
+  {
+   "fieldname": "column_break_pkg",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "checksum",
+   "fieldtype": "Data",
+   "label": "SHA-256",
+   "read_only": 1
+  },
+  {
+   "fieldname": "package_size",
+   "fieldtype": "Int",
+   "label": "Package Size (bytes)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_about",
+   "fieldtype": "Section Break",
+   "label": "About"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description",
+   "read_only": 1
+  },
+  {
+   "fieldname": "author",
+   "fieldtype": "Data",
+   "label": "Author",
+   "read_only": 1
+  },
+  {
+   "fieldname": "license",
+   "fieldtype": "Data",
+   "label": "Licence",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_about",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "homepage",
+   "fieldtype": "Data",
+   "label": "Homepage",
+   "read_only": 1
+  },
+  {
+   "fieldname": "repository",
+   "fieldtype": "Data",
+   "label": "Repository",
+   "read_only": 1
+  },
+  {
+   "fieldname": "qgis_minimum_version",
+   "fieldtype": "Data",
+   "label": "QGIS Minimum Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "qgis_maximum_version",
+   "fieldtype": "Data",
+   "label": "QGIS Maximum Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_compat",
+   "fieldtype": "Section Break",
+   "label": "Compatibility"
+  },
+  {
+   "fieldname": "compatibility_report",
+   "fieldtype": "Long Text",
+   "label": "Analysis",
+   "read_only": 1
+  },
+  {
+   "fieldname": "dependencies",
+   "fieldtype": "Table",
+   "label": "Dependencies",
+   "options": "GIS Plugin Dependency",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_install",
+   "fieldtype": "Section Break",
+   "label": "Installation"
+  },
+  {
+   "fieldname": "installed_version",
+   "fieldtype": "Data",
+   "label": "Installed Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "installed_path",
+   "fieldtype": "Data",
+   "label": "Installed In",
+   "read_only": 1
+  },
+  {
+   "fieldname": "installed_on",
+   "fieldtype": "Datetime",
+   "label": "Installed On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "processing_providers",
+   "fieldtype": "Data",
+   "label": "Processing Providers",
+   "read_only": 1,
+   "description": "Provider ids this plugin adds to QGIS Processing (filled when it is loaded)."
+  },
+  {
+   "fieldname": "column_break_inst",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "last_error",
+   "fieldtype": "Small Text",
+   "label": "Last Error",
+   "read_only": 1
+  },
+  {
+   "fieldname": "history",
+   "fieldtype": "Long Text",
+   "label": "History",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_request",
+   "fieldtype": "Section Break",
+   "label": "Request",
+   "collapsible": 1,
+   "depends_on": "requested_by"
+  },
+  {
+   "fieldname": "requested_by",
+   "fieldtype": "Link",
+   "label": "Requested By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "request_reason",
+   "fieldtype": "Small Text",
+   "label": "Reason Given",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_req",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "rejection_reason",
+   "fieldtype": "Small Text",
+   "label": "Rejection Reason",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "links": [],
+ "modified": "2026-10-20 19:24:16.103122",
+ "modified_by": "Administrator",
+ "module": "Geo Planning",
+ "name": "GIS Plugin",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "print": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "report": 1,
+   "export": 1
+  },
+  {
+   "role": "Production Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "autoname": "hash",
+ "title_field": "title",
+ "show_title_field_in_link": 1,
+ "track_changes": 1,
+ "description": "A QGIS plugin: its package, analysis, installation and whether it is enabled. Only System Managers change plugins."
+}
