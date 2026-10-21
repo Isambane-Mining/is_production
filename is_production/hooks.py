@@ -35,7 +35,27 @@ after_migrate = [
     "is_production.geo_planning.services.gis_storage_service.ensure_geometry_schema",
     "is_production.geo_planning.services.gis_map_service.ensure_default_map_services",
     "is_production.geo_planning.services.gis_plugin_service.ensure_single_defaults",
+    "is_production.cad_engineering.services.cad_health_service.ensure_settings_defaults",
 ]
+
+# CAD records follow their CAD Model's record permissions (Company / Branch / Location restrictions).
+has_permission = {
+    "CAD Entity": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
+    "CAD Layer": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
+    "CAD Design Revision": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
+    "CAD Processing Job": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
+    "CAD Block": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
+    "CAD Import Export": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
+}
+
+permission_query_conditions = {
+    "CAD Entity": "is_production.cad_engineering.services.cad_permissions.model_condition",
+    "CAD Layer": "is_production.cad_engineering.services.cad_permissions.model_condition",
+    "CAD Design Revision": "is_production.cad_engineering.services.cad_permissions.model_condition",
+    "CAD Processing Job": "is_production.cad_engineering.services.cad_permissions.model_condition",
+    "CAD Block": "is_production.cad_engineering.services.cad_permissions.model_condition",
+    "CAD Import Export": "is_production.cad_engineering.services.cad_permissions.model_condition",
+}
 
 override_whitelisted_methods = {
     # Override the PDF‐body renderer
@@ -73,6 +93,8 @@ scheduler_events = {
     "daily": [
         # GIS dependency health (QGIS Server, PyQGIS, database account), shown on GIS Settings.
         "is_production.geo_planning.services.gis_health_service.scheduled_health_check",
+        # CAD worker (Open CASCADE) and model storage, shown on CAD Settings.
+        "is_production.cad_engineering.services.cad_health_service.scheduled_health_check",
     ],
     "hourly": [
         "is_production.production.doctype.monthly_production_planning.monthly_production_planning.update_all_active_mpp_mtd",
