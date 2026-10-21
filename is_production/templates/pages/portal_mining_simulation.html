@@ -190,7 +190,8 @@ input[type="number"] { font-family: var(--font-mono); }
 .kml-gh { display: flex; align-items: center; gap: 7px; } .kml-gh .dt { margin-left: auto; } .kml-items { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 2px 10px; max-height: 132px; overflow: auto; padding-left: 22px; } .kml-items .check span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wash-fig { display: flex; flex-direction: column; gap: 2px; } .wash-chart { width: 100%; height: auto; display: block; } .wash-chart text { font: 9px var(--font-mono); fill: var(--muted); } .wash-chart .g { stroke: var(--line); stroke-width: 1; } .wash-chart .c { fill: none; stroke: var(--ink-2); stroke-width: 1.2; opacity: .55; } .wash-chart .cut { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 3; } .wash-chart .cl { fill: var(--accent); font-weight: 600; } .wash-chart .pt { fill: var(--accent); }
 .qr-card .qr-name { flex: 1 1 auto; min-width: 0; font-weight: 600; overflow-wrap: anywhere; } .qr-card .ovl-h .chip { flex: none; } .qr-card .kv .v { overflow-wrap: anywhere; }
-.recon-tbl tr.tot td { font-weight: 600; border-top: 1px solid var(--line); }
+.recon-tbl tr.tot td, .recon-tbl tr.tot th { font-weight: 600; border-top: 1px solid var(--line); }
+.coal-q tr.grp th { text-align: left; font-weight: 600; color: var(--ink-2); padding-top: 8px; border-bottom: 1px solid var(--line); }
 .ovl-fn { max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ovl-fn .dt { white-space: nowrap; }
 .sw.ovl { border: 2px solid; box-sizing: border-box; box-shadow: none; }
@@ -11527,6 +11528,35 @@ const UI = (() => {
         : 'What the 3D model holds for the schedule: within the reserve boundary, the depth limits and the keep-out zones, after the seam cut-off. Run the simulation to see it mined, to date and remaining.'));
   }
 
+  /* All the coal of the pit overview: its tons from gross in situ to air-dry contaminated, seam by seam, and its raw and
+     ADC qualities (Tons, on the resource layout; as in the Reserve tab) */
+  function coalOverview() {
+    const V = App.rv(), R = App.margin(); if (!R || !V.ws) return null;
+    const T = Tons.compute(V.P, V.ws, R), S = T.seams, Q = Tons.Q;
+    if (!S.length || !(T.total.gtis > 0)) return null;
+    // the tons in one unit, named in the header, so the numbers fit the narrow panel
+    const [sc, pre] = T.total.gtis >= 1e6 ? [1e6, 'Mt'] : T.total.gtis >= 1e3 ? [1e3, 'kt'] : [1, 't'], tf = v => (Math.abs(v) < 0.5 ? '0' : U.fmtNum(v / sc, sc > 1 ? 2 : 0));
+    const th = (t, title) => h('th', { class: 'r', title }, t), td = v => h('td', { class: 'r num' }, v);
+    const tRow = (nm, q, cls) => h('tr', cls ? { class: cls } : null, h('th', { scope: 'row' }, nm), td(tf(q.gtis)), td(tf(q.ttis)), td(tf(q.mtis)), td(tf(q.adc)));
+    const tons = h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl plan-tot recon-tbl' },
+      h('thead', null, h('tr', null, h('th', null, pre), th('GTIS', 'Gross tons in situ'), th('TTIS', 'Total tons in situ: after the geological loss'), th('MTIS', 'Mineable tons in situ: inside the reserve boundary, past the cut-offs and depth limits'), th('ADC', 'Air-dry contaminated tons: after the mining loss, the contamination and the moisture'))),
+      h('tbody', null, ...S.map(q => tRow(q.name, q)), S.length > 1 ? tRow('All coal', T.total, 'tot') : null)));
+    // the raw qualities (the coal's own, air dried) beside the ADC qualities (mixed with the contamination)
+    const raw = {}; for (const q of Q) { let n = 0, d = 0; for (const z of S) if (z.qCoal[q.k] === z.qCoal[q.k] && z.coal > 0) { n += z.qCoal[q.k] * z.coal; d += z.coal; } raw[q.k] = d > 0 ? n / d : NaN; }
+    const has = Q.filter(q => S.some(z => z.q[q.k] === z.q[q.k]));
+    let quals = null;
+    if (has.length) {
+      const qf = (v, d) => (v === v ? U.fmtNum(v, d) : '–');
+      const rows = [];
+      const group = (nm, r, a) => { rows.push(h('tr', { class: 'grp' }, h('th', { colspan: 3 }, nm))); for (const q of has) rows.push(h('tr', null, h('th', { scope: 'row' }, q.name, h('span', { class: 'u' }, q.unit)), td(qf(r[q.k], q.d)), td(qf(a[q.k], q.d)))); };
+      group(S.length > 1 ? 'All coal' : S[0].name, S.length > 1 ? raw : S[0].qCoal, S.length > 1 ? T.total.q : S[0].q);
+      if (S.length > 1) for (const z of S) group(z.name, z.qCoal, z.q);
+      quals = h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl plan-tot coal-q' }, h('thead', null, h('tr', null, h('th', null, ''), th('Raw', 'The coal’s own qualities (air dried), weighted by its tons'), th('ADC', 'Air-dry contaminated: mixed with the contamination, weighted by the ADC tons'))), h('tbody', null, rows)));
+    }
+    const B = Tons.basis(V.P);
+    return sec('Coal: GTIS to ADC', h('span', { class: 'chip' }, `ADC ${U.fmtBig(T.total.adc, 't')}`), tons, quals,
+      hint(`GTIS: all the coal of the model; TTIS after the geological loss; MTIS what the schedule can mine (inside the reserve boundary, past the cut-offs and depth limits); ADC after the mining loss, the contamination and the moisture. ${B.on ? 'ADC qualities: the raw ones mixed with the contamination’s.' : 'No contamination or moisture is set, so the ADC qualities are the raw ones.'} Set them in the Reserve tab.`));
+  }
   // ---------- inspector ----------
   let inspT = 0;
   function renderInspectorThrottled() { if (inspT) return; inspT = setTimeout(() => { inspT = 0; renderInspector(); }, 120); }
@@ -11577,6 +11607,7 @@ const UI = (() => {
         for (const J of res.rehandles || []) { let m = 0; for (let k = 0; k <= d && k < J.daily.length; k++) m += J.daily[k]; if (m > 0) el.append(h('div', { class: 'kv' }, h('span', { class: 'k', title: `${J.from} → ${J.to}` }, 'Rehandled: ' + J.name), h('span', { class: 'v' }, U.fmtBig(m, 'm³')))); }
       }
       el.append(planTotals(P, ws, res, d));
+      { const C = coalOverview(); if (C) el.append(C); }
       el.append(hint('Click a block in the 3D view to see its attributes, volumes and schedule dates.'));
       return;
     }
@@ -18606,7 +18637,8 @@ const App = {
   changed(kind = 'sim', opts = {}) {
     if (!this.P) return;
     if (kind !== 'view') { this.inv = null; this._margin = null; }
-    if (kind === 'blocks' || kind === 'wash') this._rv = null; // the coal inventory and the block margins are worked out again
+    if (kind === 'blocks' || kind === 'wash') this._rv = null;
+    if (kind !== 'view' && this.selBlock < 0) UI.renderInspectorThrottled(); // (the pit overview shows the coal tons and qualities) // the coal inventory and the block margins are worked out again
     if (kind === 'view' && !this.persisted) return;
     if (kind === 'cutoff') { this.recut(); UI.renderInspector(); }
     // the quality columns feed the quality cut-offs: work the cut-off out again when there are any
