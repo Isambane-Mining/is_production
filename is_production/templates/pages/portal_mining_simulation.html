@@ -2400,7 +2400,7 @@ const Kml = (() => {
     add('boxcuts', 'Box cuts', '#ff8a3d', (P.pits || []).filter(z => z.boxcut && z.boxcut.pts).map(z => ({ id: z.id + '_box', name: 'Box cut — ' + z.name, k: 'poly', pts: z.boxcut.pts, data: z.boxcut.months ? { 'Months': z.boxcut.months } : {} }))
       .concat(P.boxcut && P.boxcut.pts ? [{ id: 'boxcut', name: 'Box cut', k: 'poly', pts: P.boxcut.pts, data: P.boxcut.months ? { 'Months': P.boxcut.months } : {} }] : []));
     add('limits', 'Depth limits', '#b9a2ff', (P.limits || []).map(z => ({ id: z.id, name: z.name, k: 'poly', pts: z.pts, data: { 'Mined down to': lay(z.layerId) } })));
-    add('reserve', 'Reserve boundary', '#e040fb', P.reserve && P.reserve.pts ? [{ id: 'reserve', name: P.reserve.name || 'Reserve boundary', k: 'poly', pts: P.reserve.pts, data: { 'In use': P.reserve.on === false ? 'no' : 'yes' } }] : []);
+    add('reserve', 'Reserve boundary', '#e040fb', Model.reserveRings(P).map((pts, k) => ({ id: k ? 'reserve_' + k : 'reserve', name: P.reserve.name || 'Reserve boundary', k: 'poly', pts, data: { 'In use': P.reserve.on === false ? 'no' : 'yes' } })));
     add('fills', 'Final landform — fills', '#3fc1d8', (P.fills || []).map(f => ({ id: f.id, name: f.name, k: 'poly', pts: f.pts })));
     add('raises', 'Final landform — raised areas', '#e0a03a', (P.raises || []).map(f => ({ id: f.id, name: f.name, k: 'poly', pts: f.pts, data: { ...(f.height != null ? { 'Height (m)': f.height } : {}), ...(f.slope != null ? { 'Slope (%)': f.slope } : {}) } })));
     add('roads', 'Roads and ramps', '#8a7a64', (P.roads || []).map(r => ({ id: r.id, name: r.name, k: 'line', pts: r.pts, data: { Type: r.type === 'ramp' ? 'Ramp' : 'Haul road', ...(r.width ? { 'Width (m)': r.width } : {}), ...(r.type === 'ramp' && r.gradient ? { 'Gradient (%)': r.gradient } : {}) } })));
@@ -2748,6 +2748,20 @@ const Model = (() => {
       return Array.from(v);
     });
   }
+  /* The thickness of layer l in the blocks, as the seam cut-off measures a seam: in each block its average where it is
+     present (from the surfaces as loaded, below the ground), and over the blocks the thinnest, the thickest and the
+     average of them. → {min, max, avg, n (blocks)}, or null where the layer is in no block */
+  function layerThickness(ws, l) {
+    const S = ws.surfRaw || ws.surf, top = S[l], bot = S[l + 1], topo = S[0];
+    let mn = Infinity, mx = -Infinity, sum = 0, n = 0;
+    for (const cells of ws.blockCells) {
+      let st = 0, np = 0;
+      for (const c of cells) { const t = Math.min(top[c], topo[c]) - bot[c]; if (t > 1e-3) { st += t; np++; } }
+      if (!np) continue;
+      const a = st / np; if (a < mn) mn = a; if (a > mx) mx = a; sum += a; n++;
+    }
+    return n ? { min: mn, max: mx, avg: sum / n, n } : null;
+  }
   /* The surface a ramp's toe sits on (road.toeSurf, Roads tab): its index in P.surfaces (1…nL), or -1 when none is chosen
      (a moving ramp's toe then goes down with the mining to the pit floor; a fixed ramp ends at its typed end elevation). */
   /* A ramp's side slopes (Roads tab), in degrees from the horizontal (90: vertical). Its width is the width of the road
@@ -2801,9 +2815,12 @@ const Model = (() => {
   /* The reserve boundary (P.reserve.pts, Reserve tab): the blocks whose centre lies inside it are mined; those outside are
      left. 1 for a block inside (all of them without a boundary). */
   const hasReserve = P => !!(P.reserve && P.reserve.on !== false && P.reserve.pts && P.reserve.pts.length >= 3);
+  // its rings: P.reserve.rings (the areas and the holes of a boundary made from a strip ratio cut-off), else the one polygon
+  const reserveRings = P => (P.reserve && Array.isArray(P.reserve.rings) && P.reserve.rings.length ? P.reserve.rings : P.reserve && P.reserve.pts ? [P.reserve.pts] : []);
+  function inReserve(P, x, y) { let k = 0; for (const r of reserveRings(P)) if (r && r.length >= 3 && Geo.pip(x, y, r)) k++; return (k & 1) === 1; }
   function reserveInside(P, ws) {
     const nB = P.blocks.length, ins = new Uint8Array(nB).fill(1);
-    if (hasReserve(P)) ws.blockCentroid.forEach((c, b) => { if (b < nB && !Geo.pip(c[0], c[1], P.reserve.pts)) ins[b] = 0; });
+    if (hasReserve(P)) ws.blockCentroid.forEach((c, b) => { if (b < nB && !inReserve(P, c[0], c[1])) ins[b] = 0; });
     return ins;
   }
   /* opt.noReserve: leave the reserve boundary out (the Reserve tab ranks every block, inside it or not). out[b] = 1: the
@@ -3136,7 +3153,7 @@ const Model = (() => {
   function arFactor(P, L) { const q = losses(P, L); return Math.max(0, (1 - q.geo / 100) * (1 - q.mining / 100) * (1 + q.contam / 100)); }
   function newEquipment(kind, extra) { return Object.assign({ id: U.uid('eq'), kind, activityId: '' }, U.deepClone(FLEET_DEFAULTS[kind]), extra || {}); }
 
-  return { LAYER_TYPES, ACT_COLORS, DUMP_COLORS, newProject, autoLayers, seamToken, proposeGrid, rasterExtent, rasterRes, resample, fillHoles, conformSurfaces, buildWorkspace, applyCutoff, cutTarget, cutTargets, cellXY, cellAt, sampleGrid, cellsInPolygon, rasterizeBlocks, layerIndex, blockVolumes, blockDensity, kindStart, kindOf, rampToeSurf, rampSlopes, RAMP_BATTER, RAMP_FILL, surfaceLabel, rampEnd, actDests, syncActColors, blockLimits, blockDepth, zoneBlocks, stripSource, pathStrips, idStrip, blockPits, pitIndex, pitName, boxCuts, boxDef, boxMonths, boxName, boxTitle, BOX_MONTHS, pitBaseName, fleetHost, actFleet, syncPits, dropActivity, setTopsoilAsWaste, PIT_COLORS, REST, defaultActivities, newEquipment, FLEET_DEFAULTS, niceCell, teams, losses, arFactor, TEAM_LCM, pitStart, bench, wasteFollows, reserveInside, hasReserve };
+  return { LAYER_TYPES, ACT_COLORS, DUMP_COLORS, newProject, autoLayers, seamToken, proposeGrid, rasterExtent, rasterRes, resample, fillHoles, conformSurfaces, buildWorkspace, applyCutoff, cutTarget, cutTargets, cellXY, cellAt, sampleGrid, cellsInPolygon, rasterizeBlocks, layerIndex, blockVolumes, layerThickness, blockDensity, kindStart, kindOf, rampToeSurf, rampSlopes, RAMP_BATTER, RAMP_FILL, surfaceLabel, rampEnd, actDests, syncActColors, blockLimits, blockDepth, zoneBlocks, stripSource, pathStrips, idStrip, blockPits, pitIndex, pitName, boxCuts, boxDef, boxMonths, boxName, boxTitle, BOX_MONTHS, pitBaseName, fleetHost, actFleet, syncPits, dropActivity, setTopsoilAsWaste, PIT_COLORS, REST, defaultActivities, newEquipment, FLEET_DEFAULTS, niceCell, teams, losses, arFactor, TEAM_LCM, pitStart, bench, wasteFollows, reserveInside, hasReserve, reserveRings, inReserve };
 })();
 
 /* ===== KML overlays and keep-out zones (DOM-free) =====
@@ -7638,6 +7655,191 @@ const Margin = (() => {
   const srColor = (v, S) => divColor(v, S.lo, srMidIn(S), S.hi, GREEN, RED);
   const srGradient = S => divGradient(S.lo, srMidIn(S), S.hi, GREEN, RED);
   return { DEF, QUAL, settings, guess, colFor, ready, isCoal, isWasteSeam, compute, colorOf, gradient, srColor, srGradient, divColor, divGradient, NEG, POS, RED, GREEN, AMBER };
+})();
+
+/* ===== Reserve boundary from a strip ratio cut-off (Reserve tab; DOM-free) =====
+   The blocks to mine, from the strip ratio of each block (waste bcm ÷ coal t, as the block margin counts them: the seam
+   cut-off and depth limits taken off, on its in-situ or as-received basis):
+     1. every block at or below the cut-off;
+     2. a group of blocks above the cut-off that the reserve closes in on every side is taken in when the group and the
+        ring of reserve blocks around it are, together, at or below the cut-off (their waste ÷ their coal): mining
+        passes through it, and the cheaper blocks around it carry it;
+     3. a block above the cut-off at the edge is taken in when the reserve borders `share` of its edge (a notch in the
+        boundary) and it is at or below the cut-off with those neighbours;
+     4. 2 and 3 again until nothing changes; then groups of fewer than `minBlocks` blocks are left out.
+   The boundary is the outline of the chosen blocks' cells on the model grid, smoothed by up to `tol` cells, as rings
+   (P.reserve.rings: the areas and the holes in them; P.reserve.pts the largest). A block is inside when its centre is
+   inside an odd number of the rings; the smoothing is undone where it would put a block on the wrong side.
+   The inputs are kept in P.reserveAuto = {srMax, share (%), minBlocks}. */
+const AutoRes = (() => {
+  const DEF = { srMax: null, share: 75, minBlocks: 3 };
+  function settings(P) {
+    const A = (P && P.reserveAuto) || {}, n = (v, d) => (v != null && v !== '' && isFinite(+v) ? +v : d);
+    return { srMax: n(A.srMax, DEF.srMax), share: U.clamp(n(A.share, DEF.share), 0, 100), minBlocks: Math.max(1, Math.round(n(A.minBlocks, DEF.minBlocks))) };
+  }
+  // the blocks next to each block and how much edge they share (cell sides), and each block's edge to no block / the grid edge
+  function adjacency(ws) {
+    const { nx, ny } = ws, cb = ws.cellBlock, nB = ws.blockCells.length, nb = Array.from({ length: nB }, () => new Map()), open = new Float64Array(nB);
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      const c = j * nx + i, b = cb[c]; if (b < 0) continue;
+      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const a = i + di, e = j + dj, o = a < 0 || e < 0 || a >= nx || e >= ny ? -1 : cb[e * nx + a];
+        if (o === b) continue;
+        if (o < 0) open[b]++; else nb[b].set(o, (nb[b].get(o) || 0) + 1);
+      }
+    }
+    return { nb, open };
+  }
+  // connected groups of the blocks where pick(b): [[b…]]
+  function groups(nB, nb, pick) {
+    const seen = new Uint8Array(nB), out = [];
+    for (let s = 0; s < nB; s++) {
+      if (seen[s] || !pick(s)) continue;
+      const g = [s]; seen[s] = 1;
+      for (let k = 0; k < g.length; k++) for (const o of nb[g[k]].keys()) if (!seen[o] && pick(o)) { seen[o] = 1; g.push(o); }
+      out.push(g);
+    }
+    return out;
+  }
+  /* The blocks of the reserve. rows: Margin.compute rows (waste, coalT). → {take (Uint8Array), why (0 out, 1 cut-off, 2
+     enclosed, 3 notch), dropped, sr (of the reserve), n…} */
+  function choose(P, ws, rows, o) {
+    const nB = P.blocks.length, { nb, open } = adjacency(ws), W = new Float64Array(nB), C = new Float64Array(nB);
+    for (const r of rows) { W[r.b] = r.waste || 0; C[r.b] = r.coalT || 0; }
+    const sr = (w, c) => (c > 0 ? w / c : w > 0 ? Infinity : NaN), max = o.srMax, share = o.share / 100;
+    const take = new Uint8Array(nB), why = new Uint8Array(nB);
+    for (let b = 0; b < nB; b++) if (C[b] > 0 && sr(W[b], C[b]) <= max) { take[b] = 1; why[b] = 1; }
+    for (let it = 0; it < 100; it++) {
+      let more = 0;
+      // 2. the groups above the cut-off closed in by the reserve
+      for (const g of groups(nB, nb, b => !take[b])) {
+        if (g.some(b => open[b] > 0)) continue; // it reaches the edge of the blocks
+        const ring = new Set();
+        for (const b of g) for (const q of nb[b].keys()) { if (take[q]) ring.add(q); }
+        if (!ring.size) continue;
+        let w = 0, c = 0; for (const b of g) { w += W[b]; c += C[b]; } for (const q of ring) { w += W[q]; c += C[q]; }
+        if (c > 0 && w / c <= max) { for (const b of g) { take[b] = 1; why[b] = 2; } more += g.length; }
+      }
+      // 3. the notches: blocks bordered by the reserve on `share` of their edge
+      const add = [];
+      for (let b = 0; b < nB; b++) {
+        if (take[b]) continue;
+        let inE = 0, allE = open[b], w = W[b], c = C[b];
+        for (const [q, e] of nb[b]) { allE += e; if (take[q]) { inE += e; w += W[q]; c += C[q]; } }
+        if (allE > 0 && inE / allE >= share - 1e-9 && c > 0 && w / c <= max) add.push(b);
+      }
+      for (const b of add) { take[b] = 1; why[b] = 3; }
+      more += add.length;
+      if (!more) break;
+    }
+    // 4. small groups left out
+    let dropped = 0;
+    for (const g of groups(nB, nb, b => !!take[b])) if (g.length < o.minBlocks) for (const b of g) { take[b] = 0; why[b] = 0; dropped++; }
+    let w = 0, c = 0, n = 0, nCut = 0, nIn = 0, nNotch = 0;
+    for (let b = 0; b < nB; b++) if (take[b]) { w += W[b]; c += C[b]; n++; if (why[b] === 1) nCut++; else if (why[b] === 2) nIn++; else nNotch++; }
+    const areas = groups(nB, nb, b => !!take[b]).length;
+    let wa = 0, ca = 0; for (let b = 0; b < nB; b++) { wa += W[b]; ca += C[b]; }
+    return { take, why, dropped, n, nCut, nIn, nNotch, areas, waste: w, coalT: c, sr: c > 0 ? w / c : NaN, srAll: ca > 0 ? wa / ca : NaN };
+  }
+
+  // ---------- the outline ----------
+  /* The cells of the reserve: those of its blocks, and the gaps between blocks that it closes in (no block, not open to the
+     edge of the grid); the cells of blocks left out stay out. */
+  function cellMask(ws, take) {
+    const { nx, ny, n } = ws, cb = ws.cellBlock, m = new Uint8Array(n);
+    for (let c = 0; c < n; c++) if (cb[c] >= 0 && take[cb[c]]) m[c] = 1;
+    const seen = new Uint8Array(n);
+    for (let s = 0; s < n; s++) {
+      if (m[s] || seen[s]) continue;
+      const q = [s]; seen[s] = 1; let edge = false, block = false;
+      for (let k = 0; k < q.length; k++) {
+        const c = q[k], i = c % nx, j = (c / nx) | 0;
+        if (cb[c] >= 0) block = true;
+        if (!i || !j || i === nx - 1 || j === ny - 1) edge = true;
+        for (const d of [c - 1, c + 1, c - nx, c + nx]) { if ((d === c - 1 && !i) || (d === c + 1 && i === nx - 1) || d < 0 || d >= n || m[d] || seen[d]) continue; seen[d] = 1; q.push(d); }
+      }
+      if (!edge && !block) for (const c of q) m[c] = 1;
+    }
+    return m;
+  }
+  /* The outline of the cells in the mask as closed rings of cell corners (the cells on the left; where two cells touch only
+     at a corner, they are kept apart). */
+  function trace(ws, m) {
+    const { nx, ny } = ws, V = nx + 1, at = (i, j) => i >= 0 && j >= 0 && i < nx && j < ny && m[j * nx + i] === 1;
+    const out = new Map(), add = (a, b) => { let l = out.get(a); if (!l) out.set(a, (l = [])); l.push(b); };
+    const v = (i, j) => j * V + i;
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      if (!at(i, j)) continue;
+      if (!at(i, j - 1)) add(v(i, j), v(i + 1, j));
+      if (!at(i + 1, j)) add(v(i + 1, j), v(i + 1, j + 1));
+      if (!at(i, j + 1)) add(v(i + 1, j + 1), v(i, j + 1));
+      if (!at(i - 1, j)) add(v(i, j + 1), v(i, j));
+    }
+    const xy = k => [k % V, (k / V) | 0], rings = [];
+    for (const [s0, l0] of out) {
+      while (l0.length) {
+        const ring = [s0]; let prev = s0, cur = l0.pop();
+        for (let guard = 0; cur !== s0 && guard < 4 * (nx + 1) * (ny + 1); guard++) {
+          ring.push(cur);
+          const l = out.get(cur); if (!l || !l.length) break;
+          let k = 0;
+          if (l.length > 1) { // turn left where there is a choice
+            const [px, py] = xy(prev), [cx, cy] = xy(cur), dx = cx - px, dy = cy - py;
+            const turn = t => { const [tx, ty] = xy(t), ex = tx - cx, ey = ty - cy; return dx * ey - dy * ex; };
+            k = l.reduce((best, t, i) => (turn(t) > turn(l[best]) ? i : best), 0);
+          }
+          prev = cur; cur = l.splice(k, 1)[0];
+        }
+        if (ring.length >= 4) rings.push(ring.map(k => { const [i, j] = xy(k); return [ws.x0 + i * ws.cell, ws.y0 + j * ws.cell]; }));
+      }
+    }
+    return rings.map(r => r.filter((p, i) => { const a = r[(i - 1 + r.length) % r.length], b = r[(i + 1) % r.length]; return (p[0] - a[0]) * (b[1] - p[1]) - (p[1] - a[1]) * (b[0] - p[0]) !== 0; }));
+  }
+  // Douglas–Peucker on a closed ring
+  function simplify(ring, tol) {
+    if (tol <= 0 || ring.length < 5) return ring;
+    const n = ring.length; let far = 0, fd = -1;
+    for (let i = 1; i < n; i++) { const d = Math.hypot(ring[i][0] - ring[0][0], ring[i][1] - ring[0][1]); if (d > fd) { fd = d; far = i; } }
+    const keep = new Uint8Array(n); keep[0] = keep[far] = 1;
+    const seg = (a, b, pts) => {
+      const st = [[a, b]];
+      while (st.length) {
+        const [s, e] = st.pop(), A = pts[s], B = pts[e % n], L = Math.hypot(B[0] - A[0], B[1] - A[1]);
+        let k = -1, dm = tol;
+        for (let i = s + 1; i < e; i++) { const p = pts[i % n], d = L ? Math.abs((B[0] - A[0]) * (A[1] - p[1]) - (A[0] - p[0]) * (B[1] - A[1])) / L : Math.hypot(p[0] - A[0], p[1] - A[1]); if (d > dm) { dm = d; k = i; } }
+        if (k >= 0) { keep[k % n] = 1; st.push([s, k], [k, e]); }
+      }
+    };
+    seg(0, far, ring); seg(far, n, ring);
+    const out = ring.filter((_, i) => keep[i]);
+    return out.length >= 3 ? out : ring;
+  }
+  const inRings = (rings, x, y) => { let k = 0; for (const r of rings) if (r.length >= 3 && Geo.pip(x, y, r)) k++; return (k & 1) === 1; };
+  const area = r => { let a = 0; for (let i = 0, j = r.length - 1; i < r.length; j = i++) a += (r[j][0] + r[i][0]) * (r[j][1] - r[i][1]); return a / 2; };
+  /* The rings of the boundary around the chosen blocks: as smooth as up to `tol` cells allows with every block centre on
+     its side. → {rings, wrong (blocks on the wrong side, even unsmoothed)} */
+  function outline(P, ws, take, tol = 0.75) {
+    const raw = trace(ws, cellMask(ws, take)), nB = P.blocks.length;
+    const wrongOf = rings => { const w = []; for (let b = 0; b < nB; b++) { const c = ws.blockCentroid[b]; if (ws.blockCells[b].length && inRings(rings, c[0], c[1]) !== !!take[b]) w.push(b); } return w; };
+    let best = null;
+    for (const t of [tol, tol * 0.66, tol * 0.33, 0]) {
+      const rings = raw.map(r => simplify(r, t * ws.cell)).filter(r => r.length >= 3), wrong = wrongOf(rings);
+      if (!best || wrong.length < best.wrong.length) best = { rings, wrong };
+      if (!wrong.length) break;
+    }
+    best.rings.sort((a, b) => Math.abs(area(b)) - Math.abs(area(a)));
+    return best;
+  }
+  /* The boundary from the settings: P.reserve to set, with what was chosen. rows: Margin.compute rows. */
+  function build(P, ws, rows, o) {
+    if (!(o.srMax > 0)) throw new Error('Type the strip ratio cut-off (bcm/t).');
+    const ch = choose(P, ws, rows, o);
+    if (!ch.n) throw new Error(`No block is at or below ${U.fmtNum(o.srMax, 2)} bcm/t (the blocks average ${U.fmtNum(ch.srAll, 2)} bcm/t).`);
+    const ol = outline(P, ws, ch.take);
+    const reserve = { pts: ol.rings[0], rings: ol.rings, on: true, name: `Strip ratio ≤ ${U.fmtNum(o.srMax, 2)} bcm/t`, auto: { srMax: o.srMax, share: o.share, minBlocks: o.minBlocks } };
+    return { reserve, ch, wrong: ol.wrong };
+  }
+  return { DEF, settings, adjacency, choose, cellMask, trace, simplify, inRings, outline, build };
 })();
 
 /* ===== Coal quality rasters (Data tab): the qualities of the blocks read from GeoTIFF grids =====
@@ -12173,9 +12375,11 @@ const Tabs = (() => {
       hint(`${P.topsoilAsWaste === true ? 'On' : 'Off'}: ${P.topsoilAsWaste === true ? 'topsoil is mined and dumped like the overburden: its activity tips on the waste dumps, the trucks may use it to fill ramps, and a thin seam right under it can be cut off into it.' : 'topsoil goes to its own stockpile and is not used for ramp fill.'} Either way it counts as waste in the totals, the strip ratio and the monthly waste target; the running totals under the Gantt chart show it in its own column.${Water.settings(P).on !== false && Water.settings(P).soilDirect !== false ? ' Where backfill has reached its final level, the topsoil goes straight onto it first (Dumps tab, “Backfill and final landform”).' : ''}${has ? '' : ' This model has no layer of the type Topsoil.'}`));
   }
   function layersTable() {
-    const P = App.P;
+    const P = App.P, ws = App.ws;
     const numCols = (P.attrColumns || []).filter(c => c !== P.idColumn);
-    const rows = P.layers.map(L => {
+    const m2 = v => U.fmtNum(v, 2);
+    const rows = P.layers.map((L, l) => {
+      const T = ws && ws.blockCells.length ? Model.layerThickness(ws, l) : null, thick = k => h('td', { class: 'r num' }, T ? m2(T[k]) : '–');
       const color = h('input', { type: 'color', value: L.color });
       color.addEventListener('input', () => { L.color = color.value; View.setLayerColors(P.layers.map(l => l.color)); App.redrawSpoil(); });
       color.addEventListener('change', () => { App.changed('colors'); UI.renderTab(); }); // the activities of the layer follow (Sequence tab)
@@ -12187,12 +12391,13 @@ const Tabs = (() => {
         h('td', null, sel(Object.entries(Model.LAYER_TYPES).map(([k, t]) => [k, t.label]), L.type, v => { L.type = v; App.changed('layers'); })),
         h('td', null, num(L.density, v => { L.density = v > 0 ? v : L.density; App.changed('layers'); }, { step: 0.01, min: 0.5 })),
         h('td', null, num(L.swell, v => { L.swell = v >= 1 ? v : L.swell; App.changed('layers'); }, { step: 0.01, min: 1 })),
+        thick('min'), thick('max'), thick('avg'),
         h('td', null, sel([['', '—']].concat(numCols.map(c => [c, c])), L.densityField || '', v => { L.densityField = v; App.changed('layers'); })),
         h('td', null, L.type === 'coal' ? q : ''));
     });
     return h('div', null, h('div', { class: 'sec-h', style: { marginTop: '4px' } }, h('h3', null, 'Layers')),
-      h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', null, ''), h('th', null, 'Layer'), h('th', null, 'Type'), h('th', null, 't/bcm'), h('th', null, 'Swell'), h('th', null, 'Density column'), h('th', null, 'Quality columns'))), h('tbody', null, rows))),
-      hint('Density is used for tonnes; a density column from the attribute file overrides it block by block. Swell converts bank to loose volume, for the dumps and for the loose m³ the teams move.'));
+      h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', null, ''), h('th', null, 'Layer'), h('th', null, 'Type'), h('th', null, 't/bcm'), h('th', null, 'Swell'), h('th', { class: 'r', title: 'Thinnest block average' }, 'Min m'), h('th', { class: 'r', title: 'Thickest block average' }, 'Max m'), h('th', { class: 'r', title: 'Average over the blocks' }, 'Avg m'), h('th', null, 'Density column'), h('th', null, 'Quality columns'))), h('tbody', null, rows))),
+      hint('Density is used for tonnes; a density column from the attribute file overrides it block by block. Swell converts bank to loose volume, for the dumps and for the loose m³ the teams move. Min, Max and Avg are the thickness of each layer in the blocks: its average thickness in each block where it is present, the thinnest and thickest of those, and their average' + (App.ws && App.ws.blockCells.length ? '.' : ' (once the 3D model and the block layout are loaded).')));
   }
   async function buildModel(cell) {
     const P = App.P;
@@ -14015,6 +14220,42 @@ const Tabs = (() => {
     } else if (drawn) parts.push(msg('warn', `The boundary is switched off: every block is scheduled.${App.res && App.stale ? ' Run the simulation again to update the schedule.' : ''}`));
     else parts.push(h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, 'None: every block is scheduled.'));
     parts.push(hint('Draw a polygon around the blocks that pay and are to be mined: those whose centre lies inside it are scheduled, those outside are left in the ground (with their coal and waste), the mining paths skip them and the final landform leaves their ground as it is. While you draw, the blocks are coloured by margin (red to green) when there is a price, else by strip ratio. In the 3D view the boundary is magenta and the blocks outside are outlined in red (and faded when coloured by margin, strip ratio or a blended quality). Every block keeps its margin and rank here; in the tables below the blocks outside are greyed. Changing the boundary needs a new run.'));
+    // ---- the boundary from a strip ratio cut-off (AutoRes)
+    if (App.ws && P.blocks.length) {
+      const A = AutoRes.settings(P), auto = drawn && B.auto, keep = patch => { P.reserveAuto = Object.assign({}, P.reserveAuto, patch); App.changed('reserve'); };
+      let wa = 0, ca = 0; for (const r of R.rows) { wa += r.waste; ca += r.coalT; }
+      const f2 = v => U.fmtNum(v, 2);
+      const create = async () => {
+        const o = AutoRes.settings(P);
+        if (!(o.srMax > 0)) { UI.toast('Type the strip ratio cut-off first.'); return; }
+        if (drawn && !B.auto && !(await UI.confirmBox('Replace the reserve boundary', 'Replace the boundary you drew with one made from the strip ratio cut-off?', 'Replace'))) return;
+        let r; try { r = AutoRes.build(P, App.ws, R.rows, o); } catch (e) { UI.toast(e.message); return; }
+        const c = r.ch, ids = w => P.blocks.map((q, b) => (c.why[b] === w ? q.id : null)).filter(Boolean);
+        r.reserve.auto = Object.assign(r.reserve.auto, { made: U.todayISO(), n: c.n, nCut: c.nCut, nIn: c.nIn, nNotch: c.nNotch, dropped: c.dropped, areas: c.areas, sr: c.sr, enclosed: ids(2), notches: ids(3), wrong: r.wrong.map(b => P.blocks[b].id) });
+        P.reserve = r.reserve;
+        App.colorBy = 'sr'; UI.renderColorBy(); App.refreshTint();
+        App.changed('reserve', { now: true }); UI.renderTab();
+        UI.toast(`Reserve boundary at ${f2(o.srMax)} bcm/t: ${c.n} of ${P.blocks.length} blocks, strip ratio ${f2(c.sr)} bcm/t${c.areas > 1 ? `, in ${c.areas} areas` : ''}. Run the simulation to schedule them.`, 9000);
+      };
+      const ap = [
+        h('div', { class: 'grid2' },
+          fld('Strip ratio cut-off (bcm/t)', num(A.srMax, v => { keep({ srMax: v > 0 ? v : null }); UI.renderTab(); }, { min: 0, step: 0.1, allowEmpty: true, placeholder: ca > 0 ? `all: ${f2(wa / ca)}` : '—' })),
+          fld('Leave out areas of fewer than (blocks)', num(A.minBlocks, v => keep({ minBlocks: v >= 1 ? Math.round(v) : 1 }), { min: 1, step: 1 }))),
+        h('div', { class: 'grid2' },
+          fld('Take in a block above it at the edge when the reserve borders (% of its edge)', num(A.share, v => keep({ share: v == null ? AutoRes.DEF.share : U.clamp(v, 0, 100) }), { min: 0, max: 100, step: 5 })), h('span'))
+      ];
+      if (edit()) ap.push(h('div', { class: 'row edit-only' }, btn(auto ? 'Make it again' : 'Create the boundary', create, 'sm' + (auto ? '' : ' primary'), 'Put the reserve boundary around the blocks this cut-off takes')));
+      if (auto) {
+        const q = B.auto, list = (a, n = 10) => a.slice(0, n).join(', ') + (a.length > n ? ` and ${a.length - n} more` : '');
+        ap.push(msg('info', `Made ${q.made ? U.fmtDate(U.parseISO(q.made)) + ' ' : ''}at ${f2(q.srMax)} bcm/t: ${q.n} blocks, ${q.nCut} of them at or below the cut-off${q.areas > 1 ? `, in ${q.areas} areas` : ''}; strip ratio of the reserve ${f2(q.sr)} bcm/t.${q.dropped ? ` ${q.dropped} block${q.dropped === 1 ? '' : 's'} in areas too small to keep ${q.dropped === 1 ? 'is' : 'are'} left out.` : ''}`));
+        if ((q.enclosed || []).length) ap.push(msg('info', `Above the cut-off, taken in because the reserve closes them in and dilutes them: ${list(q.enclosed)}.`));
+        if ((q.notches || []).length) ap.push(msg('info', `Above the cut-off, taken in at the edge of the reserve: ${list(q.notches)}.`));
+        if ((q.wrong || []).length) ap.push(msg('warn', `The outline could not be drawn with the centre of ${q.wrong.length === 1 ? 'block' : 'blocks'} ${list(q.wrong)} on ${q.wrong.length === 1 ? 'its' : 'their'} own side, as ${q.wrong.length === 1 ? 'it is' : 'they are'} oddly shaped. Check ${q.wrong.length === 1 ? 'it' : 'them'} in the 3D view.`));
+        if (A.srMax !== q.srMax || A.share !== q.share || A.minBlocks !== q.minBlocks) ap.push(msg('warn', 'The settings above changed since the boundary was made: make it again to use them.'));
+      }
+      ap.push(hint('The blocks at or below the cut-off (waste bcm ÷ coal t, as in the table below) make the reserve. Blocks above it are taken in where the cheaper blocks around them carry them: a group that the reserve closes in on every side when, with the ring of reserve blocks around it, it is at or below the cut-off; and a block at the edge when the reserve borders that share of its edge and, with those neighbours, it is at or below the cut-off. Small separate areas are left out. Make it again after the model, the blocks or the costs change.'));
+      parts.push(h('div', { class: 'sec-h', style: { marginTop: '6px' } }, h('h3', null, 'From a strip ratio cut-off')), ...ap);
+    }
     body.append(sec('Reserve boundary', drawn ? h('span', { class: 'chip' }, on && Q ? `${Q.inside.n} of ${P.blocks.length} blocks` : 'off') : null, ...parts));
   }
   function drawReserve() {
@@ -18082,8 +18323,9 @@ const App = {
       /* the reserve boundary (bold magenta) and the blocks it leaves out (outlined in red); thin grey when it is switched off */
       const RB = P.reserve;
       if (RB && RB.pts && RB.pts.length >= 3) {
-        if (Model.hasReserve(P)) zl.unshift({ pts: RB.pts, color: App.RESERVE_COLOR, selected: false, bold: true, label: 'Reserve boundary', blocks: [] }, { pts: RB.pts, noPoly: true, color: App.OUT_COLOR, blocks: Array.from(DL.out).map((v, b) => (v ? b : -1)).filter(b => b >= 0) });
-        else zl.unshift({ pts: RB.pts, color: '#8a8f98', selected: false, label: 'Reserve boundary (off)', blocks: [] });
+        const rings = Model.reserveRings(P); // (the areas and holes of a boundary made from a strip ratio cut-off)
+        if (Model.hasReserve(P)) zl.unshift(...rings.map((pts, k) => ({ pts, color: App.RESERVE_COLOR, selected: false, bold: true, label: k ? '' : 'Reserve boundary', blocks: [] })), { pts: RB.pts, noPoly: true, color: App.OUT_COLOR, blocks: Array.from(DL.out).map((v, b) => (v ? b : -1)).filter(b => b >= 0) });
+        else zl.unshift(...rings.map((pts, k) => ({ pts, color: '#8a8f98', selected: false, label: k ? '' : 'Reserve boundary (off)', blocks: [] })));
       }
       View.setLimits(zl); }
     // separate pits: the outline of each, with its name
