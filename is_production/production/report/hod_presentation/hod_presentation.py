@@ -447,6 +447,7 @@ def get_report_payload(
     ) = validate_filters(filters)
 
     site = site_override or sites[0]
+    check_hod_site_access(site)
 
     monthly_plan = get_latest_hod_monthly_plan(
         site,
@@ -1019,6 +1020,7 @@ def validate_filters(filters):
     end_date = getdate(end_date)
 
     for site in sites:
+        check_hod_site_access(site)
         if not frappe.db.exists("Location", site):
             frappe.throw(
                 _("Location {0} does not exist.").format(
@@ -2498,6 +2500,8 @@ def get_availability_dashboard_html(
             _("Start Date cannot be after End Date.")
         )
 
+    check_hod_site_access(site)
+
     if not frappe.db.exists(
         "Location",
         site,
@@ -2628,6 +2632,15 @@ def get_availability_dashboard_html(
 def ensure_interactive_report():
     """Keep HOD Presentation out of Frappe's prepared-report queue."""
     check_report_access()
+
+    report = frappe.get_doc("Report", REPORT_NAME)
+    if not frappe.has_permission(
+        "Report", "write", doc=report
+    ):
+        frappe.throw(
+            _("You do not have permission to change Report settings."),
+            frappe.PermissionError,
+        )
 
     values = frappe.db.get_value(
         "Report",
@@ -2782,14 +2795,53 @@ def download_captured_presentation(
 ):
     check_report_access()
 
-    slides = frappe.parse_json(
-        captured_slides or "[]"
-    )
+    export_site = str(site or "").strip()
+    if not export_site:
+        frappe.throw(_("A presentation site is required."))
+
+    if frappe.db.exists("Location", export_site):
+        export_sites = [export_site]
+    else:
+        export_sites = [
+            value.strip()
+            for value in export_site.split(" / ")
+            if value.strip()
+        ]
+
+    if not export_sites or len(export_sites) > 30:
+        frappe.throw(_("Invalid presentation sites."))
+
+    for export_location in export_sites:
+        if not frappe.db.exists("Location", export_location):
+            frappe.throw(_("Invalid presentation site."))
+        check_hod_site_access(export_location)
+
+    raw_slides = captured_slides or "[]"
+
+    if not isinstance(raw_slides, str):
+        frappe.throw(_("Invalid presentation payload."))
+
+    if len(raw_slides) > 50 * 1024 * 1024:
+        frappe.throw(_("Presentation payload is too large."))
+
+    slides = frappe.parse_json(raw_slides)
 
     if not isinstance(slides, list) or not slides:
-        frappe.throw(
-            _("No report sections were captured.")
-        )
+        frappe.throw(_("No report sections were captured."))
+
+    if len(slides) > 100:
+        frappe.throw(_("Maximum 100 presentation slides allowed."))
+
+    for item in slides:
+        if not isinstance(item, dict):
+            frappe.throw(_("Invalid presentation slide."))
+
+        image_data = item.get("image_data")
+        if not isinstance(image_data, str) or not image_data:
+            frappe.throw(_("Invalid presentation image."))
+
+        if len(image_data) > 8 * 1024 * 1024:
+            frappe.throw(_("Presentation image is too large."))
 
     payload = {
         "site": site or "HOD Presentation",
@@ -2844,6 +2896,60 @@ def download_captured_presentation(
     }
 
 
+
+
+
+def check_hod_site_access(site):
+    """Enforce HOD Location assignments on the server."""
+    user = frappe.session.user
+
+    if user == "Administrator":
+        return
+
+    roles = set(frappe.get_roles(user))
+
+    if roles.intersection({
+        "Production Manager",
+        "Engineering Manager",
+    }):
+        return
+
+    if not roles.intersection({
+        "Production User",
+        "Engineering User",
+    }):
+        frappe.throw(
+            _("You are not authorised to access HOD site data."),
+            frappe.PermissionError,
+        )
+
+    permissions = frappe.get_all(
+        "User Permission",
+        filters={
+            "user": user,
+            "allow": "Location",
+            "for_value": site,
+        },
+        fields=[
+            "apply_to_all_doctypes",
+            "applicable_for",
+        ],
+        limit_page_length=0,
+    )
+
+    allowed = any(
+        row.apply_to_all_doctypes
+        or row.applicable_for == "Monthly Production Planning"
+        for row in permissions
+    )
+
+    if not allowed:
+        frappe.throw(
+            _("You do not have HOD access to site {0}.").format(
+                frappe.bold(site)
+            ),
+            frappe.PermissionError,
+        )
 
 
 def check_report_access():
