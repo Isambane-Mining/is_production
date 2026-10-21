@@ -1,0 +1,71 @@
+{
+ "actions": [],
+ "creation": "2026-10-21 20:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "fields": [
+  {
+   "fieldname": "reference_model",
+   "fieldtype": "Link",
+   "label": "Referenced Model",
+   "options": "CAD Model",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "reference_revision",
+   "fieldtype": "Link",
+   "label": "Pinned Revision",
+   "options": "CAD Design Revision",
+   "in_list_view": 1,
+   "description": "Blank = the referenced model's current working state."
+  },
+  {
+   "fieldname": "offset_x",
+   "fieldtype": "Float",
+   "label": "Offset X",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "offset_y",
+   "fieldtype": "Float",
+   "label": "Offset Y",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "offset_z",
+   "fieldtype": "Float",
+   "label": "Offset Z"
+  },
+  {
+   "fieldname": "visible",
+   "fieldtype": "Check",
+   "label": "Visible",
+   "default": "1",
+   "in_list_view": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "links": [],
+ "modified_by": "Administrator",
+ "module": "CAD Engineering",
+ "name": "CAD Model Reference",
+ "owner": "Administrator",
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "permissions": [],
+ "istable": 1,
+ "editable_grid": 1,
+ "description": "Another CAD Model shown as a read-only external reference.",
+ "field_order": [
+  "reference_model",
+  "reference_revision",
+  "offset_x",
+  "offset_y",
+  "offset_z",
+  "visible"
+ ],
+ "modified": "2026-10-21 20:00:00.000000"
+}

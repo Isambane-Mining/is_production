@@ -1,6 +1,6 @@
 {
  "charts": [],
- "content": "[{\"id\": \"4ceac6f80f\", \"type\": \"header\", \"data\": {\"text\": \"\\u003cspan class=\\\"h4\\\"\\u003e\\u003cb\\u003eMining Planning\\u003c/b\\u003e\\u003c/span\\u003e\", \"col\": 12}}, {\"id\": \"55cac2bff2\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Mining Simulation\", \"col\": 3}}, {\"id\": \"a8be43518a\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Simulation Projects\", \"col\": 3}}, {\"id\": \"861e844252\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"GIS Workstation\", \"col\": 3}}, {\"id\": \"88a6cdafec\", \"type\": \"spacer\", \"data\": {\"col\": 12}}, {\"id\": \"ff5498d6df\", \"type\": \"card\", \"data\": {\"card_name\": \"Mining Simulation\", \"col\": 4}}, {\"id\": \"57cdaaf23f\", \"type\": \"card\", \"data\": {\"card_name\": \"GIS\", \"col\": 4}}]",
+ "content": "[{\"id\": \"4ceac6f80f\", \"type\": \"header\", \"data\": {\"text\": \"\\u003cspan class=\\\"h4\\\"\\u003e\\u003cb\\u003eMining Planning\\u003c/b\\u003e\\u003c/span\\u003e\", \"col\": 12}}, {\"id\": \"55cac2bff2\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Mining Simulation\", \"col\": 3}}, {\"id\": \"a8be43518a\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Simulation Projects\", \"col\": 3}}, {\"id\": \"861e844252\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"GIS Workstation\", \"col\": 3}}, {\"id\": \"c4d5e6f7a8\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"CAD Workstation\", \"col\": 3}}, {\"id\": \"88a6cdafec\", \"type\": \"spacer\", \"data\": {\"col\": 12}}, {\"id\": \"ff5498d6df\", \"type\": \"card\", \"data\": {\"card_name\": \"Mining Simulation\", \"col\": 4}}, {\"id\": \"57cdaaf23f\", \"type\": \"card\", \"data\": {\"card_name\": \"GIS\", \"col\": 4}}, {\"id\": \"c4d5e6f7a9\", \"type\": \"card\", \"data\": {\"card_name\": \"CAD Engineering\", \"col\": 4}}]",
  "creation": "2026-10-08 12:47:50.791989",
  "custom_blocks": [],
  "docstatus": 0,
@@ -140,9 +140,68 @@
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "CAD Engineering",
+   "link_count": 5,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "CAD Model",
+   "link_count": 0,
+   "link_to": "CAD Model",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Design Revisions",
+   "link_count": 0,
+   "link_to": "CAD Design Revision",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Processing Jobs",
+   "link_count": 0,
+   "link_to": "CAD Processing Job",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "CAD Entity",
+   "link_count": 0,
+   "link_to": "CAD Entity",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "CAD Settings",
+   "link_count": 0,
+   "link_to": "CAD Settings",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
   }
  ],
- "modified": "2026-10-20 22:42:14.759153",
+ "modified": "2026-10-21 17:43:02.505226",
  "modified_by": "Administrator",
  "module": "Production",
  "name": "Mining Planning",
@@ -174,6 +233,13 @@
    "label": "GIS Workstation",
    "type": "URL",
    "url": "/portal_gis"
+  },
+  {
+   "color": "Purple",
+   "doc_view": "",
+   "label": "CAD Workstation",
+   "type": "URL",
+   "url": "/portal_cad"
   }
  ],
  "standard": 1,

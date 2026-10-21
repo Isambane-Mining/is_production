@@ -1,0 +1,343 @@
+{
+ "actions": [],
+ "creation": "2026-10-21 10:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "section_health",
+  "health_status",
+  "last_check_on",
+  "column_break_hlth",
+  "health_summary",
+  "section_health_detail",
+  "worker_health_status",
+  "occt_version",
+  "binding_version",
+  "worker_python_version",
+  "column_break_hdtl",
+  "storage_status",
+  "optional_libraries",
+  "renderer_status",
+  "health_report",
+  "section_worker",
+  "enable_cad_workstation",
+  "cad_worker_enabled",
+  "worker_python",
+  "column_break_wrk",
+  "max_processing_minutes",
+  "max_concurrent_jobs",
+  "worker_memory_limit_mb",
+  "worker_nice",
+  "section_storage",
+  "model_storage_directory",
+  "column_break_stor",
+  "mesh_cache_directory",
+  "max_import_size_mb",
+  "section_defaults",
+  "default_linear_units",
+  "default_angular_units",
+  "default_crs",
+  "column_break_def",
+  "coordinate_precision",
+  "angular_precision",
+  "default_drawing_template",
+  "default_export_format",
+  "default_annotation_scale",
+  "default_text_height_mm",
+  "section_features",
+  "enable_advanced_geometry",
+  "column_break_feat",
+  "enable_mining_design_tools"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_health",
+   "fieldtype": "Section Break",
+   "label": "Health"
+  },
+  {
+   "fieldname": "health_status",
+   "fieldtype": "Select",
+   "label": "Health Status",
+   "options": "\nOK\nWarning\nError",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_check_on",
+   "fieldtype": "Datetime",
+   "label": "Last Check On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_hlth",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "health_summary",
+   "fieldtype": "Small Text",
+   "label": "Problems Found",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_health_detail",
+   "fieldtype": "Section Break",
+   "label": "Health Details",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "worker_health_status",
+   "fieldtype": "Data",
+   "label": "CAD Worker",
+   "read_only": 1
+  },
+  {
+   "fieldname": "occt_version",
+   "fieldtype": "Data",
+   "label": "OCCT Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "binding_version",
+   "fieldtype": "Data",
+   "label": "Geometry Binding",
+   "read_only": 1
+  },
+  {
+   "fieldname": "worker_python_version",
+   "fieldtype": "Data",
+   "label": "Worker Python",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_hdtl",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "storage_status",
+   "fieldtype": "Data",
+   "label": "Model Storage",
+   "read_only": 1
+  },
+  {
+   "fieldname": "optional_libraries",
+   "fieldtype": "Small Text",
+   "label": "Import / Export Libraries",
+   "read_only": 1
+  },
+  {
+   "fieldname": "renderer_status",
+   "fieldtype": "Data",
+   "label": "Renderer Assets",
+   "read_only": 1
+  },
+  {
+   "fieldname": "health_report",
+   "fieldtype": "Code",
+   "label": "Full Report",
+   "options": "JSON",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_worker",
+   "fieldtype": "Section Break",
+   "label": "CAD Worker"
+  },
+  {
+   "fieldname": "enable_cad_workstation",
+   "fieldtype": "Check",
+   "label": "Enable CAD Workstation",
+   "default": "1"
+  },
+  {
+   "fieldname": "cad_worker_enabled",
+   "fieldtype": "Check",
+   "label": "CAD Worker Enabled",
+   "default": "1"
+  },
+  {
+   "fieldname": "worker_python",
+   "fieldtype": "Data",
+   "label": "CAD Worker Python",
+   "default": "/opt/cad-worker/venv/bin/python",
+   "reqd": 1,
+   "description": "Python of the isolated CAD worker environment (cadquery-ocp / Open CASCADE). Never the bench's Python."
+  },
+  {
+   "fieldname": "column_break_wrk",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "max_processing_minutes",
+   "fieldtype": "Int",
+   "label": "Maximum Processing Time (minutes)",
+   "default": "30"
+  },
+  {
+   "fieldname": "max_concurrent_jobs",
+   "fieldtype": "Int",
+   "label": "Maximum Concurrent Jobs",
+   "default": "2"
+  },
+  {
+   "fieldname": "worker_memory_limit_mb",
+   "fieldtype": "Int",
+   "label": "Worker Memory Limit (MB)",
+   "default": "4096",
+   "description": "0 = no limit."
+  },
+  {
+   "fieldname": "worker_nice",
+   "fieldtype": "Int",
+   "label": "Worker CPU Priority (nice)",
+   "default": "10"
+  },
+  {
+   "fieldname": "section_storage",
+   "fieldtype": "Section Break",
+   "label": "Storage"
+  },
+  {
+   "fieldname": "model_storage_directory",
+   "fieldtype": "Data",
+   "label": "Model Storage Directory",
+   "default": "private/cad/models",
+   "description": "Relative to the site folder, so every site keeps its own models."
+  },
+  {
+   "fieldname": "column_break_stor",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "mesh_cache_directory",
+   "fieldtype": "Data",
+   "label": "Mesh Cache Directory",
+   "default": "private/cad/mesh_cache"
+  },
+  {
+   "fieldname": "max_import_size_mb",
+   "fieldtype": "Int",
+   "label": "Maximum Import Size (MB)",
+   "default": "200"
+  },
+  {
+   "fieldname": "section_defaults",
+   "fieldtype": "Section Break",
+   "label": "Defaults"
+  },
+  {
+   "fieldname": "default_linear_units",
+   "fieldtype": "Select",
+   "label": "Default Linear Units",
+   "options": "Metres\nMillimetres\nKilometres\nFeet\nUS Survey Feet",
+   "default": "Metres"
+  },
+  {
+   "fieldname": "default_angular_units",
+   "fieldtype": "Select",
+   "label": "Default Angular Units",
+   "options": "Degrees\nRadians\nGradians",
+   "default": "Degrees"
+  },
+  {
+   "fieldname": "default_crs",
+   "fieldtype": "Data",
+   "label": "Default CRS",
+   "default": "EPSG:2053"
+  },
+  {
+   "fieldname": "column_break_def",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "coordinate_precision",
+   "fieldtype": "Int",
+   "label": "Coordinate Precision (decimals)",
+   "default": "3"
+  },
+  {
+   "fieldname": "angular_precision",
+   "fieldtype": "Int",
+   "label": "Angular Precision (decimals)",
+   "default": "4"
+  },
+  {
+   "fieldname": "default_drawing_template",
+   "fieldtype": "Link",
+   "label": "Default Drawing Template",
+   "options": "CAD Model"
+  },
+  {
+   "fieldname": "default_export_format",
+   "fieldtype": "Select",
+   "label": "Default Export Format",
+   "options": "DXF\nSTEP\nSTL\nOBJ\nLandXML\nCSV",
+   "default": "DXF"
+  },
+  {
+   "fieldname": "default_annotation_scale",
+   "fieldtype": "Int",
+   "label": "Default Annotation Scale (1:n)",
+   "default": "1000"
+  },
+  {
+   "fieldname": "default_text_height_mm",
+   "fieldtype": "Float",
+   "label": "Default Text Height (paper mm)",
+   "default": "2.5",
+   "description": "Text and dimension height in model units = this \u00d7 annotation scale \u00f7 1000 (for metre models)."
+  },
+  {
+   "fieldname": "section_features",
+   "fieldtype": "Section Break",
+   "label": "Features"
+  },
+  {
+   "fieldname": "enable_advanced_geometry",
+   "fieldtype": "Check",
+   "label": "Enable Advanced Geometry"
+  },
+  {
+   "fieldname": "column_break_feat",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "enable_mining_design_tools",
+   "fieldtype": "Check",
+   "label": "Enable Mining Design Tools"
+  }
+ ],
+ "grid_page_length": 50,
+ "links": [],
+ "modified": "2026-10-21 20:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "CAD Engineering",
+ "name": "CAD Settings",
+ "owner": "Administrator",
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "issingle": 1,
+ "description": "CAD worker (Open CASCADE), model storage, units, limits and CAD Workstation defaults.",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "print": 1
+  }
+ ]
+}
