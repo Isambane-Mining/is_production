@@ -14730,7 +14730,7 @@ const Tabs = (() => {
           ch,
           finTable(F, money),
           h('div', { class: 'row' }, btn('Excel schedule', () => App.exportExcel ? App.exportExcel() : UI.toast('Use the Excel schedule button at the top.'), 'sm')),
-          hint(`Month by month on the last run: ${o.wash ? `the coal mined (as received) is washed into a product at ${F.prodFrom === 'wash' ? 'the yield of the washability data, block by block' : `a yield of ${U.fmtNum(o.yieldFixed, 1)}%`}` : 'the coal mined (as received) is crushed, screened and sold as it is'}; ${U.fmtNum(o.expShare, 0)}% is exported, the rest sold at home. The costs follow the schedule's volumes: topsoil, waste hauled and dozed, coal, the bcm drilled and blasted and the explosives (Production tab), rehandling, the rehabilitated area${F.hydro ? ' and the water pumped from the pit' : ''}. The royalty and tax are worked out year by year; capital is deducted from the taxable mining income as it is spent. The NPV is discounted to the first month of the model, ${F.label(0)}. The Excel schedule has the whole model month by month and year by year.`)));
+          hint(`Month by month on the last run: ${o.wash ? `the coal mined (as received) is washed into a product at ${F.prodFrom === 'wash' ? 'the yield of the washability data, block by block' : `a yield of ${U.fmtNum(o.yieldFixed, 1)}%`}` : 'the coal mined (as received) is crushed, screened and sold as it is'}; ${U.fmtNum(o.expShare, 0)}% is exported, the rest sold at home. The costs follow the schedule's volumes: topsoil, waste hauled and dozed, coal, the bcm drilled and blasted and the explosives (Production tab), rehandling, the rehabilitated area${F.hydro ? ' and the water pumped from the pit' : ''}. The royalty and tax are worked out year by year; capital is deducted from the taxable mining income as it is spent. The NPV is discounted to the first month of the model, ${F.label(0)}. The Excel schedule (Financial Model sheet) has the whole model month by month.`)));
         requestAnimationFrame(() => Charts.cash(ch, F, cur));
       }
     }
@@ -17035,15 +17035,23 @@ const Report = (() => {
     const sh = sheet(aoa, [30, 14, 60, 13, 12, 12, 14, 14, 12, 14, 14, 14, 14]);
     return sh;
   }
-  /* The financial model year by year (Fin), with its measures and its inputs */
+  /* The financial model month by month (the months before mining, of mining, and the closure month), with the measures
+     and the inputs. The royalty rate and the taxable income are worked out by calendar year: the rate is shown in each
+     month of its year, the taxable income in the year's last month, where the tax is paid. */
   function finSheet(P, F) {
-    const A = F.annual, o = F.o, cur = o.currency, K = F.kpi, m0 = v => (v === v ? Math.round(v) : null), r2 = v => (v === v && v != null ? Math.round(v * 100) / 100 : null);
-    const head = ['Item', 'Unit', 'Total', ...A.map(Y => String(Y.y))], aoa = [head];
-    const row = (label, unit, k, o2 = {}) => { const vals = A.map(Y => (o2.f ? o2.f(Y) : Y[k]) * (o2.sign || 1)); const tot = o2.total !== undefined ? o2.total : vals.reduce((a, b) => a + (b === b ? b : 0), 0); aoa.push([label, unit, o2.dp ? r2(tot) : m0(tot), ...vals.map(v => (o2.dp ? r2(v) : m0(v)))]); };
+    const X = F.X, N = F.N, o = F.o, cur = o.currency, K = F.kpi, m0 = v => (v === v && v != null ? Math.round(v) : null), r2 = v => (v === v && v != null ? Math.round(v * 100) / 100 : null);
+    // the calendar year (F.annual) of each month
+    const yOf = new Int32Array(N), last = new Uint8Array(N); { let t = 0; F.annual.forEach((Y, i) => { for (let k = 0; k < Y.months && t < N; k++, t++) yOf[t] = i; last[t - 1] = 1; }); }
+    const head = ['Item', 'Unit', 'Total']; for (let t = 0; t < N; t++) head.push(F.label(t));
+    const aoa = [head];
+    const row = (label, unit, k, o2 = {}) => { const vals = Array.from({ length: N }, (_, t) => { const v = o2.f ? o2.f(t) : X[k][t]; return v == null ? null : v * (o2.sign || 1); }); const tot = o2.total !== undefined ? o2.total : vals.reduce((a, b) => a + (b === b && b != null ? b : 0), 0); aoa.push([label, unit, o2.dp ? r2(tot) : m0(tot), ...vals.map(v => (o2.dp ? r2(v) : m0(v)))]); };
     const gap = () => aoa.push([]), title = t => aoa.push([t]);
-    row('Months in the year', 'months', 'months');
+    let cvN = 0, cvD = 0; for (let t = 0; t < N; t++) if (X.cv[t] === X.cv[t] && X.product[t] > 0) { cvN += X.cv[t] * X.product[t]; cvD += X.product[t]; }
+    const cvAll = cvD > 0 ? cvN / cvD : null;
+    aoa.push(['Phase', '', null, ...Array.from({ length: N }, (_, t) => (t < F.np ? 'before mining' : t < F.np + F.nM ? 'mining' : 'closure'))]);
+    row('Days in the month', 'days', 'days');
     title('PRODUCTION'); row('Coal mined (as received)', 't', 'rom'); if (o.wash) { row('Plant feed', 't', 'feed'); row('Product', 't', 'product'); row('Discard', 't', 'discard'); } else row('Coal sold (as mined)', 't', 'product');
-    row('Exported', 't', 'expT'); row('Sold at home', 't', 'domT'); if (o.byCV) row('CV of the coal sold', 'MJ/kg', 'cv', { dp: true, total: null });
+    row('Exported', 't', 'expT'); row('Sold at home', 't', 'domT'); if (o.byCV) row('CV of the coal sold', 'MJ/kg', 'cv', { dp: true, total: cvAll });
     row('Topsoil', 'bcm', 'topsoil'); row('Waste hauled', 'bcm', 'waste'); row('Waste dozed', 'bcm', 'dozed'); row('Drilled and blasted', 'bcm', 'blastB'); row('Waste drilled and blasted', 'bcm', 'blastW'); row('Coal drilled and blasted', 'bcm', 'blastC'); row('Drill metres', 'm', 'drillM'); row('Explosives', 'kg', 'explKg'); row('Presplit', 'm²', 'presplitM2'); row('Rehandled', 'm³ loose', 'reh'); row('Rehabilitated', 'ha', 'rehabHa', { dp: true }); if (F.hydro) row('Water pumped from the pit', 'm³', 'water');
     gap(); title(`CASH FLOW (${cur})`);
     row('Revenue, export', cur, 'revExp'); row('Revenue, domestic', cur, 'revDom'); row('Revenue', cur, 'rev');
@@ -17052,29 +17060,17 @@ const Report = (() => {
     row('Mining costs', cur, 'mining', { sign: -1 });
     row('Crushing and screening', cur, 'cCrush', { sign: -1 }); if (o.wash) { row('Washing', cur, 'cWash', { sign: -1 }); row('Discard disposal', cur, 'cDiscard', { sign: -1 }); }
     row('Processing costs', cur, 'process', { sign: -1 }); row('Overheads', cur, 'over', { sign: -1 });
-    row('EBITDA', cur, 'ebitda'); row('Mineral royalty', cur, 'royalty', { sign: -1 }); row('Royalty rate', '%', null, { f: Y => Y.royRate * 100, dp: true, total: null }); row('Taxable income', cur, 'taxable'); row('Company tax', cur, 'tax', { sign: -1 });
+    row('EBITDA', cur, 'ebitda'); row('Mineral royalty', cur, 'royalty', { sign: -1 }); row('Royalty rate (of the year)', '%', null, { f: t => F.annual[yOf[t]].royRate * 100, dp: true, total: null });
+    row('Taxable income (of the year)', cur, null, { f: t => (last[t] ? F.annual[yOf[t]].taxable : null) }); row('Company tax', cur, 'tax', { sign: -1 });
     row('Initial capital', cur, 'capInit', { sign: -1 }); row('Sustaining capital', cur, 'capSust', { sign: -1 }); row('Closure less salvage', cur, 'capClose', { sign: -1 }); row('Working capital', cur, 'dwc', { sign: -1 });
-    row('Free cash flow', cur, 'fcf'); row('Cumulative free cash flow', cur, 'cum', { total: null });
+    row('Free cash flow', cur, 'fcf'); row('Cumulative free cash flow', cur, 'cum', { total: null }); row('Present value', cur, 'pv');
     gap(); title('MEASURES');
     aoa.push([`NPV at ${o.disc}% a year (real), to ${F.label(0)}`, cur, m0(K.npv)], ['IRR', '% a year', K.irr === K.irr ? r2(K.irr * 100) : null], ['Payback', 'months of mining', K.payback], ['Peak funding', cur, m0(K.peak)],
       ['Revenue a ton sold', `${cur}/t`, r2(K.price)], ['Cash cost a ton sold (before the royalty)', `${cur}/t`, r2(K.cashCost)], ['FOB cost a ton exported', `${cur}/t`, r2(K.fobCost)], ['Mining, processing and overheads a ton mined', `${cur}/t`, r2(K.cost)], ['EBITDA a ton sold', `${cur}/t`, r2(K.margin)]);
     gap(); title('INPUTS (Finance tab)'); aoa.push(['Currency', cur]);
     for (const G of Fin.GROUPS) for (const q of G.fields) { if (q.when && !q.when(o)) continue; const v = o[q.k]; aoa.push([`${G.title}: ${q.label}`, Fin.unitOf(q, cur) || (q.kind === 'chk' ? '' : ''), q.kind === 'chk' ? (v ? 'yes' : 'no') : q.kind === 'sel' ? (q.opts.find(x => x[0] === v) || [, v])[1] : v]); }
     aoa.push(['Product from', '', F.prodFrom === 'wash' ? 'the washability data (Data tab)' : F.prodFrom === 'fixed' ? 'a fixed yield' : 'not washed: sold as mined']);
-    const sh = sheet(aoa, [46, 16, 16, ...A.map(() => 14)]);
-    sh.__freeze = { x: 3, y: 1 };
-    return sh;
-  }
-  // the financial model month by month
-  function finMonthlySheet(P, F) {
-    const X = F.X, cur = F.o.currency, N = F.N, m0 = v => (v === v ? Math.round(v) : null);
-    const head = ['Item', 'Unit', 'Total']; for (let t = 0; t < N; t++) head.push(F.label(t));
-    const aoa = [head], row = (label, unit, k, sign = 1, noTot) => aoa.push([label, unit, noTot ? null : m0(X[k].reduce((a, b) => a + b, 0) * sign), ...Array.from(X[k], v => m0(v * sign))]);
-    aoa.push(['Phase', '', null, ...Array.from({ length: N }, (_, t) => (t < F.np ? 'before mining' : t < F.np + F.nM ? 'mining' : 'closure'))]);
-    row('Coal mined (as received)', 't', 'rom'); row('Coal sold', 't', 'product'); row('Revenue', cur, 'rev'); row('Logistics', cur, 'logi', -1); row('Marketing', cur, 'mkt', -1); row('Mining costs', cur, 'mining', -1); row('Drilling, waste', cur, 'cDrillW', -1); row('Drilling, coal', cur, 'cDrillC', -1); row('Explosives', cur, 'cExpl', -1); row('Presplit', cur, 'cPresplit', -1);
-    row('Processing costs', cur, 'process', -1); row('Overheads', cur, 'over', -1); row('EBITDA', cur, 'ebitda'); row('Mineral royalty', cur, 'royalty', -1); row('Company tax', cur, 'tax', -1); row('Capital', cur, 'capex', -1); row('Working capital', cur, 'dwc', -1);
-    row('Free cash flow', cur, 'fcf'); row('Cumulative free cash flow', cur, 'cum', 1, true); row('Present value', cur, 'pv');
-    const sh = sheet(aoa, [30, 10, 16, ...Array.from({ length: N }, () => 13)]);
+    const sh = sheet(aoa, [46, 16, 16, ...Array.from({ length: N }, () => 13)]);
     sh.__freeze = { x: 3, y: 1 };
     return sh;
   }
@@ -17436,9 +17432,9 @@ const Report = (() => {
       XLSX.utils.book_append_sheet(wb, monthlySheet(P, ws, res, IV, BL), 'Monthly Summary');
       XLSX.utils.book_append_sheet(wb, inventorySheet(P, IV), 'Coal Inventory');
       if (BL && BL.o.on) XLSX.utils.book_append_sheet(wb, blastSheet(P, ws, res, BL), 'Drill and Blast');
-      // the financial model: year by year, and month by month
+      // the financial model, month by month
       const FM = typeof Fin !== 'undefined' ? (App.fin ? App.fin() : Fin.run(P, ws, res, { blast: BL, hydro: App.hydro ? App.hydro() : null })) : null;
-      if (FM) { XLSX.utils.book_append_sheet(wb, finSheet(P, FM), 'Financial Model'); XLSX.utils.book_append_sheet(wb, finMonthlySheet(P, FM), 'Financial Monthly'); }
+      if (FM) XLSX.utils.book_append_sheet(wb, finSheet(P, FM), 'Financial Model'); // month by month
       const rfill = res.rampFillDaily && res.rampFillDaily.some(v => v > 0) ? res.rampFillDaily : null;
 
       // 4. Daily production
