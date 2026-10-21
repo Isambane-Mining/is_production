@@ -9723,7 +9723,7 @@ const View = (() => {
   let terrain = null, geom = null, mat = null, perim = null;
   let surfNow = null, insNow = null;
   let vex = 3;
-  const show = { outlines: true, labels: true, paths: true, roads: true, dumps: true, contours: false, ovl: true, keep: true, limits: true, pits: true, drains: true, fills: true, water: true };
+  const show = { outlines: true, resOut: true, labels: true, paths: true, roads: true, dumps: true, contours: false, ovl: true, keep: true, limits: true, pits: true, drains: true, fills: true, water: true };
   let satOn = false, satTex = null, tintTex = null, tintData = null, tintOn = false, matTex = null, matData = null;
   let needsRender = true, needsDrape = false, labelsDirty = true;
   const G = {};
@@ -9820,7 +9820,7 @@ const View = (() => {
     controls.addEventListener('change', () => { needsRender = true; labelsDirty = true; });
     world = new THREE.Group();
     scene.add(world);
-    for (const k of ['outlines', 'paths', 'roads', 'dumps', 'ovl', 'keep', 'limits', 'pits', 'drains', 'fills', 'water', 'gw', 'draw', 'sel', 'wall']) { G[k] = new THREE.Group(); world.add(G[k]); }
+    for (const k of ['outlines', 'resOut', 'paths', 'roads', 'dumps', 'ovl', 'keep', 'limits', 'pits', 'drains', 'fills', 'water', 'gw', 'draw', 'sel', 'wall']) { G[k] = new THREE.Group(); world.add(G[k]); }
     G.draw.userData.noClip = true; G.wall.userData.noClip = true;
     applyTheme();
     const ro = new ResizeObserver(resize); ro.observe(el);
@@ -9872,7 +9872,7 @@ const View = (() => {
   // ---------- terrain ----------
   function setWorkspace(w, opts = {}) {
     ws = w;
-    clearGroup(G.outlines); clearGroup(G.paths); clearGroup(G.roads); clearGroup(G.dumps); clearGroup(G.draw); clearGroup(G.sel); clearGroup(G.wall); clearGroup(G.ovl); clearGroup(G.keep); clearGroup(G.limits); clearGroup(G.pits); clearGroup(G.drains); clearGroup(G.fills); clearGroup(G.water); clearGroup(G.gw); anim = null; ovlSig = ''; keepRef = null; slice.on = false;
+    clearGroup(G.outlines); clearGroup(G.resOut); resKey = null; clearGroup(G.paths); clearGroup(G.roads); clearGroup(G.dumps); clearGroup(G.draw); clearGroup(G.sel); clearGroup(G.wall); clearGroup(G.ovl); clearGroup(G.keep); clearGroup(G.limits); clearGroup(G.pits); clearGroup(G.drains); clearGroup(G.fills); clearGroup(G.water); clearGroup(G.gw); anim = null; ovlSig = ''; keepRef = null; slice.on = false;
     if (terrain) { world.remove(terrain); geom.dispose(); mat.dispose(); terrain = null; }
     if (!ws) { needsRender = true; labelsEl.innerHTML = ''; return; }
     const { nx, ny, cell } = ws, n = nx * ny, S = ws.surf, nS = Math.min(16, S.length);
@@ -10039,6 +10039,22 @@ const View = (() => {
     G.outlines.visible = show.outlines;
     needsDrape = true;
   }
+  /* The outlines of the resource layout (amber), when the project keeps it apart from the blocks the schedule mines; drawn
+     again only when that layout changes. */
+  let resOutData = null, resKey = null, resN = -1;
+  function setResBlocks(blocks) {
+    const key = blocks && ws ? blocks : null;
+    if (key === resKey && (!key || blocks.length === resN)) return;
+    resKey = key; resN = key ? blocks.length : -1; clearGroup(G.resOut); resOutData = null; needsRender = true;
+    if (!key) return;
+    const step = ws.cell * 0.5, xy = [];
+    for (const b of blocks) { const pts = Geo.densify(b.pts, step, true); for (let k = 1; k < pts.length; k++) { const a = toL(pts[k - 1][0], pts[k - 1][1]), c = toL(pts[k][0], pts[k][1]); xy.push(a[0], a[1], c[0], c[1]); } }
+    resOutData = Float32Array.from(xy);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array((resOutData.length / 2) * 3), 3));
+    const L = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0xffb347, transparent: true, opacity: 0.75, depthWrite: false })); L.frustumCulled = false; L.renderOrder = 2;
+    G.resOut.add(L); G.resOut.visible = show.resOut; needsDrape = true;
+  }
   function drapeLine(geo, xy, lift = 0.35) {
     const p = geo.attributes.position.array;
     for (let k = 0, v = 0; k < xy.length; k += 2, v += 3) { p[v] = xy[k]; p[v + 1] = xy[k + 1]; p[v + 2] = surfMaxLocal(xy[k], xy[k + 1]) - zOff + lift; }
@@ -10048,6 +10064,7 @@ const View = (() => {
   function drapeAll() {
     if (!ws) return;
     if (G.outlines.children[0]) drapeLine(G.outlines.children[0].geometry, outlineData);
+    if (G.resOut.children[0] && resOutData) drapeLine(G.resOut.children[0].geometry, resOutData, 0.45);
     for (const o of G.sel.children) if (o.userData.xy) drapeLine(o.geometry, o.userData.xy, 0.6);
     for (const o of G.dumps.children) if (o.userData.xy) drapeLine(o.geometry, o.userData.xy, 0.6);
     for (const o of G.limits.children) if (o.userData.xy) drapeLine(o.geometry, o.userData.xy, o.userData.lift || 0.7);
@@ -11126,7 +11143,7 @@ const View = (() => {
   function requestRender() { needsRender = true; labelsDirty = true; }
   function snapshot() { R.render(scene, camera); return canvas.toDataURL('image/jpeg', 0.85); }
 
-  return { init, setWorkspace, setLayerColors, setSurface, setOverlays, setKeepOut, setToes, setLimits, setPits, setDrains, setFills, setWater, setGroundwater, setMeasure, beginCapture, frame, endCapture, viewSize, labelsShown, setTool, getSurface, getInsitu, setSlice, getSlice, modelBounds, viewAlong, setTint, setSatTexture, setSatVisible, hasSat, setVex, setShow, setSelectedBlock, setDumps, setRoads, setRoadHidden, roadShown: id => !roadHidden.has(id) && G.roads.children.some(o => o.userData.roadId === id && o.visible), setPaths, setLabelMode, fit, focusOn, pickAt, on, startDraw, finishDraw, cancelDraw, isDrawing, requestRender, snapshot, get vex() { return vex; }, get zOff() { return zOff; } };
+  return { init, setWorkspace, setResBlocks, setLayerColors, setSurface, setOverlays, setKeepOut, setToes, setLimits, setPits, setDrains, setFills, setWater, setGroundwater, setMeasure, beginCapture, frame, endCapture, viewSize, labelsShown, setTool, getSurface, getInsitu, setSlice, getSlice, modelBounds, viewAlong, setTint, setSatTexture, setSatVisible, hasSat, setVex, setShow, setSelectedBlock, setDumps, setRoads, setRoadHidden, roadShown: id => !roadHidden.has(id) && G.roads.children.some(o => o.userData.roadId === id && o.visible), setPaths, setLabelMode, fit, focusOn, pickAt, on, startDraw, finishDraw, cancelDraw, isDrawing, requestRender, snapshot, get vex() { return vex; }, get zOff() { return zOff; } };
 })();
 
 /* ===== Satellite imagery: live tiles (Google Map Tiles API, Esri, custom XYZ) or a georeferenced image file ===== */
@@ -11389,7 +11406,8 @@ const UI = (() => {
   }
   function renderLayersPop() {
     const p = $('layersPop'); p.innerHTML = '';
-    const items = [['outlines', 'Block outlines'], ['labels', 'Block labels'], ['paths', 'Mining path'], ['roads', 'Haul roads & ramps'], ['dumps', 'Dumps'], ['ovl', 'KML overlays'], ['keep', 'Keep-out zones'], ['limits', 'Depth limits & reserve boundary'], ['pits', 'Pit outlines & box cuts'], ['drains', 'Surface-water flow paths'], ['fills', 'Depression fills'], ['contours', 'Contours on natural ground']];
+    const sepL = App.rv ? App.rv().sep : false;
+    const items = [['outlines', sepL ? 'Reserve blocks (the schedule)' : 'Block outlines'], ...(sepL ? [['resOut', 'Resource blocks']] : []), ['labels', 'Block labels'], ['paths', 'Mining path'], ['roads', 'Haul roads & ramps'], ['dumps', 'Dumps'], ['ovl', 'KML overlays'], ['keep', 'Keep-out zones'], ['limits', 'Depth limits & reserve boundary'], ['pits', 'Pit outlines & box cuts'], ['drains', 'Surface-water flow paths'], ['fills', 'Depression fills'], ['contours', 'Contours on natural ground']];
     p.append(h('div', { class: 'pop-h' }, 'Show in the 3D view'));
     for (const [k, label] of items) p.append(chk(label, App.show[k], v => { App.show[k] = v; View.setShow(k, v); if (k === 'paths') App.refreshOverlays(); }));
     // legends and the table under the Gantt chart: on or off (kept in this browser)
@@ -11584,7 +11602,7 @@ const UI = (() => {
       DLb.out[b] ? 'Outside the reserve boundary (Block Margin Rank tab): this block is not mined.' : byCut ? (limL < 0 ? 'Seam cut-off: no seam in this block passes the cut-off, so the block is not mined.' : `Seam cut-off: no seam below ${P.layers[limL].name} passes the cut-off, so mining stops there.`)
         : `Depth limit${DLb.zone[b] >= 0 && P.limits[DLb.zone[b]] ? ' “' + P.limits[DLb.zone[b]].name + '”' : ''}: mined only down to ${P.layers[limL].name}.`)));
     // the depth to the floor of the lowest seam mined in the block
-    { const MR = App.margin(), q = MR && !DLb.out[b] ? MR.rows[b].dep : null;
+    { const MR = App.margin(), rb = App.resOf(b), q = MR && !DLb.out[b] && MR.rows[rb] ? MR.rows[rb].dep : null;
       el.append(h('div', { class: 'kv', style: { marginBottom: '8px' } }, h('span', { class: 'k', title: 'From the ground (the original topography) down to the floor of the lowest seam the schedule mines in this block, over the block' }, 'Depth to the lowest seam floor'),
         h('span', { class: 'v' }, q ? `${U.fmtNum(q.depth, 1)} m to the floor of ${q.seam} (${U.fmtNum(q.min, 1)}–${U.fmtNum(q.max, 1)} m)` : 'no seam mined'))); }
     const rows = P.layers.map((L, l) => {
@@ -11618,7 +11636,7 @@ const UI = (() => {
         if (items.length) el.append(sec(`Coal on ${d >= 0 ? U.fmtDay(P.startDate, d) : 'the start date'}`, null, h('div', { class: 'kv' }, items)));
       } }
     // its strip ratio and block margin (Block Margin Rank tab)
-    { const R = App.margin(), r = R && R.rows[b], cur = ((P.margin || {}).currency || 'R').trim() || 'R';
+    { const R = App.margin(), r = R && R.rows[App.resOf(b)], cur = ((P.margin || {}).currency || 'R').trim() || 'R';
       if (r) { const f = v => `${cur} ${U.fmtNum(v, 1)}/t`, S = R.stats.sr, cs = Margin.srColor(r.sr, S), chip = c => h('span', { class: 'mg-chip', style: { background: c ? `rgb(${c.join(',')})` : '#8a8f98' } });
         el.append(sec('Strip ratio', r.srRank ? h('span', { class: 'chip' }, `rank ${r.srRank} of ${S.n}`) : null, r.coalT > 0 ? h('div', { class: 'kv' },
           h('span', { class: 'k' }, 'Strip ratio'), h('span', { class: 'v' }, chip(cs), `${U.fmtNum(r.sr, 2)} bcm/t`),
@@ -12179,7 +12197,7 @@ const Tabs = (() => {
   const washName = n => /wash|float|sink|f[\s_-]?s\b|density/i.test(n) && /\.(csv|txt)$/i.test(n);
   /* Float-sink curves from a CSV (Wash): the product of each block at the plant's cut, to the blocks and the schedule. */
   function washSection(body) {
-    const P = App.P, W = P.wash, ws = App.ws;
+    const P = App.rv().P, W = P.wash, ws = App.rv().ws;
     const parts = [hint('The float-sink (washability) curves of the seams, as a CSV: a row for each density with the yield and the qualities. The product of each block — its yield and its qualities at the cut the plant washes to — goes to the blocks, the schedule’s product tons and the Excel schedule.')];
     if (edit()) {
       const fileIn = h('input', { type: 'file', accept: '.csv,.txt', hidden: true });
@@ -12202,7 +12220,7 @@ const Tabs = (() => {
     const ds = W.curves.flatMap(c => c.pts.map(q => q.rd)), names = Array.from(new Set(W.curves.map(c => c.seam)));
     const nHoles = W.curves.filter(c => c.x === c.x).length, nBlk = W.curves.filter(c => c.block).length;
     parts.push(h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `${W.file}: ${W.curves.length} curve${W.curves.length === 1 ? '' : 's'}${nBlk ? `, ${nBlk} for blocks` : ''}${nHoles ? `, ${nHoles} borehole${nHoles === 1 ? '' : 's'} with coordinates` : ''} · ${W.basis === 'frac' ? 'density fractions, added up to cumulative floats' : W.basis === 'mixed' ? 'cumulative floats and density fractions' : 'cumulative floats'} · RD ${U.fmtNum(Math.min(...ds), 2)} to ${U.fmtNum(Math.max(...ds), 2)} · ${W.keys.length ? W.keys.join(', ') : 'no qualities'}${W.read ? ` · read ${U.fmtDate(U.parseISO(W.read))}` : ''}`));
-    const reassign = () => { if (App.ws) Wash.assign(P, App.ws); App.changed('wash', { now: true }); const T = P.targets || {}; if (T.coalBasis === 'product' && +T.coal > 0) App.changed('sim'); UI.renderTab(); };
+    const reassign = () => { if (App.rv().ws) Wash.assign(P, App.rv().ws); App.changed('wash', { now: true }); const T = P.targets || {}; if (T.coalBasis === 'product' && +T.coal > 0) App.changed('sim'); UI.renderTab(); };
     // the seams named in the file, and the seams of the model
     if (names.some(Boolean) && (names.length > 1 || coal.length > 1)) {
       const rows = names.map(nm => { const s = sel([['', '— not used —']].concat(coal.map(L => [L.id, L.name])), Wash.mapOf(P, { seam: nm }) || '', v => { W.seamMap[nm] = v || null; reassign(); }); s.setAttribute('aria-label', `Seam of the model for ${nm || 'the curves'}`); return h('tr', null, h('td', null, nm || '(no seam)'), h('td', null, s), h('td', { class: 'r num' }, String(W.curves.filter(c => c.seam === nm).length))); });
@@ -12234,7 +12252,7 @@ const Tabs = (() => {
         st && st.edge ? msg('info', `${st.edge} block${st.edge === 1 ? '' : 's'}: the cut lies outside the densities of the curve, so its end is taken.`) : null,
         st && st.general > 1 ? msg('info', `${st.general} curves of ${L.name} have neither a block nor coordinates: the first is used for the blocks without a curve of their own.`) : null,
         st && st.none ? msg('warn', `${st.none} block${st.none === 1 ? ' has' : 's have'} no curve: ${st.none === 1 ? 'it takes' : 'they take'} the seam’s average yield in the schedule.`) : null,
-        col && st && st.n && App.ws ? h('div', { class: 'row' }, btn(App.colorBy === 'attr' && App.colorAttr === col.yield ? 'Coloured by its yield' : 'Colour the blocks by its yield', () => { App.colorBy = 'attr'; App.colorAttr = col.yield; UI.renderColorBy(); App.refreshTint(); UI.renderTab(); }, 'sm')) : null));
+        col && st && st.n && App.rv().ws ? h('div', { class: 'row' }, btn(App.colorBy === 'attr' && App.colorAttr === col.yield ? 'Coloured by its yield' : 'Colour the blocks by its yield', () => { App.colorBy = 'attr'; App.colorAttr = col.yield; UI.renderColorBy(); App.refreshTint(); UI.renderTab(); }, 'sm')) : null));
     }
     if (edit()) parts.push(h('div', { class: 'row' }, btn('Remove the washability', async () => { if (!(await UI.confirmBox('Remove the washability', `Remove ${W.file} and the product columns of the blocks? The seams’ yield columns in the Block Margin Rank tab go back to what they were.`, 'Remove', true))) return; if (App.colorBy === 'attr' && /\(wash\)$/.test(App.colorAttr || '')) App.colorBy = 'status'; Wash.remove(P); const T = P.targets || {}; if (T.coalBasis === 'product') { T.coalBasis = 'insitu'; App.changed('sim'); } App.changed('wash', { now: true }); UI.renderTab(); }, 'sm ghost danger')));
     parts.push(hint('Each block takes the curve of its own block ID, else the nearest borehole (from the block’s centre), else the curve of its seam, and is washed at the seam’s cut: at a density, or to a product ash or CV (the highest density that still makes it, so the most yield). The product is read off the cumulative float curve between the densities either side. Its yield and qualities go to the blocks as attribute columns (“Seam 4 Yield (wash)”, “Seam 4 CV (wash)”, “Seam 4 RD cut (wash)”), and the yield becomes the seam’s yield in the Block Margin Rank tab (the plant cost when the coal is processed). The schedule’s product is the as received coal of each block × its yield, its qualities weighted by product tons: in the Results tab, the running totals under the Gantt chart, the Excel monthly summary and LoM sheets; and the coal target can be set in product tons (Production tab).'));
@@ -12255,13 +12273,13 @@ const Tabs = (() => {
     return h('div', { class: 'wash-fig' }, svg, h('div', { class: 'dt' }, 'Cumulative float yield against the density (RD), one line for each curve' + (S.mode === 'rd' ? '; the cut' : '; the dots: where each is cut')));
   }
   async function loadWash(name, text) {
-    const P = App.P;
+    const P = App.rv().P;
     try {
       const r = Wash.read(P, text), old = P.wash, keep = old ? { seams: old.seams || {}, seamMap: old.seamMap || {} } : { seams: {}, seamMap: {} };
       if (old) Wash.remove(P);
       P.wash = { file: name, read: U.todayISO(), curves: r.curves, keys: r.keys, basis: r.basis, roleEN: r.en, seams: keep.seams, seamMap: {} };
       for (const c of r.curves) if (keep.seamMap[c.seam] !== undefined) P.wash.seamMap[c.seam] = keep.seamMap[c.seam];
-      if (App.ws) Wash.assign(P, App.ws);
+      if (App.rv().ws) Wash.assign(P, App.rv().ws);
       App.changed('wash', { now: true });
       const T = P.targets || {}; if (T.coalBasis === 'product' && +T.coal > 0) App.changed('sim');
       UI.renderTab();
@@ -12275,7 +12293,7 @@ const Tabs = (() => {
      seam's thickness, written to the blocks as an attribute column that becomes the seam's quality. The files stay on the
      computer; App.qgrid keeps each one on the model grid for this session, to read it for another seam or new blocks. */
   function qualitySection(body) {
-    const P = App.P, ws = App.ws, list = P.qrasters || [];
+    const P = App.rv().P, ws = App.rv().ws, list = P.qrasters || [];
     const parts = [hint('GeoTIFF grids of one seam’s coal quality — CV, ash, sulphur (TS), moisture (IM), volatiles (VM), yield or density (RD) — in the coordinate system of the model, such as the grids of a quality model from the geological software. Each block takes the average of the grid over the block, weighted by the seam’s thickness in each cell of the 3D model.')];
     if (edit()) {
       const fileIn = h('input', { type: 'file', accept: '.tif,.tiff,.gtif,.tfw,.tifw,.wld', multiple: true, hidden: true });
@@ -12298,10 +12316,10 @@ const Tabs = (() => {
     body.append(sec('Coal quality rasters', list.length ? h('span', { class: 'chip' }, `${list.length} raster${list.length === 1 ? '' : 's'}`) : null, ...parts));
   }
   function qualityCard(e) {
-    const P = App.P, L = P.layers.find(x => x.id === e.layerId), K = Qual.kind(e.kind), S = e.stats || {}, g = App.qgrid.get(e.id);
+    const P = App.rv().P, L = P.layers.find(x => x.id === e.layerId), K = Qual.kind(e.kind), S = e.stats || {}, g = App.qgrid.get(e.id);
     const f = v => (v == null || !(v === v) ? '–' : U.fmtNum(v, K.d)), u = K.unit ? (K.unit === '%' ? '%' : ' ' + K.unit) : '';
     const after = rd => { App.changed('quality', { now: true }); if (rd) App.changed('layers'); UI.renderTab(); };
-    const seamSel = sel(P.layers.filter(x => x.type === 'coal').map(x => [x.id, x.name]), e.layerId, v => { if (!g || !App.ws || v === e.layerId) return; const rd = e.kind === 'rd'; Qual.assign(P, App.ws, e, g, v); e.guessed = false; after(rd); });
+    const seamSel = sel(P.layers.filter(x => x.type === 'coal').map(x => [x.id, x.name]), e.layerId, v => { if (!g || !App.rv().ws || v === e.layerId) return; const rd = e.kind === 'rd'; Qual.assign(P, App.rv().ws, e, g, v); e.guessed = false; after(rd); });
     seamSel.setAttribute('aria-label', 'Seam of ' + e.file);
     if (!g) { seamSel.disabled = true; seamSel.title = 'Add the file again to read it for another seam'; }
     const kindSel = sel(Qual.ORDER.map(k => { const q = Qual.kind(k); return [k, q.unit ? `${q.name} (${q.unit})` : q.name]; }), e.kind, v => { const rd = e.kind === 'rd' || v === 'rd'; Qual.relabel(P, e, v); e.guessed = false; after(rd); });
@@ -12309,7 +12327,7 @@ const Tabs = (() => {
     const seam = L ? L.name : 'a removed seam';
     const use = Qual.MARGIN.includes(e.kind) ? `${seam}’s ${K.name} in the Block Margin Rank tab, and first among its quality columns` : e.kind === 'rd' ? `the density column of ${seam}: its tons follow` : `one of ${seam}’s quality columns (monthly summary and LoM sheets)`;
     const C = e.cmp, kv = (k, v) => [h('span', { class: 'k' }, k), h('span', { class: 'v' }, v)];
-    const stale = App.ws && Qual.stale(P, e), note = Qual.rangeNote(e);
+    const stale = App.rv().ws && Qual.stale(P, e), note = Qual.rangeNote(e);
     const remove = () => {
       if (App.colorBy === 'attr' && App.colorAttr === e.col) App.colorBy = 'status';
       const rd = e.kind === 'rd'; Qual.remove(P, e); App.qgrid.delete(e.id); after(rd);
@@ -12332,8 +12350,8 @@ const Tabs = (() => {
       S.nNone ? msg('info', `${S.nNone} block${S.nNone === 1 ? ' has' : 's have'} ${seam} but no data in the raster: ${S.nNone === 1 ? 'it keeps' : 'they keep'} no value, and the Block Margin Rank tab gives ${S.nNone === 1 ? 'it' : 'them'} the seam’s average.`) : null,
       stale ? msg('warn', `The blocks or the 3D model changed since this raster was read.${g ? '' : ' Add the file again to work out the values of the blocks as they are now.'}`) : null,
       h('div', { class: 'row' },
-        stale && g && edit() ? btn('Read it again for these blocks', () => { const rd = e.kind === 'rd'; Qual.assign(P, App.ws, e, g); after(rd); }, 'sm primary') : null,
-        S.n && App.ws ? btn(App.colorBy === 'attr' && App.colorAttr === e.col ? 'Coloured by it' : 'Colour the blocks by it', () => { App.colorBy = 'attr'; App.colorAttr = e.col; UI.renderColorBy(); App.refreshTint(); UI.renderTab(); }, 'sm') : null));
+        stale && g && edit() ? btn('Read it again for these blocks', () => { const rd = e.kind === 'rd'; Qual.assign(P, App.rv().ws, e, g); after(rd); }, 'sm primary') : null,
+        S.n && App.rv().ws ? btn(App.colorBy === 'attr' && App.colorAttr === e.col ? 'Coloured by it' : 'Colour the blocks by it', () => { App.colorBy = 'attr'; App.colorAttr = e.col; UI.renderColorBy(); App.refreshTint(); UI.renderTab(); }, 'sm') : null));
   }
   /* The date a dump comes into use, the same in every activity that tips on it (Sequence tab, dump options). */
   function applyDumpDate(a, dumpId, from) {
@@ -12351,7 +12369,7 @@ const Tabs = (() => {
     UI.toast(`${D ? D.name : 'The dump'} is used from ${U.fmtDate(U.parseISO(from))} in ${changed.length + 1} activities: ${[a].concat(changed).map(x => x.name).join(', ')}.${wait.length ? ` ${wait.map(x => x.name).join(', ')} ${wait.length === 1 ? 'has' : 'have'} no dump before then and ${wait.length === 1 ? 'waits' : 'wait'} for it.` : ''}`, wait.length ? 9000 : 6500);
   }
   async function addQualityRasters(items) {
-    const P = App.P, ws = App.ws;
+    const P = App.rv().P, ws = App.rv().ws;
     if (!ws || !P.grid || !P.blocks.length) { UI.toast('Build the 3D model and load the block layout first.'); return; }
     const tifs = items.filter(x => x.file && TIF_EXT.test(ext(x.name)));
     const worlds = new Map(items.filter(x => x.file && /^(tfw|tifw|tiffw|wld)$/.test(ext(x.name))).map(x => [stem(x.name).toLowerCase(), x.file]));
@@ -12509,7 +12527,7 @@ const Tabs = (() => {
   }
   // ---- seam cut-off: a seam thinner than its minimum thickness is not coal; it is mined as waste with a neighbouring layer
   function cutoffSection(body) {
-    const P = App.P, ws = App.ws;
+    const P = App.rv().P, ws = App.rv().ws;
     const seams = P.layers.map((L, l) => [L, l]).filter(([L]) => L.type === 'coal');
     if (!seams.length) return;
     const C = ws && ws.cut, CO = P.cutoff || (P.cutoff = { by: 'block', stop: false });
@@ -12566,7 +12584,7 @@ const Tabs = (() => {
       hint(`${P.topsoilAsWaste === true ? 'On' : 'Off'}: ${P.topsoilAsWaste === true ? 'topsoil is mined and dumped like the overburden: its activity tips on the waste dumps, the trucks may use it to fill ramps, and a thin seam right under it can be cut off into it.' : 'topsoil goes to its own stockpile and is not used for ramp fill.'} Either way it counts as waste in the totals, the strip ratio and the monthly waste target; the running totals under the Gantt chart show it in its own column.${Water.settings(P).on !== false && Water.settings(P).soilDirect !== false ? ' Where backfill has reached its final level, the topsoil goes straight onto it first (Rehab tab, “Backfill and final landform”).' : ''}${has ? '' : ' This model has no layer of the type Topsoil.'}`));
   }
   function layersTable() {
-    const P = App.P, ws = App.ws;
+    const P = App.rv().P, ws = App.rv().ws;
     const numCols = (P.attrColumns || []).filter(c => c !== P.idColumn);
     const m2 = v => U.fmtNum(v, 2);
     const rows = P.layers.map((L, l) => {
@@ -12588,7 +12606,7 @@ const Tabs = (() => {
     });
     return h('div', null, h('div', { class: 'sec-h', style: { marginTop: '4px' } }, h('h3', null, 'Layers')),
       h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', null, ''), h('th', null, 'Layer'), h('th', null, 'Type'), h('th', null, 't/bcm'), h('th', null, 'Swell'), h('th', { class: 'r', title: 'Thinnest block average' }, 'Min m'), h('th', { class: 'r', title: 'Thickest block average' }, 'Max m'), h('th', { class: 'r', title: 'Average over the blocks' }, 'Avg m'), h('th', null, 'Density column'), h('th', null, 'Quality columns'))), h('tbody', null, rows))),
-      hint('Density is used for tonnes; a density column from the attribute file overrides it block by block. Swell converts bank to loose volume, for the dumps and for the loose m³ the teams move. Min, Max and Avg are the thickness of each layer in the blocks: its average thickness in each block where it is present, the thinnest and thickest of those, and their average' + (App.ws && App.ws.blockCells.length ? '.' : ' (once the 3D model and the block layout are loaded).')));
+      hint('Density is used for tonnes; a density column from the attribute file overrides it block by block. Swell converts bank to loose volume, for the dumps and for the loose m³ the teams move. Min, Max and Avg are the thickness of each layer in the blocks: its average thickness in each block where it is present, the thinnest and thickest of those, and their average' + (App.rv().ws && App.rv().ws.blockCells.length ? '.' : ' (once the 3D model and the block layout are loaded).')));
   }
   async function buildModel(cell) {
     const P = App.P;
@@ -12737,6 +12755,7 @@ const Tabs = (() => {
       else report.push(['info', `Every block got its ID from ${o.idSource === 'attrib' ? 'attribute ' + (o.attribTag || '') : 'text on layer ' + (r.textLayer || '(any)')}.`]);
     }
     if (fixNote) report.push(['warn', fixNote]);
+    App.dropReserve(); // (a new resource layout: the reserve layout is copied from it again)
     const old = new Map(P.blocks.map(b => [b.id, b]));
     P.blocks = blocks.map(b => ({ id: b.id, pts: b.pts, attrs: (old.get(b.id) || {}).attrs || {} }));
     P.source.dxf = Object.assign({ file: D.dxfName, fix: D.dxfFix ? D.dxfFix.name : null }, o);
@@ -12975,17 +12994,19 @@ const Tabs = (() => {
     const map = new Map();
     for (const r of D.data) { const key = U.normId(r[k]); if (key && !map.has(key)) map.set(key, r); }
     let matched = 0; const missing = [];
-    for (const b of P.blocks) {
+    const lay = Array.isArray(P.resBlocks) ? P.resBlocks : P.blocks; // (the resource layout: the reserve blocks share its data)
+    for (const b of lay) {
       const r = map.get(U.normId(b.id));
       if (r) { b.attrs = Object.assign({}, b.attrs || {}); D.cols.forEach((c, i) => (b.attrs[c] = cleanVal(r[i]))); matched++; }
       else { missing.push(b.id); }
     }
     P.attrColumns = Array.from(new Set(D.cols.concat(P.attrColumns || []))); P.idColumn = D.idCol;
     P.source.attributes = { file: D.wbName, sheet: D.sheet, idColumn: D.idCol };
-    D.link = { matched, total: P.blocks.length, missing };
+    D.link = { matched, total: lay.length, missing };
+    App.shareAttrs();
     App.changed('blocks', { now: true });
     UI.renderColorBy(); UI.renderInspector();
-    if (!quiet) { UI.renderTab(); UI.toast(`${matched} of ${P.blocks.length} blocks linked to the attribute table.`); }
+    if (!quiet) { UI.renderTab(); UI.toast(`${matched} of ${lay.length} blocks linked to the attribute table.`); }
   }
   async function loadImage(name) {
     if (!App.ws) { UI.toast('Build the 3D model first.'); return; }
@@ -14329,18 +14350,21 @@ const Tabs = (() => {
     // the layout of the project now
     const made = GD.made && GD.used, U_ = GD.used || {};
     parts.push(made ? msg('info', `The project’s block layout is this grid: ${U.fmtNum(GD.n)} blocks of ${U.fmtNum(U_.width, 0)} × ${U.fmtNum(U_.length, 0)} m, strips at ${U.fmtNum(U_.angle, 0)}°, made ${U.fmtDate(U.parseISO(GD.made))}.`)
-      : msg('info', P.blocks.length ? `The project’s block layout is the one loaded in the Geological Data tab (${U.fmtNum(P.blocks.length)} blocks${P.source && P.source.dxf && P.source.dxf.file ? `, ${P.source.dxf.file}` : ''}). Creating the grid replaces it.` : 'The project has no block layout yet.'));
+      : msg('info', (P.resBlocks || P.blocks).length ? `The project’s block layout is the one loaded in the Geological Data tab (${U.fmtNum((P.resBlocks || P.blocks).length)} blocks${P.source && P.source.dxf && P.source.dxf.file ? `, ${P.source.dxf.file}` : ''}). Creating the grid replaces it.` : 'The project has no block layout yet.'));
     if (made && !B.error && (U_.width !== o.width || U_.length !== o.length || U_.angle !== o.angle || U_.minCover !== o.minCover || (o.x0 != null && Math.abs(o.x0 - U_.x0) > 1e-6) || (o.y0 != null && Math.abs(o.y0 - U_.y0) > 1e-6)))
       parts.push(msg('warn', 'The settings above differ from the layout in use: make it again to use them.'));
     if (made && (GD.missing || []).length) parts.push(msg('warn', `These quality rasters were not read for the grid, as they were not loaded in this session: ${GD.missing.join(', ')}. Add the files again in the Geological Data tab (Coal quality rasters) to give the blocks their qualities.`));
     if (made && !(P.qrasters || []).length) parts.push(msg('warn', 'There are no coal quality rasters, so the blocks have no CV, ASH or TS (and no revenue in the block margin). Add them in the Geological Data tab.'));
+    if (Array.isArray(P.resBlocks)) parts.push(msg('info', `The schedule mines the reserve layout copied from it: ${U.fmtNum(P.blocks.length)} blocks inside the reserve boundary (Block Margin Rank tab). Making the grid again removes that copy.`));
+    parts.push(layoutToggles());
     if (edit() && !B.error) parts.push(h('div', { class: 'row edit-only' }, btn(made ? 'Make the layout again' : 'Create the block layout', () => createGrid(B, o), 'sm primary', 'Lay these blocks over the model as the project’s block layout')));
     parts.push(hint('The blocks are rectangles of the width across the strips and the length along them, the strips running in the direction set, laid from the origin (the corner of the model unless typed) over the whole model; a block is kept where coal lies under at least the share set. They are named S01-B01: strip 1, block 1 along it. The grid becomes the project’s block layout: the reserve, the block margin, the strip ratio, the reserve boundary and the schedule all use it. Making it sets every activity’s mining path again, strip by strip; the block attributes of the Excel file are left out, and the coal qualities come from the quality rasters, read again for the new blocks.'));
     body.append(sec('Block layout', made ? h('span', { class: 'chip' }, `${U.fmtNum(GD.n)} blocks`) : null, ...parts));
   }
   async function createGrid(B, o) {
-    const P = App.P, had = P.blocks.length;
-    if (had && !(await UI.confirmBox('Replace the block layout', `Replace the ${U.fmtNum(had)} blocks of the project with ${U.fmtNum(B.blocks.length)} grid blocks? Every activity’s mining path is set again, strip by strip, and the block attributes of the Excel file are left out: the coal qualities come from the quality rasters.`, 'Replace'))) return;
+    const P = App.P, had = (P.resBlocks || P.blocks).length;
+    if (had && !(await UI.confirmBox('Replace the block layout', `Replace the ${U.fmtNum(had)} blocks of the project with ${U.fmtNum(B.blocks.length)} grid blocks? Every activity’s mining path is set again, strip by strip, and the block attributes of the Excel file are left out: the coal qualities come from the quality rasters.${P.resBlocks ? ' The reserve layout is removed: copy it again from the new blocks.' : ''}`, 'Replace'))) return;
+    App.dropReserve(); // (a new resource layout: the reserve layout is copied from it again)
     UI.busy('Laying the blocks…', 0.3); await U.nextFrame();
     try {
       P.blocks = B.blocks.map(b => ({ id: b.id, pts: b.pts, attrs: {} }));
@@ -14372,12 +14396,12 @@ const Tabs = (() => {
   function rank(body) { reservePart(body, 'rank'); }
   function strip(body) { reservePart(body, 'strip'); }
   function reservePart(body, part) {
-    const P = App.P, M = Margin.settings(P), cur = (M.currency || 'R').trim() || 'R';
+    const P = App.rv().P, M = Margin.settings(P), cur = (M.currency || 'R').trim() || 'R';
     const kp = (k, v) => h('div', { class: 'kpi' }, h('span', { class: 'k' }, k), h('span', { class: 'v' }, v));
     const set = (k, v) => { const m = P.margin || (P.margin = {}); m[k] = v; App.changed('margin'); UI.renderTab(); };
     const setCol = (kind, L, v) => { const m = P.margin || (P.margin = {}); (m[kind] || (m[kind] = {}))[L.id] = v; App.changed('margin'); UI.renderTab(); };
     const money = (k, aria) => { const i = num(M[k] == null || M[k] === '' ? null : +M[k], v => set(k, v == null ? null : Math.max(0, v)), { min: 0, step: 1, allowEmpty: true, placeholder: '0' }); i.setAttribute('aria-label', aria); return i; };
-    const R = App.ws ? App.margin() : null;
+    const R = App.rv().ws ? App.margin() : null;
     if (part === 'reserve') lossesSection(body);
     // ---- the inputs (Block Margin Rank tab)
     if (part === 'rank') {
@@ -14416,7 +14440,7 @@ const Tabs = (() => {
         parts.push(h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl seam-q' }, h('thead', null, h('tr', null, h('th', null, 'Seam'), h('th', null, 'Counted as'), h('th', null, 'Quality columns', h('br'), h('span', { class: 'dt' }, 'from the block attributes')))), h('tbody', null, rows))));
         /* Quality cut-offs: a seam whose CV (at least), ASH or TS (at most) in a block is past its cut-off is waste in that
            block, in the schedule and here (Model.applyCutoff); read from the quality columns above */
-        { const C = App.ws && App.ws.cut, qi = (L, k, aria, step) => { const QC = L.qcut || {}; const e = num(QC[k] == null || QC[k] === '' ? null : +QC[k], v => { const q = Object.assign({}, L.qcut || {}); if (v == null) delete q[k]; else q[k] = v; if (Object.keys(q).length) L.qcut = q; else delete L.qcut; App.changed('cutoff'); UI.renderTab(); }, { min: 0, step, allowEmpty: true, placeholder: 'none' }); e.setAttribute('aria-label', `${aria} cut-off of ${L.name}`); e.disabled = !edit(); return e; };
+        { const C = App.rv().ws && App.rv().ws.cut, qi = (L, k, aria, step) => { const QC = L.qcut || {}; const e = num(QC[k] == null || QC[k] === '' ? null : +QC[k], v => { const q = Object.assign({}, L.qcut || {}); if (v == null) delete q[k]; else q[k] = v; if (Object.keys(q).length) L.qcut = q; else delete L.qcut; App.changed('cutoff'); UI.renderTab(); }, { min: 0, step, allowEmpty: true, placeholder: 'none' }); e.setAttribute('aria-label', `${aria} cut-off of ${L.name}`); e.disabled = !edit(); return e; };
           const qrows = coalL.map(L => { const q = C ? C.layers.find(x => x.l === P.layers.indexOf(L)) : null;
             const cols = Margin.isWasteSeam(M, L) ? null : [Margin.colFor(P, M, L, 'cv'), Margin.colFor(P, M, L, 'ash'), Margin.colFor(P, M, L, 'ts')];
             const res = q && q.anyQ ? (q.noTarget ? 'no waste layer next to it' : q.qBlocks ? `${q.qBlocks} block${q.qBlocks === 1 ? '' : 's'} (${U.fmtBig(q.qVol, 'bcm')})` : 'none') : '–';
@@ -14459,7 +14483,7 @@ const Tabs = (() => {
   /* Coal tons from gross in situ to air-dry contaminated (Tons), seam by seam, with the ADC qualities; the moisture and
      the contamination's quality are typed here, the losses in the section above. */
   function tonsSection(body, R) {
-    const P = App.P, T = Tons.compute(P, App.ws, R), o = T.o, Q = Tons.Q;
+    const P = App.rv().P, T = Tons.compute(P, App.rv().ws, R), o = T.o, Q = Tons.Q;
     const tp = () => P.tons || (P.tons = {});
     const pctIn = (v, set, aria, ph) => { const i = num(v, x => { set(x == null ? null : U.clamp(x, 0, 100)); App.changed('margin'); UI.renderTab(); }, { min: 0, max: 100, step: 0.1, allowEmpty: true, placeholder: ph }); i.setAttribute('aria-label', aria); return i; };
     const t0 = v => U.fmtNum(v, 0), qf = (v, d) => (v === v ? U.fmtNum(v, d) : '–');
@@ -14510,14 +14534,42 @@ const Tabs = (() => {
       if (s.mis != null && s.n && Math.abs(s.ps - 1) > 1e-6) parts.push(h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `${s.name}: moisture factor ${U.fmtNum(s.ps, 4)} (in situ ${U.fmtNum(s.mis, 1)}%, air dry ${s.cols.im ? 'from ' + s.cols.im : U.fmtNum(s.mad, 1) + '%'}).`));
     }
     if (T.seams.length) parts.push(h('div', { class: 'row' }, btn('Export to Excel', async () => {
-      try { const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, Report.tonsSheet(P, App.ws, R), 'Coal Tons'); await App.saveFile(`${U.slug(P.name) || 'project'}_coal_tons_${U.todayISO().replace(/-/g, '')}.xlsx`, Report.toBytes(wb)); }
+      try { const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, Report.tonsSheet(P, App.rv().ws, R), 'Coal Tons'); await App.saveFile(`${U.slug(P.name) || 'project'}_coal_tons_${U.todayISO().replace(/-/g, '')}.xlsx`, Report.toBytes(wb)); }
       catch (e) { UI.toast('The workbook failed: ' + (e.message || e)); }
     }, 'sm primary', 'GTIS, TTIS, MTIS and ADC tons with the ADC qualities, by seam and by block (also a sheet of the Excel schedule)')));
     parts.push(hint('GTIS = the seam’s bcm in the blocks × its RD (air dried; the block’s RD column, else the layer’s). TTIS = GTIS × (1 − geological loss). MTIS = the TTIS the schedule can mine: inside the reserve boundary, past the seam and quality cut-offs, within the depth limits, outside keep-out zones. ADC t = MTIS × (1 − mining loss) × (1 + contamination) × (100 − in-situ moisture) ÷ (100 + RD × (in-situ moisture − air-dry moisture) − in-situ moisture), the Preston–Sanders moisture adjustment. The ADC qualities are the coal’s (its quality columns, air dried) weighted by its tons and mixed with the contamination’s: (coal t × coal quality + contamination t × its quality) ÷ ADC t; the contamination takes the IM of the coal. The totals are over the seams that have each quality, weighted by their ADC tons.'));
     body.append(sec('Coal tons: GTIS to ADC', T.total.adc > 0 ? h('span', { class: 'chip' }, `ADC ${U.fmtBig(T.total.adc, 't')}`) : null, ...parts));
   }
+  /* The two block layouts in the 3D view: the resource layout (amber) and the reserve layout the schedule mines (white),
+     each switched on and off; with one layout, its outlines. */
+  function layoutToggles() {
+    const sep = App.rv().sep, t = (k, label) => chk(label, App.show[k] !== false, v => { App.show[k] = v; View.setShow(k, v); });
+    return sep ? h('div', { class: 'grid2' }, t('resOut', 'Show the resource blocks (amber)'), t('outlines', 'Show the reserve blocks (white)')) : t('outlines', 'Show the block outlines');
+  }
+  /* The reserve layout: the blocks of the resource layout inside the reserve boundary, copied for the schedule */
+  function reserveLayoutParts() {
+    const P = App.P, V = App.rv(), RL = P.reserveLayout || {}, on = Model.hasReserve(P), parts = [];
+    if (V.sep) {
+      parts.push(msg('info', `The schedule mines the reserve layout: ${U.fmtNum(P.blocks.length)} of the ${U.fmtNum(P.resBlocks.length)} blocks of the resource layout, copied from inside “${RL.boundary || 'the reserve boundary'}”${RL.made ? ' on ' + U.fmtDate(U.parseISO(RL.made)) : ''}. The resource layout keeps every block and its data; the reserve blocks share it.`));
+      if (RL.sig && RL.sig !== JSON.stringify(Model.reserveRings(P))) parts.push(msg('warn', 'The reserve boundary changed since the blocks were copied: copy them again to schedule the blocks inside it now.'));
+    } else parts.push(hint(on ? 'Copy the blocks inside the boundary into a reserve layout for the schedule: the schedule then mines only those, the mining paths keeping their order, while the resource layout keeps every block and its data for the calculations before the schedule.' : 'Draw or create the reserve boundary, then copy the blocks inside it into the reserve layout the schedule mines.'));
+    if (edit()) parts.push(h('div', { class: 'row edit-only' },
+      on ? btn(V.sep ? 'Copy the blocks again' : 'Copy the blocks inside to the reserve layout', async () => {
+        const W = App.rv(), ins = Model.reserveInside(W.P, W.ws); let n = 0; for (let k = 0; k < ins.length; k++) if (ins[k] && W.ws.blockCells[k].length) n++;
+        if (!n) { UI.toast('No block of the resource layout has its centre inside the reserve boundary.'); return; }
+        if (!(await UI.confirmBox('Copy to the reserve layout', `Copy the ${U.fmtNum(n)} blocks inside the reserve boundary (of the ${U.fmtNum(W.P.blocks.length)} in the resource layout) into the reserve layout the schedule mines? The resource layout and its data are kept, and the mining paths keep their order with these blocks.`, 'Copy'))) return;
+        const k = App.copyReserve(); UI.renderTab(); UI.renderInspector(); UI.renderColorBy();
+        UI.toast(`${U.fmtNum(k)} blocks copied to the reserve layout: the schedule mines these. Run the simulation to schedule them.`, 8000);
+      }, 'sm' + (V.sep ? '' : ' primary'), 'The blocks whose centre lies inside the boundary become the blocks the schedule mines') : null,
+      V.sep ? btn('Remove the reserve layout', async () => {
+        if (!(await UI.confirmBox('Remove the reserve layout', 'Remove the reserve layout? The schedule mines the resource layout again, with the mining paths as they were before the copy.', 'Remove', true))) return;
+        App.dropReserve(); UI.renderTab(); UI.renderInspector(); UI.renderColorBy();
+      }, 'sm ghost danger') : null));
+    parts.push(layoutToggles());
+    return parts;
+  }
   function reserveBoundary(body, R, cur, kp) {
-    const P = App.P, B = P.reserve, drawn = !!(B && B.pts && B.pts.length >= 3), on = Model.hasReserve(P), Q = R.resv;
+    const P = App.rv().P, B = P.reserve, drawn = !!(B && B.pts && B.pts.length >= 3), on = Model.hasReserve(P), Q = R.resv;
     const f = v => (v === v ? `${cur} ${U.fmtNum(v, Math.abs(v) < 100 ? 1 : 0)}/t` : '–');
     const parts = [];
     if (edit()) parts.push(h('div', { class: 'row edit-only' },
@@ -14545,13 +14597,13 @@ const Tabs = (() => {
     else parts.push(h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, 'None: every block is scheduled.'));
     parts.push(hint('Draw a polygon around the blocks that pay and are to be mined: those whose centre lies inside it are scheduled, those outside are left in the ground (with their coal and waste), the mining paths skip them and the final landform leaves their ground as it is. While you draw, the blocks are coloured by margin (red to green) when there is a price, else by strip ratio. In the 3D view the boundary is magenta and the blocks outside are outlined in red (and faded when coloured by margin, strip ratio or a blended quality). Every block keeps its margin and rank here; in the tables below the blocks outside are greyed. Changing the boundary needs a new run.'));
     // ---- the boundary from a strip ratio and a block margin cut-off (AutoRes)
-    if (App.ws && P.blocks.length) {
+    if (App.rv().ws && P.blocks.length) {
       const A = AutoRes.settings(P), auto = drawn && B.auto, keep = patch => { P.reserveAuto = Object.assign({}, P.reserveAuto, patch); App.changed('reserve'); };
       let wa = 0, ca = 0, ra = 0, sa = 0; for (const r of R.rows) { wa += r.waste; ca += r.coalT; ra += r.rev; sa += r.cost; }
       const f2 = v => U.fmtNum(v, 2), fm = v => `${cur} ${U.fmtNum(v, Math.abs(v) < 100 ? 1 : 0)}/t`;
       const create = async () => {
         const o = AutoRes.settings(P);
-        let r; try { r = AutoRes.build(P, App.ws, R.rows, o, R.ready, cur); } catch (e) { UI.toast(e.message); return; }
+        let r; try { r = AutoRes.build(P, App.rv().ws, R.rows, o, R.ready, cur); } catch (e) { UI.toast(e.message); return; }
         if (drawn && !B.auto && !(await UI.confirmBox('Replace the reserve boundary', 'Replace the boundary you drew with one made from the cut-offs?', 'Replace'))) return;
         const c = r.ch, ids = w => P.blocks.map((q, b) => (c.why[b] === w ? q.id : null)).filter(Boolean);
         r.reserve.auto = Object.assign(r.reserve.auto, { made: U.todayISO(), n: c.n, nCut: c.nCut, nIn: c.nIn, nNotch: c.nNotch, dropped: c.dropped, areas: c.areas, sr: c.sr, margin: R.ready ? c.margin : null, enclosed: ids(2), notches: ids(3), wrong: r.wrong.map(b => P.blocks[b].id) });
@@ -14581,10 +14633,11 @@ const Tabs = (() => {
       ap.push(hint('The blocks with a strip ratio (waste bcm ÷ coal t) at or below its cut-off and a margin at or above its cut-off, as in the Block Margin Rank and Strip Ratio tabs, make the reserve; leave a cut-off empty to go by the other alone. Blocks that fail are taken in where the better blocks around them carry them, counted together (Σ waste ÷ Σ coal, and Σ revenue − Σ cost ÷ Σ coal): a group that the reserve closes in on every side when, with the ring of reserve blocks around it, it passes both; and a block at the edge when the reserve borders that share of its edge and, with those neighbours, it passes both. Small separate areas are left out. Make it again after the model, the blocks, the prices or the costs change.'));
       parts.push(h('div', { class: 'sec-h', style: { marginTop: '6px' } }, h('h3', null, 'From strip ratio and margin cut-offs')), ...ap);
     }
+    parts.push(h('div', { class: 'sec-h', style: { marginTop: '6px' } }, h('h3', null, 'Reserve layout for the schedule')), ...reserveLayoutParts());
     body.append(sec('Reserve boundary', drawn ? h('span', { class: 'chip' }, on && Q ? `${Q.inside.n} of ${P.blocks.length} blocks` : 'off') : null, ...parts));
   }
   function drawReserve() {
-    const P = App.P, R = App.margin();
+    const P = App.rv().P, R = App.margin();
     if (R && R.ready) App.colorBy = 'margin'; else App.colorBy = 'sr';
     UI.renderColorBy(); App.refreshTint();
     drawHud(P.reserve && P.reserve.pts ? 'Redraw the reserve boundary' : 'Draw the reserve boundary', 'Click around the blocks to mine · double-click or Enter to close it · Backspace undoes · Esc cancels');
@@ -14594,7 +14647,7 @@ const Tabs = (() => {
         hud(null);
         P.reserve = { pts, on: true, name: 'Reserve boundary' };
         App.changed('reserve', { now: true }); UI.renderTab();
-        const ins = Model.reserveInside(P, App.ws), n = Array.from(ins).filter(Boolean).length;
+        const ins = Model.reserveInside(P, App.rv().ws), n = Array.from(ins).filter(Boolean).length;
         UI.toast(n ? `Reserve boundary: ${n} of ${P.blocks.length} blocks inside are scheduled; the ${P.blocks.length - n} outside are left. Run the simulation to schedule them.` : 'No block centre lies inside that polygon, so nothing would be mined. Redraw it around the blocks.', 8000);
       },
       onCancel: () => hud(null), onError: m => UI.toast(m)
@@ -14604,7 +14657,7 @@ const Tabs = (() => {
      in tons; with the blended CV, ASH and TS from the attribute file. In the order of the margin rank when there is one; the totals
      of all the blocks stay at the foot. */
   function layerTable(body, R) {
-    const P = App.P, L = P.layers, T = R.layerTot;
+    const P = App.rv().P, L = P.layers, T = R.layerTot;
     const order = R.ready ? R.ranked.concat(R.rows.filter(r => !(r.margin === r.margin))) : R.rows;
     const show = order.slice(0, 1000);
     const lab = q => [L[q.l].name, h('br'), h('span', { class: 'dt' }, q.coal ? 'coal t' : L[q.l].type === 'coal' ? 'bcm, as waste' : 'waste bcm')];
@@ -14613,7 +14666,7 @@ const Tabs = (() => {
       h('div', { class: 'tbl-wrap', style: { maxHeight: '420px', overflow: 'auto' } }, h('table', { class: 'tbl mg-tbl lay-tbl' },
         h('thead', null, h('tr', null, h('th', null, 'Block'), R.ready ? h('th', { class: 'r' }, 'Rank') : null, ...T.map(q => h('th', { class: 'r', title: q.coal ? 'coal, tons' : 'waste, bcm' }, ...lab(q))),
           h('th', { class: 'r' }, 'Waste', h('br'), h('span', { class: 'dt' }, 'bcm')), h('th', { class: 'r' }, 'Coal', h('br'), h('span', { class: 'dt' }, R.M.basis === 'ar' ? 't (as rec.)' : 't')), h('th', { class: 'r' }, 'Blended CV', h('br'), h('span', { class: 'dt' }, 'MJ/kg')), h('th', { class: 'r' }, 'Blended ASH', h('br'), h('span', { class: 'dt' }, '%')), h('th', { class: 'r' }, 'Blended TS', h('br'), h('span', { class: 'dt' }, '%')))),
-        h('tbody', null, show.map(r => h('tr', { class: (r.b === App.selBlock ? 'sel ' : '') + (r.inside ? '' : 'out'), onclick: () => App.selectBlock(r.b), title: r.inside ? '' : 'Outside the reserve boundary: not mined' },
+        h('tbody', null, show.map(r => h('tr', { class: (r.b === App.selRes() ? 'sel ' : '') + (r.inside ? '' : 'out'), onclick: () => App.selectRes(r.b), title: r.inside ? '' : 'Outside the reserve boundary: not mined' },
           h('td', null, r.id), R.ready ? h('td', { class: 'r num' }, r.rank ? String(r.rank) : '–') : null, ...r.byLayer.map(q => h('td', { class: 'r num' }, U.fmtNum(q.coal ? q.t : q.v, 0))),
           h('td', { class: 'r num' }, U.fmtNum(r.waste, 0)), h('td', { class: 'r num' }, U.fmtNum(r.coalT, 0)), h('td', { class: 'r num' }, r.cv === r.cv ? U.fmtNum(r.cv, 2) : '–'), h('td', { class: 'r num' }, r.ash === r.ash ? U.fmtNum(r.ash, 1) : '–'), h('td', { class: 'r num' }, r.ts === r.ts ? U.fmtNum(r.ts, 2) : '–')))),
         h('tfoot', null, h('tr', { class: 'tot' }, h('td', null, 'All blocks'), R.ready ? h('td') : null, ...T.map(q => h('td', { class: 'r num' }, U.fmtNum(q.coal ? q.t : q.v, 0))),
@@ -14632,7 +14685,7 @@ const Tabs = (() => {
     const on = App.colorBy === 'margin';
     const show = R.ranked.slice(0, 1000);
     const tr = r => { const c = Margin.colorOf(r.margin, S.lo, S.hi);
-      return h('tr', { class: (r.b === App.selBlock ? 'sel ' : '') + (r.inside ? '' : 'out'), onclick: () => App.selectBlock(r.b), title: r.inside ? '' : 'Outside the reserve boundary: not mined' },
+      return h('tr', { class: (r.b === App.selRes() ? 'sel ' : '') + (r.inside ? '' : 'out'), onclick: () => App.selectRes(r.b), title: r.inside ? '' : 'Outside the reserve boundary: not mined' },
         h('td', { class: 'r num' }, String(r.rank)), h('td', null, r.id),
         h('td', { class: 'r num' }, h('span', { class: 'mg-chip', style: { background: c ? `rgb(${c.join(',')})` : '#8a8f98' } }), U.fmtNum(r.margin, 1)),
         h('td', { class: 'r num' }, r.cv === r.cv ? U.fmtNum(r.cv, 2) : '–'), h('td', { class: 'r num' }, r.ash === r.ash ? U.fmtNum(r.ash, 1) : '–'), h('td', { class: 'r num' }, r.ts === r.ts ? U.fmtNum(r.ts, 2) : '–'),
@@ -14665,7 +14718,7 @@ const Tabs = (() => {
     const list = R.rows.filter(r => r.dep).sort((p, q) => q.dep.depth - p.dep.depth || p.b - q.b), show = list.slice(0, 1000);
     const deep = list[0], shal = list[list.length - 1];
     const tr = r => { const q = r.dep, c = U.ramp(S.hi > S.lo ? (q.depth - S.lo) / (S.hi - S.lo) : 0.5);
-      return h('tr', { class: (r.b === App.selBlock ? 'sel ' : '') + (r.inside ? '' : 'out'), onclick: () => App.selectBlock(r.b), title: r.inside ? '' : 'Outside the reserve boundary: not mined' },
+      return h('tr', { class: (r.b === App.selRes() ? 'sel ' : '') + (r.inside ? '' : 'out'), onclick: () => App.selectRes(r.b), title: r.inside ? '' : 'Outside the reserve boundary: not mined' },
         h('td', null, r.id), h('td', null, q.seam), h('td', { class: 'r num' }, h('span', { class: 'mg-chip', style: { background: `rgb(${c.join(',')})` } }), U.fmtNum(q.depth, 1)),
         h('td', { class: 'r num' }, U.fmtNum(q.max, 1)), h('td', { class: 'r num' }, U.fmtNum(q.ground, 1)), h('td', { class: 'r num' }, U.fmtNum(q.floor, 1))); };
     body.append(sec('Block depth', h('span', { class: 'chip' }, `${S.n} blocks`),
@@ -14680,7 +14733,7 @@ const Tabs = (() => {
       hint('The depth of a block is from the ground (the original topography) down to the floor of the lowest seam mined in it, on average over the block: the deepest coal layer that the schedule mines there as coal — in an activity’s path, within the depth limits, and with coal left after the seam and quality cut-offs. “Deepest” is its deepest point. The Excel schedule gives it for every block (Block Schedule, and the Block Margin).')));
   }
   function stripRatio(body, R, cur, kp) {
-    const P = App.P, S = R.stats.sr, f = v => `${U.fmtNum(v, 2)} bcm/t`;
+    const P = App.rv().P, S = R.stats.sr, f = v => `${U.fmtNum(v, 2)} bcm/t`;
     if (!S.n) { body.append(sec('Strip ratio', null, msg('warn', 'No block has coal, so there is no strip ratio.'))); return; }
     const G = Margin.srGradient(S), on = App.colorBy === 'sr', midIn = Math.min(S.hi, Math.max(S.lo, S.mid));
     const mi = num(S.midSet ? S.mid : null, v => { const m = P.margin || (P.margin = {}); m.srMid = v > 0 ? v : null; App.changed('margin'); UI.renderTab(); }, { min: 0, step: 0.1, allowEmpty: true, placeholder: `average, ${U.fmtNum(S.avg, 2)}` });
@@ -14690,7 +14743,7 @@ const Tabs = (() => {
       h('div', { class: 'lab' }, h('span', { style: { left: 0 } }, U.fmtNum(S.lo, 2)), G.zero > 18 && G.zero < 82 ? h('span', { style: { left: G.zero + '%', transform: 'translateX(-50%)' } }, U.fmtNum(midIn, 2)) : null, h('span', { style: { right: 0 } }, U.fmtNum(S.hi, 2) + ' bcm/t')));
     const show = R.srRanked.slice(0, 1000);
     const tr = r => { const c = Margin.srColor(r.sr, S);
-      return h('tr', { class: (r.b === App.selBlock ? 'sel ' : '') + (r.inside ? '' : 'out'), onclick: () => App.selectBlock(r.b), title: r.inside ? '' : 'Outside the reserve boundary: not mined' },
+      return h('tr', { class: (r.b === App.selRes() ? 'sel ' : '') + (r.inside ? '' : 'out'), onclick: () => App.selectRes(r.b), title: r.inside ? '' : 'Outside the reserve boundary: not mined' },
         h('td', { class: 'r num' }, String(r.srRank)), h('td', null, r.id),
         h('td', { class: 'r num' }, h('span', { class: 'mg-chip', style: { background: c ? `rgb(${c.join(',')})` : '#8a8f98' } }), U.fmtNum(r.sr, 2)),
         h('td', { class: 'r num' }, U.fmtNum(r.waste, 0)), h('td', { class: 'r num' }, U.fmtNum(r.coalT, 0)), R.ready ? h('td', { class: 'r num' }, r.rank ? String(r.rank) : '–') : null); };
@@ -17778,11 +17831,11 @@ const Report = (() => {
     XLSX.utils.book_append_sheet(wb, sheet(info, [34, 90]), 'Project');
     // the block margin of every block, ranked (Block Margin Rank tab)
     if (ws && typeof Margin !== 'undefined') {
-      const MR = App.margin ? App.margin() : Margin.compute(P, ws);
-      if (MR.ready) XLSX.utils.book_append_sheet(wb, marginSheet(P, ws, MR), 'Block Margin'); // with the strip ratio of each block
-      else if (MR.stats.sr.n) XLSX.utils.book_append_sheet(wb, stripSheet(P, ws, MR), 'Strip Ratio');
+      const RV = App.rv ? App.rv() : { P, ws }, MR = App.margin ? App.margin() : Margin.compute(P, ws); // (the resource layout)
+      if (MR.ready) XLSX.utils.book_append_sheet(wb, marginSheet(RV.P, RV.ws, MR), 'Block Margin'); // with the strip ratio of each block
+      else if (MR.stats.sr.n) XLSX.utils.book_append_sheet(wb, stripSheet(RV.P, RV.ws, MR), 'Strip Ratio');
       // the coal tons from GTIS to ADC, with the ADC qualities (Reserve tab)
-      if (typeof Tons !== 'undefined' && P.layers.some(L => L.type === 'coal')) XLSX.utils.book_append_sheet(wb, tonsSheet(P, ws, MR), 'Coal Tons');
+      if (typeof Tons !== 'undefined' && P.layers.some(L => L.type === 'coal')) XLSX.utils.book_append_sheet(wb, tonsSheet(RV.P, RV.ws, MR), 'Coal Tons');
     }
     // the sheets of the LoM workbook layout: LoM Schedule (and one per pit), Weekly Q1, the assumptions and the detail
     if (res && typeof LoM !== 'undefined') LoM.addSheets(wb, App);
@@ -18409,7 +18462,7 @@ const App = {
   P: null, surf: null, ws: null, res: null, pb: null, day: -1, stale: false,
   selBlock: -1, actId: null, roadId: null, dumpId: null,
   tab: 'project', colorBy: 'status', colorAttr: '',
-  show: { outlines: true, labels: true, paths: true, roads: true, dumps: true, contours: false, ovl: true, keep: true, limits: true, pits: true, drains: true, fills: true },
+  show: { outlines: true, resOut: true, labels: true, paths: true, roads: true, dumps: true, contours: false, ovl: true, keep: true, limits: true, pits: true, drains: true, fills: true },
   drainId: null, rhId: null, fillId: null, raiseId: null,
   limitId: null, LIMIT_COLOR: '#b9a2ff', RESERVE_COLOR: '#e040fb', OUT_COLOR: '#e34948', pitId: null,
   sat: { on: false, canvas: null, sig: '', attribution: '' },
@@ -18537,18 +18590,19 @@ const App = {
   // the seam cut-off changed: work out again which seams are coal, then redraw (camera, slice and results stay)
   recut() {
     if (!this.ws) return;
-    Model.applyCutoff(this.ws);
+    Model.applyCutoff(this.ws); this._rv = null;
     View.setWorkspace(this.ws, { vex: View.vex, keepCamera: true });
     if (this.pb) View.setSurface(this.pb.insitu, this.pb.fill, this.pb.mat, this.spoilClasses());
     this.refreshOverlays();
     Section.apply();
   },
-  rasterize() { if (!this.ws) return; Model.rasterizeBlocks(this.ws); View.setWorkspace(this.ws, { vex: View.vex, keepCamera: true }); if (this.pb) View.setSurface(this.pb.insitu, this.pb.fill, this.pb.mat, this.spoilClasses()); this.refreshOverlays(); Section.reset(); Measure.reset(); },
+  rasterize() { if (!this.ws) return; this._rv = null; Model.rasterizeBlocks(this.ws); View.setWorkspace(this.ws, { vex: View.vex, keepCamera: true }); if (this.pb) View.setSurface(this.pb.insitu, this.pb.fill, this.pb.mat, this.spoilClasses()); this.refreshOverlays(); Section.reset(); Measure.reset(); },
 
   // ---------- change tracking & saving ----------
   changed(kind = 'sim', opts = {}) {
     if (!this.P) return;
-    if (kind !== 'view') { this.inv = null; this._margin = null; } // the coal inventory and the block margins are worked out again
+    if (kind !== 'view') { this.inv = null; this._margin = null; }
+    if (kind === 'blocks' || kind === 'wash') this._rv = null; // the coal inventory and the block margins are worked out again
     if (kind === 'view' && !this.persisted) return;
     if (kind === 'cutoff') { this.recut(); UI.renderInspector(); }
     // the quality columns feed the quality cut-offs: work the cut-off out again when there are any
@@ -18710,6 +18764,7 @@ const App = {
   // ---------- overlays ----------
   refreshOverlays() {
     const P = this.P;
+    { const V = this.rv(); View.setResBlocks(V.sep && P ? P.resBlocks : null); } // (the resource layout, kept apart)
     if (!P || !this.ws) { View.setRoads([]); View.setDumps([]); View.setPaths([]); View.setOverlays([]); View.setKeepOut(null); View.setLimits([]); View.setPits([], []); View.setDrains([]); View.setFills([]); return; }
     this.refreshKeep();
     // depth-limit zones: the polygon, and the blocks each one actually limits
@@ -18766,7 +18821,7 @@ const App = {
     View.setKeepOut(K);
   },
   refreshTint() {
-    const ws = this.ws, P = this.P;
+    let ws = this.ws, P = this.P;
     if (!ws) return;
     const mode = this.colorBy;
     if (mode === 'none') { View.setTint(null); UI.renderLegend(); return; }
@@ -18807,6 +18862,8 @@ const App = {
       UI.renderLegend({ type: 'list', title: 'Backfill & topsoil', items: [['#56a048', 'Topsoil replaced'], ['#e8b040', 'Backfilled, waiting for topsoil'], ['#5a8ee0', 'Void below the top of the backfill']] });
       return;
     }
+    // the colours of the resource stage (margin, strip ratio, qualities, depth, attributes, seam thickness): the resource layout
+    if (['margin', 'sr', 'depth', 'cv', 'ash', 'ts', 'attr', 'thick'].includes(mode)) { const V = this.rv(); ws = V.ws; P = V.P; }
     const cellColor = new Array(ws.blockCells.length).fill(null);
     let legend = null;
     if (mode === 'status') {
@@ -19023,9 +19080,73 @@ const App = {
     if (this.res && !this.hydroReady() && Hydro.settings(this.P).on !== false) { UI.busy('Working out the groundwater…', 0.5); await U.nextFrame(); try { return this.hydro(); } finally { UI.busy(null); } }
     return this.hydro();
   },
+  /* The resource layout (P.resBlocks: kept apart once the blocks inside the reserve boundary are copied into the reserve
+     layout, P.blocks, the blocks the schedule mines): the project seen through it, and its own workspace. Every calculation
+     before the schedule uses it (the reserve, the block margin, the strip ratio, the reserve boundary, the coal tons); with
+     one layout it is the project and its workspace. sep: there are two layouts. */
+  rv() {
+    const P = this.P;
+    if (!P || !this.ws || !Array.isArray(P.resBlocks)) return { P, ws: this.ws, sep: false };
+    const C = this._rv;
+    if (!C || C.ws0 !== this.ws || C.blocks !== P.resBlocks || C.n !== P.resBlocks.length || C.sched !== P.blocks) {
+      this.shareAttrs();
+      const RP = new Proxy(P, { get: (t, k) => (k === 'blocks' ? t.resBlocks : t[k]) });
+      const ws = Model.buildWorkspace(RP, this.surf);
+      if (P.wash) Wash.assign(RP, ws);
+      this._rv = { ws0: this.ws, blocks: P.resBlocks, n: P.resBlocks.length, sched: P.blocks, P: RP, ws };
+    }
+    return { P: this._rv.P, ws: this._rv.ws, sep: true };
+  },
+  // the reserve blocks share their data (qualities, attributes) with the resource blocks they were copied from
+  shareAttrs() {
+    const P = this.P; if (!P || !Array.isArray(P.resBlocks)) return;
+    const by = new Map(P.resBlocks.map(b => [b.id, b]));
+    for (const b of P.blocks) { const r = by.get(b.id); if (r) { r.attrs = r.attrs || {}; b.attrs = r.attrs; } }
+  },
+  // a block of the schedule's layout → the same block in the resource layout (-1: none); the block selected, there
+  resOf(b) { const V = this.rv(); if (!V.sep) return b; const B = this.P.blocks[b], k = B && V.ws ? V.ws.blockIndex.get(B.id) : undefined; return k === undefined ? -1 : k; },
+  selRes() { return this.selBlock >= 0 ? this.resOf(this.selBlock) : -1; },
+  // select a block of the resource layout: its copy in the reserve layout
+  selectRes(rb) {
+    const V = this.rv(); if (!V.sep) return this.selectBlock(rb);
+    const B = V.P.blocks[rb], k = B ? this.ws.blockIndex.get(B.id) : undefined;
+    if (k === undefined) { UI.toast(`${B ? B.id : 'That block'} is not in the reserve layout (the blocks the schedule mines).`); return; }
+    this.selectBlock(k);
+  },
+  /* Copy the blocks of the resource layout whose centre lies inside the reserve boundary into the reserve layout, the blocks
+     the schedule mines: the resource layout and its data are kept (P.resBlocks); each mining path keeps its order with the
+     blocks copied (the paths before are kept, to put back with the layout). */
+  copyReserve() {
+    const P = this.P, V = this.rv();
+    const ins = Model.reserveInside(V.P, V.ws), src = V.P.blocks, keep = src.filter((b, k) => ins[k] && V.ws.blockCells[k].length);
+    if (!keep.length) return 0;
+    if (!V.sep) { P.resBlocks = P.blocks; P.reserveLayout = { paths: Object.fromEntries(P.activities.map(a => [a.id, a.path.slice()])) }; }
+    const paths = (P.reserveLayout && P.reserveLayout.paths) || {};
+    P.blocks = keep.map(b => ({ id: b.id, pts: b.pts.map(q => q.slice()), attrs: b.attrs || (b.attrs = {}) }));
+    const ids = new Set(P.blocks.map(b => b.id));
+    for (const a of P.activities) a.path = (paths[a.id] || a.path).filter(id => ids.has(id));
+    P.reserveLayout = { paths, made: U.todayISO(), n: keep.length, of: src.length, boundary: P.reserve.name || 'Reserve boundary', sig: JSON.stringify(Model.reserveRings(P)) };
+    this.res = null; this.pb = null; this.day = -1; this.selBlock = -1; this._rv = null;
+    this.rasterize(); Timeline.setData(null, P);
+    this.changed('blocks', { now: true });
+    return keep.length;
+  },
+  // back to one layout: the resource layout is the schedule's again, with the mining paths as they were
+  dropReserve() {
+    const P = this.P; if (!P || !Array.isArray(P.resBlocks)) return false;
+    const paths = (P.reserveLayout && P.reserveLayout.paths) || {};
+    P.blocks = P.resBlocks; delete P.resBlocks;
+    for (const a of P.activities) if (paths[a.id]) a.path = paths[a.id];
+    delete P.reserveLayout;
+    this.res = null; this.pb = null; this.day = -1; this.selBlock = -1; this._rv = null;
+    if (this.ws) { this.rasterize(); Timeline.setData(null, P); }
+    this.changed('blocks', { now: true });
+    return true;
+  },
   margin() {
     if (!this.P || !this.ws) return null;
-    if (!this._margin || this._margin.ws !== this.ws) this._margin = { ws: this.ws, R: Margin.compute(this.P, this.ws) };
+    const V = this.rv(); // (on the resource layout)
+    if (!this._margin || this._margin.ws !== V.ws) this._margin = { ws: V.ws, R: Margin.compute(V.P, V.ws) };
     return this._margin.R;
   },
   /* The activities follow the colours of their layers: in the 3D paths, the Gantt chart and the charts (the run's too,
