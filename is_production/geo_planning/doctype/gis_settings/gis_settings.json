@@ -27,6 +27,7 @@
   "qgis_python",
   "column_break_qgis",
   "qgis_project_directory",
+  "qgis_server_group",
   "section_database",
   "qgis_db_host",
   "qgis_db_port",
@@ -175,11 +176,18 @@
    "fieldtype": "Column Break"
   },
   {
-   "description": "Where the QGIS project of each published dataset is written (<dataset>.qgs). The bench user must be able to write it and QGIS Server's user must be able to read it; the files hold the read-only account's password, so keep the directory private (e.g. owner bench user, group www-data, mode 2750).",
+   "description": "Base folder for QGIS projects, shared by all sites on this host. Each site writes into its own subfolder, <base>/<site name>. Run bench --site <site> gis-setup to create it (and the site's database account) for this bench.",
    "fieldname": "qgis_project_directory",
    "fieldtype": "Data",
    "label": "QGIS Project Directory",
    "default": "/var/lib/qgis-server/projects"
+  },
+  {
+   "fieldname": "qgis_server_group",
+   "fieldtype": "Data",
+   "label": "QGIS Server Group",
+   "default": "www-data",
+   "description": "The group QGIS Server runs as on this host (bench gis-setup finds it from the qgis-server systemd unit). Project folders are shared with this group."
   },
   {
    "description": "The read-only MariaDB account QGIS uses to read GIS features. It only needs SELECT on tabGIS Feature.",
@@ -312,7 +320,7 @@
  "grid_page_length": 50,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-20 18:56:37.128990",
+ "modified": "2026-10-21 09:53:29.410389",
  "modified_by": "Administrator",
  "module": "Geo Planning",
  "name": "GIS Settings",

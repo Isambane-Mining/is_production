@@ -137,7 +137,13 @@ def plugin_status(warnings):
 		return None
 	from is_production.geo_planning.services.gis_plugin_service import scan_plugins
 
-	result = scan_plugins()
+	try:
+		result = scan_plugins()
+	except Exception as e:  # the plugin scan must never break the health check
+		warnings.append(_("The plugin folders could not be scanned: {0}").format(e))
+		return None
+	for problem in result.get("unreadable", []):
+		warnings.append(problem)
 	if result["errors"]:
 		warnings.append(_("Plugins with errors: {0}.").format(", ".join(result["errors"])))
 	if frappe.db.get_single_value("GIS Plugin Settings", "server_restart_required"):
@@ -190,14 +196,33 @@ def describe_database(database):
 	return text + " " + (_("Account is limited.") if database.get("limited") else _("Account is NOT limited."))
 
 
-def check_project_directory(path):
-	if not path:
+def project_directory_command(directory):
+	"""The one-off command an administrator runs to create a site's QGIS project folder."""
+	import getpass
+
+	group = frappe.db.get_single_value("GIS Settings", "qgis_server_group") or "www-data"
+	return (
+		f"bench --site {frappe.local.site} gis-setup  (or: sudo install -d -o {getpass.getuser()} -g {group} -m 2750 {directory})"
+	)
+
+
+def check_project_directory(base):
+	"""This site's project folder (<base>/<site>): it must exist and be writable by this bench's user."""
+	if not base:
 		return None
-	if not os.path.isdir(path):
-		return {"ok": False, "message": _("QGIS Project Directory {0} does not exist.").format(path)}
-	if not os.access(path, os.W_OK):
-		return {"ok": False, "message": _("The bench user cannot write to {0}.").format(path)}
-	return {"ok": True}
+	from is_production.geo_planning.services.gis_publish_service import site_project_directory
+
+	path = site_project_directory(base)
+	try:
+		exists = os.path.isdir(path)
+		writable = exists and os.access(path, os.W_OK | os.X_OK)
+	except OSError:
+		exists = writable = False
+	if not exists:
+		return {"ok": False, "path": path, "message": _("This site's QGIS project folder {0} does not exist (or cannot be reached). Create it with: {1}").format(path, project_directory_command(path))}
+	if not writable:
+		return {"ok": False, "path": path, "message": _("This bench's user cannot write to {0}. Fix it with: {1}").format(path, project_directory_command(path))}
+	return {"ok": True, "path": path}
 
 
 def run_worker(python, script, request, timeout=WORKER_TIMEOUT):
