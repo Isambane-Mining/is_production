@@ -187,6 +187,7 @@ input[type="number"] { font-family: var(--font-mono); }
 .kml-gh { display: flex; align-items: center; gap: 7px; } .kml-gh .dt { margin-left: auto; } .kml-items { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 2px 10px; max-height: 132px; overflow: auto; padding-left: 22px; } .kml-items .check span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wash-fig { display: flex; flex-direction: column; gap: 2px; } .wash-chart { width: 100%; height: auto; display: block; } .wash-chart text { font: 9px var(--font-mono); fill: var(--muted); } .wash-chart .g { stroke: var(--line); stroke-width: 1; } .wash-chart .c { fill: none; stroke: var(--ink-2); stroke-width: 1.2; opacity: .55; } .wash-chart .cut { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 3; } .wash-chart .cl { fill: var(--accent); font-weight: 600; } .wash-chart .pt { fill: var(--accent); }
 .qr-card .qr-name { flex: 1 1 auto; min-width: 0; font-weight: 600; overflow-wrap: anywhere; } .qr-card .ovl-h .chip { flex: none; } .qr-card .kv .v { overflow-wrap: anywhere; }
+.recon-tbl tr.tot td { font-weight: 600; border-top: 1px solid var(--line); }
 .ovl-fn { max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ovl-fn .dt { white-space: nowrap; }
 .sw.ovl { border: 2px solid; box-sizing: border-box; box-shadow: none; }
@@ -543,6 +544,7 @@ canvas.chart { width: 100%; display: block; }
         <button type="button" role="tab" data-tab="roads" aria-selected="false">Roads</button>
         <button type="button" role="tab" data-tab="sequence" aria-selected="false">Sequence</button>
         <button type="button" role="tab" data-tab="finance" aria-selected="false">Finance</button>
+        <button type="button" role="tab" data-tab="recon" aria-selected="false">Recon</button>
         <button type="button" role="tab" data-tab="results" aria-selected="false">Results</button>
       </nav>
       <div class="tab-body" id="tabBody" role="tabpanel"></div>
@@ -8869,6 +8871,255 @@ const Fin = (() => {
   return { GROUPS, FIELDS, DEF, settings, unitOf, cvMonthly, run, irrOf };
 })();
 
+/* ===== Survey reconciliation (Recon tab; DOM-free) =====
+   Survey DTMs come as point files (XYZ, CSV or TXT: X, Y and Z columns, in the coordinate system of the model). Their
+   points are averaged onto the grid of the model: each cell takes the mean elevation of the points in it, and the small
+   gaps between the points are filled from the cells around them; a cell with no survey near it has no value and is left
+   out. Which columns are X, Y and Z is worked out from the points themselves: the pair that lands on the model, and the
+   column with the elevations of the model's ground (so Y, X, Z files of the Lo systems read as well as X, Y, Z).
+   A reconciliation compares two surfaces over the cells both cover: the ground of the geological model (the original
+   topography) or a survey, against a later survey. Where the ground went down, what was taken out is split over the
+   layers of the model, from the in-situ top on the from-date (the lowest of the original ground and the surveys up to
+   then) down; what lay above that top (spoil and dumps) and what was dug below the deepest surface of the model are
+   counted on their own. Where the ground went up, the rise is fill. Changes smaller than the tolerance are survey noise
+   and are not counted. Tons are the bcm × the density of the layer (of the block, with a density column). With a
+   schedule run, what the schedule mines between the two dates in the blocks the surveys cover is set beside it. */
+const Recon = (() => {
+  const DEF = { tol: 0.1 };
+  const MAX_COLS = 8, SAMPLE = 2000;
+  function settings(P) {
+    const R = P && P.recon ? P.recon : {}, tol = +R.tol;
+    return { surveys: Array.isArray(R.surveys) ? R.surveys : [], from: R.from || 'model', to: R.to || '', tol: R.tol != null && R.tol !== '' && isFinite(tol) ? Math.max(0, tol) : DEF.tol };
+  }
+  const key = s => s.id; // the store key of a survey's grid (ids are 'dtm_…')
+  const blobKeys = P => settings(P).surveys.map(key);
+  const byDate = P => settings(P).surveys.slice().sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.name || '').localeCompare(b.name || ''));
+  // a date in a file name: 2026-09-30, 2026_09_30, 20260930 → ISO, or null
+  function dateFromName(name) {
+    const m = /(20\d\d|19\d\d)[-_. ]?(0[1-9]|1[0-2])[-_. ]?(0[1-9]|[12]\d|3[01])(?!\d)/.exec(String(name || ''));
+    const iso = m ? `${m[1]}-${m[2]}-${m[3]}` : null;
+    return iso && U.parseISO(iso) ? iso : null;
+  }
+
+  // ---------- reading a point file ----------
+  const numOf = s => { if (s === '' || s == null) return NaN; const v = Number(s); return v; };
+  function splitter(line) {
+    if (line.includes('\t')) return l => l.split('\t');
+    if (line.includes(',')) return l => l.split(',');
+    if (line.includes(';')) return l => l.split(';');
+    return l => l.trim().split(/\s+/);
+  }
+  const clean = s => s.trim().replace(/^"(.*)"$/, '$1').trim();
+  /* The columns to use, from a sample of rows: {x, y, z} (indexes), or an error. The pair of columns that, as X and Y,
+     puts most points on the model's grid; then of the other columns the one closest to the elevations of the ground. */
+  function pickColumns(P, ws, names, rows) {
+    const sign = Geo.axisSign(P.crs), x1 = ws.x0 + ws.nx * ws.cell, y1 = ws.y0 + ws.ny * ws.cell;
+    const nc = Math.max(0, ...rows.map(r => r.length));
+    const numeric = [];
+    for (let j = 0; j < nc; j++) { let k = 0; for (const r of rows) if (isFinite(r[j])) k++; if (k >= rows.length * 0.9) numeric.push(j); }
+    if (numeric.length < 3) throw new Error('it needs three columns of numbers (X, Y and Z); it has ' + numeric.length + '.');
+    let best = null;
+    for (const a of numeric) for (const b of numeric) {
+      if (a === b) continue;
+      let k = 0; for (const r of rows) { const x = sign * r[a], y = sign * r[b]; if (x >= ws.x0 && x <= x1 && y >= ws.y0 && y <= y1) k++; }
+      if (!best || k > best.k) best = { a, b, k };
+    }
+    if (!best || best.k < rows.length * 0.05) throw new Error('its points do not fall on the model. Check that it is in the coordinate system of the model (' + ((Geo.PRESETS.find(p => p.id === P.crs.preset) || {}).name || P.crs.preset) + ').');
+    const named = numeric.find(j => j !== best.a && j !== best.b && /^(z|elev|elevation|rl|height|level|alt|altitude|h)$/i.test(names[j] || ''));
+    // else the column nearest the ground of the model where the points are (the middle of how far each value is from it)
+    const on = rows.filter(r => { const x = sign * r[best.a], y = sign * r[best.b]; return x >= ws.x0 && x <= x1 && y >= ws.y0 && y <= y1; });
+    const ground = on.map(r => Model.sampleGrid(ws, ws.surf[0], sign * r[best.a], sign * r[best.b]));
+    let z = named, zd = Infinity;
+    if (z === undefined) for (const j of numeric) {
+      if (j === best.a || j === best.b) continue;
+      const d = on.map((r, i) => Math.abs(r[j] - ground[i])).filter(v => v === v).sort((p, q) => p - q), med = d.length ? d[d.length >> 1] : Infinity;
+      if (med < zd) { zd = med; z = j; }
+    }
+    if (z === undefined) throw new Error('no column of elevations was found.');
+    return { x: best.a, y: best.b, z };
+  }
+  /* A point file onto the grid of the model: {grid (Float32Array, NaN where there is no survey), info}. The file is read
+     in pieces, so point clouds of any size can be read. */
+  async function readPoints(P, ws, file, onProgress) {
+    const reader = file.stream().getReader(), dec = new TextDecoder(), size = file.size || 1;
+    const sum = new Float64Array(ws.n), cnt = new Uint32Array(ws.n), sign = Geo.axisSign(P.crs);
+    let rest = '', read = 0, split = null, names = null, sample = [], cols = null, n = 0, outside = 0, skipped = 0;
+    let zMin = Infinity, zMax = -Infinity, bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
+    const put = r => {
+      const x = sign * r[cols.x], y = sign * r[cols.y], z = r[cols.z];
+      if (!(isFinite(x) && isFinite(y) && isFinite(z))) { skipped++; return; }
+      const c = Model.cellAt(ws, x, y);
+      if (c < 0) { outside++; return; }
+      sum[c] += z; cnt[c]++; n++;
+      if (z < zMin) zMin = z; if (z > zMax) zMax = z;
+      if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; if (y > by1) by1 = y;
+    };
+    const line = raw => {
+      const l = raw.trim();
+      if (!l || l[0] === '#' || l.startsWith('//')) return;
+      if (!split) split = splitter(l);
+      const f = split(l).slice(0, MAX_COLS).map(clean);
+      if (!cols && !names && !sample.length) {
+        // a first line with words in it names the columns
+        if (f.slice(0, 3).some(s => !isFinite(numOf(s)))) { names = f; return; }
+      }
+      const r = f.map(numOf);
+      if (cols) { put(r); return; }
+      sample.push(r);
+      if (sample.length >= SAMPLE) { cols = pickColumns(P, ws, names || [], sample); sample.forEach(put); sample = null; }
+    };
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      read += value.length;
+      const text = rest + dec.decode(value, { stream: true }), parts = text.split(/\r?\n|\r/);
+      rest = parts.pop();
+      for (const p of parts) line(p);
+      if (onProgress) onProgress(Math.min(1, read / size));
+    }
+    line(rest + dec.decode());
+    if (!cols) { if (!sample || !sample.length) throw new Error('it has no points.'); cols = pickColumns(P, ws, names || [], sample); sample.forEach(put); }
+    if (!n) throw new Error('none of its points fall on the model.');
+    const grid = new Float32Array(ws.n).fill(NaN);
+    let hit = 0; for (let c = 0; c < ws.n; c++) if (cnt[c]) { grid[c] = sum[c] / cnt[c]; hit++; }
+    // the gaps between the points, out to 1.5 × how far apart the points lie
+    const spacing = Math.sqrt(Math.max(ws.A, (bx1 - bx0) * (by1 - by0)) / n), reach = U.clamp(Math.ceil((1.5 * spacing) / ws.cell), 1, 12);
+    const filled = fillGaps(grid, ws.nx, ws.ny, reach);
+    const nm = j => (names && names[j] ? names[j] : 'column ' + (j + 1));
+    return { grid, info: { points: n, outside, skipped, cells: hit + filled, filled, zMin, zMax, columns: `${nm(cols.x)}, ${nm(cols.y)}, ${nm(cols.z)}` } };
+  }
+  /* An empty cell takes the inverse-distance mean of the surveyed cells within `reach` cells of it, when they lie on
+     three or four sides of it (so the survey is not carried out past its edge). → how many cells were filled */
+  function fillGaps(g, nx, ny, reach) {
+    const src = g.slice(), r2 = (reach + 0.5) * (reach + 0.5);
+    let k = 0;
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      const c = j * nx + i; if (src[c] === src[c]) continue;
+      let s = 0, w = 0, q = 0;
+      for (let dj = -reach; dj <= reach; dj++) {
+        const b = j + dj; if (b < 0 || b >= ny) continue;
+        for (let di = -reach; di <= reach; di++) {
+          const a = i + di, d2 = di * di + dj * dj; if (a < 0 || a >= nx || d2 > r2) continue;
+          const v = src[b * nx + a]; if (v !== v) continue;
+          s += v / d2; w += 1 / d2; q |= di >= 0 && dj > 0 ? 1 : di > 0 && dj <= 0 ? 2 : di <= 0 && dj < 0 ? 4 : 8;
+        }
+      }
+      if (w > 0 && (q === 15 || q === 7 || q === 11 || q === 13 || q === 14)) { g[c] = s / w; k++; }
+    }
+    return k;
+  }
+
+  // ---------- the reconciliation ----------
+  const usable = (P, ws, s, g) => !!g && g.length === ws.n && (s.gridVersion || 0) === (P.gridVersion || 0);
+  /* From `o.from` ('model' or a survey id) to `o.to` (a survey id). G: survey id → its grid. res: a schedule run, or null.
+     → {from, to, d0, d1, days, layers: [{bcm, t}], spoil, below, fill, cells, cutCells, fillCells, blocks, plan} */
+  function compute(P, ws, G, o, res) {
+    const st = settings(P), L = P.layers, nL = L.length, S = ws.surf, A = ws.A, tol = o.tol != null ? o.tol : st.tol;
+    const find = id => st.surveys.find(s => s.id === id);
+    const to = find(o.to), from = o.from === 'model' ? null : find(o.from);
+    if (!to) throw new Error('Choose the survey to compare with.');
+    if (o.from !== 'model' && !from) throw new Error('Choose the surface to compare from.');
+    if (from && from.id === to.id) throw new Error('Choose two different surveys.');
+    for (const s of [from, to]) if (s && !usable(P, ws, s, G.get(s.id))) throw new Error(`“${s.name}” was read for an earlier 3D model. Add its file again.`);
+    const d0 = from ? from.date : P.startDate, d1 = to.date;
+    if (!U.parseISO(d0) || !U.parseISO(d1)) throw new Error('Give each survey its survey date.');
+    if (d1 <= d0) throw new Error(`“${to.name}” (${U.fmtDate(U.parseISO(d1))}) must be later than ${from ? `“${from.name}”` : 'the start of the schedule'} (${U.fmtDate(U.parseISO(d0))}).`);
+    const F = from ? G.get(from.id) : S[0], T = G.get(to.id);
+    // the in-situ top on the from-date: the lowest of the original ground and the surveys up to then
+    const M = Float32Array.from(S[0]);
+    for (const s of st.surveys) { if (s === to || !(s.date && s.date <= d0)) continue; const g = G.get(s.id); if (!usable(P, ws, s, g)) continue; for (let c = 0; c < ws.n; c++) if (g[c] < M[c]) M[c] = g[c]; }
+    if (from) for (let c = 0; c < ws.n; c++) if (F[c] < M[c]) M[c] = F[c];
+    const layers = L.map(() => ({ bcm: 0, t: 0 })), blocks = new Map(), cellBlock = ws.cellBlock;
+    const covered = new Uint32Array(ws.blockCells.length);
+    let spoil = 0, below = 0, fill = 0, cells = 0, cutCells = 0, fillCells = 0;
+    const row = b => { let r = blocks.get(b); if (!r) blocks.set(b, (r = { bcm: new Float64Array(nL), t: new Float64Array(nL), spoil: 0, below: 0, fill: 0 })); return r; };
+    for (let c = 0; c < ws.n; c++) {
+      const f = F[c], t = T[c];
+      if (!(f === f && t === t)) continue;
+      cells++; const b = cellBlock[c]; if (b >= 0) covered[b]++;
+      const d = t - f;
+      if (Math.abs(d) < tol || d === 0) continue;
+      if (d > 0) { fill += d * A; fillCells++; row(b).fill += d * A; continue; }
+      cutCells++;
+      const top = Math.min(f, M[c]), r = row(b);
+      const sp = Math.max(0, f - Math.max(t, top)); spoil += sp * A; r.spoil += sp * A;
+      for (let l = 0; l < nL; l++) {
+        const zt = Math.min(S[l][c], S[0][c], top), zb = Math.max(S[l + 1][c], t);
+        if (zt > zb) { const v = (zt - zb) * A, w = v * Model.blockDensity(P, b >= 0 ? b : -1, l); layers[l].bcm += v; layers[l].t += w; r.bcm[l] += v; r.t[l] += w; }
+      }
+      const bl = Math.max(0, Math.min(top, S[nL][c]) - t); below += bl * A; r.below += bl * A;
+    }
+    // the schedule between the two dates, in the blocks the surveys cover (half of the block or more)
+    let plan = null;
+    if (res && res.records && P.startDate) {
+      const a = U.daysBetween(P.startDate, d0), z = U.daysBetween(P.startDate, d1), inArea = b => ws.blockCells[b].length > 0 && covered[b] >= ws.blockCells[b].length * 0.5;
+      plan = { layers: L.map(() => ({ bcm: 0, t: 0 })), blocks: 0, partial: res.nDays && z > res.nDays };
+      const seen = new Set();
+      for (const q of res.records) {
+        if (q.d < a || q.d >= z || !inArea(q.b)) continue;
+        const l = res.acts[q.a].layer, y = plan.layers[l]; y.bcm += q.v; y.t += q.t || q.v * Model.blockDensity(P, q.b, l); seen.add(q.b);
+      }
+      plan.blocks = seen.size;
+    }
+    return { from, to, d0, d1, days: U.daysBetween(d0, d1), tol, layers, spoil, below, fill, cells, cutCells, fillCells, A, blocks, plan };
+  }
+
+  // ---------- the Excel report ----------
+  const N0 = '#,##0', N2 = '0.00', HA = '#,##0.00';
+  const cell = (v, z, f) => (v == null || (typeof v === 'number' && !isFinite(v)) ? (f ? { t: 's', v: '', f } : null) : typeof v === 'number' ? Object.assign({ t: 'n', v }, z ? { z } : {}, f ? { f } : {}) : { t: 's', v: String(v) });
+  function sheet(aoa, widths, freeze) {
+    const sh = XLSX.utils.aoa_to_sheet(aoa.map(r => r.map(v => (v && typeof v === 'object' && v.t ? v : cell(v)))));
+    sh['!cols'] = widths.map(w => ({ wch: w }));
+    if (freeze) sh.__freeze = freeze;
+    return sh;
+  }
+  const label = (P, s, d) => (s ? `${s.name} (survey of ${U.fmtDate(U.parseISO(s.date))})` : `Geological model: the original ground (schedule start ${U.fmtDate(U.parseISO(d))})`);
+  /* The workbook: Recon Summary (each layer: surveyed bcm and tons, with the schedule beside them) and Recon by Block. */
+  function workbook(P, ws, R) {
+    const wb = XLSX.utils.book_new(), L = P.layers, ha = c => (c * R.A) / 1e4, col = c => XLSX.utils.encode_col(c);
+    const a = [[`${P.name} – Survey reconciliation`], []];
+    a.push(['From', label(P, R.from, R.d0)], ['To', label(P, R.to, R.d1)], ['Period', `${U.fmtDate(U.parseISO(R.d0))} to ${U.fmtDate(U.parseISO(R.d1))}`, cell(R.days, N0), 'days'],
+      ['Model grid', cell(Math.sqrt(R.A), N2), 'm cells', 'Tolerance', cell(R.tol, N2), 'm (smaller changes are not counted)'],
+      ['Area compared', cell(ha(R.cells), HA), 'ha', 'Cut', cell(ha(R.cutCells), HA), 'ha', 'Fill', cell(ha(R.fillCells), HA), 'ha'], []);
+    const plan = R.plan;
+    a.push(['Layer', 'Type', 'Surveyed (bcm)', 'Density (t/bcm)', 'Surveyed (t)'].concat(plan ? ['Scheduled (bcm)', 'Scheduled (t)', 'Difference (bcm)', 'Difference (%)'] : []));
+    const h0 = a.length + 1; // the first layer row (1-based)
+    L.forEach((Ly, l) => {
+      const q = R.layers[l], r = a.length + 1, y = plan ? plan.layers[l] : null;
+      a.push([Ly.name, (Model.LAYER_TYPES[Ly.type] || {}).label || Ly.type, cell(q.bcm, N0), cell(q.bcm > 0 ? q.t / q.bcm : Ly.density, N2, `IFERROR(E${r}/C${r},${Ly.density})`), cell(q.t, N0)]
+        .concat(y ? [cell(y.bcm, N0), cell(y.t, N0), cell(q.bcm - y.bcm, N0, `C${r}-F${r}`), cell(y.bcm > 0 ? (q.bcm - y.bcm) / y.bcm : null, '0.0%', `IFERROR(H${r}/F${r},"")`)] : []));
+    });
+    const h1 = a.length; // the last layer row
+    const tot = (nm, kind) => {
+      const r = a.length + 1, rows = L.map((Ly, l) => [Ly, l]).filter(([Ly]) => kind === 'all' || (kind === 'coal') === (Ly.type === 'coal'));
+      const sumOf = (k, src) => rows.reduce((s, [, l]) => s + src[l][k], 0), crit = kind === 'all' ? null : kind === 'coal' ? '"Coal"' : '"<>Coal"';
+      const f = c => (crit ? `SUMIF($B$${h0}:$B$${h1},${crit},${c}$${h0}:${c}$${h1})` : `SUM(${c}${h0}:${c}${h1})`);
+      a.push([nm, '', cell(sumOf('bcm', R.layers), N0, f('C')), '', cell(sumOf('t', R.layers), N0, f('E'))]
+        .concat(plan ? [cell(sumOf('bcm', plan.layers), N0, f('F')), cell(sumOf('t', plan.layers), N0, f('G')), cell(sumOf('bcm', R.layers) - sumOf('bcm', plan.layers), N0, `C${r}-F${r}`), cell(sumOf('bcm', plan.layers) > 0 ? (sumOf('bcm', R.layers) - sumOf('bcm', plan.layers)) / sumOf('bcm', plan.layers) : null, '0.0%', `IFERROR(H${r}/F${r},"")`)] : []));
+    };
+    tot('Total waste', 'waste'); tot('Total coal', 'coal'); tot('Total in situ', 'all');
+    a.push([], ['Other movement', '', 'm³'], ['Spoil and dumps taken out', 'above the in-situ ground', cell(R.spoil, N0)], ['Dug below the model', 'below its deepest surface', cell(R.below, N0)], ['Fill placed', 'where the ground rose', cell(R.fill, N0)], []);
+    a.push(['Notes'], ['The two surfaces are compared cell by cell where both have a value. Material taken out is split over the layers of the model from the in-situ top on the from-date (the lowest of the original ground and the surveys up to then).'],
+      ['Areas mined and backfilled between the two surveys are not seen: compare surveys in date order, as often as they are flown.']);
+    if (plan) a.push([`Scheduled: what the last simulation run mines from ${U.fmtDate(U.parseISO(R.d0))} to the day before ${U.fmtDate(U.parseISO(R.d1))}, in the ${plan.blocks} block${plan.blocks === 1 ? '' : 's'} the surveys cover (half of the block or more). Ramps and highwall batters are not included.${plan.partial ? ' The schedule ends before the to-date.' : ''}`]);
+    XLSX.utils.book_append_sheet(wb, sheet(a, [30, 26, 16, 16, 16, 16, 16, 16, 14, 4]), 'Recon Summary');
+    // by block: bcm and tons of each layer, the spoil, what was dug below the model and the fill
+    const pits = Model.blockPits(P, ws), hasPits = (P.pits || []).length > 0;
+    const head = ['Block', 'Pit'].concat(L.map(Ly => `${Ly.name} (bcm)`), L.map(Ly => `${Ly.name} (t)`), ['Spoil out (m³)', 'Below the model (m³)', 'Fill (m³)']);
+    const b = [head], ids = Array.from(R.blocks.keys()).sort((x, y) => (x < 0) - (y < 0) || String(P.blocks[x] ? P.blocks[x].id : '').localeCompare(String(P.blocks[y] ? P.blocks[y].id : ''), undefined, { numeric: true }));
+    for (const k of ids) {
+      const q = R.blocks.get(k);
+      b.push([k < 0 ? 'Outside the blocks' : String(P.blocks[k].id), k >= 0 && hasPits ? Model.pitName(P, pits[k]) : ''].concat(Array.from(q.bcm, v => cell(v, N0)), Array.from(q.t, v => cell(v, N0)), [cell(q.spoil, N0), cell(q.below, N0), cell(q.fill, N0)]));
+    }
+    const last = b.length, sums = head.slice(2).map((_, j) => b.slice(1).reduce((s, r) => s + ((r[j + 2] && r[j + 2].v) || 0), 0));
+    b.push(['Total', ''].concat(sums.map((v, j) => cell(v, N0, `SUM(${col(j + 2)}2:${col(j + 2)}${last})`))));
+    XLSX.utils.book_append_sheet(wb, sheet(b, [18, 14].concat(head.slice(2).map(hd => Math.max(12, Math.min(26, hd.length + 2)))), { x: 2, y: 1 }), 'Recon by Block');
+    return wb;
+  }
+
+  return { DEF, settings, key, blobKeys, byDate, dateFromName, readPoints, fillGaps, usable, compute, workbook };
+})();
+
 /* ===== Project storage: IndexedDB (standalone), artifact db (shared, owner writes), memory (view-only file) ===== */
 const Store = (() => {
   // ---------- IndexedDB ----------
@@ -9004,7 +9255,7 @@ const Store = (() => {
   // Portable project file: project JSON + blobs (base64 of gzip)
   async function exportBundle(store, P, fallback = {}) {
     const blobs = {};
-    for (const key of ['grid', 'sat']) { const u8 = (await store.getBlob(P.id, key)) || fallback[key]; if (u8) blobs[key] = U.u8ToB64(await U.gzip(u8)); }
+    for (const key of ['grid', 'sat'].concat(Recon.blobKeys(P))) { const u8 = (await store.getBlob(P.id, key)) || fallback[key]; if (u8) blobs[key] = U.u8ToB64(await U.gzip(u8)); }
     return { format: 'rollover-mine-sim', version: 1, exported: new Date().toISOString(), project: P, blobs };
   }
   async function readBundle(obj) {
@@ -11195,7 +11446,7 @@ const Tabs = (() => {
 
   function render(tab, body) {
     if (!App.P) { body.append(h('div', { class: 'empty' }, 'Loading…')); return; }
-    ({ project, data, sequence, roads, dumps, production, reserve, finance, results })[tab](body);
+    ({ project, data, sequence, roads, dumps, production, reserve, finance, recon, results })[tab](body);
     if (!App.canEdit) body.querySelectorAll('input,select,textarea').forEach(i => { if (!i.closest('[data-viewer]')) i.disabled = true; });
   }
   function hud(title, sub, buttons) {
@@ -14112,6 +14363,140 @@ const Tabs = (() => {
       h('thead', null, h('tr', null, h('th', null, `${F.o.currency} million`), ...A.map(Y => h('th', { class: 'r' }, String(Y.y))), h('th', { class: 'r' }, 'Total'))),
       h('tbody', null, t('rom', 'Coal mined (Mt)'), t('product', 'Coal sold (Mt)'), r('rev', 'Revenue'), r('logi', 'Logistics', true), r('mining', 'Mining', true), r('process', 'Processing', true), r('over', 'Overheads', true), r('mkt', 'Marketing', true),
         r('ebitda', 'EBITDA'), r('royalty', 'Royalty', true), r('tax', 'Tax', true), r('capex', 'Capital', true), r('dwc', 'Working capital', true), r('fcf', 'Free cash flow'))));
+  }
+
+  // =============== RECON ===============
+  /* Survey DTMs (point files) against the geological model or one another: the bcm and tons taken out of each layer
+     between two dates, beside what the schedule mines then, and the Excel report of it (Recon). The surveys' grids are
+     kept in the store with the project ('dtm_…') and read once a project is open. */
+  const RD = { pid: null, grids: new Map(), loading: false };
+  function reconFor(P) { if (RD.pid !== P.id) { RD.pid = P.id; RD.grids = new Map(); } return RD.grids; }
+  async function reconGrids() {
+    const P = App.P, G = reconFor(P), need = Recon.settings(P).surveys.filter(s => !G.has(s.id));
+    if (!need.length || RD.loading || !App.store) return;
+    RD.loading = true;
+    for (const s of need) {
+      try { const u8 = await App.store.getBlob(P.id, Recon.key(s)); G.set(s.id, u8 ? U.decodeGrid(u8) : null); }
+      catch (e) { G.set(s.id, null); console.warn(s.name, e); }
+    }
+    RD.loading = false;
+    if (App.tab === 'recon' && App.P === P) UI.renderTab();
+  }
+  // the project is in the store before a survey's grid is put there
+  async function reconSaved() { while (App.saving) await U.sleep(100); clearTimeout(App.saveTimer); await App.saveNow(); }
+  async function addSurveys(files) {
+    const P = App.P, ws = App.ws;
+    if (!ws || !P.grid) { UI.toast('Build the 3D model in the Data tab first: the surveys are compared with it, cell by cell.'); return; }
+    const R = P.recon || (P.recon = {}), G = reconFor(P), done = [], bad = [];
+    if (!Array.isArray(R.surveys)) R.surveys = [];
+    for (let k = 0; k < files.length; k++) {
+      const f = files[k], nm = f.name, lead = `Reading ${nm} (${k + 1} of ${files.length})…`;
+      UI.busy(lead, k / files.length); await U.nextFrame();
+      try {
+        const out = await Recon.readPoints(P, ws, f, fr => UI.busy(`${lead} ${Math.round(fr * 100)}%`, (k + fr * 0.9) / files.length));
+        const s = Object.assign({ id: U.uid('dtm'), name: stem(nm), date: Recon.dateFromName(nm) || U.todayISO(), file: nm, read: U.todayISO(), gridVersion: P.gridVersion || 0 }, out.info);
+        UI.busy(`Saving ${nm}…`, (k + 0.95) / files.length);
+        await reconSaved();
+        await App.store.putBlob(P.id, Recon.key(s), U.encodeGrid(out.grid));
+        R.surveys.push(s); G.set(s.id, out.grid); done.push(s);
+      } catch (e) { bad.push(`${nm}: ${e.message || e}`); console.warn(nm, e); }
+    }
+    UI.busy(null);
+    if (done.length) {
+      // compare the newest survey with the one before it (or with the model)
+      const list = Recon.byDate(P), last = list[list.length - 1];
+      R.to = last.id; R.from = list.length > 1 ? list[list.length - 2].id : 'model';
+      App.changed('recon', { now: true });
+    }
+    UI.renderTab();
+    if (bad.length) UI.toast(`${done.length ? `${done.length} survey${done.length === 1 ? '' : 's'} added. ` : ''}Not read: ${bad.join(' · ')}`);
+    else if (done.length) UI.toast(`${done.length} survey${done.length === 1 ? '' : 's'} added: ${done.map(s => `${s.name} (${U.fmtNum(s.points)} points)`).join(', ')}. Check each survey date.`);
+  }
+  async function removeSurvey(s) {
+    const P = App.P, R = P.recon;
+    if (!(await UI.confirmBox('Remove the survey', `Remove “${s.name}” and its surface from the project?`, 'Remove', true))) return;
+    R.surveys = R.surveys.filter(q => q !== s);
+    if (R.to === s.id) R.to = ''; if (R.from === s.id) R.from = 'model';
+    reconFor(P).delete(s.id);
+    App.changed('recon', { now: true });
+    try { await App.store.delBlob(P.id, Recon.key(s)); } catch (e) { console.warn(e); }
+    UI.renderTab();
+  }
+  function surveyCard(s, G) {
+    const P = App.P, ws = App.ws, g = G.get(s.id), kv = (k, v) => [h('span', { class: 'k' }, k), h('span', { class: 'v' }, v)];
+    const ha = s.cells && P.grid ? (s.cells * P.grid.cell * P.grid.cell) / 1e4 : null, ok = ws && Recon.usable(P, ws, s, g);
+    return h('div', { class: 'ovl-card qr-card' },
+      h('div', { class: 'ovl-h' }, h('span', { class: 'qr-name', title: s.file }, s.name), h('span', { class: 'chip' }, s.date ? U.fmtDate(U.parseISO(s.date)) : 'no date'), edit() ? btn('Remove', () => removeSurvey(s), 'sm ghost') : null),
+      h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, [s.file, s.read ? `read ${U.fmtDate(U.parseISO(s.read))}` : null].filter(Boolean).join(' · ')),
+      edit() ? h('div', { class: 'grid2' },
+        fld('Name', txt(s.name, v => { s.name = v.trim() || s.file; App.changed('recon'); })),
+        fld('Survey date', txt(s.date, v => { if (!U.parseISO(v)) return; s.date = v; App.changed('recon'); UI.renderTab(); }, { type: 'date' }))) : null,
+      h('div', { class: 'kv' },
+        ...kv('Points on the model', `${U.fmtNum(s.points)}${s.outside ? ` · ${U.fmtNum(s.outside)} outside it` : ''}`),
+        ...kv('Area covered', ha != null ? `${U.fmtNum(ha, 2)} ha${s.filled ? ` (${U.fmtNum((s.filled / s.cells) * 100, 0)}% interpolated)` : ''}` : '–'),
+        ...kv('Elevations', `${U.fmtNum(s.zMin, 1)} to ${U.fmtNum(s.zMax, 1)} m`),
+        ...kv('Columns used (X, Y, Z)', s.columns || '–')),
+      g === undefined ? h('div', { class: 'dt' }, 'Reading the surface…') : null,
+      g === null ? msg('warn', 'Its surface is not in the store. Add the file again.') : null,
+      g && !ok ? msg('warn', 'It was read for an earlier 3D model. Add the file again to compare it with the model as it is now.') : null);
+  }
+  function recon(body) {
+    const P = App.P, ws = App.ws, st = Recon.settings(P), list = Recon.byDate(P), G = reconFor(P), R = () => P.recon || (P.recon = {});
+    reconGrids();
+    const parts = [hint('Survey DTMs as point files: XYZ, CSV or TXT with X, Y and Z columns, in the coordinate system of the model (a header line is optional; point numbers and codes are skipped). Which columns are X, Y and Z is worked out from the points. The points are averaged onto the grid of the 3D model and the gaps between them interpolated; each survey is saved with the project.')];
+    if (edit()) {
+      const fileIn = h('input', { type: 'file', accept: '.xyz,.csv,.txt,.pts', multiple: true, hidden: true });
+      fileIn.setAttribute('aria-label', 'Survey point files');
+      fileIn.addEventListener('change', async () => { const fs = Array.from(fileIn.files); fileIn.value = ''; await addSurveys(fs); });
+      parts.push(h('div', { class: 'row' }, btn('Add survey DTMs…', () => fileIn.click(), 'sm primary', 'Choose one or more point files (.xyz, .csv, .txt)'), fileIn));
+    }
+    if (!ws || !P.grid) parts.push(msg('warn', 'Build the 3D model in the Data tab first: the surveys are compared with it, cell by cell.'));
+    for (const s of list) parts.push(surveyCard(s, G));
+    if (list.length) parts.push(hint('The survey date is read from the file name when it has one (2026-09-30, 20260930); check it on each survey.'));
+    body.append(sec('Surveys', list.length ? h('span', { class: 'chip' }, `${list.length} survey${list.length === 1 ? '' : 's'}`) : null, ...parts));
+    if (!list.length || !ws) return;
+
+    // ---- the reconciliation: from the model or a survey, to a later survey
+    const fromOpts = [['model', 'Geological model (original ground)']].concat(list.map(s => [s.id, `${s.name} · ${s.date ? U.fmtDate(U.parseISO(s.date)) : 'no date'}`]));
+    const toOpts = list.map(s => [s.id, `${s.name} · ${s.date ? U.fmtDate(U.parseISO(s.date)) : 'no date'}`]);
+    const to = st.to && list.some(s => s.id === st.to) ? st.to : list[list.length - 1].id, from = st.from === 'model' || list.some(s => s.id === st.from) ? st.from : 'model';
+    const rp = [
+      h('div', { class: 'grid2' },
+        fld('From', sel(fromOpts, from, v => { R().from = v; App.changed('recon'); UI.renderTab(); })),
+        fld('To', sel(toOpts, to, v => { R().to = v; App.changed('recon'); UI.renderTab(); }))),
+      h('div', { class: 'grid2' }, fld('Ignore changes smaller than (m)', num(st.tol, v => { R().tol = v >= 0 ? v : Recon.DEF.tol; App.changed('recon'); UI.renderTab(); }, { min: 0, step: 0.05 })), h('span'))
+    ];
+    const res = App.res && !App.stale ? App.res : null;
+    let C = null, err = null;
+    if (RD.loading || [from, to].some(id => id !== 'model' && G.get(id) === undefined)) rp.push(h('div', { class: 'dt' }, 'Reading the surveys…'));
+    else { try { C = Recon.compute(P, ws, G, { from, to, tol: st.tol }, res); } catch (e) { err = e.message || String(e); } }
+    if (err) rp.push(msg('warn', err));
+    if (C) {
+      const L = P.layers, f0 = v => U.fmtNum(v, 0), plan = C.plan, ha = n => U.fmtNum((n * C.A) / 1e4, 2);
+      rp.push(h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `${U.fmtDate(U.parseISO(C.d0))} to ${U.fmtDate(U.parseISO(C.d1))} (${U.fmtNum(C.days)} days) · ${ha(C.cells)} ha compared · ${ha(C.cutCells)} ha cut · ${ha(C.fillCells)} ha fill`));
+      const th = (t, r) => h('th', r ? { class: 'r' } : null, t), td = (t, r) => h('td', r ? { class: 'r num' } : null, t);
+      const head = [th('Layer'), th('Surveyed bcm', 1), th('Surveyed t', 1)].concat(plan ? [th('Scheduled bcm', 1), th('Diff.', 1)] : []);
+      const rows = L.map((Ly, l) => {
+        const q = C.layers[l], y = plan ? plan.layers[l] : null;
+        return h('tr', null, td(Ly.name), td(f0(q.bcm), 1), td(f0(q.t), 1), ...(y ? [td(f0(y.bcm), 1), td(y.bcm > 0 ? `${q.bcm >= y.bcm ? '+' : '−'}${U.fmtNum((Math.abs(q.bcm - y.bcm) / y.bcm) * 100, 0)}%` : '–', 1)] : []));
+      });
+      const sum = (src, k, coal) => L.reduce((s, Ly, l) => s + (coal == null || (Ly.type === 'coal') === coal ? src[l][k] : 0), 0);
+      for (const [nm, coal] of [['Total waste', false], ['Total coal', true]]) rows.push(h('tr', { class: 'tot' }, td(nm), td(f0(sum(C.layers, 'bcm', coal)), 1), td(f0(sum(C.layers, 't', coal)), 1), ...(plan ? [td(f0(sum(plan.layers, 'bcm', coal)), 1), td('', 1)] : [])));
+      rp.push(h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl recon-tbl' }, h('thead', null, h('tr', null, ...head)), h('tbody', null, ...rows))));
+      const kv = (k, v) => [h('span', { class: 'k' }, k), h('span', { class: 'v' }, v)];
+      rp.push(h('div', { class: 'kv' }, ...kv('Spoil and dumps taken out', `${f0(C.spoil)} m³`), ...kv('Dug below the model', `${f0(C.below)} m³`), ...kv('Fill placed', `${f0(C.fill)} m³`)));
+      rp.push(hint(plan ? `Scheduled: what the last run mines in these dates in the ${plan.blocks} block${plan.blocks === 1 ? '' : 's'} the surveys cover (half of the block or more), without the ramps and highwall batters.${plan.partial ? ' The schedule ends before the to-date.' : ''}` : App.res && App.stale ? 'Run the simulation again to set the schedule beside the surveys.' : 'Run the simulation to set the schedule beside the surveys.'));
+      rp.push(h('div', { class: 'row' }, btn('Export to Excel', async () => {
+        UI.busy('Building the reconciliation workbook…', 0.5); await U.nextFrame();
+        try {
+          const bytes = Report.toBytes(Recon.workbook(P, ws, C));
+          UI.busy(null);
+          await App.saveFile(`${U.slug(P.name) || 'project'}_recon_${C.d0.replace(/-/g, '')}_${C.d1.replace(/-/g, '')}.xlsx`, bytes);
+        } catch (e) { UI.busy(null); UI.toast('The report failed: ' + (e.message || e)); }
+      }, 'sm primary', 'The bcm and tons of each layer, by layer and by block, as an Excel workbook')));
+    }
+    rp.push(hint('Where the ground went down, what was taken out is split over the layers of the model from the in-situ top on the from-date (the lowest of the original ground and the surveys up to then); spoil and dumps above it, and digging below the deepest surface of the model, are counted on their own. Areas mined and backfilled between the two surveys are not seen, so compare surveys in date order.'));
+    body.append(sec('Reconciliation', null, ...rp));
   }
 
   // =============== RESULTS ===============
@@ -17952,7 +18337,7 @@ const App = {
     const Q = JSON.parse(JSON.stringify(src));
     Q.id = U.uid('prj'); Q.name = name; Q.isDemo = false; Q.created = new Date().toISOString();
     await this.store.save(Q);
-    for (const k of ['grid', 'sat']) {
+    for (const k of ['grid', 'sat'].concat(Recon.blobKeys(src))) { // (and the survey DTMs of the Recon tab)
       let b = await this.store.getBlob(id, k);
       if (!b && k === 'grid' && cur && this.surf) b = Store.packSurfaces(this.surf); // an example that was never saved: its model is only in memory
       if (b) await this.store.putBlob(Q.id, k, b);
