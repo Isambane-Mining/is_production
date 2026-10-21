@@ -117,7 +117,7 @@ frappe.query_reports["HOD Presentation"] = {
         bindHodDashboardTabs(report);
         ensureHodInteractiveReport();
 
-        report.page.add_inner_button(__("Download Presentation"), () => {
+        report.page.add_inner_button(__("Download Presentation (LAB V2)"), () => {
             downloadHodPresentation(report);
         });
     },
@@ -898,6 +898,12 @@ async function downloadHodPresentation(report) {
                     heading_style:
                         "engineering",
 
+                    no_machines: Boolean(
+                        categorySection.element.querySelector(
+                            ".isd-no-machine-data"
+                        )
+                    ),
+
                     image_data:
                         await captureHodCategorySection(
                             categorySection.element,
@@ -943,23 +949,31 @@ async function downloadHodPresentation(report) {
                         });
                     });
 
-                    capturedSlides.push({
-                        title:
-                            "Hours Based Performance - " +
-                            siteName,
+                    const hoursCategories =
+                        getHodHoursCategorySections(hoursPanel);
 
-                        heading_style:
-                            "engineering",
+                    if (!hoursCategories.length) {
+                        throw new Error(
+                            "No hours-based machine categories found."
+                        );
+                    }
 
-                        image_data:
-                            await captureHodSection(
-                                chartsRoot,
-                                {
-                                    quality: 0.90,
-                                    pixelRatio: 1.0
-                                }
-                            )
-                    });
+                    for (const section of hoursCategories) {
+                        capturedSlides.push({
+                            title:
+                                "Hours Based Performance - " +
+                                siteName +
+                                " - " +
+                                section.category,
+
+                            heading_style: "engineering",
+
+                            image_data:
+                                await captureHodHoursSlide(
+                                    section.element
+                                )
+                        });
+                    }
                 } finally {
                     if (originalPanelStyle === null) {
                         hoursPanel.removeAttribute(
@@ -1132,34 +1146,119 @@ function getHodHoursCategorySections(hoursPanel) {
         return [];
     }
 
-    const chartsRoot =
-        hoursPanel.firstElementChild ||
-        hoursPanel;
+    const prefix =
+        "Daily average hours per machine for ";
 
-    return HOD_PRESENTATION_HOURS_CATEGORIES
-        .map(category => {
-            const element = Array.from(
-                chartsRoot.children || []
-            ).find(candidate => {
-                const heading =
-                    candidate.firstElementChild;
+    const categories =
+        HOD_PRESENTATION_HOURS_CATEGORIES;
 
-                const headingText = (
-                    heading?.textContent || ""
-                ).trim().toLowerCase();
+    const charts = Array.from(
+        hoursPanel.querySelectorAll(
+            'svg[aria-label]'
+        )
+    );
 
-                return headingText.startsWith(
-                    category.toLowerCase() + " —"
-                ) || headingText.startsWith(
-                    category.toLowerCase() + " -"
-                );
+    const sections = new Map();
+
+    for (const svg of charts) {
+        const label = String(
+            svg.getAttribute("aria-label") || ""
+        ).trim();
+
+        if (!label.startsWith(prefix)) {
+            continue;
+        }
+
+        const categoryName =
+            label.slice(prefix.length).trim();
+
+        const category = categories.find(
+            name =>
+                name.toLowerCase() ===
+                categoryName.toLowerCase()
+        );
+
+        if (!category) {
+            continue;
+        }
+
+        const chartCard =
+            svg.closest(".frappe-card");
+
+        const chartSection =
+            chartCard?.parentElement;
+
+        if (
+            !chartSection ||
+            !hoursPanel.contains(chartSection)
+        ) {
+            continue;
+        }
+
+        if (!sections.has(category)) {
+            sections.set(category, {
+                category,
+                element: chartSection
             });
+        }
+    }
 
-            return element
-                ? { category, element }
-                : null;
-        })
+    return categories
+        .map(category => sections.get(category))
         .filter(Boolean);
+}
+
+
+async function captureHodHoursSlide(element) {
+    const svg = element.querySelector(
+        'svg[aria-label^="Daily average hours per machine for "]'
+    );
+
+    if (!svg) {
+        throw new Error(
+            "Hours-based chart SVG was not found."
+        );
+    }
+
+    const originalStyle = svg.getAttribute("style");
+    const originalWidth = svg.getAttribute("width");
+    const originalHeight = svg.getAttribute("height");
+
+    try {
+        svg.style.width = "100%";
+        svg.style.height = "auto";
+        svg.style.maxWidth = "none";
+        svg.style.display = "block";
+
+        await new Promise(resolve => {
+            requestAnimationFrame(() => {
+                requestAnimationFrame(resolve);
+            });
+        });
+
+        return await captureHodSection(element, {
+            quality: 0.95,
+            pixelRatio: 1.5
+        });
+    } finally {
+        if (originalStyle === null) {
+            svg.removeAttribute("style");
+        } else {
+            svg.setAttribute("style", originalStyle);
+        }
+
+        if (originalWidth === null) {
+            svg.removeAttribute("width");
+        } else {
+            svg.setAttribute("width", originalWidth);
+        }
+
+        if (originalHeight === null) {
+            svg.removeAttribute("height");
+        } else {
+            svg.setAttribute("height", originalHeight);
+        }
+    }
 }
 
 
@@ -1171,7 +1270,9 @@ async function captureHodCategorySection(
         categoryPanel,
         element,
         ...element.querySelectorAll(
-            ".frappe-card, .isd-chart, .isd-chart-stack"
+            ".frappe-card, .isd-chart, .isd-chart-stack, "
+            + ".isd-chart-grid, .isd-yaxis, .isd-bar, "
+            + ".isd-category-average-line, .isd-short-haul-segment"
         )
     ];
 
@@ -1213,6 +1314,94 @@ async function captureHodCategorySection(
     ).forEach(node => {
         node.style.maxWidth = "none";
         node.style.overflow = "visible";
+    });
+
+    // Presentation-only plotting height.
+    // Keep all chart percentages and averages aligned.
+    // Use a taller plot for wide machine fleets in PowerPoint.
+    const machineBarCount = element.querySelectorAll(
+        ".isd-chart-section:not(.isd-daily-summary-section) "
+        + ".isd-chart-grid > .isd-bar"
+    ).length;
+
+    const plotHeight = machineBarCount >= 36 ? 460 : 300;
+    const originalPlotScale = 220;
+    const plotScale = plotHeight / originalPlotScale;
+
+    element.querySelectorAll(
+        ".isd-chart-section:not(.isd-daily-summary-section)"
+    ).forEach(chartSection => {
+        chartSection.querySelectorAll(
+            ".isd-chart-grid"
+        ).forEach(grid => {
+            ["height", "min-height", "max-height", "line-height"]
+                .forEach(property => {
+                    grid.style.setProperty(
+                        property, `${plotHeight}px`, "important"
+                    );
+                });
+
+            grid.style.setProperty(
+                "background-size", `100% ${plotHeight / 10}px`, "important"
+            );
+        });
+
+        chartSection.querySelectorAll(
+            ".isd-yaxis"
+        ).forEach(axis => {
+            ["height", "min-height", "max-height"]
+                .forEach(property => {
+                    axis.style.setProperty(
+                        property, `${plotHeight}px`, "important"
+                    );
+                });
+        });
+
+        chartSection.querySelectorAll(
+            ".isd-chart-grid > .isd-bar"
+        ).forEach(bar => {
+            const originalHeight = parseFloat(bar.style.height);
+
+            if (Number.isFinite(originalHeight)) {
+                const scaledHeight = Math.min(
+                    plotHeight,
+                    Math.max(2, originalHeight * plotScale)
+                );
+
+                bar.style.setProperty(
+                    "height", `${scaledHeight}px`, "important"
+                );
+            }
+
+            bar.style.setProperty(
+                "max-height", `${plotHeight}px`, "important"
+            );
+
+            bar.querySelectorAll(".isd-short-haul-segment")
+                .forEach(segment => {
+                    const height = parseFloat(segment.style.height);
+                    if (Number.isFinite(height)) {
+                        segment.style.setProperty(
+                            "height",
+                            `${height * plotScale}px`,
+                            "important"
+                        );
+                    }
+                });
+        });
+
+        chartSection.querySelectorAll(
+            ".isd-category-average-line"
+        ).forEach(line => {
+            const bottom = parseFloat(line.style.bottom);
+            if (Number.isFinite(bottom)) {
+                line.style.setProperty(
+                    "bottom",
+                    `${bottom * plotScale}px`,
+                    "important"
+                );
+            }
+        });
     });
 
     await new Promise(resolve => {
