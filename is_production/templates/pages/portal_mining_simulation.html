@@ -134,10 +134,13 @@ body.no-sec-legend #spLegend { display: none !important; }
 @media (min-width: 1181px) { .inspector { border-left: 0; } }
 .side { background: var(--panel); border-right: 1px solid var(--line); display: grid; grid-template-rows: auto 1fr; grid-template-columns: minmax(0, 1fr); min-height: 0; min-width: 0; }
 .sec > *, .tab-body > *, .work > * { min-width: 0; }
-.tabs { display: flex; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; padding: 0 6px; }
-.tabs button { flex: 1 0 auto; border: 0; background: none; padding: 11px 2px 9px; font-family: var(--font-cond); font-weight: 600; font-size: 12px; letter-spacing: .02em; text-transform: uppercase; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; }
-.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
-.tabs button:hover { color: var(--ink); }
+/* the panels: one dropdown, grouped by stage of the plan */
+.tabs { display: flex; align-items: center; border-bottom: 1px solid var(--line); padding: 8px 10px; }
+.tab-pick { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+.tab-pick .tab-k { flex: none; font-family: var(--font-cond); font-weight: 600; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.tab-pick select { flex: 1; min-width: 0; font-family: var(--font-cond); font-weight: 600; font-size: 15px; letter-spacing: .02em; color: var(--ink); background: var(--field); border: 1px solid var(--line); border-bottom: 2px solid var(--accent); border-radius: 5px; padding: 6px 8px; cursor: pointer; }
+.tab-pick select:hover { border-color: var(--ink-2); border-bottom-color: var(--accent); }
+.tab-pick select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .tab-body { overflow-y: auto; padding: 14px 14px 40px; min-height: 0; display: flex; flex-direction: column; gap: 14px; }
 
 .sec { display: flex; flex-direction: column; gap: 9px; }
@@ -374,7 +377,7 @@ canvas.chart { width: 100%; display: block; }
 .sub-card { border: 1px solid var(--line-2); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 8px; margin-top: 8px; background: var(--card, transparent); }
 .legend3d .rl { display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 10.5px; color: var(--view-muted); width: 160px; }
 .legend3d .rl .z { position: absolute; transform: translateX(-50%); }
-/* the block margin scale in the Reserve tab: red below zero, green above */
+/* the block margin scale in the Block Margin Rank tab: red below zero, green above */
 .mg-scale { margin: 4px 0 2px; }
 .mg-scale .bar { height: 10px; border-radius: 3px; position: relative; }
 .mg-scale .bar .zero { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink); transform: translateX(-1px); border-radius: 1px; }
@@ -535,21 +538,18 @@ canvas.chart { width: 100%; display: block; }
   </header>
   <main class="work" id="work">
     <aside class="side" id="side">
-      <nav class="tabs" role="tablist" id="tabs">
-        <button type="button" role="tab" data-tab="project" aria-selected="true">Project</button>
-        <button type="button" role="tab" data-tab="data" aria-selected="false">Data</button>
-        <button type="button" role="tab" data-tab="reserve" aria-selected="false">Reserve</button>
-        <button type="button" role="tab" data-tab="rank" aria-selected="false">Block Margin Rank</button>
-        <button type="button" role="tab" data-tab="strip" aria-selected="false">Strip Ratio</button>
-        <button type="button" role="tab" data-tab="production" aria-selected="false">Production</button>
-        <button type="button" role="tab" data-tab="dumps" aria-selected="false">Dumps</button>
-        <button type="button" role="tab" data-tab="roads" aria-selected="false">Roads</button>
-        <button type="button" role="tab" data-tab="sequence" aria-selected="false">Sequence</button>
-        <button type="button" role="tab" data-tab="finance" aria-selected="false">Finance</button>
-        <button type="button" role="tab" data-tab="recon" aria-selected="false">Recon</button>
-        <button type="button" role="tab" data-tab="results" aria-selected="false">Results</button>
+      <nav class="tabs" id="tabs" aria-label="Panels">
+        <label class="tab-pick" for="tabSelect"><span class="tab-k">Panel</span>
+          <select id="tabSelect">
+            <optgroup label="Set-up"><option value="project">Project</option><option value="data">Geological Data</option><option value="layers">Feature layers</option></optgroup>
+            <optgroup label="Resource"><option value="reserve">Reserve</option><option value="rank">Block Margin Rank</option><option value="strip">Strip Ratio</option></optgroup>
+            <optgroup label="Mining"><option value="production">Production</option><option value="blast">Drill and Blast</option><option value="dumps">Dumps</option><option value="roads">Roads</option><option value="sequence">Sequence</option></optgroup>
+            <optgroup label="Water and rehabilitation"><option value="hydro">Hydrogeological</option><option value="rehab">Rehab</option></optgroup>
+            <optgroup label="Outcomes"><option value="finance">Finance</option><option value="recon">Recon</option><option value="results">Results</option></optgroup>
+          </select>
+        </label>
       </nav>
-      <div class="tab-body" id="tabBody" role="tabpanel"></div>
+      <div class="tab-body" id="tabBody" role="region" aria-label="Panel"></div>
     </aside>
     <div class="gutter v" id="gutSide" data-k="side" role="separator" aria-orientation="vertical" aria-label="Width of the side panel" title="Drag to resize · double-click for the usual size" tabindex="0"></div>
     <section class="stage">
@@ -2677,7 +2677,7 @@ const Model = (() => {
       if (L.type !== 'coal') continue;
       const min = +L.minThick > 0 ? +L.minThick : 0, tgt = cutTarget(P, l), top = raw[l], bot = raw[l + 1];
       cut.min[l] = min; cut.target[l] = tgt;
-      /* Quality cut-offs (L.qcut = {cv: lowest CV, ash: highest ASH, ts: highest TS}, Reserve tab): a block whose value of
+      /* Quality cut-offs (L.qcut = {cv: lowest CV, ash: highest ASH, ts: highest TS}, Block Margin Rank tab): a block whose value of
          the seam (its column in the block attributes, as the margin reads it) is past one of them has the whole seam taken
          as waste there, like a seam below its thickness cut-off. A block without the value is kept as coal. */
       const QC = L.qcut || {}, qn = v => (v === '' || v == null || !isFinite(+v) ? null : +v), qLim = { cv: qn(QC.cv), ash: qn(QC.ash), ts: qn(QC.ts) };
@@ -2800,7 +2800,7 @@ const Model = (() => {
   }
 
   // Activity dump options [{dump, from}] (older projects kept a plain list of dump ids in priority order)
-  // the mining activities take the colour of their layer (the stratigraphy colours of the Data tab)
+  // the mining activities take the colour of their layer (the stratigraphy colours of the Geological Data tab)
   function syncActColors(P) {
     let n = 0;
     for (const a of P.activities || []) { const L = (P.layers || []).find(x => x.id === a.layerId); if (L && L.color && a.color !== L.color) { a.color = L.color; n++; } }
@@ -2814,7 +2814,7 @@ const Model = (() => {
   // ---------- depth limits ----------
   /* P.limits = [{id, name, pts, layerId}]. A block whose centre lies inside a zone is mined only down to and including
      that layer. Returns the deepest layer index allowed per block and the zone that sets it (-1 = unrestricted). */
-  /* The reserve boundary (P.reserve.pts, Reserve tab): the blocks whose centre lies inside it are mined; those outside are
+  /* The reserve boundary (P.reserve.pts, Block Margin Rank tab): the blocks whose centre lies inside it are mined; those outside are
      left. 1 for a block inside (all of them without a boundary). */
   const hasReserve = P => !!(P.reserve && P.reserve.on !== false && P.reserve.pts && P.reserve.pts.length >= 3);
   // its rings: P.reserve.rings (the areas and the holes of a boundary made from a strip ratio cut-off), else the one polygon
@@ -2825,7 +2825,7 @@ const Model = (() => {
     if (hasReserve(P)) ws.blockCentroid.forEach((c, b) => { if (b < nB && !inReserve(P, c[0], c[1])) ins[b] = 0; });
     return ins;
   }
-  /* opt.noReserve: leave the reserve boundary out (the Reserve tab ranks every block, inside it or not). out[b] = 1: the
+  /* opt.noReserve: leave the reserve boundary out (the Block Margin Rank tab ranks every block, inside it or not). out[b] = 1: the
      block lies outside the reserve boundary and is not mined (lim -1). */
   function blockLimits(P, ws, opt) {
     const nL = P.layers.length, nB = P.blocks.length;
@@ -3516,7 +3516,7 @@ const Synth = (() => {
     const { names, surf } = surfaces();
     const P = Model.newProject('Demo Colliery (synthetic data)');
     P.isDemo = true;
-    P.description = 'Example rollover pit generated from synthetic data: 5 layers, 120 blocks, dozer rollover of the 4–2 interburden. Replace with your own TIFF, DXF and Excel files from the Data tab.';
+    P.description = 'Example rollover pit generated from synthetic data: 5 layers, 120 blocks, dozer rollover of the 4–2 interburden. Replace with your own TIFF, DXF and Excel files from the Geological Data tab.';
     P.startDate = '2026-11-02';
     P.crs = { preset: 'lo29_neg', proj4: '', axis: 'EN' };
     P.grid = { x0: E0, y0: N0, nx: NX, ny: NY, cell: CELL };
@@ -3568,7 +3568,7 @@ const Synth = (() => {
     byName('Topsoil').dep = { on: 'below', lead: 2, unit: 'strip' }; // do not strip topsoil more than two strips ahead of the overburden
     byName('Overburden').dests = D('dmp_box', { dump: 'dmp_inpit', from: '2027-02-01' }); // ex-pit first, then backfill the mined-out pit
     P.bench = { on: true, lead: 3 }; // mined in benches by strip: no layer more than three strips ahead of the lowest coal seam
-    // the block margin (Reserve tab): example costs and a price that follows the CV of each seam
+    // the block margin (Block Margin Rank tab): example costs and a price that follows the CV of each seam
     P.margin = { wasteCost: 130, coalCost: 200, price: 25, byCV: true, plant: false, basis: 'insitu', currency: 'R' };
     const ib = P.activities.find(a => a.method === 'dozer_push');
     ib.dests = D('dmp_box'); ib.pushBearing = 270;
@@ -4563,7 +4563,7 @@ const Sim = (() => {
       return D;
     });
   }
-  /* Depression fills with a start date (P.fills[k].start, Dumps tab): from that day the waste hauled to the dumps fills
+  /* Depression fills with a start date (P.fills[k].start, Rehab tab): from that day the waste hauled to the dumps fills
      them first (never the topsoil), up to the top of the backfill of the final landform (RH.cap: the hollow brought up to the level of the
      ground around it, less the topsoil), lift by lift from the tipping point nearest the roads. Each is a dump of its own
      (kind 'fill') at the head of the dump options of every activity that hauls to a waste dump; its mined ground is filled
@@ -4632,8 +4632,8 @@ const Sim = (() => {
   // ---------------- validation ----------------
   function validate(ws) {
     const P = ws.project, out = [];
-    if (!P.layers.length) out.push({ type: 'error', msg: 'No stratigraphic layers. Load elevation TIFFs in the Data tab.' });
-    if (!P.blocks.length) out.push({ type: 'error', msg: 'No mining blocks. Load a block layout DXF in the Data tab.' });
+    if (!P.layers.length) out.push({ type: 'error', msg: 'No stratigraphic layers. Load elevation TIFFs in the Geological Data tab.' });
+    if (!P.blocks.length) out.push({ type: 'error', msg: 'No mining blocks. Load a block layout DXF in the Geological Data tab.' });
     const seen = new Set();
     // separate pits: every part of the mine with blocks (each pit, and the ground outside them) has its own activities
     const pits = P.pits || [], pitOf = Model.blockPits(P, ws), inPart = new Int32Array(pits.length + 1);
@@ -4668,7 +4668,7 @@ const Sim = (() => {
       if (!dst) out.push({ type: 'warn', msg: `Rehandling "${j.name}" has nowhere to put the material, so it is skipped. Choose where it goes in the Dumps tab.` });
       else if (src && dst === src) out.push({ type: 'warn', msg: `Rehandling "${j.name}" takes from and puts into the same dump; it is skipped.` });
       if (j.when === 'date' && !U.parseISO(j.start || '')) out.push({ type: 'warn', msg: `Rehandling "${j.name}" starts on a date, but no date is set; it starts when mining finishes.` });
-      if (j.to === 'soil' && Water.settings(P).on === false) out.push({ type: 'warn', msg: `Rehandling "${j.name}" puts topsoil onto the backfill, but the final landform is switched off (Dumps tab), so no backfill waits for topsoil; it is skipped.` });
+      if (j.to === 'soil' && Water.settings(P).on === false) out.push({ type: 'warn', msg: `Rehandling "${j.name}" puts topsoil onto the backfill, but the final landform is switched off (Rehab tab), so no backfill waits for topsoil; it is skipped.` });
     }
     if (!(Model.teams(P).cap > 0)) out.push({ type: 'error', msg: 'Set the number of teams in the Production tab: the teams do the mining.' });
     if (!P.startDate || !U.parseISO(P.startDate)) out.push({ type: 'error', msg: 'Set a schedule start date in the Project tab.' });
@@ -4793,7 +4793,7 @@ const Sim = (() => {
       const st = RH.stats;
       if (RH.restore) events.push({ day: 0, type: 'info', msg: `Final landform: the mined-out ground is backfilled with waste up to the original topography${RH.above > 0 ? `, and ${U.fmtNum(RH.above, 1)} m above it` : ''}, and ${U.fmtNum(RH.soil, 2)} m of topsoil goes on top${RH.paths.length ? `; ${RH.paths.length} drainage line${RH.paths.length === 1 ? '' : 's'} along the flow paths` : ''}.${st.lowered > 1 ? ` Drains and natural hollows leave ${U.fmtBig(st.lowered, 'm³')} below the original topography.` : ''}` });
       else events.push({ day: 0, type: 'info', msg: `Final landform: the mined-out ground is backfilled up to the original topography, or to the average of the ground within ${U.fmtNum(st.radius, 0)} m where that is lower, less ${U.fmtNum(RH.soil, 2)} m for the topsoil that goes on top${RH.paths.length ? `, with ${RH.paths.length} drainage line${RH.paths.length === 1 ? '' : 's'} along the flow paths` : ''}. That leaves ${U.fmtBig(st.lowered + RH.soil * st.area, 'm³')} less room than filling to the original topography.` });
-      for (const q of RH.paths) if (q.rise > 0.1) events.push({ day: 0, type: 'warn', msg: `Flow path "${q.name}" has to climb ${U.fmtNum(q.rise, 1)} m against its direction ${U.fmtNum(q.riseAt, 0)} m along it, where the drain may not go deeper than ${U.fmtNum(RH.stats.cutDepth, 1)} m into ground that is not mined, so the water cannot follow it all the way. Draw it around the high ground, or let the drain cut deeper (Dumps tab).` });
+      for (const q of RH.paths) if (q.rise > 0.1) events.push({ day: 0, type: 'warn', msg: `Flow path "${q.name}" has to climb ${U.fmtNum(q.rise, 1)} m against its direction ${U.fmtNum(q.riseAt, 0)} m along it, where the drain may not go deeper than ${U.fmtNum(RH.stats.cutDepth, 1)} m into ground that is not mined, so the water cannot follow it all the way. Draw it around the high ground, or let the drain cut deeper (Hydrogeological tab).` });
       if (RH.stats.cutVol > 1) events.push({ day: 0, type: 'info', msg: `Flow paths: ${U.fmtBig(RH.stats.cutVol, 'bcm')} is cut for drains through ground that is not mined; it is dug when mining is finished and goes to the waste dumps.` });
       if (RH.lift && RH.restore) { const q = RH.lift;
         events.push({ day: 0, type: 'info', msg: `Waste above the original topography: up to ${U.fmtNum(q.max, 1)} m over the mined ground, ${U.fmtBig(q.vol, 'm³')} (${U.fmtNum(q.avg, 2)} m on average over ${U.fmtArea(q.area)} of the ${U.fmtArea(q.maskArea)} mined). At the edge it comes down to the ground around it at ${U.fmtNum(q.tie, 1)}%. ${q.chCells ? `Water that runs in from outside the mining area crosses it as before, in channels left at the original ground (${U.fmtNum(q.chLen, 0)} m of channel, banks at ${U.fmtNum(q.bank, 0)}%). ` : ''}It is built with the backfill, strip by strip as the voids are filled, and the topsoil goes on top of it.` }); }
@@ -4817,8 +4817,8 @@ const Sim = (() => {
       dumps.push(D);
       events.push({ day: D.startDay, type: 'info', msg: `${D.name}: from ${U.fmtDay(P.startDate, D.startDay)} the waste hauled to the dumps ${D.what === 'raise' ? 'builds' : 'fills'} it first (waste only: the topsoil keeps to its own dumps), up to the top of the ${D.what === 'raise' ? 'raised landform' : 'backfill'} below the topsoil (${U.fmtBig(D.fillCap, 'm³')} of spoil above the original ground${D.blocks.size ? ', and the mined-out ground in it once the blocks under it are mined out' : ''}); the activities’ own dumps take what it has no room for.` });
     }
-    for (const f of P.fills || []) if (f.start && U.parseISO(f.start) && !RH) events.push({ day: 0, type: 'warn', msg: `Depression fill “${f.name}” has a start date, but the final landform is switched off (Dumps tab), so it is not filled.` });
-    for (const f of P.raises || []) if (f.start && U.parseISO(f.start) && !RH) events.push({ day: 0, type: 'warn', msg: `Raised area “${f.name}” has a start date, but the final landform is switched off (Dumps tab), so it is not built.` });
+    for (const f of P.fills || []) if (f.start && U.parseISO(f.start) && !RH) events.push({ day: 0, type: 'warn', msg: `Depression fill “${f.name}” has a start date, but the final landform is switched off (Rehab tab), so it is not filled.` });
+    for (const f of P.raises || []) if (f.start && U.parseISO(f.start) && !RH) events.push({ day: 0, type: 'warn', msg: `Raised area “${f.name}” has a start date, but the final landform is switched off (Rehab tab), so it is not built.` });
     const dumpById = new Map(dumps.map(D => [D.d.id, D]));
     const cal = P.calendar, H = +cal.hoursPerDay || 22;
     const start = U.parseISO(P.startDate);
@@ -5059,7 +5059,7 @@ const Sim = (() => {
        others may. Ramp excavation and rehandling are done by the teams too: they are not held back, but the rest of the
        month has that much less. */
     const TG = P.targets || {}, tgLimit = TG.mode !== 'compare', TM = Model.teams(P);
-    const PRD = TG.coalBasis === 'product' && typeof Wash !== 'undefined' ? Wash.product(P) : null; // a coal target in washed product (washability, Data tab)
+    const PRD = TG.coalBasis === 'product' && typeof Wash !== 'undefined' ? Wash.product(P) : null; // a coal target in washed product (washability, Geological Data tab)
     const TL = { coal: tgLimit && +TG.coal > 0 ? +TG.coal : 0, waste: tgLimit && +TG.waste > 0 ? +TG.waste : 0, wT: TG.wasteUnit === 't', work: TG.basis === 'working', per: Monthly.daysPerMonth(P), team: TM.cap, ar: TG.coalBasis === 'ar' || !!PRD, prod: PRD };
     TL.any = TL.coal > 0 || TL.waste > 0;
     events.push({ day: 0, type: 'info', msg: `Teams: ${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)} team${TM.count === 1 ? '' : 's'} × ${U.fmtNum(TM.perTeam, 0)} m³ loose = ${U.fmtNum(TM.cap, 0)} m³ loose in an average month for the mining, the ramps and the rehandling.${TL.any ? ` The monthly targets limit it: ${[TL.coal > 0 ? `coal ${U.fmtNum(TL.coal, 0)} t${TL.prod ? ' of washed product' : TL.ar ? ' as received' : ''}` : null, TL.waste > 0 ? `waste ${U.fmtNum(TL.waste, 0)} ${TL.wT ? 't' : 'bcm'}` : null].filter(Boolean).join(' and ')} in an average month, following the ${TL.work ? 'working' : 'calendar'} days of each month.` : ''}` });
@@ -6763,7 +6763,7 @@ const Monthly = (() => {
     // the coal target with its ramp-up: day by day, each counted day × its share of the target
     const rampN = rampMonths(P);
     const coalTg = !(+T.coal > 0) ? null : !rampN ? spread(T.coal) : (() => { const a = mk(); for (let d = 0; d < nD; d++) if (basis !== 'working' || res.working[d]) a[mOf[d]] += (+T.coal * rampFactor(P, d)) / per; return a; })();
-    // the washed product (washability, Data tab): as received coal × yield, block by block
+    // the washed product (washability, Geological Data tab): as received coal × yield, block by block
     const prod = typeof Wash !== 'undefined' ? Wash.schedule(P, res, mOf, nM) : null;
     const target = { limit, rampMonths: rampN, coalAvg: +T.coal > 0 ? +T.coal : null, wasteAvg: +T.waste > 0 ? +T.waste : null, coal: coalTg, waste: spread(T.waste), wasteUnit, basis, per, coalBasis: T.coalBasis === 'ar' ? 'ar' : T.coalBasis === 'product' && prod ? 'product' : 'insitu' };
 
@@ -6856,7 +6856,7 @@ const Monthly = (() => {
     // the as received coal: the coal tons of the schedule × the as received factor of each seam (losses and contamination)
     { const a = mk(); for (const A of res.acts) { const Ly = L[A.layer]; if (Ly.type !== 'coal') continue; const f = Model.arFactor(P, Ly); for (let d = 0; d < n; d++) a[d] += A.t[d] * f; }
       if (L.some(x => x.type === 'coal')) cols.push({ key: 'ar', label: 'As received', unit: 't', kind: 'ar', daily: a }); }
-    // the washed product: as received × the yield of each block (washability, Data tab)
+    // the washed product: as received × the yield of each block (washability, Geological Data tab)
     { const W = typeof Wash !== 'undefined' ? Wash.schedule(P, res, new Int32Array(n), 1) : null;
       if (W) cols.push({ key: 'product', label: 'Product', unit: 't', kind: 'product', daily: W.daily }); }
     const shown = cols.filter(c => !hide[c.key]);
@@ -7521,7 +7521,7 @@ const Margin = (() => {
   function colFor(P, M, L, kind) { const v = (M[kind] || {})[L.id]; return v === undefined ? guess(P, L, kind) : v || ''; }
   // ready: the inputs the margin needs are there
   function ready(P) { const M = settings(P); return num(M.price) > 0 || (M.revBy === 'seam' && Object.values(M.seamPrice || {}).some(v => num(v) > 0)); }
-  // a seam counted as coal here: coal in the model, and not counted as waste in the Reserve tab
+  // a seam counted as coal here: coal in the model, and not counted as waste in the Block Margin Rank tab
   const isCoal = (M, L) => L.type === 'coal' && !(M.waste && M.waste[L.id]);
   const isWasteSeam = (M, L) => L.type === 'coal' && !isCoal(M, L);
 
@@ -7770,7 +7770,7 @@ const Tons = (() => {
   return { CONT, Q, settings, ps, compute, basis, kindOf };
 })();
 
-/* ===== Reserve boundary from a strip ratio and a block margin cut-off (Reserve tab; DOM-free) =====
+/* ===== Reserve boundary from a strip ratio and a block margin cut-off (Block Margin Rank tab; DOM-free) =====
    The blocks to mine, from the strip ratio and the margin of each block as the block margin counts them (waste bcm ÷
    coal t, and (revenue − cost) ÷ coal t; the seam cut-off and depth limits taken off, on its in-situ or as-received
    basis). A block, or blocks together, pass when their strip ratio (Σ waste ÷ Σ coal) is at or below srMax and their
@@ -7967,7 +7967,7 @@ const AutoRes = (() => {
   return { DEF, settings, adjacency, choose, cellMask, trace, simplify, inRings, outline, label, build };
 })();
 
-/* ===== Coal quality rasters (Data tab): the qualities of the blocks read from GeoTIFF grids =====
+/* ===== Coal quality rasters (Geological Data tab): the qualities of the blocks read from GeoTIFF grids =====
    P.qrasters = [{ id, file, layerId (the seam), kind (cv, ash, ts, im, vm, yield, rd or other), label (the file's name
    without its extension: the column name of an "other" quality), col (the attribute column the values go to), res (m),
    guessed (the seam or quality was not in the file name), read (date), sig (the blocks and model they were worked out
@@ -7977,7 +7977,7 @@ const AutoRes = (() => {
    average of its cells, weighted by the seam's thickness in each cell (its tons: the density is one value per block);
    cells without data are left out, so a block only partly covered takes the average of the covered part. Where the seam
    has no thickness in a block, the plain average over the block is kept. The values are written to the blocks as an
-   attribute column (col), which becomes the seam's quality: the Reserve tab's CV, ASH, TS or yield column
+   attribute column (col), which becomes the seam's quality: the Block Margin Rank tab's CV, ASH, TS or yield column
    (P.margin[kind]), the layer's quality columns (the monthly summary and the LoM sheets) or its density column (RD). */
 const Qual = (() => {
   // the qualities, in the order the file name is tested (the more particular first)
@@ -7991,9 +7991,9 @@ const Qual = (() => {
     { k: 'cv', name: 'CV', unit: 'MJ/kg', d: 2, lo: 5, hi: 40, re: /(^|[^a-z])(cv|gcv|ncv|mj|kcal|cal)([^a-z]|$)|calorific/i },
     { k: 'other', name: 'Other', unit: '', d: 2 }
   ];
-  const ORDER = ['cv', 'ash', 'ts', 'im', 'vm', 'yield', 'rd', 'other']; // as offered in the Data tab
+  const ORDER = ['cv', 'ash', 'ts', 'im', 'vm', 'yield', 'rd', 'other']; // as offered in the Geological Data tab
   const kind = k => KINDS.find(q => q.k === k) || KINDS[KINDS.length - 1];
-  const MARGIN = ['cv', 'ash', 'ts', 'yield']; // the Reserve tab's quality columns
+  const MARGIN = ['cv', 'ash', 'ts', 'yield']; // the Block Margin Rank tab's quality columns
   // the quality columns the LoM sheets read (13b-lom.js), so the one replaced by a raster is taken out of the layer's list
   const LOMRE = { cv: /(^|[^a-z])(cv|calorific|mj|kcal)/i, ash: /(^|[^a-z])ash/i, im: /(^|[^a-z])(im|inherent)/i, ts: /(^|[^a-z])(ts|sulph|sulfur|sulphur)/i, vm: /(^|[^a-z])(vm|volatile)/i };
   const list = P => P.qrasters || (P.qrasters = []);
@@ -8052,7 +8052,7 @@ const Qual = (() => {
   const stale = (P, e) => e.sig !== sig(P);
   const numeric = (P, c) => P.blocks.some(b => b.attrs && isFinite(parseFloat(b.attrs[c])));
 
-  /* The attribute file column the seam used for this quality before the raster (for the comparison): the Reserve tab's
+  /* The attribute file column the seam used for this quality before the raster (for the comparison): the Block Margin Rank tab's
      column, the density column, or a column named for the seam and the quality. */
   function fileCol(P, L, k) {
     if (!L) return '';
@@ -8155,7 +8155,7 @@ const Qual = (() => {
   return { KINDS, ORDER, kind, kindOf, detect, colName, blockValues, stats, sig, stale, fileCol, compare, assign, relabel, remove, rangeNote, MARGIN };
 })();
 
-/* ===== Coal washability (Data tab): float-sink curves from a CSV, and the washed product of each block and seam =====
+/* ===== Coal washability (Geological Data tab): float-sink curves from a CSV, and the washed product of each block and seam =====
    The CSV holds one row for each density fraction of a curve: the relative density (RD) of the float cut, the yield
    (mass %) and the qualities (CV, ash, IM, TS, VM, FC). A curve belongs to a seam (a column naming the seam) and may
    belong to a block (a block ID column), or to a borehole or zone with its coordinates (X and Y). Each row is either a
@@ -8170,7 +8170,7 @@ const Qual = (() => {
    the densities either side, and each quality as the mass of it (yield × quality) linearly, ÷ the yield, so the
    blend is right. A block takes the curve of its own ID, else the nearest borehole with coordinates (from its centre),
    else the curve of its seam; its product yield and qualities go to the blocks as attribute columns ("Seam 4 Yield
-   (wash)", "Seam 4 CV (wash)", "Seam 4 RD cut (wash)"), and the yield column becomes the seam's yield in the Reserve tab.
+   (wash)", "Seam 4 CV (wash)", "Seam 4 RD cut (wash)"), and the yield column becomes the seam's yield in the Block Margin Rank tab.
    The schedule's product: as received coal × yield, block by block, with the product qualities weighted by product tons. */
 const Wash = (() => {
   const QK = [
@@ -8411,7 +8411,7 @@ const Wash = (() => {
     }
     return W.stats;
   }
-  // the washed yield becomes the seam's yield column in the Reserve tab (its plant cost when the coal is processed)
+  // the washed yield becomes the seam's yield column in the Block Margin Rank tab (its plant cost when the coal is processed)
   function link(P, L, col) {
     const W = P.wash, m = P.margin || (P.margin = {}), y = m.yield || (m.yield = {}), prev = W.prev || (W.prev = {});
     if (!prev[L.id]) prev[L.id] = { had: Object.prototype.hasOwnProperty.call(y, L.id), v: y[L.id] === undefined ? null : y[L.id] };
@@ -8850,7 +8850,7 @@ const Hydro = (() => {
   return { DEF, MAT, RAIN, settings, matOf, grid, blur, aquifer, step, solve, run, at, flow, toCells, sampleAt, monthName };
 })();
 
-/* ===== Drill and blast (Production tab; DOM-free) =====
+/* ===== Drill and blast (Drill and Blast tab; DOM-free) =====
    Which layers are drilled and blasted (recommend: from the layer's type, name, thickness and depth below the ground;
    the user can set each one), the blast design of the waste and of the coal (burden × spacing, powder factor, subdrill,
    the highest bench, hole diameter, stemming and explosive density), and what the schedule needs of it day by day:
@@ -9019,7 +9019,7 @@ const Fin = (() => {
       f('royaltyRate', 'Royalty rate', '% of gross sales', 3, { step: 0.1, when: o => o.royalty === 'fixed' })] },
     { id: 'sales', title: 'Coal sales', fields: [
       f('wash', 'Wash the coal (a coal washing plant)', '', false, { kind: 'chk' }),
-      f('yieldSrc', 'Plant yield from', '', 'wash', { kind: 'sel', opts: [['wash', 'The washability data (Data tab), block by block'], ['fixed', 'A fixed yield']], when: o => o.wash }),
+      f('yieldSrc', 'Plant yield from', '', 'wash', { kind: 'sel', opts: [['wash', 'The washability data (Geological Data tab), block by block'], ['fixed', 'A fixed yield']], when: o => o.wash }),
       f('yieldFixed', 'Plant yield', '%', 70, { step: 0.5, when: o => o.wash }),
       f('expShare', 'Exported', '% of the coal sold', 60, { step: 5 }),
       f('expPrice', 'Export price', 'US$/t FOB', 95, { step: 1 }),
@@ -11288,7 +11288,7 @@ const UI = (() => {
 
   // ---------- init ----------
   function init() {
-    document.querySelectorAll('#tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+    $('tabSelect').addEventListener('change', e => showTab(e.target.value));
     $('btnProjects').addEventListener('click', projectsDialog);
     $('btnRun').addEventListener('click', () => App.runSim());
     $('btnRunView').addEventListener('click', () => App.runSim());
@@ -11381,7 +11381,7 @@ const UI = (() => {
   function showTab(t) {
     if (View.isDrawing()) View.cancelDraw();
     App.tab = t;
-    document.querySelectorAll('#tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === t ? 'true' : 'false'));
+    { const s = $('tabSelect'); if (s && s.value !== t) s.value = t; }
     renderTab();
     App.refreshOverlays();
   }
@@ -11513,7 +11513,7 @@ const UI = (() => {
     const RC = res ? res.cut : null, cutV = l => (res ? (RC && RC.vol[b][l] > 1e-3 ? RC.mined[b][l] : null) : C && C.vol[b][l] > 1e-3 ? C.vol[b][l] : null);
     const cutQ = l => (res ? RC && RC.layers.find(q => q.l === l) : C && { min: C.min[l], target: C.target[l] });
     if (limL < P.layers.length - 1) el.append(h('div', { class: 'msg warn', style: { marginBottom: '8px' } }, h('span', { class: 'ic' }, DLb.out[b] ? 'Reserve' : byCut ? 'Cut-off' : 'Limit'), h('span', { style: { flex: 1 } },
-      DLb.out[b] ? 'Outside the reserve boundary (Reserve tab): this block is not mined.' : byCut ? (limL < 0 ? 'Seam cut-off: no seam in this block passes the cut-off, so the block is not mined.' : `Seam cut-off: no seam below ${P.layers[limL].name} passes the cut-off, so mining stops there.`)
+      DLb.out[b] ? 'Outside the reserve boundary (Block Margin Rank tab): this block is not mined.' : byCut ? (limL < 0 ? 'Seam cut-off: no seam in this block passes the cut-off, so the block is not mined.' : `Seam cut-off: no seam below ${P.layers[limL].name} passes the cut-off, so mining stops there.`)
         : `Depth limit${DLb.zone[b] >= 0 && P.limits[DLb.zone[b]] ? ' “' + P.limits[DLb.zone[b]].name + '”' : ''}: mined only down to ${P.layers[limL].name}.`)));
     // the depth to the floor of the lowest seam mined in the block
     { const MR = App.margin(), q = MR && !DLb.out[b] ? MR.rows[b].dep : null;
@@ -11549,7 +11549,7 @@ const UI = (() => {
         const items = iv.C.seams.filter(l => iv.C.isSched(b, l)).map(l => { const t = Inventory.tonnes(iv.C, iv.I, b, l); return [h('span', { class: 'k' }, P.layers[l].name), h('span', { class: 'v' }, t.rem < 1 ? 'mined out' : t.exp >= t.rem - 1 ? `${U.fmtBig(t.exp, 't')} exposed` : t.exp > 1 ? `${U.fmtBig(t.exp, 't')} exposed, ${U.fmtBig(t.rem - t.exp, 't')} covered` : `${U.fmtBig(t.rem, 't')} covered`)]; });
         if (items.length) el.append(sec(`Coal on ${d >= 0 ? U.fmtDay(P.startDate, d) : 'the start date'}`, null, h('div', { class: 'kv' }, items)));
       } }
-    // its strip ratio and block margin (Reserve tab)
+    // its strip ratio and block margin (Block Margin Rank tab)
     { const R = App.margin(), r = R && R.rows[b], cur = ((P.margin || {}).currency || 'R').trim() || 'R';
       if (r) { const f = v => `${cur} ${U.fmtNum(v, 1)}/t`, S = R.stats.sr, cs = Margin.srColor(r.sr, S), chip = c => h('span', { class: 'mg-chip', style: { background: c ? `rgb(${c.join(',')})` : '#8a8f98' } });
         el.append(sec('Strip ratio', r.srRank ? h('span', { class: 'chip' }, `rank ${r.srRank} of ${S.n}`) : null, r.coalT > 0 ? h('div', { class: 'kv' },
@@ -11580,7 +11580,7 @@ const UI = (() => {
     if (seqs.length) el.append(sec('Sequence position', null, h('div', { class: 'kv' }, seqs.map(([k, v]) => [h('span', { class: 'k' }, k), h('span', { class: 'v' }, v)]))));
     const attrs = blk.attrs || {};
     const keys = Object.keys(attrs);
-    el.append(sec('Attributes', null, keys.length ? h('div', { class: 'kv' }, keys.map(k => [h('span', { class: 'k', title: k }, k), h('span', { class: 'v' }, fmtAttr(attrs[k]))])) : hint('No attributes linked. Load the block attribute Excel file in the Data tab.')));
+    el.append(sec('Attributes', null, keys.length ? h('div', { class: 'kv' }, keys.map(k => [h('span', { class: 'k', title: k }, k), h('span', { class: 'v' }, fmtAttr(attrs[k]))])) : hint('No attributes linked. Load the block attribute Excel file in the Geological Data tab.')));
     el.append(h('div', { class: 'row' }, btn('Centre view on block', () => { const c = ws.blockCentroid[b]; View.focusOn(c[0], c[1]); }, 'sm')));
   }
   function fmtAttr(v) { if (typeof v === 'number') return Number.isInteger(v) ? String(v) : U.fmtNum(v, Math.abs(v) < 10 ? 3 : 2); return v == null ? '' : String(v); }
@@ -11731,7 +11731,7 @@ const UI = (() => {
   function newProjectDialog() {
     let name = 'New pit', start = U.todayISO();
     const body = h('div', { class: 'grid2' }, fld('Project name', txt(name, v => (name = v), { live: true })), fld('Schedule start date', txt(start, v => (start = v), { type: 'date', live: true })));
-    modal('New project', h('div', null, body, hint('Next, open the Data tab and choose the folder with your elevation TIFFs, block layout DXF and block attribute Excel file.')), [
+    modal('New project', h('div', null, body, hint('Next, open the Geological Data tab and choose the folder with your elevation TIFFs, block layout DXF and block attribute Excel file.')), [
       btn('Cancel', closeModal),
       btn('Create project', async () => {
         const P = Model.newProject(name.trim() || 'New pit');
@@ -11773,7 +11773,7 @@ const Tabs = (() => {
 
   function render(tab, body) {
     if (!App.P) { body.append(h('div', { class: 'empty' }, 'Loading…')); return; }
-    ({ project, data, sequence, roads, dumps, production, reserve, rank, strip, finance, recon, results })[tab](body);
+    ({ project, data, layers: featureLayers, sequence, roads, dumps, production, blast: drillBlast, reserve, rank, strip, hydro, rehab, finance, recon, results })[tab](body);
     if (!App.canEdit) body.querySelectorAll('input,select,textarea').forEach(i => { if (!i.closest('[data-viewer]')) i.disabled = true; });
   }
   function hud(title, sub, buttons) {
@@ -11791,7 +11791,7 @@ const Tabs = (() => {
     body.append(sec('Project', null,
       fld('Name', txt(P.name, v => { P.name = v.trim() || 'Untitled'; App.changed('meta'); UI.setProjectName(P.name); })),
       fld('Description', txt(P.description, v => { P.description = v; App.changed('meta'); }, { area: true })),
-      P.isDemo ? hint('This example colliery is built from <b>synthetic data</b>. Explore it, or start your own project from the Projects menu and load your files in the Data tab.') : null
+      P.isDemo ? hint('This example colliery is built from <b>synthetic data</b>. Explore it, or start your own project from the Projects menu and load your files in the Geological Data tab.') : null
     ));
     const startTxt = h('p', { class: 'hint' });
     const updStart = () => { const d = U.parseISO(P.startDate); startTxt.textContent = d ? `Day 1 of the schedule is ${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][d.getUTCDay()]} ${U.fmtDate(d)}.` : 'Set a start date.'; };
@@ -11830,7 +11830,7 @@ const Tabs = (() => {
       imBody.push(hint('Uses Google’s official Map Tiles API. Enable “Map Tiles API” for the key in Google Cloud and restrict it to the site you open this page from. The key is saved with the project, so anyone who can open the project can see it.'));
     }
     if (im.provider === 'custom') imBody.push(fld('Tile URL template', txt(im.customUrl, v => { im.customUrl = v.trim(); App.changed('meta'); App.sat.sig = ''; }, { placeholder: 'https://…/{z}/{x}/{y}.jpg' })));
-    if (im.provider === 'file') imBody.push(hint('Choose the image in the Data tab: a GeoTIFF (8-bit RGB) or a JPG/PNG with a world file (.jgw/.pgw), in the same coordinate system as the model. The image is stored with the project, so view-only users see it too.'));
+    if (im.provider === 'file') imBody.push(hint('Choose the image in the Geological Data tab: a GeoTIFF (8-bit RGB) or a JPG/PNG with a world file (.jgw/.pgw), in the same coordinate system as the model. The image is stored with the project, so view-only users see it too.'));
     imBody.push(h('label', { class: 'fld' }, h('span', null, 'Imagery opacity'), (() => { const r = h('input', { type: 'range', min: 0.2, max: 1, step: 0.05, value: im.opacity || 1 }); r.addEventListener('input', () => { im.opacity = +r.value; View.setSatVisible(App.sat.on, im.opacity); }); r.addEventListener('change', () => App.changed('meta')); return r; })()));
     if (App.env.artifact && im.provider !== 'file') imBody.push(msg('warn', 'Inside the Claude viewer, pages cannot load map tiles from Google or Esri. Here, use an image from the project folder. Live imagery works when you open the downloaded standalone file in a normal browser.'));
     imBody.push(h('div', { class: 'row' }, btn(App.sat.on ? 'Reload imagery' : 'Show satellite photo', () => { App.sat.sig = ''; App.toggleSat(true); }, 'sm')));
@@ -12060,9 +12060,6 @@ const Tabs = (() => {
     qualitySection(body);
     washSection(body);
 
-    // ---- KML overlays & keep-out zones
-    overlaySection(body);
-
     // ---- imagery file
     if (P.imagery.provider === 'file' || D.images.length) {
       const imgs = D.images.filter(n => !TIF_EXT.test(ext(n)) || (D.info.get(n) || {}).kind === 'image');
@@ -12170,8 +12167,8 @@ const Tabs = (() => {
         st && st.none ? msg('warn', `${st.none} block${st.none === 1 ? ' has' : 's have'} no curve: ${st.none === 1 ? 'it takes' : 'they take'} the seam’s average yield in the schedule.`) : null,
         col && st && st.n && App.ws ? h('div', { class: 'row' }, btn(App.colorBy === 'attr' && App.colorAttr === col.yield ? 'Coloured by its yield' : 'Colour the blocks by its yield', () => { App.colorBy = 'attr'; App.colorAttr = col.yield; UI.renderColorBy(); App.refreshTint(); UI.renderTab(); }, 'sm')) : null));
     }
-    if (edit()) parts.push(h('div', { class: 'row' }, btn('Remove the washability', async () => { if (!(await UI.confirmBox('Remove the washability', `Remove ${W.file} and the product columns of the blocks? The seams’ yield columns in the Reserve tab go back to what they were.`, 'Remove', true))) return; if (App.colorBy === 'attr' && /\(wash\)$/.test(App.colorAttr || '')) App.colorBy = 'status'; Wash.remove(P); const T = P.targets || {}; if (T.coalBasis === 'product') { T.coalBasis = 'insitu'; App.changed('sim'); } App.changed('wash', { now: true }); UI.renderTab(); }, 'sm ghost danger')));
-    parts.push(hint('Each block takes the curve of its own block ID, else the nearest borehole (from the block’s centre), else the curve of its seam, and is washed at the seam’s cut: at a density, or to a product ash or CV (the highest density that still makes it, so the most yield). The product is read off the cumulative float curve between the densities either side. Its yield and qualities go to the blocks as attribute columns (“Seam 4 Yield (wash)”, “Seam 4 CV (wash)”, “Seam 4 RD cut (wash)”), and the yield becomes the seam’s yield in the Reserve tab (the plant cost when the coal is processed). The schedule’s product is the as received coal of each block × its yield, its qualities weighted by product tons: in the Results tab, the running totals under the Gantt chart, the Excel monthly summary and LoM sheets; and the coal target can be set in product tons (Production tab).'));
+    if (edit()) parts.push(h('div', { class: 'row' }, btn('Remove the washability', async () => { if (!(await UI.confirmBox('Remove the washability', `Remove ${W.file} and the product columns of the blocks? The seams’ yield columns in the Block Margin Rank tab go back to what they were.`, 'Remove', true))) return; if (App.colorBy === 'attr' && /\(wash\)$/.test(App.colorAttr || '')) App.colorBy = 'status'; Wash.remove(P); const T = P.targets || {}; if (T.coalBasis === 'product') { T.coalBasis = 'insitu'; App.changed('sim'); } App.changed('wash', { now: true }); UI.renderTab(); }, 'sm ghost danger')));
+    parts.push(hint('Each block takes the curve of its own block ID, else the nearest borehole (from the block’s centre), else the curve of its seam, and is washed at the seam’s cut: at a density, or to a product ash or CV (the highest density that still makes it, so the most yield). The product is read off the cumulative float curve between the densities either side. Its yield and qualities go to the blocks as attribute columns (“Seam 4 Yield (wash)”, “Seam 4 CV (wash)”, “Seam 4 RD cut (wash)”), and the yield becomes the seam’s yield in the Block Margin Rank tab (the plant cost when the coal is processed). The schedule’s product is the as received coal of each block × its yield, its qualities weighted by product tons: in the Results tab, the running totals under the Gantt chart, the Excel monthly summary and LoM sheets; and the coal target can be set in product tons (Production tab).'));
     body.append(sec('Coal washability (CSV)', h('span', { class: 'chip' }, `${W.curves.length} curve${W.curves.length === 1 ? '' : 's'}`), ...parts));
   }
   /* The cumulative float yield of each curve against the density, with the cut (or, to a target, where each curve is cut). */
@@ -12200,7 +12197,7 @@ const Tabs = (() => {
       const T = P.targets || {}; if (T.coalBasis === 'product' && +T.coal > 0) App.changed('sim');
       UI.renderTab();
       const st = P.wash.stats || {}, seams = P.layers.filter(L => st[L.id]).map(L => `${L.name} ${U.fmtNum(st[L.id].yAvg, 1)}% yield`);
-      UI.toast(`${name}: ${r.curves.length} washability curve${r.curves.length === 1 ? '' : 's'} read${seams.length ? ` — ${seams.join(', ')}` : ''}.${r.notes.length ? ' ' + r.notes.join(' ') : ''}${!seams.length ? ' Choose the seam of each curve in the Data tab.' : ''}`, 8000);
+      UI.toast(`${name}: ${r.curves.length} washability curve${r.curves.length === 1 ? '' : 's'} read${seams.length ? ` — ${seams.join(', ')}` : ''}.${r.notes.length ? ' ' + r.notes.join(' ') : ''}${!seams.length ? ' Choose the seam of each curve in the Geological Data tab.' : ''}`, 8000);
     } catch (e) { UI.toast(`${name} could not be read as washability curves: ${e.message}`, 8000); console.warn(e); }
   }
 
@@ -12228,7 +12225,7 @@ const Tabs = (() => {
     }
     if (!ws || !P.blocks.length) parts.push(msg('warn', 'Build the 3D model and load the block layout first: the rasters are averaged over the blocks.'));
     for (const e of list) parts.push(qualityCard(e));
-    if (list.length) parts.push(hint('The seam and the quality are read from the file name (S4_CV.tif, Seam2_Ash.tif, No4_TS.tif…); check them on each raster. The values are written to the blocks as an attribute column, such as “Seam 4 CV (raster)”, which becomes the seam’s quality: in the Reserve tab (CV, ASH, TS and yield: the blended qualities and the margin), first among the layer’s quality columns (the monthly summary and the LoM sheets of the Excel schedule), or as its density column (RD, which changes its tons). Remove a raster to go back to the attribute file. Cells without data are left out: a block partly covered takes the average of the part covered; a block not covered keeps no value, and the Block Margin Rank tab gives it the seam’s average. The rasters are not saved with the project, only the block values: after the blocks or the model change, add the files again.'));
+    if (list.length) parts.push(hint('The seam and the quality are read from the file name (S4_CV.tif, Seam2_Ash.tif, No4_TS.tif…); check them on each raster. The values are written to the blocks as an attribute column, such as “Seam 4 CV (raster)”, which becomes the seam’s quality: in the Block Margin Rank tab (CV, ASH, TS and yield: the blended qualities and the margin), first among the layer’s quality columns (the monthly summary and the LoM sheets of the Excel schedule), or as its density column (RD, which changes its tons). Remove a raster to go back to the attribute file. Cells without data are left out: a block partly covered takes the average of the part covered; a block not covered keeps no value, and the Block Margin Rank tab gives it the seam’s average. The rasters are not saved with the project, only the block values: after the blocks or the model change, add the files again.'));
     body.append(sec('Coal quality rasters', list.length ? h('span', { class: 'chip' }, `${list.length} raster${list.length === 1 ? '' : 's'}`) : null, ...parts));
   }
   function qualityCard(e) {
@@ -12497,7 +12494,7 @@ const Tabs = (() => {
         App.changed('cutoff'); App.changed('sim'); UI.renderTab();
         if (n) UI.toast(v ? `${n} topsoil activit${n === 1 ? 'y now tips' : 'ies now tip'} on the waste dumps (in the Sequence tab).` : `${n} topsoil activit${n === 1 ? 'y is' : 'ies are'} back on ${n === 1 ? 'its' : 'their'} topsoil stockpile.`, 6000);
       }),
-      hint(`${P.topsoilAsWaste === true ? 'On' : 'Off'}: ${P.topsoilAsWaste === true ? 'topsoil is mined and dumped like the overburden: its activity tips on the waste dumps, the trucks may use it to fill ramps, and a thin seam right under it can be cut off into it.' : 'topsoil goes to its own stockpile and is not used for ramp fill.'} Either way it counts as waste in the totals, the strip ratio and the monthly waste target; the running totals under the Gantt chart show it in its own column.${Water.settings(P).on !== false && Water.settings(P).soilDirect !== false ? ' Where backfill has reached its final level, the topsoil goes straight onto it first (Dumps tab, “Backfill and final landform”).' : ''}${has ? '' : ' This model has no layer of the type Topsoil.'}`));
+      hint(`${P.topsoilAsWaste === true ? 'On' : 'Off'}: ${P.topsoilAsWaste === true ? 'topsoil is mined and dumped like the overburden: its activity tips on the waste dumps, the trucks may use it to fill ramps, and a thin seam right under it can be cut off into it.' : 'topsoil goes to its own stockpile and is not used for ramp fill.'} Either way it counts as waste in the totals, the strip ratio and the monthly waste target; the running totals under the Gantt chart show it in its own column.${Water.settings(P).on !== false && Water.settings(P).soilDirect !== false ? ' Where backfill has reached its final level, the topsoil goes straight onto it first (Rehab tab, “Backfill and final landform”).' : ''}${has ? '' : ' This model has no layer of the type Topsoil.'}`));
   }
   function layersTable() {
     const P = App.P, ws = App.ws;
@@ -12943,7 +12940,7 @@ const Tabs = (() => {
   // =============== SEQUENCE ===============
   function sequence(body) {
     const P = App.P, ws = App.ws;
-    if (!P.layers.length) { body.append(h('div', { class: 'empty' }, 'Build the 3D model in the Data tab first. Activities are created for each layer.')); return; }
+    if (!P.layers.length) { body.append(h('div', { class: 'empty' }, 'Build the 3D model in the Geological Data tab first. Activities are created for each layer.')); return; }
     const acts = P.activities, pits = P.pits || (P.pits = []);
     if (!acts.find(a => a.id === App.actId)) App.actId = acts[0] ? acts[0].id : null;
     pitSection(body);
@@ -12990,7 +12987,7 @@ const Tabs = (() => {
       fld('Layer', sel(P.layers.map(l => [l.id, l.name]), a.layerId, v => { a.layerId = v; Model.syncActColors(P); App.changed('sim'); App.syncColors(); UI.renderTab(); })),
       fld('Method', sel([['truck_shovel', 'Truck & shovel'], ['dozer_push', 'Dozer push'], ['mixed', 'Dozer push with truck & shovel']], a.method, v => { a.method = v; if (v !== 'truck_shovel') a.destMode = 'void'; App.changed('sim'); UI.renderTab(); })),
       fld(`Colour (of ${(P.layers.find(l => l.id === a.layerId) || { name: 'the layer' }).name})`, (() => {
-        // the colour of the activity is its layer's (Data tab, stratigraphy): changing it here changes the layer and its other activities
+        // the colour of the activity is its layer's (Geological Data tab, stratigraphy): changing it here changes the layer and its other activities
         const c = h('input', { type: 'color', value: a.color, title: 'The colour of the layer: its activities and the 3D strata' });
         c.setAttribute('aria-label', 'Colour of the layer of ' + a.name);
         c.addEventListener('change', () => { const L = P.layers.find(l => l.id === a.layerId); if (L) L.color = c.value; else a.color = c.value; App.changed('colors'); UI.renderTab(); });
@@ -13147,7 +13144,7 @@ const Tabs = (() => {
     body.append(sec('Mining path', h('span', { class: 'chip' }, `${ws ? a.path.filter(id => { const b = ws.blockIndex.get(id); return b === undefined || (!cutOff(b) && !isOut(b) && !foreign(b)); }).length : a.path.length} blocks · ${U.fmtBig(tot, 'bcm')}`), tools,
       nFor ? msg('warn', `${nFor} block${nFor === 1 ? '' : 's'} in this path ${nFor === 1 ? 'lies' : 'lie'} outside ${pk(a) >= 0 ? 'pit ' + pits[pk(a)].name : 'this part of the mine'} and ${nFor === 1 ? 'is' : 'are'} skipped: a block is mined by the activities of its own pit.`) : null,
       nCut ? msg('info', `${nCut} block${nCut === 1 ? '' : 's'} in this path ${nCut === 1 ? 'is' : 'are'} stopped above this layer by a depth limit or the seam cut-off and ${nCut === 1 ? 'is' : 'are'} skipped.`) : null,
-      nOut ? msg('info', `${nOut} block${nOut === 1 ? '' : 's'} in this path ${nOut === 1 ? 'lies' : 'lie'} outside the reserve boundary (Reserve tab) and ${nOut === 1 ? 'is' : 'are'} not mined.`) : null, edit() ? h('div', { class: 'edit-only' }, modeSel) : null, pl,
+      nOut ? msg('info', `${nOut} block${nOut === 1 ? '' : 's'} in this path ${nOut === 1 ? 'lies' : 'lie'} outside the reserve boundary (Block Margin Rank tab) and ${nOut === 1 ? 'is' : 'are'} not mined.`) : null, edit() ? h('div', { class: 'edit-only' }, modeSel) : null, pl,
       hint((pits.length ? 'The path tools only take blocks of this activity’s pit. ' : '') + 'The numbers on the 3D blocks show this path. Within a block the face advances towards the next block in the path.')));
   }
   // ---- separate pits: each polygon is a pit with its own activities and mining paths
@@ -13775,11 +13772,6 @@ const Tabs = (() => {
         hint(VT.roads !== false ? 'Where a dump lies over the pit, the corridor of a haul road or ramp is backfilled together with the mined-out blocks it runs through, up to the original ground level and never above it. A ramp is filled as the voids are: block by block inside the pit, and the part excavated outside the mining blocks once the void at its foot is being filled. That part is filled by any waste dump, even one whose outline does not reach it: a dump over that void fills both together, and a dump elsewhere tips into the ramp first once spoil has been placed in the void. It is only covered where it has no ground left to excavate. A ramp whose toe follows the mining stays open from its toe up to the surface and is restored behind that, outside the blocks as well. Haul roads on ground outside the pit are left open.' + (Water.settings(P).on !== false ? ' With the final landform on (below), the backfill in the pit stops at the top of the backfill instead, and a road that runs on through the pit is brought back to the landform.' : '') : 'The corridor of a haul road or ramp is never dumped on, so it stays open through the backfilled pit.'),
         hint(VT.on !== false ? `Where a dump lies over the pit, each activity tips no higher than its own bench in the block it is mining: ${VT.ref === 'floor' ? 'the base' : 'the top'} of its layer there, taken as the average over the block. A lower bench therefore fills the void less high than the overburden does. Spoil that does not fit goes to the activity’s next dump. Dumps on ground outside the pit, and spoil pushed over by dozers, are not affected.${VT.ref !== 'floor' && Water.settings(P).on !== false && Water.settings(P).backfillTo !== 'landform' ? ' With the waste backfilled up to the original topography (below), the first bench under the topsoil is mined from the stripped ground, so its trucks tip from the ground: they build the backfill up to the original topography, and the waste above it, as they go.' : ''}` : 'Tipped spoil may rise in a mined-out void as high as the dump’s own limit allows.')));
     }
-    landformSection(body);
-    fillSection(body);
-    raiseSection(body);
-    waterSection(body);
-    groundwaterSection(body);
     rehandleSection(body);
     oldDumpSection(body);
     body.append(sec('Dumps & stockpiles', null, h('div', { class: 'row edit-only' }, btn('Draw dump', () => drawDump(), 'sm primary')), list,
@@ -13931,23 +13923,23 @@ const Tabs = (() => {
     parts.push(hint(`Draw a flow path from where the water should start to where it should leave the mine: a dam, a stream or the edge of the model. ${R.on !== false ? `The final landform is cut along it as a drain that falls at least ${U.fmtNum(+R.pathFall || 0, 1)}% all the way in the drawn direction and lies ${U.fmtNum(R.bank == null ? 0.5 : +R.bank, 1)} m below the ground on either side, so the water runs into it and along it. Where it crosses ground that is not mined it follows that ground, cut at most ${U.fmtNum(R.cutDepth == null ? 2 : +R.cutDepth, 1)} m deep where the water would otherwise be held back; that cut is dug when mining is finished. ` : ''}“Show surface water” fills the hollows of the surface on the timeline date to their spill level and shows standing water, streams, the direction of flow and drops of water running off. The end of each flow path takes the water away. The export writes the surface, the D8 flow direction, the flow accumulation and the ponding depth as a GeoTIFF in the project’s coordinate system.`));
     body.append(sec('Surface water', drains.length ? h('span', { class: 'chip' }, String(drains.length)) : null, ...parts));
   }
-  // drill and blast over the schedule (Results tab): drill metres and explosives, waste and coal, layer by layer
+  // drill and blast over the schedule (Drill and Blast tab): drill metres and explosives, waste and coal, layer by layer
   function blastResults(body) {
     const B = App.blast(); if (!B || !B.o.on) return;
     const T = B.tot, kp = (k, v) => h('div', { class: 'kpi' }, h('span', { class: 'k' }, k), h('span', { class: 'v' }, v));
     const rows = B.layers.filter(y => y.on && y.bcm > 0).map(y => h('tr', null, h('td', null, y.name), h('td', { class: 'r num' }, U.fmtNum(y.h, 1)), h('td', { class: 'r num' }, U.fmtBig(y.bcm)), h('td', { class: 'r num' }, U.fmtBig(y.m)), h('td', { class: 'r num' }, U.fmtNum(y.kg / 1000, 0))));
-    body.append(sec('Drill and blast', h('span', { class: 'chip' }, `${U.fmtBig(T.wasteM + T.coalM)} m`),
+    body.append(sec('Drilled and blasted in the schedule', h('span', { class: 'chip' }, `${U.fmtBig(T.wasteM + T.coalM)} m`),
       h('div', { class: 'kpis' }, kp('Waste drill metres', `${U.fmtBig(T.wasteM)} m`), kp('Coal drill metres', `${U.fmtBig(T.coalM)} m`), kp('Explosives, waste', U.fmtBig(T.wasteKg / 1000, 't')), kp('Explosives, coal', U.fmtBig(T.coalKg / 1000, 't'))),
       rows.length ? h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl', 'aria-label': 'Drill and blast by layer' }, h('thead', null, h('tr', null, h('th', null, 'Layer'), h('th', { class: 'r' }, 'Bench (m)'), h('th', { class: 'r' }, 'Blasted (bcm)'), h('th', { class: 'r' }, 'Drill m'), h('th', { class: 'r' }, 'Explosives (t)'))), h('tbody', null, rows))) : msg('info', 'Nothing drilled and blasted was mined.'),
-      hint('From the drill and blast of the Production tab, on what the schedule mined. The Excel schedule has it month by month (Monthly Summary, DRILL AND BLAST) and layer by layer (Drill and Blast).')));
+      hint('From the drill and blast of the Drill and Blast tab, on what the schedule mined. The Excel schedule has it month by month (Monthly Summary, DRILL AND BLAST) and layer by layer (Drill and Blast).')));
   }
-  /* The water of the pit over the schedule (Results tab): what is pumped each month, the cone of depression, decant */
+  /* The water of the pit over the schedule (Hydrogeological tab): what is pumped each month, the cone of depression, decant */
   function waterResults(body, res) {
     const P = App.P;
     if (Hydro.settings(P).on === false) return;
     if (!App.hydroReady()) {
       body.append(sec('Water in the pit', null, h('div', { class: 'dt' }, 'Working out the groundwater…')));
-      setTimeout(async () => { if (App.tab !== 'results' || App.res !== res) return; await App.hydroAsync(); if (App.tab === 'results' && App.res === res) UI.renderTab(); }, 60);
+      setTimeout(async () => { if (App.tab !== 'hydro' || App.res !== res) return; await App.hydroAsync(); if (App.tab === 'hydro' && App.res === res) UI.renderTab(); }, 60);
       return;
     }
     const HR = App.hydro();
@@ -13959,7 +13951,7 @@ const Tabs = (() => {
         kp('Decant from the backfill', T.firstDecant >= 0 ? `${U.fmtBig(T.decant, 'm³')} from ${Hydro.monthName(HR, T.firstDecant)}` : 'none')),
       ch,
       h('div', { class: 'row' }, btn(WaterUI.gw ? 'Hide the groundwater' : 'Show the groundwater on the timeline', () => { WaterUI.showGroundwater(!WaterUI.gw); UI.renderTab(); }, 'sm')),
-      hint(`The water to pump from the open pit each month, as m³ a day: the groundwater seeping into it, the rain falling on it and the run-off from the ground draining to it. The groundwater settings are in the Dumps tab; the Excel schedule has the water balance of every month (Water Balance).`)));
+      hint(`The water to pump from the open pit each month, as m³ a day: the groundwater seeping into it, the rain falling on it and the run-off from the ground draining to it. The groundwater settings are in the Hydrogeological tab; the Excel schedule has the water balance of every month (Water Balance).`)));
     requestAnimationFrame(() => Charts.water(ch, HR));
   }
   /* ---------- groundwater (Hydro): the aquifer, the rain, recharge and run-off; the water table over the schedule ---------- */
@@ -13998,7 +13990,7 @@ const Tabs = (() => {
             kp('Drawdown, at most', `${U.fmtNum(T.drawMax, 1)} m`), kp('Decant from the backfill', T.firstDecant >= 0 ? `${U.fmtBig(T.decant, 'm³')} from ${Hydro.monthName(HR, T.firstDecant)}` : 'none in the schedule'))); } }
       else if (res) parts.push(h('div', { class: 'row' }, btn('Work out the groundwater', async () => { await App.hydroAsync(); UI.renderTab(); }, 'sm')));
     }
-    parts.push(hint(`The water table is worked out month by month through the schedule, over the stratigraphy of the model: each layer has the hydraulic conductivity (K) and specific yield of its material, and the floor of the lowest layer is the base of the aquifer. Before mining the water table lies the depth set below the ground, following it smoothed, and is held there as it was. The open pit (more than 3 m below the original ground) is a drain: the groundwater seeping into it is pumped out with the rain on the pit and the run-off from its catchment. The backfill takes the K, storage and recharge of spoil, and the water table recovers in it; where it reaches the surface the water comes out (decant). The defaults are typical of the Mpumalanga Highveld coalfields, where the coal seams are the main aquifers; use the values of your hydrogeological study. “Show the groundwater” draws the drawdown (the cone of depression), the depth to the water table or its elevation on the timeline date, with its contours and the direction of the groundwater flow; the Results tab and the Excel schedule give the water balance of every month.`));
+    parts.push(hint(`The water table is worked out month by month through the schedule, over the stratigraphy of the model: each layer has the hydraulic conductivity (K) and specific yield of its material, and the floor of the lowest layer is the base of the aquifer. Before mining the water table lies the depth set below the ground, following it smoothed, and is held there as it was. The open pit (more than 3 m below the original ground) is a drain: the groundwater seeping into it is pumped out with the rain on the pit and the run-off from its catchment. The backfill takes the K, storage and recharge of spoil, and the water table recovers in it; where it reaches the surface the water comes out (decant). The defaults are typical of the Mpumalanga Highveld coalfields, where the coal seams are the main aquifers; use the values of your hydrogeological study. “Show the groundwater” draws the drawdown (the cone of depression), the depth to the water table or its elevation on the timeline date, with its contours and the direction of the groundwater flow; the “Water in the pit” section below and the Excel schedule give the water balance of every month.`));
     body.append(sec('Groundwater', null, ...parts));
   }
   // ---------- depression fills: natural hollows filled up to the level of the ground around them ----------
@@ -14236,8 +14228,8 @@ const Tabs = (() => {
   // =============== RESERVE ===============
   /* The block margin: what each block's coal earns less what it costs to mine (and process), per ton of coal, and the
      blocks ranked by it (Margin). Not part of the schedule: changing it does not ask for a new run. */
-  /* Reserve, Block Margin Rank and Strip Ratio tabs: one body, each tab its own sections. Reserve: the losses, the reserve
-     boundary, the block depth and the volumes by layer; Block Margin Rank: the inputs of the block margin and its rank;
+  /* Reserve, Block Margin Rank and Strip Ratio tabs: one body, each tab its own sections. Reserve: the losses, the
+     coal tons, the block depth and the volumes by layer; Block Margin Rank: the inputs of the block margin, its rank and the reserve boundary;
      Strip Ratio: the strip ratio of every block. */
   function reserve(body) { reservePart(body, 'reserve'); }
   function rank(body) { reservePart(body, 'rank'); }
@@ -14294,7 +14286,7 @@ const Tabs = (() => {
             return h('tr', null, h('td', null, L.name), h('td', null, qi(L, 'cv', 'CV', 0.1)), h('td', null, qi(L, 'ash', 'ASH', 0.1)), h('td', null, qi(L, 'ts', 'TS', 0.01)), h('td', { class: 'num' }, res, cols && (L.qcut || {}).cv != null && !cols[0] ? h('div', { class: 'dt' }, 'no CV column') : null)); });
           parts.push(h('div', { class: 'dt', style: { margin: '8px 0 4px', fontWeight: 600 } }, 'Quality cut-offs'));
           parts.push(h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', null, 'Seam'), h('th', null, 'CV at least', h('br'), h('span', { class: 'dt' }, 'MJ/kg')), h('th', null, 'ASH at most', h('br'), h('span', { class: 'dt' }, '%')), h('th', null, 'TS at most', h('br'), h('span', { class: 'dt' }, '%')), h('th', null, 'Taken as waste'))), h('tbody', null, ...qrows))));
-          parts.push(hint('A seam whose CV in a block is below its cut-off, or whose ASH or TS is above it, is taken as waste in that block: mined as waste with the waste layer next to it (as set for the thickness cut-off in the Data tab), in the schedule, the Excel reports and the block margin. The values are read from the quality columns chosen above; a block without the value is kept as coal. Leave a box empty for no cut-off.')); }
+          parts.push(hint('A seam whose CV in a block is below its cut-off, or whose ASH or TS is above it, is taken as waste in that block: mined as waste with the waste layer next to it (as set for the thickness cut-off in the Geological Data tab), in the schedule, the Excel reports and the block margin. The values are read from the quality columns chosen above; a block without the value is kept as coal. Leave a box empty for no cut-off.')); }
         if (R && R.bad) parts.push(msg('warn', `Choose the ${[M.byCV !== false ? 'CV' : null, M.plant === true ? 'yield' : null].filter(Boolean).join(' and ')} column of every seam: ${R.seams.filter(s => (M.byCV !== false && !s.cvCol) || (M.plant === true && !s.yCol)).map(s => s.name).join(', ')} ${R.seams.filter(s => (M.byCV !== false && !s.cvCol) || (M.plant === true && !s.yCol)).length === 1 ? 'has' : 'have'} none, so ${M.byCV !== false ? 'its coal earns nothing' : 'its plant cost is 0'}.`));
         if (R && !R.seams.length) parts.push(msg('warn', 'Every seam is counted as waste: no block has coal.'));
         // ASH and TS: a seam counted as coal without the column is left out of that blend
@@ -14308,15 +14300,16 @@ const Tabs = (() => {
       parts.push(h('div', { class: 'msg info' }, h('span', { class: 'ic' }, 'Margin'), h('span', { style: { flex: 1 } }, `(${f.join(' ')}) ÷ coal t, per block, in ${cur}/t. A block that pays for itself is positive.`)));
       parts.push(hint(M.revBy === 'seam' ? 'Seam by seam: the revenue of a block is the sum over its seams counted as coal of each seam’s tons × its own price (the coal price above where none is set)' + (M.byCV !== false ? ' × its own CV in the block' : '') + '. With the same price for every seam this is the same as on the blended CV; give a seam its own price (the Price box of each seam) to sell it on its own.' : 'On the blended CV: the coal of a block is sold as one product, at the coal price' + (M.byCV !== false ? ' × the blended CV of the block' : '') + '. Choose “seam by seam” to give each seam a price of its own.'));
       parts.push(h('div', { class: 'msg info' }, h('span', { class: 'ic' }, 'Blend'), h('span', { style: { flex: 1 } }, (R && R.qBasis === 'ADC' ? 'On the air-dry contaminated (ADC) basis: blended CV, ASH and TS of a block = Σ (seam ADC t × seam ADC quality) ÷ Σ seam ADC t, the ADC quality being the seam’s mixed with the contamination’s and the ADC tons those of the Reserve tab (losses, contamination, moisture); the coal is sold as ADC tons at its ADC CV. ' : 'Raw (no contamination or moisture is set in the Reserve tab): blended CV, ASH and TS of a block = Σ (seam coal t × seam quality) ÷ Σ seam coal t. ') + 'Over the seams in the block counted as coal (for ASH and TS, those with the column). The qualities come from the attribute file; the tons from the 3D model. Only the CV is in the price.')));
-      parts.push(hint(`The costs of the formula less its revenue, turned round so that a positive margin is a block worth mining (green) and a negative one does not pay for itself (red). The volumes and tons of each block, layer by layer, come from the 3D model (the surfaces), as the schedule mines it: the seam cut-off, depth limits and keep-out zones taken off; tons are bcm × the density of the layer (its RD column where one is set)${M.basis === 'ar' ? ', and the coal as received after the losses above' : ''}. The block attribute file gives only the qualities: the CV, ASH, TS (and yield) of each seam. The blended CV, ASH and TS of a block are those of its seams counted as coal, weighted by their tons; a seam counted as waste adds to the waste volume and leaves the coal tons and the blended qualities (a layer typed as waste in the Data tab, or coal below the seam cut-off, is waste here too). Untick the quality for one price per ton; untick processing when the coal is sold as mined. A block that lacks a CV, ASH, TS or yield takes the seam's average. Only the quality cut-offs and the reserve boundary below change the schedule.`));
+      parts.push(hint(`The costs of the formula less its revenue, turned round so that a positive margin is a block worth mining (green) and a negative one does not pay for itself (red). The volumes and tons of each block, layer by layer, come from the 3D model (the surfaces), as the schedule mines it: the seam cut-off, depth limits and keep-out zones taken off; tons are bcm × the density of the layer (its RD column where one is set)${M.basis === 'ar' ? ', and the coal as received after the losses above' : ''}. The block attribute file gives only the qualities: the CV, ASH, TS (and yield) of each seam. The blended CV, ASH and TS of a block are those of its seams counted as coal, weighted by their tons; a seam counted as waste adds to the waste volume and leaves the coal tons and the blended qualities (a layer typed as waste in the Geological Data tab, or coal below the seam cut-off, is waste here too). Untick the quality for one price per ton; untick processing when the coal is sold as mined. A block that lacks a CV, ASH, TS or yield takes the seam's average. Only the quality cut-offs and the reserve boundary below change the schedule.`));
       body.append(sec('Block margin', h('span', { class: 'chip' }, `${cur}/t`), ...parts));
     }
     // ---- the margins and the rank
     if (!R) { body.append(sec(part === 'strip' ? 'Strip ratio' : part === 'rank' ? 'Margin rank' : 'Reserve boundary', null, msg('warn', 'Load the model first.'))); return; }
-    if (part === 'reserve') { reserveBoundary(body, R, cur, kp); tonsSection(body, R); depthSection(body, R, kp); layerTable(body, R); }
+    if (part === 'reserve') { tonsSection(body, R); depthSection(body, R, kp); layerTable(body, R); }
     if (part === 'rank') {
       if (!R.ready) body.append(sec('Margin rank', null, msg('warn', 'Type the coal price (and the costs) above to work out the margin of every block.')));
       else marginRank(body, R, cur, kp);
+      reserveBoundary(body, R, cur, kp);
     }
     if (part === 'strip') {
       stripRatio(body, R, cur, kp);
@@ -14649,7 +14642,7 @@ const Tabs = (() => {
         h('div', { class: 'grid2' }, fld('Coal target (t per month)', ci), fld('Coal target in', cs)),
         h('div', { class: 'grid2' }, fld('Waste target (per month)', wi), fld('Waste target in', us)),
         h('div', { class: 'grid2' }, fld('Each month follows its', bs), fld('Use the targets to', ms)),
-        +T.coal > 0 ? h('div', { class: 'dt', style: { whiteSpace: 'normal', fontSize: 'var(--fs-xs)', color: 'var(--muted)' } }, `Coal: ${eg(+T.coal, 't')}${cb === 'ar' ? ' as received' : cb === 'product' ? ' of washed product (as received × the yield of each block, from the washability in the Data tab)' : ''}.`) : null,
+        +T.coal > 0 ? h('div', { class: 'dt', style: { whiteSpace: 'normal', fontSize: 'var(--fs-xs)', color: 'var(--muted)' } }, `Coal: ${eg(+T.coal, 't')}${cb === 'ar' ? ' as received' : cb === 'product' ? ' of washed product (as received × the yield of each block, from the washability in the Geological Data tab)' : ''}.`) : null,
         +T.waste > 0 ? h('div', { class: 'dt', style: { whiteSpace: 'normal', fontSize: 'var(--fs-xs)', color: 'var(--muted)' } }, `Waste: ${eg(+T.waste, wu)}.`) : null,
         +T.coal > 0 ? h('div', { class: 'grid2' }, fld('Coal ramp-up (months)', ri), h('span')) : null,
         +T.coal > 0 ? h('div', { class: 'dt', style: { whiteSpace: 'normal', fontSize: 'var(--fs-xs)', color: 'var(--muted)' } }, `Ramp-up: ${rampTxt}.`) : null,
@@ -14672,10 +14665,9 @@ const Tabs = (() => {
         got.length ? msg('info', `In the last run: ${got.map(([k, d]) => `${k} from ${U.fmtDay(P.startDate, d)}`).join(', ')}.`) : null,
         hint('Empty: from the start of the schedule. With a date, no activity mining that kind of material starts before it: topsoil is the topsoil layers, coal the coal seams, waste every other layer (overburden, interburden, partings). An activity’s own earliest start (Sequence tab) and its pit’s start date still hold when they are later. The layers above still have to be mined first, so a late waste date also holds the coal back where the waste covers it.')));
     }
-    blastSection(body);
   }
 
-  /* ---------- drill and blast (Production tab): which layers, the waste and the coal blast designs ---------- */
+  /* ---------- drill and blast (Drill and Blast tab): which layers, the waste and the coal blast designs ---------- */
   const BLAST_F = [['burden', 'Burden', 'm', 0.5], ['spacing', 'Spacing', 'm', 0.5], ['pf', 'Powder factor', null, 0.01], ['sub', 'Subdrill', 'm (negative: stand off the floor)', 0.1], ['bench', 'Highest bench', 'm', 1],
     ['dia', 'Hole diameter', 'mm', 1], ['stem', 'Stemming', 'm', 0.1], ['dens', 'Explosive density', 'g/cm³', 0.05], ['rate', 'Drill rate (for the rigs needed)', 'm an hour a rig', 1], ['hours', 'Drilling hours', 'a working day', 1]];
   function blastSection(body) {
@@ -14763,7 +14755,7 @@ const Tabs = (() => {
           ch,
           finTable(F, money),
           h('div', { class: 'row' }, btn('Excel schedule', () => App.exportExcel ? App.exportExcel() : UI.toast('Use the Excel schedule button at the top.'), 'sm')),
-          hint(`Month by month on the last run: ${o.wash ? `the coal mined (as received) is washed into a product at ${F.prodFrom === 'wash' ? 'the yield of the washability data, block by block' : `a yield of ${U.fmtNum(o.yieldFixed, 1)}%`}` : 'the coal mined (as received) is crushed, screened and sold as it is'}; ${U.fmtNum(o.expShare, 0)}% is exported, the rest sold at home. The costs follow the schedule's volumes: topsoil, waste hauled and dozed, coal, the bcm drilled and blasted and the explosives (Production tab), rehandling, the rehabilitated area${F.hydro ? ' and the water pumped from the pit' : ''}. The royalty and tax are worked out year by year; capital is deducted from the taxable mining income as it is spent. The NPV is discounted to the first month of the model, ${F.label(0)}. The Excel schedule (Financial Model sheet) has the whole model month by month.`)));
+          hint(`Month by month on the last run: ${o.wash ? `the coal mined (as received) is washed into a product at ${F.prodFrom === 'wash' ? 'the yield of the washability data, block by block' : `a yield of ${U.fmtNum(o.yieldFixed, 1)}%`}` : 'the coal mined (as received) is crushed, screened and sold as it is'}; ${U.fmtNum(o.expShare, 0)}% is exported, the rest sold at home. The costs follow the schedule's volumes: topsoil, waste hauled and dozed, coal, the bcm drilled and blasted and the explosives (Drill and Blast tab), rehandling, the rehabilitated area${F.hydro ? ' and the water pumped from the pit' : ''}. The royalty and tax are worked out year by year; capital is deducted from the taxable mining income as it is spent. The NPV is discounted to the first month of the model, ${F.label(0)}. The Excel schedule (Financial Model sheet) has the whole model month by month.`)));
         requestAnimationFrame(() => Charts.cash(ch, F, cur));
       }
     }
@@ -14783,9 +14775,9 @@ const Tabs = (() => {
         flds.push(fld(`${q.label} (${Fin.unitOf(q, cur)})`, e));
       }
       parts.push(...flds.reduce((a, x, i, arr) => (i % 2 ? a : a.concat(h('div', { class: 'grid2' }, x, arr[i + 1] || h('span')))), []));
-      if (G.id === 'sales' && o.wash && o.yieldSrc === 'wash' && !(typeof Wash !== 'undefined' && Wash.product(P))) parts.push(msg('warn', `There is no washability data (Data tab), so the plant yield is the fixed ${U.fmtNum(o.yieldFixed, 1)}%.`));
+      if (G.id === 'sales' && o.wash && o.yieldSrc === 'wash' && !(typeof Wash !== 'undefined' && Wash.product(P))) parts.push(msg('warn', `There is no washability data (Geological Data tab), so the plant yield is the fixed ${U.fmtNum(o.yieldFixed, 1)}%.`));
       if (G.id === 'sales') parts.push(hint(o.wash ? 'Washing: the coal mined (as received) is the plant feed; the product is sold and the discard is dumped. Untick it to sell the coal as mined (crushed and screened only).' : 'Not washed: the coal mined (as received) is crushed, screened and sold as it is. Tick “Wash the coal” to add a coal washing plant: its yield, its cost a ton of feed and the discard.'));
-      if (G.id === 'mining') { const BL = Blast.settings(P); parts.push(hint(BL.on ? 'Drilling is priced on the bcm drilled and blasted, waste and coal at their own rates, and the explosives on the kg, of the drill and blast (Production tab). Presplit is priced on the m² of presplit: one face per strip along its highwall, as high as the waste blasted, so the waste bcm drilled and blasted ÷ the strip width.' : 'Drill and blast is off (Production tab), so there are no drilling or explosives costs.')); }
+      if (G.id === 'mining') { const BL = Blast.settings(P); parts.push(hint(BL.on ? 'Drilling is priced on the bcm drilled and blasted, waste and coal at their own rates, and the explosives on the kg, of the drill and blast (Drill and Blast tab). Presplit is priced on the m² of presplit: one face per strip along its highwall, as high as the waste blasted, so the waste bcm drilled and blasted ÷ the strip width.' : 'Drill and blast is off (Drill and Blast tab), so there are no drilling or explosives costs.')); }
       if (G.id === 'econ') parts.push(hint('Prices and costs are in today’s money, escalated from the start of mining by the rates set (0: a real model). The SA royalty on unrefined minerals is 0.5% + EBIT ÷ (gross sales × 9) of the gross sales at the mine, at most 7%, worked out year by year; capital spending is deducted from the EBIT and, for the tax, in full against the mining income as it is spent, with assessed losses carried forward.'));
       body.append(sec(G.title, null, ...parts));
     }
@@ -14822,7 +14814,7 @@ const Tabs = (() => {
   async function reconSaved() { while (App.saving) await U.sleep(100); clearTimeout(App.saveTimer); await App.saveNow(); }
   async function addSurveys(files) {
     const P = App.P, ws = App.ws;
-    if (!ws || !P.grid) { UI.toast('Build the 3D model in the Data tab first: the surveys are compared with it, cell by cell.'); return; }
+    if (!ws || !P.grid) { UI.toast('Build the 3D model in the Geological Data tab first: the surveys are compared with it, cell by cell.'); return; }
     const R = P.recon || (P.recon = {}), G = reconFor(P), done = [], bad = [];
     if (!Array.isArray(R.surveys)) R.surveys = [];
     for (let k = 0; k < files.length; k++) {
@@ -14886,7 +14878,7 @@ const Tabs = (() => {
       fileIn.addEventListener('change', async () => { const fs = Array.from(fileIn.files); fileIn.value = ''; await addSurveys(fs); });
       parts.push(h('div', { class: 'row' }, btn('Add survey DTMs…', () => fileIn.click(), 'sm primary', 'Choose one or more point files (.xyz, .csv, .txt)'), fileIn));
     }
-    if (!ws || !P.grid) parts.push(msg('warn', 'Build the 3D model in the Data tab first: the surveys are compared with it, cell by cell.'));
+    if (!ws || !P.grid) parts.push(msg('warn', 'Build the 3D model in the Geological Data tab first: the surveys are compared with it, cell by cell.'));
     for (const s of list) parts.push(surveyCard(s, G));
     if (list.length) parts.push(hint('The survey date is read from the file name when it has one (2026-09-30, 20260930); check it on each survey.'));
     body.append(sec('Surveys', list.length ? h('span', { class: 'chip' }, `${list.length} survey${list.length === 1 ? '' : 's'}`) : null, ...parts));
@@ -14935,12 +14927,54 @@ const Tabs = (() => {
     body.append(sec('Reconciliation', null, ...rp));
   }
 
+  // =============== FEATURE LAYERS ===============
+  function featureLayers(body) { overlaySection(body); }
+  // =============== DRILL AND BLAST ===============
+  // the drill and blast design and, after a run, what the schedule drills and blasts
+  function drillBlast(body) { blastSection(body); blastResults(body); }
+  // =============== HYDROGEOLOGICAL ===============
+  // the surface water (flow paths, drains) and the groundwater; after a run, the water in the pit
+  function hydro(body) {
+    if (!App.ws) { body.append(h('div', { class: 'empty' }, 'Build the 3D model in the Geological Data tab first.')); return; }
+    waterSection(body);
+    groundwaterSection(body);
+    if (App.res) { if (App.stale) body.append(msg('warn', 'Inputs changed since the last run. Run the simulation again to update the water in the pit.')); waterResults(body, App.res); }
+  }
+  // =============== REHAB ===============
+  // the final landform: backfill up to it and topsoil on top, depression fills and raised areas
+  function rehab(body) {
+    if (!App.ws) { body.append(h('div', { class: 'empty' }, 'Build the 3D model in the Geological Data tab first.')); return; }
+    landformSection(body);
+    fillSection(body);
+    raiseSection(body);
+    if (App.res) { if (App.stale) body.append(msg('warn', 'Inputs changed since the last run. Run the simulation again to update the final landform.')); landformResults(body, App.res); }
+  }
+  /* The final landform of the last run (Rehab tab): topsoil replaced, backfill waiting for it, voids left, and what was
+     built above the original ground */
+  function landformResults(body, res) {
+    const kp = (k, v) => h('div', { class: 'kpi' }, h('span', { class: 'k' }, k), h('span', { class: 'v' }, v));
+    if (res.rehab && res.rehab.on) {
+      const R = res.rehab, e = R.end, soilL = R.soilDaily.reduce((x, y) => x + y, 0);
+      body.append(sec('Final landform and topsoil', null, h('div', { class: 'kpis' },
+        kp('Topsoil replaced', U.fmtArea(e.soiled)), kp('Waiting for topsoil', U.fmtArea(e.waiting)),
+        kp('Topsoil placed on the backfill', U.fmtBig(soilL, 'm³ loose')), kp('Voids left below the backfill', e.voidVol > 1 ? U.fmtBig(e.voidVol, 'm³') : 'none'),
+        R.drainCut ? kp('Drains cut outside the pit', U.fmtBig(R.drainCut.bcm, 'bcm')) : null,
+        R.finalVoid && R.finalVoid.moved > 1 ? kp('Final void filled from the dumps', U.fmtBig(R.finalVoid.moved, 'm³ loose')) : null,
+        R.lift && R.restore ? kp('Waste above the original ground', `${U.fmtBig(R.lift.vol - (e.liftLeft > 1000 ? e.liftLeft : 0), 'm³')} · up to ${U.fmtNum(R.above, 1)} m`) : R.lift ? kp('Landform lifted', `${U.fmtNum(R.lift.avg, 2)} m avg · ${Math.round(R.lift.kept * 100)}% flow kept`) : null,
+        R.raises && R.raises.some(q => q.vol > 1) ? kp('Raised areas', `${R.raises.filter(q => q.vol > 1).length} · ${U.fmtBig(R.raises.reduce((x, q) => x + q.vol, 0), 'm³')} more spoil`) : null,
+        R.restore ? null : kp('Room given up for the landform', U.fmtBig(R.stats.lowered + R.topsoil * R.stats.area, 'm³'))),
+        R.restore && R.lift && e.liftLeft > 1000 ? msg('warn', `${U.fmtBig(e.liftLeft, 'm³')} of the waste above the original topography was not built${e.voidVol > 1000 ? `, and ${U.fmtBig(e.voidVol, 'm³')} of the voids below the original ground is still open` : ''}: there was not enough waste. Lower the height above the original topography (above).`) : null,
+        h('div', { class: 'row' }, btn('Show the surface water at the end', () => WaterUI.showEnd(), 'sm'), btn('Export for GIS…', () => WaterUI.exportDialog(), 'sm')),
+        hint(R.restore ? `The waste is backfilled up to the original topography${R.above > 0 ? `, and ${U.fmtNum(R.above, 1)} m above it (coming down to the ground around it at the edge of the mined ground)` : ''}, and ${U.fmtNum(R.topsoil, 2)} m of topsoil goes on top of it. Colour the blocks by “Backfill & topsoil” to see where topsoil is back, where backfill waits for it and where voids are left. The settings are above.`
+          : `Backfill stops ${U.fmtNum(R.topsoil, 2)} m below the final landform (the original topography, or the average of the ground within ${U.fmtNum(R.radius, 0)} m where that is lower, with drains along the flow paths). Colour the blocks by “Backfill & topsoil” to see where topsoil is back, where backfill waits for it and where voids are left. The settings are above.`)));
+    }
+  }
   // =============== RESULTS ===============
   function results(body) {
     const P = App.P, res = App.res;
     if (App.lastValidation && App.lastValidation.length) body.append(sec('Before you can run', null, ...App.lastValidation.map(e => msg('error', e.msg))));
     if (!res) {
-      body.append(h('div', { class: 'empty' }, h('p', { style: { margin: '0 0 10px' } }, App.ws ? 'Run the simulation to schedule every block and fill the timeline.' : 'Load your data in the Data tab first.'), App.ws ? btn('Run simulation', () => App.runSim(), 'primary') : null));
+      body.append(h('div', { class: 'empty' }, h('p', { style: { margin: '0 0 10px' } }, App.ws ? 'Run the simulation to schedule every block and fill the timeline.' : 'Load your data in the Geological Data tab first.'), App.ws ? btn('Run simulation', () => App.runSim(), 'primary') : null));
       if (App.ws) { const w = Sim.validate(App.ws); if (w.length) body.append(sec('Checks', null, ...w.map(e => msg(e.type, e.msg)))); }
       return;
     }
@@ -15065,22 +15099,7 @@ const Tabs = (() => {
           hint(`Coal the schedule still has to mine. Exposed: the waste above it has been stripped; covered: still under waste. Months of production at ${iv.C.rateFrom === 'target' ? 'the monthly coal target' : `the schedule’s average of ${U.fmtBig(iv.C.perMonth, 't')} a month`}. The Excel schedule has the closing inventory of every month (“Coal Inventory” sheet); the report gives it block by block on any day.${iv.C.rom.some(r => r.tracked) ? '' : ' Give the ROM tip a plant feed rate (Dumps tab) to keep its stockpile in the inventory too.'}`)));
         requestAnimationFrame(() => Charts.inventory(ch, IV, P));
       } }
-    // the final landform: topsoil replaced, waiting, voids left; rehandling jobs
-    if (res.rehab && res.rehab.on) {
-      const R = res.rehab, e = R.end, soilL = R.soilDaily.reduce((x, y) => x + y, 0);
-      body.append(sec('Final landform and topsoil', null, h('div', { class: 'kpis' },
-        kp('Topsoil replaced', U.fmtArea(e.soiled)), kp('Waiting for topsoil', U.fmtArea(e.waiting)),
-        kp('Topsoil placed on the backfill', U.fmtBig(soilL, 'm³ loose')), kp('Voids left below the backfill', e.voidVol > 1 ? U.fmtBig(e.voidVol, 'm³') : 'none'),
-        R.drainCut ? kp('Drains cut outside the pit', U.fmtBig(R.drainCut.bcm, 'bcm')) : null,
-        R.finalVoid && R.finalVoid.moved > 1 ? kp('Final void filled from the dumps', U.fmtBig(R.finalVoid.moved, 'm³ loose')) : null,
-        R.lift && R.restore ? kp('Waste above the original ground', `${U.fmtBig(R.lift.vol - (e.liftLeft > 1000 ? e.liftLeft : 0), 'm³')} · up to ${U.fmtNum(R.above, 1)} m`) : R.lift ? kp('Landform lifted', `${U.fmtNum(R.lift.avg, 2)} m avg · ${Math.round(R.lift.kept * 100)}% flow kept`) : null,
-        R.raises && R.raises.some(q => q.vol > 1) ? kp('Raised areas', `${R.raises.filter(q => q.vol > 1).length} · ${U.fmtBig(R.raises.reduce((x, q) => x + q.vol, 0), 'm³')} more spoil`) : null,
-        R.restore ? null : kp('Room given up for the landform', U.fmtBig(R.stats.lowered + R.topsoil * R.stats.area, 'm³'))),
-        R.restore && R.lift && e.liftLeft > 1000 ? msg('warn', `${U.fmtBig(e.liftLeft, 'm³')} of the waste above the original topography was not built${e.voidVol > 1000 ? `, and ${U.fmtBig(e.voidVol, 'm³')} of the voids below the original ground is still open` : ''}: there was not enough waste. Lower the height above the original topography (Dumps tab).`) : null,
-        h('div', { class: 'row' }, btn('Show the surface water at the end', () => WaterUI.showEnd(), 'sm'), btn('Export for GIS…', () => WaterUI.exportDialog(), 'sm')),
-        hint(R.restore ? `The waste is backfilled up to the original topography${R.above > 0 ? `, and ${U.fmtNum(R.above, 1)} m above it (coming down to the ground around it at the edge of the mined ground)` : ''}, and ${U.fmtNum(R.topsoil, 2)} m of topsoil goes on top of it. Colour the blocks by “Backfill & topsoil” to see where topsoil is back, where backfill waits for it and where voids are left. The settings are in the Dumps tab.`
-          : `Backfill stops ${U.fmtNum(R.topsoil, 2)} m below the final landform (the original topography, or the average of the ground within ${U.fmtNum(R.radius, 0)} m where that is lower, with drains along the flow paths). Colour the blocks by “Backfill & topsoil” to see where topsoil is back, where backfill waits for it and where voids are left. The settings are in the Dumps tab.`)));
-    }
+    // the rehandling jobs (the final landform of the run is in the Rehab tab)
     if (res.rehandles && res.rehandles.length) {
       const trs = res.rehandles.map(J => h('tr', null, h('td', null, h('span', { class: 'sw', style: { background: J.color, display: 'inline-block', width: '10px', height: '10px', marginRight: '6px', verticalAlign: '-1px' } }), J.name),
         h('td', null, `${J.from} → ${J.to}`), h('td', { class: 'r num' }, U.fmtBig(J.moved)), h('td', { class: 'num' }, J.first >= 0 ? U.fmtDay(P.startDate, J.first) : '–'), h('td', { class: 'num' }, J.last >= 0 ? U.fmtDay(P.startDate, J.last) : '–'),
@@ -15096,7 +15115,7 @@ const Tabs = (() => {
       res.below.forEach((v, b) => { if (!byOutR(b)) return; n++; v.forEach((x, l) => { if (P.layers[l].type === 'coal') coalT += x * Model.blockDensity(P, b, l); else waste += x; }); });
       body.append(sec('Reserve boundary', null, h('div', { class: 'kpis' },
         kp('Blocks scheduled (inside)', String(P.blocks.length - n)), kp('Blocks left (outside)', String(n)), kp('Coal left outside', U.fmtBig(coalT, 't')), kp('Waste left outside', U.fmtBig(waste, 'bcm'))),
-        hint('Draw or change the boundary in the Reserve tab. Blocks whose centre lies outside it are not mined at all, and the final landform leaves their ground as it is.')));
+        hint('Draw or change the boundary in the Block Margin Rank tab. Blocks whose centre lies outside it are not mined at all, and the final landform leaves their ground as it is.')));
     }
     if (res.cut) {
       const tT = res.cut.layers.reduce((a, q) => a + q.mT + (q.leftT || 0), 0), tV = res.cut.layers.reduce((a, q) => a + q.mVol, 0);
@@ -15110,7 +15129,7 @@ const Tabs = (() => {
             h('div', { class: 'dt' }, `${q.whole + q.part} block${q.whole + q.part === 1 ? '' : 's'}${q.part ? ` (${q.part} in part)` : ''} · mined with ${P.layers[q.target] ? P.layers[q.target].name : 'waste'}`),
             q.left > 1 ? h('div', { class: 'dt' }, `${U.fmtBig(q.left, 'bcm')} of it stays in the ground`) : null),
           h('div', { class: 'vv' }, U.fmtBig(q.mT + (q.leftT || 0), 't'), h('br'), h('span', { class: 'dt' }, U.fmtBig(q.mVol, 'bcm') + ' as waste'))))),
-        hint(`Tested ${res.cut.by === 'cell' ? 'per grid cell' : 'per block (average seam thickness)'}. Set the cut-off in the Data tab under “Seam cut-off”. The figures count the thin coal inside what this schedule mines. The Excel schedule lists the thickness and the thin coal of every block.`)));
+        hint(`Tested ${res.cut.by === 'cell' ? 'per grid cell' : 'per block (average seam thickness)'}. Set the cut-off in the Geological Data tab under “Seam cut-off”. The figures count the thin coal inside what this schedule mines. The Excel schedule lists the thickness and the thin coal of every block.`)));
     }
     if (res.below && res.limit.some((v, b) => v < P.layers.length - 1 && !byCut(b) && !byOutR(b))) {
       let coalLeft = 0, wasteLeft = 0;
@@ -15134,13 +15153,13 @@ const Tabs = (() => {
       body.append(sec('Keep-out zones', KH && KH.affected.length ? h('span', { class: 'chip' }, `${KH.affected.length} block${KH.affected.length === 1 ? '' : 's'}`) : null, h('div', { class: 'kpis' },
         kp('Blocks within a distance', String(KH ? KH.affected.length : full + part)), kp('Dug within the distances', KH ? U.fmtArea(KH.area) : '–'),
         kp('Coal left in the ground', U.fmtBig(coalLeft, 't')), kp('Waste not moved', U.fmtBig(wasteLeft, 'bcm'))),
-        full ? msg('warn', `${full} block${full === 1 ? ' is' : 's are'} not mined at all: ${full === 1 ? 'its' : 'their'} overlay is draped on the topography or the current ground. Drape it on a seam roof (Data tab) to mine the waste above that seam.`) : null,
+        full ? msg('warn', `${full} block${full === 1 ? ' is' : 's are'} not mined at all: ${full === 1 ? 'its' : 'their'} overlay is draped on the topography or the current ground. Drape it on a seam roof (Feature layers tab) to mine the waste above that seam.`) : null,
         hitRows.length ? h('div', { class: 'tbl-wrap', style: { maxHeight: '260px', overflowY: 'auto' } }, h('table', { class: 'tbl keep-hits' },
           h('thead', null, h('tr', null, h('th', null, 'Dug within a distance'), h('th', null, 'From'), h('th', { class: 'r' }, 'Area'))),
           h('tbody', null, hitRows.map(r => h('tr', { class: r.b >= 0 && r.b === App.selBlock ? 'sel' : '', style: { cursor: 'pointer' }, title: 'Show it on the timeline', onclick: () => go(r) },
             h('td', null, r.what, r.why || r.left ? h('div', { class: 'why' }, [r.why ? 'within ' + r.why : '', r.left].filter(Boolean).join(' · ')) : null),
             h('td', null, U.fmtDay(P.startDate, r.day)), h('td', { class: 'r' }, U.fmtArea(r.area))))))) : KH ? hint('Nothing is dug within a keep-away distance in this run.') : null,
-        hint('A block that comes within a keep-away distance is mined down to the layer its overlay is draped on; that layer and everything below it stay in the ground in the whole block. In the 3D view these blocks are tinted and outlined in red, and the ground dug inside a distance (by mining or a ramp) shows in yellow as the simulation plays. Set the distances in the Data tab under “Overlays & keep-out zones”. The Excel schedule lists the effect block by block.')));
+        hint('A block that comes within a keep-away distance is mined down to the layer its overlay is draped on; that layer and everything below it stay in the ground in the whole block. In the 3D view these blocks are tinted and outlined in red, and the ground dug inside a distance (by mining or a ramp) shows in yellow as the simulation plays. Set the distances in the Feature layers tab under “Overlays & keep-out zones”. The Excel schedule lists the effect block by block.')));
     }
     const rows = res.acts.map(A => {
       const f = A.bcm.findIndex(v => v > 0), l = A.bcm.length - 1 - Array.from(A.bcm).reverse().findIndex(v => v > 0);
@@ -15161,8 +15180,7 @@ const Tabs = (() => {
     const c1 = h('div', { class: 'chart-box' }), c2 = h('div', { class: 'chart-box' });
     body.append(sec('Coal per month (kt)', null, c1), sec(mo.target.wasteUnit === 't' ? 'Waste per month (kt)' : 'Waste per month (kbcm)', null, c2));
     requestAnimationFrame(() => { Charts.monthly(c1, res, P, 'coal', mo); Charts.monthly(c2, res, P, 'waste', mo); });
-    waterResults(body, res);
-    blastResults(body);
+    body.append(hint('The water in the pit is in the Hydrogeological tab, what is drilled and blasted in the Drill and Blast tab, and the final landform in the Rehab tab.'));
     const anyOut = res.dumps.some(D => D.removed > 0);
     const dr = res.dumps.map(D => {
       const dd = P.dumps.find(x => x.id === D.id); const cap = dd ? Sim.dumpCapacity(App.ws, dd) : D.capacity != null ? D.capacity : Infinity; const got = D.daily.reduce((s, v) => s + v, 0);
@@ -16222,7 +16240,7 @@ const WaterUI = (() => {
     S.gw = !!on;
     if (on && !S.on) { S.sw = false; toggle(true); return; } // (the groundwater on its own; the surface water can be ticked)
     if (!on && S.on && !S.sw) { toggle(false); return; }
-    refresh(true); if (App.tab === 'dumps') UI.renderTab(); UI.renderLegend();
+    refresh(true); if (App.tab === 'hydro') UI.renderTab(); UI.renderLegend();
   }
   function refresh(now) {
     clearTimeout(S.timer);
@@ -16247,7 +16265,7 @@ const WaterUI = (() => {
     const clear = note => { S.gwNote = note || ''; if (S.gwKey) { S.gwKey = ''; View.setGroundwater(null); } S.scale = null; S.A = null; };
     if (!S.gw) { const had = !!S.A; clear(); if (had && typeof Section !== 'undefined' && Section.active) Section.schedule(); return; }
     if (!App.res) return clear('Run the simulation to work out the groundwater over the schedule.');
-    if (Hydro.settings(App.P).on === false) return clear('The groundwater is switched off (Dumps tab).');
+    if (Hydro.settings(App.P).on === false) return clear('The groundwater is switched off (Hydrogeological tab).');
     if (S.src === 'design') return clear('The groundwater is worked out over the schedule: choose the timeline date or the end of the schedule to see it.');
     if (!App.hydroReady()) {
       clear('Working out the groundwater…');
@@ -16272,7 +16290,7 @@ const WaterUI = (() => {
     if (!S.on) { shownKey = ''; View.setWater(null); S.gwKey = ''; View.setGroundwater(null); }
     refresh(true);
     UI.renderLegend();
-    if (App.tab === 'dumps') UI.renderTab();
+    if (App.tab === 'hydro') UI.renderTab();
   }
   function showEnd() {
     if (!App.res) { UI.toast('Run the simulation first.'); return; }
@@ -16339,7 +16357,7 @@ const WaterUI = (() => {
     el.append(h('div', { class: 'wl' }, h('span', { class: 'sw', style: { background: '#d62828' } }), M.cone[m] > 0 ? `Cone of depression (red line): ${U.fmtArea(M.cone[m])} lowered by ${U.fmtNum(HR.o.cone, 1)} m or more, reaching ${U.fmtNum(M.reach[m], 0)} m from the pit; up to ${U.fmtNum(M.drawMax[m], 1)} m lowered.` : `The water table is not lowered by ${U.fmtNum(HR.o.cone, 1)} m anywhere.`));
     el.append(h('div', { class: 'wl' }, h('span', { class: 'sw', style: { background: '#ff7b00', borderRadius: '50%' } }), M.pitArea[m] > 0 ? `${mn}, into the pit (${U.fmtArea(M.pitArea[m])} open): groundwater ${U.fmtNum(perDay(HR, 'gw', m), 0)} m³/day, rain on it ${U.fmtNum(perDay(HR, 'rainPit', m), 0)} and run-off from ${U.fmtArea(M.catch[m])} around it ${U.fmtNum(perDay(HR, 'runoff', m), 0)}: ${U.fmtNum(perDay(HR, 'pumped', m), 0)} m³/day to pump.` : `${mn}: no open pit.`));
     if (M.decant[m] > 1 || M.seep[m] > 1) el.append(h('div', { class: 'wl' }, h('span', { class: 'sw', style: { background: '#ffd400', borderRadius: '50%' } }), [M.decant[m] > 1 ? `decant from the backfill ${U.fmtNum(perDay(HR, 'decant', m), 0)} m³/day` : null, M.seep[m] > 1 ? `seepage at the surface elsewhere ${U.fmtNum(perDay(HR, 'seep', m), 0)} m³/day` : null].filter(Boolean).join('; ').replace(/^./, c => c.toUpperCase()) + '.'));
-    el.append(h('div', { class: 'wl dt' }, `Water table ${U.fmtNum(M.depthAvg[m], 1)} m below the ground on average outside the pit. The water balance of every month is in the Results tab and the Excel schedule.`));
+    el.append(h('div', { class: 'wl dt' }, `Water table ${U.fmtNum(M.depthAvg[m], 1)} m below the ground on average outside the pit. The water balance of every month is under “Water in the pit” in the Hydrogeological tab and in the Excel schedule.`));
   }
   function edgeName(e) {
     const ws = App.ws, x0 = ws.x0, y0 = ws.y0, x1 = x0 + ws.nx * ws.cell, y1 = y0 + ws.ny * ws.cell, m = ws.cell * 1.5;
@@ -16931,8 +16949,8 @@ const Timeline = (() => {
       if (c.kind === 'adc') nm.setAttribute('aria-label', 'Name of ' + c.key.slice(4));
       return h('tr', null, h('td', null, cb), h('td', null, nm));
     }))))));
-    body.append(UI.hint(run.adc ? 'The ADC tonnes come from the block attribute columns reported as ADC tons (Data tab, “Block attributes”): each block’s ADC tonnes × the share of its seam mined. Waste is in bank cubic metres; ramp excavation is added to Waste. Hover over a figure to see how much of the whole schedule it is.'
-      : 'No block attribute column is reported as ADC tons yet, so the coal tonnes of each seam from the schedule are shown. Load the attribute file with the ADC columns, or mark them as ADC tons in the Data tab under “Block attributes”.'));
+    body.append(UI.hint(run.adc ? 'The ADC tonnes come from the block attribute columns reported as ADC tons (Geological Data tab, “Block attributes”): each block’s ADC tonnes × the share of its seam mined. Waste is in bank cubic metres; ramp excavation is added to Waste. Hover over a figure to see how much of the whole schedule it is.'
+      : 'No block attribute column is reported as ADC tons yet, so the coal tonnes of each seam from the schedule are shown. Load the attribute file with the ADC columns, or mark them as ADC tons in the Geological Data tab under “Block attributes”.'));
     function done() { App.changed('meta'); renderAcc(); App.redrawSpoil(); }
     UI.modal('Running totals under the Gantt chart', body, [UI.btn('Done', () => UI.closeModal(), 'primary')]);
   }
@@ -17017,7 +17035,7 @@ const Report = (() => {
     return ws;
   }
 
-  /* The block margin of every block (Reserve tab), ranked: the table first (sortable, with a filter), the inputs below it. */
+  /* The block margin of every block (Block Margin Rank tab), ranked: the table first (sortable, with a filter), the inputs below it. */
   function marginSheet(P, ws, R) {
     const M = R.M, cur = (M.currency || 'R').trim() || 'R', pits = P.pits || [], pitOf = pits.length ? Model.blockPits(P, ws) : null;
     const r2 = v => (v === v ? Math.round(v * 100) / 100 : null), r0 = v => (v === v ? Math.round(v) : null); // (null: an empty cell)
@@ -17102,7 +17120,7 @@ const Report = (() => {
       ['Revenue a ton sold', `${cur}/t`, r2(K.price)], ['Cash cost a ton sold (before the royalty)', `${cur}/t`, r2(K.cashCost)], ['FOB cost a ton exported', `${cur}/t`, r2(K.fobCost)], ['Mining, processing and overheads a ton mined', `${cur}/t`, r2(K.cost)], ['EBITDA a ton sold', `${cur}/t`, r2(K.margin)]);
     gap(); title('INPUTS (Finance tab)'); aoa.push(['Currency', cur]);
     for (const G of Fin.GROUPS) for (const q of G.fields) { if (q.when && !q.when(o)) continue; const v = o[q.k]; aoa.push([`${G.title}: ${q.label}`, Fin.unitOf(q, cur) || (q.kind === 'chk' ? '' : ''), q.kind === 'chk' ? (v ? 'yes' : 'no') : q.kind === 'sel' ? (q.opts.find(x => x[0] === v) || [, v])[1] : v]); }
-    aoa.push(['Product from', '', F.prodFrom === 'wash' ? 'the washability data (Data tab)' : F.prodFrom === 'fixed' ? 'a fixed yield' : 'not washed: sold as mined']);
+    aoa.push(['Product from', '', F.prodFrom === 'wash' ? 'the washability data (Geological Data tab)' : F.prodFrom === 'fixed' ? 'a fixed yield' : 'not washed: sold as mined']);
     const sh = sheet(aoa, [46, 16, 16, ...Array.from({ length: N }, () => 13)]);
     sh.__freeze = { x: 3, y: 1 };
     return sh;
@@ -17127,7 +17145,7 @@ const Report = (() => {
     sh.__freeze = { x: 1, y: 1 };
     return sh;
   }
-  /* The strip ratio of every block (Reserve tab), ranked from the lowest, when there is no block margin to carry it. */
+  /* The strip ratio of every block (Strip Ratio tab), ranked from the lowest, when there is no block margin to carry it. */
   /* Coal tons from GTIS to ADC (Tons; Reserve tab): seam by seam with every factor and the ADC qualities, the quality of the
      contamination, and block by block. */
   function tonsSheet(P, ws, R) {
@@ -17209,10 +17227,10 @@ const Report = (() => {
       M.adc.forEach((q, i) => { if (ly && q.layer === ly.id) { adcUsed.add(i); add(`${a.A.name}: ADC tons (${q.col})`, 't', q.v); } });
     }
     M.adc.forEach((q, i) => { if (!adcUsed.has(i)) add(`ADC tons (${q.col}) — ${q.layerName}`, 't', q.v); });
-    // the washed product (washability, Data tab): the as received coal of each block × its yield
+    // the washed product (washability, Geological Data tab): the as received coal of each block × its yield
     if (M.prod) {
       const W = M.prod, pc = a => Array.from(a, v => v * 100), unit = k => (Wash.qk(k) || {}).unit || '';
-      gap(); title('WASHED PRODUCT — as received coal × the yield of each block (washability, Data tab)');
+      gap(); title('WASHED PRODUCT — as received coal × the yield of each block (washability, Geological Data tab)');
       add('Plant feed (as received, washed seams)', 't', W.feed);
       add('Product (washed)', 't', W.T);
       if (T.coal && T.coalBasis === 'product') add('Product − target', 't', diff(W.T, T.coal));
@@ -17239,7 +17257,7 @@ const Report = (() => {
     }
     if (M.sum(M.rampB) > 0) { add('Ramp excavation', 'bcm', M.rampB); add('Ramp excavation', 't', M.rampT); }
     if (M.batterB && M.sum(M.batterB) > 0) { add('Highwall batters', 'bcm', M.batterB); add('Highwall batters', 't', M.batterT); }
-    // drill and blast (Production tab): drill metres, holes, explosives and what is blasted
+    // drill and blast (Drill and Blast tab): drill metres, holes, explosives and what is blasted
     if (BL && BL.o.on) {
       const DB = Blast.monthly(BL, M.mOf, nM, M.work), tot = a => arr(DB.waste[a]).map((v, m) => v + DB.coal[a][m]);
       gap(); title('DRILL AND BLAST');
@@ -17591,7 +17609,7 @@ const Report = (() => {
         return [B.title, `${B.blocks.length} blocks in ${B.strips} strips (${B.blocks.map(b => P.blocks[b].id).join(', ')}), about ${r0(B.width)} m wide and ${r0(B.length)} m long; mined first, layer by layer, ${B.months > 0 ? `in the first ${B.months} month${B.months === 1 ? '' : 's'} of mining there` : 'until it is mined out'}`
           + (R && s0 >= 0 ? `: from ${U.fmtDay(iso, s0)}${R.until >= 0 ? ' to ' + U.fmtDay(iso, R.until) : ''}; ${r0(R.depth)} m deep on average; ${R.topSeam ? (R.exposedDay >= 0 ? `${R.topSeam} exposed across it on ${U.fmtDay(iso, R.exposedDay)}` : `${R.topSeam} not exposed across it`) + '; ' : ''}${R.doneDay >= 0 ? `mined out on ${U.fmtDay(iso, R.doneDay)}` : 'not mined out'}${R.until >= 0 && R.until < res.nDays && !(R.doneDay >= 0 && R.doneDay < R.until) ? `; when its months ended still to mine: ${R.layers.filter(q => q.inTime < q.total).map(q => `${q.name} in ${q.total - q.inTime} of ${q.total} blocks`).join(', ')}` : ''}` : '')];
       }) : []),
-      ...(ws && Model.hasReserve(P) ? [['Reserve boundary', (() => { const ins = Model.reserveInside(P, ws), n = Array.from(ins).filter(Boolean).length; return `drawn in the Reserve tab: ${n} of ${P.blocks.length} blocks inside are scheduled; the ${P.blocks.length - n} outside are left in the ground`; })()]] : P.reserve && P.reserve.pts && P.reserve.pts.length >= 3 ? [['Reserve boundary', 'drawn in the Reserve tab but switched off: every block is scheduled']] : []),
+      ...(ws && Model.hasReserve(P) ? [['Reserve boundary', (() => { const ins = Model.reserveInside(P, ws), n = Array.from(ins).filter(Boolean).length; return `drawn in the Block Margin Rank tab: ${n} of ${P.blocks.length} blocks inside are scheduled; the ${P.blocks.length - n} outside are left in the ground`; })()]] : P.reserve && P.reserve.pts && P.reserve.pts.length >= 3 ? [['Reserve boundary', 'drawn in the Block Margin Rank tab but switched off: every block is scheduled']] : []),
       ...(P.qrasters || []).map(e => { const K = typeof Qual !== 'undefined' ? Qual.kind(e.kind) : { name: e.kind, unit: '' }, Ly = P.layers.find(x => x.id === e.layerId), S = e.stats || {};
         return [`Quality raster — ${e.file}`, `${Ly ? Ly.name : '?'} ${K.k === 'other' ? e.label : K.name}: column “${e.col}”, the seam-weighted average over each block; ${S.n || 0} of ${P.blocks.length} blocks${S.n ? `, ${r2(S.lo)} to ${r2(S.hi)}${K.unit === '%' ? '%' : K.unit ? ' ' + K.unit : ''}, average ${r2(S.avg)}` : ''}${e.cmp && e.cmp.n ? `; replaces ${e.cmp.col} (${e.cmp.mean >= 0 ? '+' : ''}${r2(e.cmp.mean)} on average)` : ''}`]; }),
       ...(P.wash && P.wash.cols ? [['Washability', (() => { const W = P.wash, n = W.curves.length;
@@ -17612,7 +17630,7 @@ const Report = (() => {
         return [`Limits — ${a.name}`, out.join('; ')];
       }),
       ...P.activities.map(a => [`Dumps — ${a.name}`, (a.method === 'mixed' ? `pushed into the previous void${+a.dozeShare > 0 && +a.dozeShare < 100 ? ' (at most ' + Math.round(+a.dozeShare) + '% of a block)' : ''}; hauled ${a.mixMode === 'backup' ? '(only when it cannot be pushed) ' : ''}to ` : a.destMode === 'void' ? 'previous void; otherwise ' : '') + (Model.actDests(a).map((q, i) => `${i + 1}. ${(P.dumps.find(d => d.id === q.dump) || {}).name || '?'}${q.from && U.parseISO(q.from) ? ' from ' + U.fmtDate(U.parseISO(q.from)) : ''}`).join('; ') || 'none')])];
-    // the groundwater and the surface water of the pit (Dumps tab, Hydro), month by month
+    // the groundwater and the surface water of the pit (Hydrogeological tab, Hydro), month by month
     const HR = res && typeof Hydro !== 'undefined' && App.hydro ? App.hydro() : null;
     if (HR) {
       const o = HR.o, T = HR.tot;
@@ -17621,7 +17639,7 @@ const Report = (() => {
       XLSX.utils.book_append_sheet(wb, waterSheet(P, HR), 'Water Balance');
     }
     XLSX.utils.book_append_sheet(wb, sheet(info, [34, 90]), 'Project');
-    // the block margin of every block, ranked (Reserve tab)
+    // the block margin of every block, ranked (Block Margin Rank tab)
     if (ws && typeof Margin !== 'undefined') {
       const MR = App.margin ? App.margin() : Margin.compute(P, ws);
       if (MR.ready) XLSX.utils.book_append_sheet(wb, marginSheet(P, ws, MR), 'Block Margin'); // with the strip ratio of each block
@@ -17697,7 +17715,7 @@ const LoM = (() => {
     const pits = P.pits || [], pitOf = res.blockPit || null, hasPits = !!(pitOf && res.pits);
     const pitName = k => (hasPits ? Model.pitName(P, k) : P.name);
     const qc = qualityCols(P), TM = Model.teams(P), QB = Tons.basis(P);
-    // the washed product (washability, Data tab): the yield and product qualities of each block and seam
+    // the washed product (washability, Geological Data tab): the yield and product qualities of each block and seam
     const PR = typeof Wash !== 'undefined' ? Wash.product(P) : null, PK = PR ? PR.keys.filter(k => QK.includes(k)) : [];
     const qOf = (b, l) => { const o = {}, A = P.blocks[b].attrs || {}; if (qc[l]) for (const k of QK) if (qc[l][k]) { const v = parseFloat(A[qc[l][k]]); if (isFinite(v)) o[k] = v; } return o; };
     // the position of each block in the path of each activity, and its strip
@@ -17722,7 +17740,7 @@ const LoM = (() => {
         ar: coal ? r2(q.t * arF) : null, adc: coal ? r2(q.t * QB.factor(q.b, l)) : null, loose: r2(q.v * sw), bcm: r2(q.v), t: q.t, dest: Object.keys(res.bl[q.b][l].dest).join('; '), act: A.name, b: q.b,
         ...(coal && PR && PR.seams.get(l) ? (() => { const s = PR.seams.get(l), y = s.y[q.b], pq = {}; for (const k of PK) if (s.q[k]) pq[k] = r2(s.q[k][q.b]); return { yld: Math.round(y * 10000) / 100, prod: r2(q.t * arF * y), pq }; })() : {}) };
     });
-    // drill and blast (Production tab): the drill metres, holes and explosives of each row, at its block and layer's rates
+    // drill and blast (Drill and Blast tab): the drill metres, holes and explosives of each row, at its block and layer's rates
     const BO = typeof Blast !== 'undefined' ? Blast.settings(P) : null, BR = BO && BO.on ? Blast.rates(P, ws, res, BO) : null;
     if (BR) for (const q of rows) { const z = BR(q.b, q.l); if (!z) continue; const v = q.bcm, t = q.t; q.db = { coal: z.coal, m: r2(v * z.m), holes: r2(v * z.holes), kg: r2(v * z.kgB + t * z.kgT), bcm: v }; }
     // exposure: a seam of a block is exposed on the day the last layer above it in that block is mined out
@@ -17984,7 +18002,7 @@ const LoM = (() => {
     set(0, r, 'teams'); set(1, r, 'Teams available');
     for (let m = 0; m < nM; m++) set(C0 + m, r, TM.count, `${TA}!$B$5`, '0.0');
     named.avail = ++r;
-    /* drill and blast (Production tab): from the drill metres, holes and explosives of each row of the Schedule Detail,
+    /* drill and blast (Drill and Blast tab): from the drill metres, holes and explosives of each row of the Schedule Detail,
        waste and coal, month by month */
     if (D.blast) {
       const c = D.DB0, cKind = colL(c), cM = colL(c + 1), cH = colL(c + 2), cK = colL(c + 3), BO = D.BO;
@@ -18259,7 +18277,7 @@ const App = {
   limitId: null, LIMIT_COLOR: '#b9a2ff', RESERVE_COLOR: '#e040fb', OUT_COLOR: '#e34948', pitId: null,
   sat: { on: false, canvas: null, sig: '', attribution: '' },
   folder: { name: '', files: new Map() },
-  qgrid: new Map(), // the coal quality rasters read in this session, on the model grid (Data tab: to read them again)
+  qgrid: new Map(), // the coal quality rasters read in this session, on the model grid (Geological Data tab: to read them again)
   saveTimer: 0, saving: false,
 
   async boot() {
@@ -18371,7 +18389,7 @@ const App = {
   buildWs(opts = {}) {
     if (this.surf && this.P.grid) {
       this.ws = Model.buildWorkspace(this.P, this.surf);
-      if (this.P.wash) Wash.assign(this.P, this.ws); // the washed product of the blocks, as they are now (washability, Data tab)
+      if (this.P.wash) Wash.assign(this.P, this.ws); // the washed product of the blocks, as they are now (washability, Geological Data tab)
       View.setWorkspace(this.ws, { vex: (this.P.view && this.P.view.vex) || 3, keepCamera: opts.keepCamera });
       UI.setVex((this.P.view && this.P.view.vex) || 3);
     } else { this.ws = null; View.setWorkspace(null); }
@@ -18402,7 +18420,7 @@ const App = {
     if (['sim', 'paths', 'fleet', 'roads', 'dumps', 'layers', 'blocks', 'calendar', 'keepout', 'limits', 'cutoff', 'pits', 'drains', 'reserve'].includes(kind) && this.res) { this.stale = true; Timeline.setStale(true); if (this.ws) this.refreshToes(); }
     if (['paths', 'roads', 'dumps', 'blocks', 'overlays', 'keepout', 'limits', 'pits', 'drains', 'reserve'].includes(kind)) this.refreshOverlays();
     if (kind === 'drains') WaterUI.refresh();
-    if (kind === 'hydro') { WaterUI.refresh(true); if (this.tab === 'results') UI.renderTab(); }
+    if (kind === 'hydro') { WaterUI.refresh(true); if (this.tab === 'hydro') UI.renderTab(); }
     if (kind === 'blast' || kind === 'fin') this._fin = null;
     if (kind === 'limits' || kind === 'pits') UI.renderLegend();
     if (kind === 'overlays' || kind === 'keepout') { UI.renderLegend(); if (Section.active) Section.schedule(); }
@@ -18574,8 +18592,8 @@ const App = {
       const boxes = Model.boxCuts(P, this.ws, null, true).map(B => ({ pts: B.def.pts, color: B.color, blocks: B.blocks, label: B.k >= 0 ? 'Box cut · ' + pits[B.k].name : pits.length ? 'Box cut · outside the pits' : 'Box cut', selected: this.tab === 'sequence' && B.k >= 0 && pits[B.k].id === this.pitId }));
       View.setPits(pits.map(z => ({ pts: z.pts, color: z.color, label: z.name, selected: this.tab === 'sequence' && z.id === this.pitId })), boxes); }
     // surface-water flow paths, with arrowheads in the drawn direction
-    View.setDrains((P.drains || []).map(d => ({ pts: d.pts, name: d.name, selected: this.tab === 'dumps' && d.id === this.drainId })).concat((P.batters || []).filter(q => q.pts && q.pts.length > 1).map(q => ({ pts: q.pts, name: q.name, color: '#d0574b', noArrow: true, selected: this.tab === 'sequence' && q.id === this.batterId }))));
-    View.setFills((P.fills || []).map(f => ({ pts: f.pts, name: f.name, selected: this.tab === 'dumps' && f.id === this.fillId })).concat((P.raises || []).map(f => ({ pts: f.pts, name: f.name, color: '#e0a03a', selected: this.tab === 'dumps' && f.id === this.raiseId }))));
+    View.setDrains((P.drains || []).map(d => ({ pts: d.pts, name: d.name, selected: this.tab === 'hydro' && d.id === this.drainId })).concat((P.batters || []).filter(q => q.pts && q.pts.length > 1).map(q => ({ pts: q.pts, name: q.name, color: '#d0574b', noArrow: true, selected: this.tab === 'sequence' && q.id === this.batterId }))));
+    View.setFills((P.fills || []).map(f => ({ pts: f.pts, name: f.name, selected: this.tab === 'rehab' && f.id === this.fillId })).concat((P.raises || []).map(f => ({ pts: f.pts, name: f.name, color: '#e0a03a', selected: this.tab === 'rehab' && f.id === this.raiseId }))));
     View.setRoads(P.roads, this.tab === 'roads' ? this.roadId : null);
     // (existing dumps to load out are outlined too, with their name)
     View.setDumps(P.dumps.concat((P.oldDumps || []).filter(o => o.pts && o.pts.length >= 3).map(o => ({ id: o.id, name: o.name, pts: o.pts, color: '#c9a27a', kind: 'old' }))), this.tab === 'dumps' ? this.oldId || this.dumpId : null);
@@ -18916,7 +18934,7 @@ const App = {
 
   // ---------- simulation ----------
   async runSim(opts = {}) {
-    if (!this.ws) { UI.toast('Load elevation rasters and a block layout first (Data tab).'); return; }
+    if (!this.ws) { UI.toast('Load elevation rasters and a block layout first (Geological Data tab).'); return; }
     View.cancelDraw(true);
     const errs = Sim.validate(this.ws).filter(e => e.type === 'error');
     if (errs.length) { if (!opts.quiet) UI.toast(errs[0].msg); this.tab !== 'results' && !opts.quiet && UI.showTab('results'); this.lastValidation = errs; UI.renderTab(); return; }
@@ -18998,7 +19016,7 @@ const App = {
     let out;
     if (im.provider === 'file') {
       const u8 = await this.store.getBlob(this.P.id, 'sat');
-      if (!u8) throw new Error('No imagery file loaded yet. Pick an image in the Data tab.');
+      if (!u8) throw new Error('No imagery file loaded yet. Pick an image in the Geological Data tab.');
       out = { canvas: await Imagery.jpegToCanvas(u8), attribution: im.fileName || 'Project image' };
     } else {
       UI.busy('Loading satellite imagery…', 0.05);
