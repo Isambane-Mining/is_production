@@ -5,7 +5,7 @@ the bench, and does not import Frappe. Reads a JSON request on stdin::
 
     {
       "db": {"host", "port", "name", "user", "password"},
-      "output": "/var/lib/qgis-server/projects/<dataset>.qgs",
+      "output": "<project base>/<site>/<dataset>.qgs",
       "dataset": {"name", "title", "geometry_type", "crs", "has_z", "color",
                   "extent": [min_x, min_y, max_x, max_y] | null,
                   "attributes": [{"field_name", "data_type", "label"}]}
@@ -17,7 +17,7 @@ and prints one JSON report on stdout. The project reads features live from ``tab
 Each attribute becomes a typed expression field read from the ``attributes`` JSON column. Internal
 columns (raw JSON, Frappe bookkeeping) are hidden from WMS and WFS. The file is written to a temporary
 name, checked by loading it back, and then moved into place with mode 0640 (it holds the read-only
-account's password; QGIS Server reads it through the directory's www-data group).
+account's password; QGIS Server reads it through the folder's group, which is QGIS Server's own).
 
 This file imports QGIS (GPL-2.0-or-later); see the licence note in the app README.
 """
