@@ -3569,7 +3569,7 @@ const Synth = (() => {
     byName('Overburden').dests = D('dmp_box', { dump: 'dmp_inpit', from: '2027-02-01' }); // ex-pit first, then backfill the mined-out pit
     P.bench = { on: true, lead: 3 }; // mined in benches by strip: no layer more than three strips ahead of the lowest coal seam
     // the block margin (Block Margin Rank tab): example costs and a price that follows the CV of each seam
-    P.margin = { wasteCost: 130, coalCost: 200, price: 25, byCV: true, plant: false, basis: 'insitu', currency: 'R' };
+    P.margin = { wasteCost: 130, coalCost: 200, price: 25, byCV: true, plant: false, basis: 'adc', currency: 'R' };
     const ib = P.activities.find(a => a.method === 'dozer_push');
     ib.dests = D('dmp_box'); ib.pushBearing = 270;
     // the rollover: dozers push into the void; whenever they cannot (box cut, void not open yet) it is hauled to the box-cut dump
@@ -7486,7 +7486,7 @@ const Inventory = (() => {
 
 /* ===== Block margin: what each block's coal earns less what it costs to mine it, per ton of coal, and the blocks ranked by it =====
    P.margin = {wasteCost (per bcm of waste), coalCost (per t of coal), price (per t; × CV when byCV), byCV (bool), plant (bool),
-   plantCost (per t; × yield), basis: 'insitu' | 'ar', currency, cv / ash / ts / yield: {layerId: column},
+   plantCost (per t; × yield), basis: 'adc' (air-dry contaminated tons, the default) | 'ar' | 'insitu', currency, cv / ash / ts / yield: {layerId: column},
    waste: {layerId: true} (seams counted as waste here), srMid (the middle of the strip ratio colour scale, bcm/t; empty: the average)}.
    The volumes and tons of each block, layer by layer, come from the 3D model (the surfaces), as the schedule mines it: the
    seam cut-off, depth limits and keep-out zones taken off; tons = bcm × the density of the layer (its RD column where one
@@ -7503,7 +7503,7 @@ const Inventory = (() => {
    is left out of that blend. Blocks without coal have no margin.
    Rank 1 is the highest margin. Every block is ranked, inside the reserve boundary (P.reserve) or not; inside tells which. */
 const Margin = (() => {
-  const DEF = { wasteCost: null, coalCost: null, price: null, revBy: 'blend', seamPrice: {}, byCV: true, plant: false, plantCost: null, basis: 'insitu', currency: 'R', cv: {}, ash: {}, ts: {}, yield: {}, waste: {}, srMid: null };
+  const DEF = { wasteCost: null, coalCost: null, price: null, revBy: 'blend', seamPrice: {}, byCV: true, plant: false, plantCost: null, basis: 'adc', currency: 'R', cv: {}, ash: {}, ts: {}, yield: {}, waste: {}, srMid: null };
   function settings(P) { const M = Object.assign({}, DEF, P.margin || {}); for (const k of ['cv', 'ash', 'ts', 'yield', 'waste', 'seamPrice']) M[k] = Object.assign({}, (P.margin || {})[k]); return M; }
   const num = v => (v === '' || v == null || !isFinite(+v) ? null : +v);
   const KIND = { cv: /(^|[^a-z])(cv|mj|kcal|cal|gcv|ncv)([^a-z]|$)|calorific/i, ash: /(^|[^a-z])ash/i, ts: /(^|[^a-z])(ts|tsul|stot)([^a-z]|$)|sulph|sulfur/i, yield: /yield|yld/i, vm: /(^|[^a-z])vm([^a-z]|$)|volatile/i, im: /(^|[^a-z])(im|moist|inh)([^a-z]|$)|moisture|inherent/i }; // (VM and IM: for the ADC qualities)
@@ -7534,7 +7534,8 @@ const Margin = (() => {
     const coalL = P.layers.map((L, l) => (isCoal(M, L) ? l : -1)).filter(l => l >= 0);
     const QB = Tons.basis(P); // the blended qualities: ADC (weighted by ADC tons) or raw
     const vOf = (b, l) => (l <= lim[b] ? vol[b][l] : 0);
-    const tOf = (b, l) => vOf(b, l) * Model.blockDensity(P, b, l) * (M.basis === 'ar' && isCoal(M, P.layers[l]) ? Model.arFactor(P, P.layers[l]) : 1);
+    // the coal tons of the margin: air-dry contaminated (the tons in situ × the losses, contamination and moisture of the Reserve tab), as received, or in situ
+    const tOf = (b, l) => vOf(b, l) * Model.blockDensity(P, b, l) * (!isCoal(M, P.layers[l]) ? 1 : M.basis === 'ar' ? Model.arFactor(P, P.layers[l]) : M.basis === 'insitu' ? 1 : QB.adc(b, l));
     // each seam: its CV, ASH, TS and yield columns, the values per block, and the seam's averages for blocks that lack them
     const seams = coalL.map(l => {
       const L = P.layers[l], s = { l, id: L.id, name: L.name, cvCol: colFor(P, M, L, 'cv'), ashCol: colFor(P, M, L, 'ash'), tsCol: colFor(P, M, L, 'ts'), yCol: M.plant ? colFor(P, M, L, 'yield') : '' };
@@ -7663,7 +7664,9 @@ const Margin = (() => {
   const srMidIn = S => Math.min(S.hi, Math.max(S.lo, S.mid));
   const srColor = (v, S) => divColor(v, S.lo, srMidIn(S), S.hi, GREEN, RED);
   const srGradient = S => divGradient(S.lo, srMidIn(S), S.hi, GREEN, RED);
-  return { DEF, QUAL, settings, guess, colFor, ready, isCoal, isWasteSeam, compute, colorOf, gradient, srColor, srGradient, divColor, divGradient, NEG, POS, RED, GREEN, AMBER };
+  // the tons the margin counts the coal in: 'ADC', 'as received' or 'in situ'
+  const tonsWord = M => (M.basis === 'ar' ? 'as received' : M.basis === 'insitu' ? 'in situ' : 'ADC');
+  return { DEF, QUAL, settings, guess, colFor, ready, isCoal, isWasteSeam, compute, tonsWord, colorOf, gradient, srColor, srGradient, divColor, divGradient, NEG, POS, RED, GREEN, AMBER };
 })();
 
 /* ===== Coal tons from gross in situ to air-dry contaminated (Reserve tab; DOM-free) =====
@@ -7762,7 +7765,8 @@ const Tons = (() => {
       return z.k1 * ps(Model.blockDensity(P, b, l), z.mis, m);
     };
     const q = (l, k, v) => { const z = seam[l]; return !on || !z || !(v === v) || v == null || !(k in o.cont) ? v : (v + z.f * o.cont[k]) / (1 + z.f); };
-    return { on, label: on ? 'ADC' : 'raw', factor: (b, l) => (on ? factor(b, l) : 1), q, f: l => (seam[l] ? seam[l].f : 0), cont: o.cont };
+    // adc(b, l): the ADC tons of a ton in situ, whatever the basis of the qualities (the block margin's tons on the ADC basis)
+    return { on, label: on ? 'ADC' : 'raw', factor: (b, l) => (on ? factor(b, l) : 1), adc: factor, q, f: l => (seam[l] ? seam[l].f : 0), cont: o.cont };
   }
   // the quality an attribute column holds, from its name: 'cv', 'ash', 'ts', 'vm', 'im', or null
   const KIND = { cv: /(^|[^a-z])(cv|mj|kcal|cal|gcv|ncv)([^a-z]|$)|calorific/i, ash: /(^|[^a-z])ash/i, ts: /(^|[^a-z])(ts|tsul|stot)([^a-z]|$)|sulph|sulfur/i, vm: /(^|[^a-z])vm([^a-z]|$)|volatile/i, im: /(^|[^a-z])(im|moist|inh)([^a-z]|$)|moisture|inherent/i };
@@ -11641,7 +11645,7 @@ const UI = (() => {
         el.append(sec('Strip ratio', r.srRank ? h('span', { class: 'chip' }, `rank ${r.srRank} of ${S.n}`) : null, r.coalT > 0 ? h('div', { class: 'kv' },
           h('span', { class: 'k' }, 'Strip ratio'), h('span', { class: 'v' }, chip(cs), `${U.fmtNum(r.sr, 2)} bcm/t`),
           h('span', { class: 'k' }, 'Waste'), h('span', { class: 'v' }, `${U.fmtNum(r.waste, 0)} bcm`),
-          h('span', { class: 'k' }, R.M.basis === 'ar' ? 'Coal (as received)' : 'Coal'), h('span', { class: 'v' }, `${U.fmtNum(r.coalT, 0)} t`),
+          h('span', { class: 'k' }, `Coal (${Margin.tonsWord(R.M)})`), h('span', { class: 'v' }, `${U.fmtNum(r.coalT, 0)} t`),
           ...(R.boundary ? [h('span', { class: 'k' }, 'Reserve boundary'), h('span', { class: 'v' }, r.inside ? 'inside: scheduled' : 'outside: not mined')] : [])) : hint('No coal in this block, so it has no strip ratio.')));
         // its blended coal quality: the CV, ASH and TS of its seams counted as coal, weighted by tons; and each seam's own
         if (r.coalT > 0 && [r.cv, r.ash, r.ts].some(v => v === v)) {
@@ -14406,7 +14410,7 @@ const Tabs = (() => {
     // ---- the inputs (Block Margin Rank tab)
     if (part === 'rank') {
       const wc = money('wasteCost', 'Waste mining cost per bcm'), cc = money('coalCost', 'Coal mining cost per ton'), pr = money('price', 'Coal price'), pc = money('plantCost', 'Plant cost per ton');
-      const bs = sel([['insitu', 'In situ'], ['ar', 'As received (after the losses)']], M.basis === 'ar' ? 'ar' : 'insitu', v => set('basis', v)); bs.setAttribute('aria-label', 'Coal tons for the margin');
+      const bs = sel([['adc', 'Air dry contaminated (ADC: losses, contamination, moisture)'], ['ar', 'As received (after the losses)'], ['insitu', 'In situ']], M.basis === 'ar' || M.basis === 'insitu' ? M.basis : 'adc', v => set('basis', v)); bs.setAttribute('aria-label', 'Coal tons for the margin');
       const cu = txt(cur, v => set('currency', v.trim() || 'R')); cu.setAttribute('aria-label', 'Currency');
       const parts = [
         h('div', { class: 'grid2' }, fld(`Waste mining cost (${cur}/bcm)`, wc), fld(`Coal mining cost (${cur}/t)`, cc)),
@@ -14581,7 +14585,7 @@ const Tabs = (() => {
       const I = Q.inside, O = Q.outside, ids = (list, n) => list.slice(0, n).map(r => r.id).join(', ') + (list.length > n ? ` and ${list.length - n} more` : '');
       const col = (t, q, cls) => h('div', { class: 'bnd-col ' + cls }, h('div', { class: 'bnd-h' }, t),
         h('div', { class: 'kv' },
-          h('span', { class: 'k' }, R.M.basis === 'ar' ? 'Coal (as received)' : 'Coal'), h('span', { class: 'v' }, U.fmtBig(q.coalT, 't')),
+          h('span', { class: 'k' }, `Coal (${Margin.tonsWord(R.M)})`), h('span', { class: 'v' }, U.fmtBig(q.coalT, 't')),
           h('span', { class: 'k' }, 'Waste'), h('span', { class: 'v' }, U.fmtBig(q.waste, 'bcm')),
           h('span', { class: 'k' }, 'Strip ratio'), h('span', { class: 'v' }, q.sr === q.sr ? `${U.fmtNum(q.sr, 2)} bcm/t` : '–'),
           h('span', { class: 'k' }, `Blended CV (${R.qBasis})`), h('span', { class: 'v' }, q.cv === q.cv ? `${U.fmtNum(q.cv, 2)} MJ/kg` : '–'),
@@ -14665,14 +14669,14 @@ const Tabs = (() => {
     body.append(sec('Volumes and tons by layer', h('span', { class: 'chip' }, `${P.blocks.length} blocks`),
       h('div', { class: 'tbl-wrap', style: { maxHeight: '420px', overflow: 'auto' } }, h('table', { class: 'tbl mg-tbl lay-tbl' },
         h('thead', null, h('tr', null, h('th', null, 'Block'), R.ready ? h('th', { class: 'r' }, 'Rank') : null, ...T.map(q => h('th', { class: 'r', title: q.coal ? 'coal, tons' : 'waste, bcm' }, ...lab(q))),
-          h('th', { class: 'r' }, 'Waste', h('br'), h('span', { class: 'dt' }, 'bcm')), h('th', { class: 'r' }, 'Coal', h('br'), h('span', { class: 'dt' }, R.M.basis === 'ar' ? 't (as rec.)' : 't')), h('th', { class: 'r' }, 'Blended CV', h('br'), h('span', { class: 'dt' }, 'MJ/kg')), h('th', { class: 'r' }, 'Blended ASH', h('br'), h('span', { class: 'dt' }, '%')), h('th', { class: 'r' }, 'Blended TS', h('br'), h('span', { class: 'dt' }, '%')))),
+          h('th', { class: 'r' }, 'Waste', h('br'), h('span', { class: 'dt' }, 'bcm')), h('th', { class: 'r' }, 'Coal', h('br'), h('span', { class: 'dt' }, R.M.basis === 'ar' ? 't (as rec.)' : R.M.basis === 'insitu' ? 't' : 't (ADC)')), h('th', { class: 'r' }, 'Blended CV', h('br'), h('span', { class: 'dt' }, 'MJ/kg')), h('th', { class: 'r' }, 'Blended ASH', h('br'), h('span', { class: 'dt' }, '%')), h('th', { class: 'r' }, 'Blended TS', h('br'), h('span', { class: 'dt' }, '%')))),
         h('tbody', null, show.map(r => h('tr', { class: (r.b === App.selRes() ? 'sel ' : '') + (r.inside ? '' : 'out'), onclick: () => App.selectRes(r.b), title: r.inside ? '' : 'Outside the reserve boundary: not mined' },
           h('td', null, r.id), R.ready ? h('td', { class: 'r num' }, r.rank ? String(r.rank) : '–') : null, ...r.byLayer.map(q => h('td', { class: 'r num' }, U.fmtNum(q.coal ? q.t : q.v, 0))),
           h('td', { class: 'r num' }, U.fmtNum(r.waste, 0)), h('td', { class: 'r num' }, U.fmtNum(r.coalT, 0)), h('td', { class: 'r num' }, r.cv === r.cv ? U.fmtNum(r.cv, 2) : '–'), h('td', { class: 'r num' }, r.ash === r.ash ? U.fmtNum(r.ash, 1) : '–'), h('td', { class: 'r num' }, r.ts === r.ts ? U.fmtNum(r.ts, 2) : '–')))),
         h('tfoot', null, h('tr', { class: 'tot' }, h('td', null, 'All blocks'), R.ready ? h('td') : null, ...T.map(q => h('td', { class: 'r num' }, U.fmtNum(q.coal ? q.t : q.v, 0))),
           h('td', { class: 'r num' }, U.fmtNum(tW, 0)), h('td', { class: 'r num' }, U.fmtNum(tC, 0)), h('td', { class: 'r num' }, avgQ(R.stats.cv, 2)), h('td', { class: 'r num' }, avgQ(R.stats.ash, 1)), h('td', { class: 'r num' }, avgQ(R.stats.ts, 2)))))),
       order.length > show.length ? h('div', { class: 'dt' }, `The first ${show.length} of ${order.length}; the Excel schedule (“Block Margin” sheet) has every block and layer.`) : null,
-      hint(`Waste layers in bcm, seams counted as coal in tons${R.M.basis === 'ar' ? ' (as received)' : ''}: from the 3D model (the surfaces), not the attribute file, as the schedule mines each block (the seam cut-off, depth limits and keep-out zones taken off); tons are bcm × the density of the layer (the RD column where one is set). A seam counted as waste shows its bcm and is part of the waste. The blended CV, ASH and TS are those of the block's seams counted as coal (attribute file), weighted by their tons. ${R.ready ? 'The blocks are in the order of the margin rank; ' : ''}the foot row adds up all the blocks (the qualities weighted by tons); greyed rows lie outside the reserve boundary.`)));
+      hint(`Waste layers in bcm, seams counted as coal in tons (${Margin.tonsWord(R.M)}): from the 3D model (the surfaces), not the attribute file, as the schedule mines each block (the seam cut-off, depth limits and keep-out zones taken off); tons are bcm × the density of the layer (the RD column where one is set). A seam counted as waste shows its bcm and is part of the waste. The blended CV, ASH and TS are those of the block's seams counted as coal (attribute file), weighted by their tons. ${R.ready ? 'The blocks are in the order of the margin rank; ' : ''}the foot row adds up all the blocks (the qualities weighted by tons); greyed rows lie outside the reserve boundary.`)));
   }
   // the blocks ranked by margin, with the scale and the colouring
   function marginRank(body, R, cur, kp) {
@@ -14760,7 +14764,7 @@ const Tabs = (() => {
         h('thead', null, h('tr', null, h('th', { class: 'r' }, 'Rank'), h('th', null, 'Block'), h('th', { class: 'r' }, 'bcm/t'), h('th', { class: 'r' }, 'Waste bcm'), h('th', { class: 'r' }, 'Coal t'), R.ready ? h('th', { class: 'r', title: 'Its rank by margin' }, 'Margin rank') : null)),
         h('tbody', null, show.map(tr)))),
       R.srRanked.length > show.length ? h('div', { class: 'dt' }, `The first ${show.length} of ${R.srRanked.length}; the Excel schedule has them all.`) : null,
-      hint(`The strip ratio of a block is its waste (every layer that is not coal, topsoil too) in bcm ÷ its coal in tons${R.M.basis === 'ar' ? ' as received' : ' in situ'} (Coal tons, in the Block Margin Rank tab), with depth limits and keep-out zones taken off. Rank 1 is the lowest. “Colour the blocks by strip ratio” shows them in robot colours: green for the lowest, amber at the middle of the scale, red for the highest.${R.ready ? ' The break-even strip ratio is where a block with the average revenue per ton (and plant cost) would just pay for itself: above it the waste costs more than the coal earns.' : ''} Blocks without coal have no strip ratio.`)));
+      hint(`The strip ratio of a block is its waste (every layer that is not coal, topsoil too) in bcm ÷ its coal in tons ${Margin.tonsWord(R.M)} (Coal tons, in the Block Margin Rank tab), with depth limits and keep-out zones taken off. Rank 1 is the lowest. “Colour the blocks by strip ratio” shows them in robot colours: green for the lowest, amber at the middle of the scale, red for the highest.${R.ready ? ' The break-even strip ratio is where a block with the average revenue per ton (and plant cost) would just pay for itself: above it the waste costs more than the coal earns.' : ''} Blocks without coal have no strip ratio.`)));
   }
 
   // =============== PRODUCTION ===============
@@ -17231,7 +17235,7 @@ const Report = (() => {
     const r2 = v => (v === v ? Math.round(v * 100) / 100 : null), r0 = v => (v === v ? Math.round(v) : null); // (null: an empty cell)
     // each layer from the model: waste in bcm, the seams counted as coal in tons; then each seam's qualities from the attribute file
     const lay = P.layers.map((L, l) => ({ l, name: L.name, coal: Margin.isCoal(M, L) }));
-    const head = ['Rank', 'Block'].concat(pitOf ? ['Pit'] : [], R.boundary ? ['In reserve'] : [], ['Coal t', 'Waste bcm', 'Strip ratio (bcm/t)', 'Strip ratio rank', 'Lowest seam mined', 'Depth to its floor (m)', `Blended ${R.qBasis} CV (MJ/kg)`, `Blended ${R.qBasis} ASH (%)`, `Blended ${R.qBasis} TS (%)`],
+    const head = ['Rank', 'Block'].concat(pitOf ? ['Pit'] : [], R.boundary ? ['In reserve'] : [], [`Coal t (${Margin.tonsWord(R.M)})`, 'Waste bcm', 'Strip ratio (bcm/t)', 'Strip ratio rank', 'Lowest seam mined', 'Depth to its floor (m)', `Blended ${R.qBasis} CV (MJ/kg)`, `Blended ${R.qBasis} ASH (%)`, `Blended ${R.qBasis} TS (%)`],
       lay.map(q => `${q.name} ${q.coal ? 't' : 'bcm'}`),
       R.seams.flatMap(s => (M.byCV ? [`${s.name} CV (MJ/kg)`] : []).concat(s.ashCol ? [`${s.name} ASH (%)`] : [], s.tsCol ? [`${s.name} TS (%)`] : [], M.plant ? [`${s.name} yield`] : [], M.revBy === 'seam' ? [`${s.name} revenue (${cur})`] : [])),
       [`Revenue (${cur})`, `Waste mining (${cur})`, `Coal mining (${cur})`], M.plant ? [`Processing (${cur})`] : [], [`Total cost (${cur})`, `Revenue (${cur}/t)`, `Cost (${cur}/t)`, `Margin (${cur}/t)`]);
@@ -17249,7 +17253,7 @@ const Report = (() => {
       ['Depth to its floor', `from the ground (the original topography) down to the floor of the lowest seam mined in the block, on average over the block` + (R.stats.depth.n ? `; ${R.stats.depth.lo.toFixed(1)} to ${R.stats.depth.hi.toFixed(1)} m, ${R.stats.depth.avg.toFixed(1)} m on average` : '')],
       ['Revenue', M.revBy === 'seam' ? `seam by seam in each block: each seam's tons × its price${M.byCV ? ' × its CV' : ''}; ` + R.seams.map(s => `${s.name} at ${+((M.seamPrice || {})[s.id] != null && (M.seamPrice || {})[s.id] !== '' ? M.seamPrice[s.id] : M.price) || 0}`).join(', ') : `on the blended CV of each block: coal t × price${M.byCV ? ' × blended CV' : ''}`],
       [`Waste mining cost (${cur}/bcm)`, +M.wasteCost || 0], [`Coal mining cost (${cur}/t)`, +M.coalCost || 0], [M.byCV ? `Coal price (${cur}/t per MJ/kg)` : `Coal price (${cur}/t)`, +M.price || 0],
-      ...(M.plant ? [[`Plant cost (${cur}/t)`, +M.plantCost || 0]] : []), ['Coal tons', M.basis === 'ar' ? 'as received (after the losses)' : 'in situ'],
+      ...(M.plant ? [[`Plant cost (${cur}/t)`, +M.plantCost || 0]] : []), ['Coal tons', M.basis === 'ar' ? 'as received (after the losses)' : M.basis === 'insitu' ? 'in situ' : 'air dry contaminated (losses, contamination, moisture; Reserve tab)'],
       ...R.seams.flatMap(s => (M.byCV ? [[`CV — ${s.name}`, s.cvCol ? `${s.cvCol} (average ${s.cvAvg.toFixed(2)})` : 'none']] : []).concat(
         [[`ASH — ${s.name}`, s.ashCol ? `${s.ashCol} (average ${s.ashAvg === s.ashAvg ? s.ashAvg.toFixed(1) + '%' : '–'})` : 'none']], [[`TS — ${s.name}`, s.tsCol ? `${s.tsCol} (average ${s.tsAvg === s.tsAvg ? s.tsAvg.toFixed(2) + '%' : '–'})` : 'none']], M.plant ? [[`Yield — ${s.name}`, s.yCol ? `${s.yCol}${s.yPct ? ' (%, as a fraction here)' : ''} (average ${(s.yAvg * 100).toFixed(1)}%)` : 'none']] : [])),
       ['Blocks', `${R.stats.n} ranked: ${R.stats.pos} positive (${r0(R.stats.tPos)} t), ${R.stats.neg} negative (${r0(R.stats.tNeg)} t)${R.stats.none ? `; ${R.stats.none} without coal` : ''}`],
@@ -17366,7 +17370,7 @@ const Report = (() => {
   function stripSheet(P, ws, R) {
     const pits = P.pits || [], pitOf = pits.length ? Model.blockPits(P, ws) : null, S = R.stats.sr;
     const lay = P.layers.map((L, l) => ({ l, name: L.name, coal: Margin.isCoal(R.M, L) }));
-    const head = ['Rank', 'Block'].concat(pitOf ? ['Pit'] : [], R.boundary ? ['In reserve'] : [], ['Waste bcm', R.M.basis === 'ar' ? 'Coal t (as received)' : 'Coal t', 'Strip ratio (bcm/t)', 'Lowest seam mined', 'Depth to its floor (m)', `Blended ${R.qBasis} CV (MJ/kg)`, `Blended ${R.qBasis} ASH (%)`, `Blended ${R.qBasis} TS (%)`], lay.map(q => `${q.name} ${q.coal ? 't' : 'bcm'}`));
+    const head = ['Rank', 'Block'].concat(pitOf ? ['Pit'] : [], R.boundary ? ['In reserve'] : [], ['Waste bcm', `Coal t (${Margin.tonsWord(R.M)})`, 'Strip ratio (bcm/t)', 'Lowest seam mined', 'Depth to its floor (m)', `Blended ${R.qBasis} CV (MJ/kg)`, `Blended ${R.qBasis} ASH (%)`, `Blended ${R.qBasis} TS (%)`], lay.map(q => `${q.name} ${q.coal ? 't' : 'bcm'}`));
     const rowOf = r => [r.srRank || null, r.id].concat(pitOf ? [pitOf[r.b] >= 0 ? pits[pitOf[r.b]].name : Model.REST] : [], R.boundary ? [r.inside ? 'Yes' : 'No'] : [], [Math.round(r.waste), Math.round(r.coalT), r.sr === r.sr ? Math.round(r.sr * 100) / 100 : null, r.dep ? r.dep.seam : null, r.dep ? Math.round(r.dep.depth * 100) / 100 : null, r.cv === r.cv ? Math.round(r.cv * 100) / 100 : null, r.ash === r.ash ? Math.round(r.ash * 100) / 100 : null, r.ts === r.ts ? Math.round(r.ts * 100) / 100 : null], lay.map(q => Math.round(q.coal ? r.byLayer[q.l].t : r.byLayer[q.l].v)));
     const aoa = [head].concat(R.srRanked.map(rowOf), R.rows.filter(r => !(r.coalT > 0)).map(rowOf));
     aoa.push([], ['Strip ratio', `waste bcm (every layer that is not coal) ÷ coal t; average ${S.avg.toFixed(2)} bcm/t, from ${S.lo.toFixed(2)} to ${S.hi.toFixed(2)}; rank 1 is the lowest; blocks without coal are not ranked`]);
