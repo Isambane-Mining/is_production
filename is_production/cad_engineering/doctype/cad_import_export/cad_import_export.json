@@ -1,0 +1,259 @@
+{
+ "actions": [],
+ "creation": "2026-10-21 20:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "fields": [
+  {
+   "fieldname": "operation_type",
+   "fieldtype": "Select",
+   "label": "Operation Type",
+   "options": "Import\nExport",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "cad_model",
+   "fieldtype": "Link",
+   "label": "CAD Model",
+   "options": "CAD Model",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "file_format",
+   "fieldtype": "Select",
+   "label": "Format",
+   "options": "DXF",
+   "default": "DXF",
+   "read_only": 1
+  },
+  {
+   "fieldname": "format_version",
+   "fieldtype": "Data",
+   "label": "Format Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "processing_status",
+   "fieldtype": "Select",
+   "label": "Processing Status",
+   "options": "Inspecting\nReady to Commit\nImporting\nExporting\nCompleted\nFailed\nCancelled",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "processing_job",
+   "fieldtype": "Link",
+   "label": "Processing Job",
+   "options": "CAD Processing Job",
+   "read_only": 1
+  },
+  {
+   "fieldname": "revision",
+   "fieldtype": "Link",
+   "label": "Revision",
+   "options": "CAD Design Revision",
+   "read_only": 1,
+   "description": "Import: the Working revision it went into. Export: the revision exported."
+  },
+  {
+   "fieldname": "section_files",
+   "fieldtype": "Section Break",
+   "label": "Files"
+  },
+  {
+   "fieldname": "source_file",
+   "fieldtype": "Attach",
+   "label": "Source File",
+   "read_only": 1
+  },
+  {
+   "fieldname": "file_size",
+   "fieldtype": "Int",
+   "label": "File Size (bytes)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_files",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "result_file",
+   "fieldtype": "Attach",
+   "label": "Result File",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_coordinates",
+   "fieldtype": "Section Break",
+   "label": "Coordinates and Units"
+  },
+  {
+   "fieldname": "source_crs",
+   "fieldtype": "Data",
+   "label": "Source CRS",
+   "read_only": 1
+  },
+  {
+   "fieldname": "target_crs",
+   "fieldtype": "Data",
+   "label": "Target CRS",
+   "read_only": 1
+  },
+  {
+   "fieldname": "axis_mapping",
+   "fieldtype": "Select",
+   "label": "Axis Mapping",
+   "options": "As in file\nNegate X and Y\nSwap X and Y",
+   "default": "As in file",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_coords",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "source_units",
+   "fieldtype": "Data",
+   "label": "Source Units",
+   "read_only": 1
+  },
+  {
+   "fieldname": "target_units",
+   "fieldtype": "Data",
+   "label": "Target Units",
+   "read_only": 1
+  },
+  {
+   "fieldname": "unit_scale",
+   "fieldtype": "Float",
+   "label": "Unit Conversion Factor",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_results",
+   "fieldtype": "Section Break",
+   "label": "Validation and Results"
+  },
+  {
+   "fieldname": "entity_count",
+   "fieldtype": "Int",
+   "label": "Entities",
+   "read_only": 1
+  },
+  {
+   "fieldname": "warning_count",
+   "fieldtype": "Int",
+   "label": "Warnings",
+   "read_only": 1
+  },
+  {
+   "fieldname": "validation_results",
+   "fieldtype": "JSON",
+   "label": "Validation Report",
+   "read_only": 1
+  },
+  {
+   "fieldname": "options",
+   "fieldtype": "JSON",
+   "label": "Options",
+   "read_only": 1
+  },
+  {
+   "fieldname": "warnings",
+   "fieldtype": "Long Text",
+   "label": "Warnings",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "links": [],
+ "modified_by": "Administrator",
+ "module": "CAD Engineering",
+ "name": "CAD Import Export",
+ "owner": "Administrator",
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production User",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "if_owner": 1
+  }
+ ],
+ "autoname": "format:CAD-IO-{YYYY}-{#####}",
+ "naming_rule": "Expression",
+ "title_field": "operation_type",
+ "description": "One exchange of an engineering file with a CAD Model: validation report, options, processing job and result. Original files are kept.",
+ "field_order": [
+  "operation_type",
+  "cad_model",
+  "file_format",
+  "format_version",
+  "column_break_main",
+  "processing_status",
+  "processing_job",
+  "revision",
+  "section_files",
+  "source_file",
+  "file_size",
+  "column_break_files",
+  "result_file",
+  "section_coordinates",
+  "source_crs",
+  "target_crs",
+  "axis_mapping",
+  "column_break_coords",
+  "source_units",
+  "target_units",
+  "unit_scale",
+  "section_results",
+  "entity_count",
+  "warning_count",
+  "validation_results",
+  "options",
+  "warnings"
+ ],
+ "modified": "2026-10-21 20:00:00.000000"
+}

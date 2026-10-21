@@ -1,0 +1,225 @@
+{
+ "actions": [],
+ "creation": "2026-10-21 10:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "cad_model",
+  "revision_number",
+  "revision_label",
+  "parent_revision",
+  "column_break_main",
+  "revision_status",
+  "revision_description",
+  "section_snapshot",
+  "geometry_snapshot",
+  "geometry_checksum",
+  "snapshot_on",
+  "column_break_snap",
+  "entity_count",
+  "layer_count",
+  "validation_results",
+  "section_approval",
+  "submitted_by",
+  "submitted_on",
+  "approved_by",
+  "approved_by_employee",
+  "column_break_appr",
+  "approval_date",
+  "approval_notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "cad_model",
+   "fieldtype": "Link",
+   "label": "CAD Model",
+   "options": "CAD Model",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "revision_number",
+   "fieldtype": "Int",
+   "label": "Revision Number",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "revision_label",
+   "fieldtype": "Data",
+   "label": "Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "parent_revision",
+   "fieldtype": "Link",
+   "label": "Parent Revision",
+   "options": "CAD Design Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "revision_status",
+   "fieldtype": "Select",
+   "label": "Revision Status",
+   "options": "Working\nIn Review\nApproved\nRejected\nSuperseded",
+   "default": "Working",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "revision_description",
+   "fieldtype": "Small Text",
+   "label": "Revision Description"
+  },
+  {
+   "fieldname": "section_snapshot",
+   "fieldtype": "Section Break",
+   "label": "Geometry Snapshot"
+  },
+  {
+   "fieldname": "geometry_snapshot",
+   "fieldtype": "Data",
+   "label": "Geometry Snapshot",
+   "read_only": 1,
+   "description": "Storage key of the frozen snapshot (layers, entities, geometry file checksums)."
+  },
+  {
+   "fieldname": "geometry_checksum",
+   "fieldtype": "Data",
+   "label": "Geometry Checksum (SHA-256)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "snapshot_on",
+   "fieldtype": "Datetime",
+   "label": "Snapshot Taken On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_snap",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "entity_count",
+   "fieldtype": "Int",
+   "label": "Entities",
+   "read_only": 1
+  },
+  {
+   "fieldname": "layer_count",
+   "fieldtype": "Int",
+   "label": "Layers",
+   "read_only": 1
+  },
+  {
+   "fieldname": "validation_results",
+   "fieldtype": "JSON",
+   "label": "Validation Results",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_approval",
+   "fieldtype": "Section Break",
+   "label": "Review and Approval"
+  },
+  {
+   "fieldname": "submitted_by",
+   "fieldtype": "Link",
+   "label": "Submitted By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "submitted_on",
+   "fieldtype": "Datetime",
+   "label": "Submitted On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "approved_by",
+   "fieldtype": "Link",
+   "label": "Approved By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "approved_by_employee",
+   "fieldtype": "Link",
+   "label": "Approving Employee",
+   "options": "Employee",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_appr",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "approval_date",
+   "fieldtype": "Datetime",
+   "label": "Approval Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "approval_notes",
+   "fieldtype": "Small Text",
+   "label": "Approval Notes",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "links": [],
+ "modified": "2026-10-21 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "CAD Engineering",
+ "name": "CAD Design Revision",
+ "owner": "Administrator",
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "revision_label",
+ "search_fields": "cad_model,revision_status",
+ "track_changes": 1,
+ "description": "A revision of a CAD Model. Working revisions are edited; submitted revisions keep an immutable geometry snapshot with a SHA-256 checksum; approved revisions can never change.",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production User",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1
+  }
+ ]
+}

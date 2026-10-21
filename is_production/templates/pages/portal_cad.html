@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CAD Workstation</title>
+<link rel="icon" href="{{ favicon }}" data-frappe-favicon>
+<script>
+	window.FRAPPE_PAGE_THEME = {{ page_theme | tojson }};
+	window.FRAPPE_CAD = {{ cad | tojson }};
+</script>
+<script src="/assets/is_production/mining_simulation/frappe_theme.js"></script>
+<link rel="stylesheet" href="{{ cad_css }}">
+</head>
+<body>
+<div id="cad-app"></div>
+<script src="{{ cad_js }}"></script>
+</body>
+</html>
