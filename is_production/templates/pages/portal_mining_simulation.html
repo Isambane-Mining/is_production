@@ -539,6 +539,8 @@ canvas.chart { width: 100%; display: block; }
         <button type="button" role="tab" data-tab="project" aria-selected="true">Project</button>
         <button type="button" role="tab" data-tab="data" aria-selected="false">Data</button>
         <button type="button" role="tab" data-tab="reserve" aria-selected="false">Reserve</button>
+        <button type="button" role="tab" data-tab="rank" aria-selected="false">Block Margin Rank</button>
+        <button type="button" role="tab" data-tab="strip" aria-selected="false">Strip Ratio</button>
         <button type="button" role="tab" data-tab="production" aria-selected="false">Production</button>
         <button type="button" role="tab" data-tab="dumps" aria-selected="false">Dumps</button>
         <button type="button" role="tab" data-tab="roads" aria-selected="false">Roads</button>
@@ -7654,28 +7656,46 @@ const Margin = (() => {
   const srMidIn = S => Math.min(S.hi, Math.max(S.lo, S.mid));
   const srColor = (v, S) => divColor(v, S.lo, srMidIn(S), S.hi, GREEN, RED);
   const srGradient = S => divGradient(S.lo, srMidIn(S), S.hi, GREEN, RED);
-  return { DEF, QUAL, settings, guess, colFor, ready, isCoal, isWasteSeam, compute, colorOf, gradient, srColor, srGradient, divColor, divGradient, NEG, POS, RED, GREEN, AMBER };
+  /* The second block margin (Block Margin Rank tab): one coal price and one total cost per ton of everything mined, waste
+     and coal (P.margin2 = {price, cost}, per t). For a block:
+       margin = price − cost × (waste t + coal t) ÷ coal t
+     its waste t being the bcm of its waste layers × their density. The bcm and tons are those of the block margin (R.rows:
+     the seam cut-off and depth limits taken off, the seams counted as waste, the in-situ or as-received basis). */
+  function simple(P, R) {
+    const S2 = P.margin2 || {}, price = num(S2.price), cost = num(S2.cost), ready = price > 0 && cost != null && cost >= 0;
+    const rows = R.rows.map(r => {
+      const wasteT = r.byLayer.reduce((s, q) => s + (q.coal ? 0 : q.t), 0), tot = wasteT + r.coalT;
+      return { b: r.b, id: r.id, coalT: r.coalT, wasteT, tot, ratio: r.coalT > 0 ? tot / r.coalT : NaN, rev: r.coalT * (price || 0), cost: tot * (cost || 0), margin: ready && r.coalT > 0 ? price - (cost * tot) / r.coalT : NaN, inside: r.inside, rank: 0 };
+    });
+    const ranked = rows.filter(r => r.margin === r.margin).sort((p, q) => q.margin - p.margin || p.b - q.b);
+    ranked.forEach((r, i) => { r.rank = i + 1; });
+    let lo = Infinity, hi = -Infinity, pos = 0, neg = 0, tPos = 0, tNeg = 0, tAll = 0, rev = 0, cst = 0;
+    for (const r of ranked) { lo = Math.min(lo, r.margin); hi = Math.max(hi, r.margin); tAll += r.coalT; rev += r.rev; cst += r.cost; if (r.margin >= 0) { pos++; tPos += r.coalT; } else { neg++; tNeg += r.coalT; } }
+    return { ready, price, cost, rows, ranked, stats: { n: ranked.length, none: rows.length - ranked.length, pos, neg, tPos, tNeg, tAll, avg: tAll > 0 ? (rev - cst) / tAll : NaN, lo: ranked.length ? lo : NaN, hi: ranked.length ? hi : NaN, best: ranked[0] || null, worst: ranked[ranked.length - 1] || null } };
+  }
+  return { DEF, QUAL, settings, guess, colFor, ready, isCoal, isWasteSeam, compute, simple, colorOf, gradient, srColor, srGradient, divColor, divGradient, NEG, POS, RED, GREEN, AMBER };
 })();
 
-/* ===== Reserve boundary from a strip ratio cut-off (Reserve tab; DOM-free) =====
-   The blocks to mine, from the strip ratio of each block (waste bcm ÷ coal t, as the block margin counts them: the seam
-   cut-off and depth limits taken off, on its in-situ or as-received basis):
-     1. every block at or below the cut-off;
-     2. a group of blocks above the cut-off that the reserve closes in on every side is taken in when the group and the
-        ring of reserve blocks around it are, together, at or below the cut-off (their waste ÷ their coal): mining
-        passes through it, and the cheaper blocks around it carry it;
-     3. a block above the cut-off at the edge is taken in when the reserve borders `share` of its edge (a notch in the
-        boundary) and it is at or below the cut-off with those neighbours;
+/* ===== Reserve boundary from a strip ratio and a block margin cut-off (Reserve tab; DOM-free) =====
+   The blocks to mine, from the strip ratio and the margin of each block as the block margin counts them (waste bcm ÷
+   coal t, and (revenue − cost) ÷ coal t; the seam cut-off and depth limits taken off, on its in-situ or as-received
+   basis). A block, or blocks together, pass when their strip ratio (Σ waste ÷ Σ coal) is at or below srMax and their
+   margin (Σ revenue − Σ cost) ÷ Σ coal is at or above mMin; either cut-off may be left out.
+     1. every block that passes;
+     2. a group of blocks that fail, closed in on every side by the reserve, is taken in when the group and the ring of
+        reserve blocks around it pass together: mining passes through it, and the better blocks around it carry it;
+     3. a block that fails at the edge is taken in when the reserve borders `share` of its edge (a notch in the
+        boundary) and it passes with those neighbours;
      4. 2 and 3 again until nothing changes; then groups of fewer than `minBlocks` blocks are left out.
    The boundary is the outline of the chosen blocks' cells on the model grid, smoothed by up to `tol` cells, as rings
    (P.reserve.rings: the areas and the holes in them; P.reserve.pts the largest). A block is inside when its centre is
    inside an odd number of the rings; the smoothing is undone where it would put a block on the wrong side.
-   The inputs are kept in P.reserveAuto = {srMax, share (%), minBlocks}. */
+   The inputs are kept in P.reserveAuto = {srMax, mMin, share (%), minBlocks}. */
 const AutoRes = (() => {
-  const DEF = { srMax: null, share: 75, minBlocks: 3 };
+  const DEF = { srMax: null, mMin: null, share: 75, minBlocks: 3 };
   function settings(P) {
     const A = (P && P.reserveAuto) || {}, n = (v, d) => (v != null && v !== '' && isFinite(+v) ? +v : d);
-    return { srMax: n(A.srMax, DEF.srMax), share: U.clamp(n(A.share, DEF.share), 0, 100), minBlocks: Math.max(1, Math.round(n(A.minBlocks, DEF.minBlocks))) };
+    return { srMax: n(A.srMax, DEF.srMax), mMin: n(A.mMin, DEF.mMin), share: U.clamp(n(A.share, DEF.share), 0, 100), minBlocks: Math.max(1, Math.round(n(A.minBlocks, DEF.minBlocks))) };
   }
   // the blocks next to each block and how much edge they share (cell sides), and each block's edge to no block / the grid edge
   function adjacency(ws) {
@@ -7701,14 +7721,15 @@ const AutoRes = (() => {
     }
     return out;
   }
-  /* The blocks of the reserve. rows: Margin.compute rows (waste, coalT). → {take (Uint8Array), why (0 out, 1 cut-off, 2
-     enclosed, 3 notch), dropped, sr (of the reserve), n…} */
+  /* The blocks of the reserve. rows: Margin.compute rows (waste, coalT, rev, cost). → {take (Uint8Array), why (0 out,
+     1 passes, 2 enclosed, 3 notch), dropped, sr and margin (of the reserve), n…} */
   function choose(P, ws, rows, o) {
-    const nB = P.blocks.length, { nb, open } = adjacency(ws), W = new Float64Array(nB), C = new Float64Array(nB);
-    for (const r of rows) { W[r.b] = r.waste || 0; C[r.b] = r.coalT || 0; }
-    const sr = (w, c) => (c > 0 ? w / c : w > 0 ? Infinity : NaN), max = o.srMax, share = o.share / 100;
+    const nB = P.blocks.length, { nb, open } = adjacency(ws), W = new Float64Array(nB), C = new Float64Array(nB), RV = new Float64Array(nB), CS = new Float64Array(nB);
+    for (const r of rows) { W[r.b] = r.waste || 0; C[r.b] = r.coalT || 0; RV[r.b] = r.rev || 0; CS[r.b] = r.cost || 0; }
+    const share = o.share / 100;
+    const pass = (w, c, rv, cs) => c > 0 && (o.srMax == null || w / c <= o.srMax + 1e-12) && (o.mMin == null || (rv - cs) / c >= o.mMin - 1e-9);
     const take = new Uint8Array(nB), why = new Uint8Array(nB);
-    for (let b = 0; b < nB; b++) if (C[b] > 0 && sr(W[b], C[b]) <= max) { take[b] = 1; why[b] = 1; }
+    for (let b = 0; b < nB; b++) if (pass(W[b], C[b], RV[b], CS[b])) { take[b] = 1; why[b] = 1; }
     for (let it = 0; it < 100; it++) {
       let more = 0;
       // 2. the groups above the cut-off closed in by the reserve
@@ -7717,16 +7738,16 @@ const AutoRes = (() => {
         const ring = new Set();
         for (const b of g) for (const q of nb[b].keys()) { if (take[q]) ring.add(q); }
         if (!ring.size) continue;
-        let w = 0, c = 0; for (const b of g) { w += W[b]; c += C[b]; } for (const q of ring) { w += W[q]; c += C[q]; }
-        if (c > 0 && w / c <= max) { for (const b of g) { take[b] = 1; why[b] = 2; } more += g.length; }
+        let w = 0, c = 0, rv = 0, cs = 0; for (const q of g.concat(Array.from(ring))) { w += W[q]; c += C[q]; rv += RV[q]; cs += CS[q]; }
+        if (pass(w, c, rv, cs)) { for (const b of g) { take[b] = 1; why[b] = 2; } more += g.length; }
       }
       // 3. the notches: blocks bordered by the reserve on `share` of their edge
       const add = [];
       for (let b = 0; b < nB; b++) {
         if (take[b]) continue;
-        let inE = 0, allE = open[b], w = W[b], c = C[b];
-        for (const [q, e] of nb[b]) { allE += e; if (take[q]) { inE += e; w += W[q]; c += C[q]; } }
-        if (allE > 0 && inE / allE >= share - 1e-9 && c > 0 && w / c <= max) add.push(b);
+        let inE = 0, allE = open[b], w = W[b], c = C[b], rv = RV[b], cs = CS[b];
+        for (const [q, e] of nb[b]) { allE += e; if (take[q]) { inE += e; w += W[q]; c += C[q]; rv += RV[q]; cs += CS[q]; } }
+        if (allE > 0 && inE / allE >= share - 1e-9 && pass(w, c, rv, cs)) add.push(b);
       }
       for (const b of add) { take[b] = 1; why[b] = 3; }
       more += add.length;
@@ -7735,11 +7756,11 @@ const AutoRes = (() => {
     // 4. small groups left out
     let dropped = 0;
     for (const g of groups(nB, nb, b => !!take[b])) if (g.length < o.minBlocks) for (const b of g) { take[b] = 0; why[b] = 0; dropped++; }
-    let w = 0, c = 0, n = 0, nCut = 0, nIn = 0, nNotch = 0;
-    for (let b = 0; b < nB; b++) if (take[b]) { w += W[b]; c += C[b]; n++; if (why[b] === 1) nCut++; else if (why[b] === 2) nIn++; else nNotch++; }
+    let w = 0, c = 0, rv = 0, cs = 0, n = 0, nCut = 0, nIn = 0, nNotch = 0;
+    for (let b = 0; b < nB; b++) if (take[b]) { w += W[b]; c += C[b]; rv += RV[b]; cs += CS[b]; n++; if (why[b] === 1) nCut++; else if (why[b] === 2) nIn++; else nNotch++; }
     const areas = groups(nB, nb, b => !!take[b]).length;
-    let wa = 0, ca = 0; for (let b = 0; b < nB; b++) { wa += W[b]; ca += C[b]; }
-    return { take, why, dropped, n, nCut, nIn, nNotch, areas, waste: w, coalT: c, sr: c > 0 ? w / c : NaN, srAll: ca > 0 ? wa / ca : NaN };
+    let wa = 0, ca = 0, ra = 0, sa = 0; for (let b = 0; b < nB; b++) { wa += W[b]; ca += C[b]; ra += RV[b]; sa += CS[b]; }
+    return { take, why, dropped, n, nCut, nIn, nNotch, areas, waste: w, coalT: c, sr: c > 0 ? w / c : NaN, margin: c > 0 ? (rv - cs) / c : NaN, srAll: ca > 0 ? wa / ca : NaN, marginAll: ca > 0 ? (ra - sa) / ca : NaN };
   }
 
   // ---------- the outline ----------
@@ -7830,16 +7851,26 @@ const AutoRes = (() => {
     best.rings.sort((a, b) => Math.abs(area(b)) - Math.abs(area(a)));
     return best;
   }
-  /* The boundary from the settings: P.reserve to set, with what was chosen. rows: Margin.compute rows. */
-  function build(P, ws, rows, o) {
-    if (!(o.srMax > 0)) throw new Error('Type the strip ratio cut-off (bcm/t).');
-    const ch = choose(P, ws, rows, o);
-    if (!ch.n) throw new Error(`No block is at or below ${U.fmtNum(o.srMax, 2)} bcm/t (the blocks average ${U.fmtNum(ch.srAll, 2)} bcm/t).`);
-    const ol = outline(P, ws, ch.take);
-    const reserve = { pts: ol.rings[0], rings: ol.rings, on: true, name: `Strip ratio ≤ ${U.fmtNum(o.srMax, 2)} bcm/t`, auto: { srMax: o.srMax, share: o.share, minBlocks: o.minBlocks } };
+  // the cut-offs in words: "strip ratio ≤ 6.00 bcm/t and margin ≥ R 40/t"
+  function label(o, cur) {
+    const p = [];
+    if (o.srMax != null) p.push(`strip ratio ≤ ${U.fmtNum(o.srMax, 2)} bcm/t`);
+    if (o.mMin != null) p.push(`margin ≥ ${cur || 'R'} ${U.fmtNum(o.mMin, Math.abs(o.mMin) < 100 ? 1 : 0)}/t`);
+    return p.join(' and ');
+  }
+  /* The boundary from the settings: P.reserve to set, with what was chosen. rows: Margin.compute rows; ready: the margin
+     has prices (needed for a margin cut-off); cur: its currency. */
+  function build(P, ws, rows, o, ready, cur) {
+    if (o.srMax == null && o.mMin == null) throw new Error('Type the strip ratio cut-off, the block margin cut-off or both.');
+    if (o.srMax != null && !(o.srMax > 0)) throw new Error('The strip ratio cut-off must be more than 0 bcm/t.');
+    if (o.mMin != null && !ready) throw new Error('Type the coal price and the costs in the Block Margin Rank tab first: the margin cut-off needs them.');
+    const ch = choose(P, ws, rows, o), L = label(o, cur);
+    if (!ch.n) throw new Error(`No block has ${L} (the blocks average ${U.fmtNum(ch.srAll, 2)} bcm/t${ready ? ` and ${cur || 'R'} ${U.fmtNum(ch.marginAll, 1)}/t` : ''}).`);
+    const ol = outline(P, ws, ch.take), name = L.charAt(0).toUpperCase() + L.slice(1);
+    const reserve = { pts: ol.rings[0], rings: ol.rings, on: true, name, auto: { srMax: o.srMax, mMin: o.mMin, currency: cur || 'R', share: o.share, minBlocks: o.minBlocks } };
     return { reserve, ch, wrong: ol.wrong };
   }
-  return { DEF, settings, adjacency, choose, cellMask, trace, simplify, inRings, outline, build };
+  return { DEF, settings, adjacency, choose, cellMask, trace, simplify, inRings, outline, label, build };
 })();
 
 /* ===== Coal quality rasters (Data tab): the qualities of the blocks read from GeoTIFF grids =====
@@ -8023,7 +8054,7 @@ const Qual = (() => {
     const K = kind(e.kind), S = e.stats;
     if (!S || !S.n || K.lo == null) return '';
     if (S.lo >= K.lo - 1e-9 && S.hi <= K.hi + 1e-9) return '';
-    if (K.k === 'cv' && S.lo > 1000 && S.hi < 9000) return `The values (${Math.round(S.lo)} to ${Math.round(S.hi)}) look like kcal/kg: the Reserve tab prices the CV per MJ/kg (divide by 238.8).`;
+    if (K.k === 'cv' && S.lo > 1000 && S.hi < 9000) return `The values (${Math.round(S.lo)} to ${Math.round(S.hi)}) look like kcal/kg: the Block Margin Rank tab prices the CV per MJ/kg (divide by 238.8).`;
     if (K.k === 'yield' && S.hi <= 1) return '';
     return `The values (${S.lo.toFixed(K.d)} to ${S.hi.toFixed(K.d)}) are outside the usual range of ${K.name}${K.unit ? ' in ' + K.unit : ''} (${K.lo} to ${K.hi}): check the file and its quality.`;
   }
@@ -11215,6 +11246,8 @@ const UI = (() => {
     else if (App.colorBy === 'pit') App.colorBy = 'status';
     if (P && Margin.ready(P)) opts.push(['margin', 'Block margin']);
     else if (App.colorBy === 'margin') App.colorBy = 'status';
+    if (P && App.ws && P.margin2 && +P.margin2.price > 0 && P.margin2.cost != null && P.margin2.cost !== '') opts.push(['margin2', 'Block margin (total costs)']);
+    else if (App.colorBy === 'margin2') App.colorBy = 'status';
     if (P && App.ws && P.layers.some(L => L.type === 'coal')) opts.push(['sr', 'Strip ratio']);
     else if (App.colorBy === 'sr') App.colorBy = 'status';
     if (P && App.ws && P.layers.some(L => L.type === 'coal')) opts.push(['depth', 'Depth to lowest seam floor']);
@@ -11648,7 +11681,7 @@ const Tabs = (() => {
 
   function render(tab, body) {
     if (!App.P) { body.append(h('div', { class: 'empty' }, 'Loading…')); return; }
-    ({ project, data, sequence, roads, dumps, production, reserve, finance, recon, results })[tab](body);
+    ({ project, data, sequence, roads, dumps, production, reserve, rank, strip, finance, recon, results })[tab](body);
     if (!App.canEdit) body.querySelectorAll('input,select,textarea').forEach(i => { if (!i.closest('[data-viewer]')) i.disabled = true; });
   }
   function hud(title, sub, buttons) {
@@ -12103,7 +12136,7 @@ const Tabs = (() => {
     }
     if (!ws || !P.blocks.length) parts.push(msg('warn', 'Build the 3D model and load the block layout first: the rasters are averaged over the blocks.'));
     for (const e of list) parts.push(qualityCard(e));
-    if (list.length) parts.push(hint('The seam and the quality are read from the file name (S4_CV.tif, Seam2_Ash.tif, No4_TS.tif…); check them on each raster. The values are written to the blocks as an attribute column, such as “Seam 4 CV (raster)”, which becomes the seam’s quality: in the Reserve tab (CV, ASH, TS and yield: the blended qualities and the margin), first among the layer’s quality columns (the monthly summary and the LoM sheets of the Excel schedule), or as its density column (RD, which changes its tons). Remove a raster to go back to the attribute file. Cells without data are left out: a block partly covered takes the average of the part covered; a block not covered keeps no value, and the Reserve tab gives it the seam’s average. The rasters are not saved with the project, only the block values: after the blocks or the model change, add the files again.'));
+    if (list.length) parts.push(hint('The seam and the quality are read from the file name (S4_CV.tif, Seam2_Ash.tif, No4_TS.tif…); check them on each raster. The values are written to the blocks as an attribute column, such as “Seam 4 CV (raster)”, which becomes the seam’s quality: in the Reserve tab (CV, ASH, TS and yield: the blended qualities and the margin), first among the layer’s quality columns (the monthly summary and the LoM sheets of the Excel schedule), or as its density column (RD, which changes its tons). Remove a raster to go back to the attribute file. Cells without data are left out: a block partly covered takes the average of the part covered; a block not covered keeps no value, and the Block Margin Rank tab gives it the seam’s average. The rasters are not saved with the project, only the block values: after the blocks or the model change, add the files again.'));
     body.append(sec('Coal quality rasters', list.length ? h('span', { class: 'chip' }, `${list.length} raster${list.length === 1 ? '' : 's'}`) : null, ...parts));
   }
   function qualityCard(e) {
@@ -12116,7 +12149,7 @@ const Tabs = (() => {
     const kindSel = sel(Qual.ORDER.map(k => { const q = Qual.kind(k); return [k, q.unit ? `${q.name} (${q.unit})` : q.name]; }), e.kind, v => { const rd = e.kind === 'rd' || v === 'rd'; Qual.relabel(P, e, v); e.guessed = false; after(rd); });
     kindSel.setAttribute('aria-label', 'Quality of ' + e.file);
     const seam = L ? L.name : 'a removed seam';
-    const use = Qual.MARGIN.includes(e.kind) ? `${seam}’s ${K.name} in the Reserve tab, and first among its quality columns` : e.kind === 'rd' ? `the density column of ${seam}: its tons follow` : `one of ${seam}’s quality columns (monthly summary and LoM sheets)`;
+    const use = Qual.MARGIN.includes(e.kind) ? `${seam}’s ${K.name} in the Block Margin Rank tab, and first among its quality columns` : e.kind === 'rd' ? `the density column of ${seam}: its tons follow` : `one of ${seam}’s quality columns (monthly summary and LoM sheets)`;
     const C = e.cmp, kv = (k, v) => [h('span', { class: 'k' }, k), h('span', { class: 'v' }, v)];
     const stale = App.ws && Qual.stale(P, e), note = Qual.rangeNote(e);
     const remove = () => {
@@ -12138,7 +12171,7 @@ const Tabs = (() => {
       e.guessed ? msg('warn', `The ${e.seamGuessed === false ? 'quality' : 'seam or the quality'} was not in the file name: check the seam and the quality above.`) : null,
       note ? msg('warn', note) : null,
       e.crs ? msg('warn', e.crs) : null,
-      S.nNone ? msg('info', `${S.nNone} block${S.nNone === 1 ? ' has' : 's have'} ${seam} but no data in the raster: ${S.nNone === 1 ? 'it keeps' : 'they keep'} no value, and the Reserve tab gives ${S.nNone === 1 ? 'it' : 'them'} the seam’s average.`) : null,
+      S.nNone ? msg('info', `${S.nNone} block${S.nNone === 1 ? ' has' : 's have'} ${seam} but no data in the raster: ${S.nNone === 1 ? 'it keeps' : 'they keep'} no value, and the Block Margin Rank tab gives ${S.nNone === 1 ? 'it' : 'them'} the seam’s average.`) : null,
       stale ? msg('warn', `The blocks or the 3D model changed since this raster was read.${g ? '' : ' Add the file again to work out the values of the blocks as they are now.'}`) : null,
       h('div', { class: 'row' },
         stale && g && edit() ? btn('Read it again for these blocks', () => { const rd = e.kind === 'rd'; Qual.assign(P, App.ws, e, g); after(rd); }, 'sm primary') : null,
@@ -14111,16 +14144,22 @@ const Tabs = (() => {
   // =============== RESERVE ===============
   /* The block margin: what each block's coal earns less what it costs to mine (and process), per ton of coal, and the
      blocks ranked by it (Margin). Not part of the schedule: changing it does not ask for a new run. */
-  function reserve(body) {
+  /* Reserve, Block Margin Rank and Strip Ratio tabs: one body, each tab its own sections. Reserve: the losses, the reserve
+     boundary, the block depth and the volumes by layer; Block Margin Rank: the inputs of the block margin, its rank and the
+     second rank on total costs; Strip Ratio: the strip ratio of every block. */
+  function reserve(body) { reservePart(body, 'reserve'); }
+  function rank(body) { reservePart(body, 'rank'); }
+  function strip(body) { reservePart(body, 'strip'); }
+  function reservePart(body, part) {
     const P = App.P, M = Margin.settings(P), cur = (M.currency || 'R').trim() || 'R';
     const kp = (k, v) => h('div', { class: 'kpi' }, h('span', { class: 'k' }, k), h('span', { class: 'v' }, v));
     const set = (k, v) => { const m = P.margin || (P.margin = {}); m[k] = v; App.changed('margin'); UI.renderTab(); };
     const setCol = (kind, L, v) => { const m = P.margin || (P.margin = {}); (m[kind] || (m[kind] = {}))[L.id] = v; App.changed('margin'); UI.renderTab(); };
     const money = (k, aria) => { const i = num(M[k] == null || M[k] === '' ? null : +M[k], v => set(k, v == null ? null : Math.max(0, v)), { min: 0, step: 1, allowEmpty: true, placeholder: '0' }); i.setAttribute('aria-label', aria); return i; };
     const R = App.ws ? App.margin() : null;
-    lossesSection(body);
-    // ---- the inputs
-    {
+    if (part === 'reserve') lossesSection(body);
+    // ---- the inputs (Block Margin Rank tab)
+    if (part === 'rank') {
       const wc = money('wasteCost', 'Waste mining cost per bcm'), cc = money('coalCost', 'Coal mining cost per ton'), pr = money('price', 'Coal price'), pc = money('plantCost', 'Plant cost per ton');
       const bs = sel([['insitu', 'In situ'], ['ar', 'As received (after the losses)']], M.basis === 'ar' ? 'ar' : 'insitu', v => set('basis', v)); bs.setAttribute('aria-label', 'Coal tons for the margin');
       const cu = txt(cur, v => set('currency', v.trim() || 'R')); cu.setAttribute('aria-label', 'Currency');
@@ -14181,13 +14220,17 @@ const Tabs = (() => {
       body.append(sec('Block margin', h('span', { class: 'chip' }, `${cur}/t`), ...parts));
     }
     // ---- the margins and the rank
-    if (!R) { body.append(sec('Margin rank', null, msg('warn', 'Load the model first.'))); return; }
-    reserveBoundary(body, R, cur, kp);
-    if (!R.ready) body.append(sec('Margin rank', null, msg('warn', 'Type the coal price (and the costs) above to work out the margin of every block.')));
-    else marginRank(body, R, cur, kp);
-    stripRatio(body, R, cur, kp);
-    depthSection(body, R, kp);
-    layerTable(body, R);
+    if (!R) { body.append(sec(part === 'strip' ? 'Strip ratio' : part === 'rank' ? 'Margin rank' : 'Reserve boundary', null, msg('warn', 'Load the model first.'))); return; }
+    if (part === 'reserve') { reserveBoundary(body, R, cur, kp); depthSection(body, R, kp); layerTable(body, R); }
+    if (part === 'rank') {
+      if (!R.ready) body.append(sec('Margin rank', null, msg('warn', 'Type the coal price (and the costs) above to work out the margin of every block.')));
+      else marginRank(body, R, cur, kp);
+      simpleRank(body, R, cur, kp);
+    }
+    if (part === 'strip') {
+      stripRatio(body, R, cur, kp);
+      body.append(hint('The strip ratio is the waste bcm ÷ the coal t of each block, as the block margin counts them: which seams count as coal, and the in-situ or as-received tons, are set in the Block Margin Rank tab; the losses in the Reserve tab.'));
+    }
   }
   /* The reserve boundary: a polygon around the blocks to mine, kept in P.reserve = {pts, on, name}. Blocks whose centre lies
      inside it are scheduled; those outside are left in the ground (Model.blockLimits). Drawn over the blocks coloured by
@@ -14220,41 +14263,42 @@ const Tabs = (() => {
     } else if (drawn) parts.push(msg('warn', `The boundary is switched off: every block is scheduled.${App.res && App.stale ? ' Run the simulation again to update the schedule.' : ''}`));
     else parts.push(h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, 'None: every block is scheduled.'));
     parts.push(hint('Draw a polygon around the blocks that pay and are to be mined: those whose centre lies inside it are scheduled, those outside are left in the ground (with their coal and waste), the mining paths skip them and the final landform leaves their ground as it is. While you draw, the blocks are coloured by margin (red to green) when there is a price, else by strip ratio. In the 3D view the boundary is magenta and the blocks outside are outlined in red (and faded when coloured by margin, strip ratio or a blended quality). Every block keeps its margin and rank here; in the tables below the blocks outside are greyed. Changing the boundary needs a new run.'));
-    // ---- the boundary from a strip ratio cut-off (AutoRes)
+    // ---- the boundary from a strip ratio and a block margin cut-off (AutoRes)
     if (App.ws && P.blocks.length) {
       const A = AutoRes.settings(P), auto = drawn && B.auto, keep = patch => { P.reserveAuto = Object.assign({}, P.reserveAuto, patch); App.changed('reserve'); };
-      let wa = 0, ca = 0; for (const r of R.rows) { wa += r.waste; ca += r.coalT; }
-      const f2 = v => U.fmtNum(v, 2);
+      let wa = 0, ca = 0, ra = 0, sa = 0; for (const r of R.rows) { wa += r.waste; ca += r.coalT; ra += r.rev; sa += r.cost; }
+      const f2 = v => U.fmtNum(v, 2), fm = v => `${cur} ${U.fmtNum(v, Math.abs(v) < 100 ? 1 : 0)}/t`;
       const create = async () => {
         const o = AutoRes.settings(P);
-        if (!(o.srMax > 0)) { UI.toast('Type the strip ratio cut-off first.'); return; }
-        if (drawn && !B.auto && !(await UI.confirmBox('Replace the reserve boundary', 'Replace the boundary you drew with one made from the strip ratio cut-off?', 'Replace'))) return;
-        let r; try { r = AutoRes.build(P, App.ws, R.rows, o); } catch (e) { UI.toast(e.message); return; }
+        let r; try { r = AutoRes.build(P, App.ws, R.rows, o, R.ready, cur); } catch (e) { UI.toast(e.message); return; }
+        if (drawn && !B.auto && !(await UI.confirmBox('Replace the reserve boundary', 'Replace the boundary you drew with one made from the cut-offs?', 'Replace'))) return;
         const c = r.ch, ids = w => P.blocks.map((q, b) => (c.why[b] === w ? q.id : null)).filter(Boolean);
-        r.reserve.auto = Object.assign(r.reserve.auto, { made: U.todayISO(), n: c.n, nCut: c.nCut, nIn: c.nIn, nNotch: c.nNotch, dropped: c.dropped, areas: c.areas, sr: c.sr, enclosed: ids(2), notches: ids(3), wrong: r.wrong.map(b => P.blocks[b].id) });
+        r.reserve.auto = Object.assign(r.reserve.auto, { made: U.todayISO(), n: c.n, nCut: c.nCut, nIn: c.nIn, nNotch: c.nNotch, dropped: c.dropped, areas: c.areas, sr: c.sr, margin: R.ready ? c.margin : null, enclosed: ids(2), notches: ids(3), wrong: r.wrong.map(b => P.blocks[b].id) });
         P.reserve = r.reserve;
-        App.colorBy = 'sr'; UI.renderColorBy(); App.refreshTint();
+        App.colorBy = o.mMin != null ? 'margin' : 'sr'; UI.renderColorBy(); App.refreshTint();
         App.changed('reserve', { now: true }); UI.renderTab();
-        UI.toast(`Reserve boundary at ${f2(o.srMax)} bcm/t: ${c.n} of ${P.blocks.length} blocks, strip ratio ${f2(c.sr)} bcm/t${c.areas > 1 ? `, in ${c.areas} areas` : ''}. Run the simulation to schedule them.`, 9000);
+        UI.toast(`Reserve boundary at ${AutoRes.label(o, cur)}: ${c.n} of ${P.blocks.length} blocks, strip ratio ${f2(c.sr)} bcm/t${R.ready ? `, margin ${fm(c.margin)}` : ''}${c.areas > 1 ? `, in ${c.areas} areas` : ''}. Run the simulation to schedule them.`, 9000);
       };
       const ap = [
         h('div', { class: 'grid2' },
-          fld('Strip ratio cut-off (bcm/t)', num(A.srMax, v => { keep({ srMax: v > 0 ? v : null }); UI.renderTab(); }, { min: 0, step: 0.1, allowEmpty: true, placeholder: ca > 0 ? `all: ${f2(wa / ca)}` : '—' })),
-          fld('Leave out areas of fewer than (blocks)', num(A.minBlocks, v => keep({ minBlocks: v >= 1 ? Math.round(v) : 1 }), { min: 1, step: 1 }))),
+          fld('Strip ratio cut-off (bcm/t, at most)', num(A.srMax, v => { keep({ srMax: v > 0 ? v : null }); UI.renderTab(); }, { min: 0, step: 0.1, allowEmpty: true, placeholder: ca > 0 ? `all: ${f2(wa / ca)}` : '—' })),
+          fld(`Block margin cut-off (${cur}/t, at least)`, num(A.mMin, v => { keep({ mMin: v == null ? null : v }); UI.renderTab(); }, { step: 5, allowEmpty: true, placeholder: R.ready && ca > 0 ? `all: ${U.fmtNum((ra - sa) / ca, 0)}` : 'needs prices' }))),
         h('div', { class: 'grid2' },
-          fld('Take in a block above it at the edge when the reserve borders (% of its edge)', num(A.share, v => keep({ share: v == null ? AutoRes.DEF.share : U.clamp(v, 0, 100) }), { min: 0, max: 100, step: 5 })), h('span'))
+          fld('Take in a block that fails at the edge when the reserve borders (% of its edge)', num(A.share, v => keep({ share: v == null ? AutoRes.DEF.share : U.clamp(v, 0, 100) }), { min: 0, max: 100, step: 5 })),
+          fld('Leave out areas of fewer than (blocks)', num(A.minBlocks, v => keep({ minBlocks: v >= 1 ? Math.round(v) : 1 }), { min: 1, step: 1 })))
       ];
+      if (A.mMin != null && !R.ready) ap.push(msg('warn', 'The margin cut-off needs the coal price and the costs: type them in the Block Margin Rank tab.'));
       if (edit()) ap.push(h('div', { class: 'row edit-only' }, btn(auto ? 'Make it again' : 'Create the boundary', create, 'sm' + (auto ? '' : ' primary'), 'Put the reserve boundary around the blocks this cut-off takes')));
       if (auto) {
         const q = B.auto, list = (a, n = 10) => a.slice(0, n).join(', ') + (a.length > n ? ` and ${a.length - n} more` : '');
-        ap.push(msg('info', `Made ${q.made ? U.fmtDate(U.parseISO(q.made)) + ' ' : ''}at ${f2(q.srMax)} bcm/t: ${q.n} blocks, ${q.nCut} of them at or below the cut-off${q.areas > 1 ? `, in ${q.areas} areas` : ''}; strip ratio of the reserve ${f2(q.sr)} bcm/t.${q.dropped ? ` ${q.dropped} block${q.dropped === 1 ? '' : 's'} in areas too small to keep ${q.dropped === 1 ? 'is' : 'are'} left out.` : ''}`));
-        if ((q.enclosed || []).length) ap.push(msg('info', `Above the cut-off, taken in because the reserve closes them in and dilutes them: ${list(q.enclosed)}.`));
-        if ((q.notches || []).length) ap.push(msg('info', `Above the cut-off, taken in at the edge of the reserve: ${list(q.notches)}.`));
+        ap.push(msg('info', `Made ${q.made ? U.fmtDate(U.parseISO(q.made)) + ' ' : ''}at ${AutoRes.label(q, q.currency || cur)}: ${q.n} blocks, ${q.nCut} of them within the cut-offs on their own${q.areas > 1 ? `, in ${q.areas} areas` : ''}; the reserve has a strip ratio of ${f2(q.sr)} bcm/t${q.margin != null && q.margin === q.margin ? ` and a margin of ${fm(q.margin)}` : ''}.${q.dropped ? ` ${q.dropped} block${q.dropped === 1 ? '' : 's'} in areas too small to keep ${q.dropped === 1 ? 'is' : 'are'} left out.` : ''}`));
+        if ((q.enclosed || []).length) ap.push(msg('info', `Outside the cut-offs on their own, taken in because the reserve closes them in and the blocks around them carry them: ${list(q.enclosed)}.`));
+        if ((q.notches || []).length) ap.push(msg('info', `Outside the cut-offs on their own, taken in at the edge of the reserve: ${list(q.notches)}.`));
         if ((q.wrong || []).length) ap.push(msg('warn', `The outline could not be drawn with the centre of ${q.wrong.length === 1 ? 'block' : 'blocks'} ${list(q.wrong)} on ${q.wrong.length === 1 ? 'its' : 'their'} own side, as ${q.wrong.length === 1 ? 'it is' : 'they are'} oddly shaped. Check ${q.wrong.length === 1 ? 'it' : 'them'} in the 3D view.`));
-        if (A.srMax !== q.srMax || A.share !== q.share || A.minBlocks !== q.minBlocks) ap.push(msg('warn', 'The settings above changed since the boundary was made: make it again to use them.'));
+        if (A.srMax !== (q.srMax == null ? null : q.srMax) || A.mMin !== (q.mMin == null ? null : q.mMin) || A.share !== q.share || A.minBlocks !== q.minBlocks) ap.push(msg('warn', 'The settings above changed since the boundary was made: make it again to use them.'));
       }
-      ap.push(hint('The blocks at or below the cut-off (waste bcm ÷ coal t, as in the table below) make the reserve. Blocks above it are taken in where the cheaper blocks around them carry them: a group that the reserve closes in on every side when, with the ring of reserve blocks around it, it is at or below the cut-off; and a block at the edge when the reserve borders that share of its edge and, with those neighbours, it is at or below the cut-off. Small separate areas are left out. Make it again after the model, the blocks or the costs change.'));
-      parts.push(h('div', { class: 'sec-h', style: { marginTop: '6px' } }, h('h3', null, 'From a strip ratio cut-off')), ...ap);
+      ap.push(hint('The blocks with a strip ratio (waste bcm ÷ coal t) at or below its cut-off and a margin at or above its cut-off, as in the Block Margin Rank and Strip Ratio tabs, make the reserve; leave a cut-off empty to go by the other alone. Blocks that fail are taken in where the better blocks around them carry them, counted together (Σ waste ÷ Σ coal, and Σ revenue − Σ cost ÷ Σ coal): a group that the reserve closes in on every side when, with the ring of reserve blocks around it, it passes both; and a block at the edge when the reserve borders that share of its edge and, with those neighbours, it passes both. Small separate areas are left out. Make it again after the model, the blocks, the prices or the costs change.'));
+      parts.push(h('div', { class: 'sec-h', style: { marginTop: '6px' } }, h('h3', null, 'From strip ratio and margin cut-offs')), ...ap);
     }
     body.append(sec('Reserve boundary', drawn ? h('span', { class: 'chip' }, on && Q ? `${Q.inside.n} of ${P.blocks.length} blocks` : 'off') : null, ...parts));
   }
@@ -14330,6 +14374,39 @@ const Tabs = (() => {
       hint((R.M.byCV !== false ? 'The revenue of a block is its coal tons × the price × its blended CV (MJ/kg); its blended ASH and TS are shown, not priced. ' : 'Its blended CV, ASH and TS are shown, not priced. ') + 'Rank 1 is the block with the highest margin. Click a row to select the block in the 3D view (the inspector gives its revenue and costs); “Colour the blocks by margin” shows them in robot colours: red below zero, amber at zero, green for the highest, with the scale in the legend. The Excel schedule has every block on the “Block Margin” sheet, with its revenue and costs.')));
   }
 
+  /* The second margin rank (Margin.simple): a coal price and a total cost per ton of everything mined, both per t. */
+  function simpleRank(body, R, cur, kp) {
+    const P = App.P, S2 = P.margin2 || {}, Q = Margin.simple(P, R), S = Q.stats, mt = v => `${cur} ${U.fmtNum(v, Math.abs(v) < 100 ? 1 : 0)}/t`;
+    const set = (k, v) => { const m = P.margin2 || (P.margin2 = {}); m[k] = v == null ? null : Math.max(0, v); App.changed('margin'); UI.renderTab(); };
+    const inp = (k, aria) => { const i = num(S2[k] == null || S2[k] === '' ? null : +S2[k], v => set(k, v), { min: 0, step: 1, allowEmpty: true, placeholder: '0' }); i.setAttribute('aria-label', aria); return i; };
+    const parts = [h('div', { class: 'grid2' }, fld(`Coal price (${cur}/t)`, inp('price', 'Coal price, second margin')), fld(`Total costs (${cur}/t mined, waste and coal)`, inp('cost', 'Total cost per ton mined')))];
+    if (!Q.ready) parts.push(msg('warn', 'Type the coal price and the total costs to rank the blocks.'));
+    else if (S.n) {
+      const G = Margin.gradient(S.lo, S.hi), on = App.colorBy === 'margin2', show = Q.ranked.slice(0, 1000);
+      const tr = r => { const c = Margin.colorOf(r.margin, S.lo, S.hi);
+        return h('tr', { class: (r.b === App.selBlock ? 'sel ' : '') + (r.inside ? '' : 'out'), onclick: () => App.selectBlock(r.b), title: r.inside ? '' : 'Outside the reserve boundary: not mined' },
+          h('td', { class: 'r num' }, String(r.rank)), h('td', null, r.id),
+          h('td', { class: 'r num' }, h('span', { class: 'mg-chip', style: { background: c ? `rgb(${c.join(',')})` : '#8a8f98' } }), U.fmtNum(r.margin, 1)),
+          h('td', { class: 'r num' }, U.fmtNum(r.coalT, 0)), h('td', { class: 'r num' }, U.fmtNum(r.wasteT, 0)), h('td', { class: 'r num' }, U.fmtNum(r.ratio, 2)), h('td', { class: 'r num' }, U.fmtNum(r.cost / r.coalT, 1))); };
+      parts.push(
+        h('div', { class: 'kpis' },
+          kp(`Positive margin · ${S.pos} block${S.pos === 1 ? '' : 's'}`, U.fmtBig(S.tPos, 't')), kp(`Negative margin · ${S.neg} block${S.neg === 1 ? '' : 's'}`, U.fmtBig(S.tNeg, 't')),
+          kp('Average margin (by tons)', mt(S.avg)), kp('Break-even', `${U.fmtNum(Q.price / Q.cost, 2)} t mined per t of coal`),
+          kp(`Highest · ${S.best.id}`, mt(S.hi)), kp(`Lowest · ${S.worst.id}`, mt(S.lo))),
+        h('div', { class: 'mg-scale', 'aria-label': `Margin scale from ${mt(S.lo)} to ${mt(S.hi)}` },
+          h('div', { class: 'bar', style: { background: G.css } }, S.lo < 0 && S.hi > 0 ? h('span', { class: 'zero', style: { left: G.zero + '%' } }) : null),
+          h('div', { class: 'lab' }, h('span', { style: { left: 0 } }, mt(S.lo)), h('span', { style: { right: 0 } }, mt(S.hi)))),
+        h('div', { class: 'row' }, on ? btn('Stop colouring the blocks', () => { App.colorBy = 'status'; UI.renderColorBy(); App.refreshTint(); UI.renderTab(); }, 'sm') : btn('Colour the blocks by this margin', () => { App.colorBy = 'margin2'; UI.renderColorBy(); App.refreshTint(); UI.renderTab(); }, 'sm primary')),
+        S.none ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `${S.none} block${S.none === 1 ? ' has' : 's have'} no coal and ${S.none === 1 ? 'is' : 'are'} not ranked.`) : null,
+        h('div', { class: 'tbl-wrap', style: { maxHeight: '420px', overflow: 'auto' } }, h('table', { class: 'tbl mg-tbl' },
+          h('thead', null, h('tr', null, h('th', { class: 'r' }, 'Rank'), h('th', null, 'Block'), h('th', { class: 'r' }, `Margin ${cur}/t`), h('th', { class: 'r' }, 'Coal t'), h('th', { class: 'r' }, 'Waste t'), h('th', { class: 'r', title: 'Tons mined (waste and coal) per ton of coal' }, 't mined/t coal'), h('th', { class: 'r', title: 'Total costs per ton of coal' }, `Cost ${cur}/t coal`))),
+          h('tbody', null, show.map(tr)))),
+        Q.ranked.length > show.length ? h('div', { class: 'dt' }, `The first ${show.length} of ${Q.ranked.length}.`) : null);
+    }
+    parts.push(hint(`Margin = coal price − total costs × (waste t + coal t) ÷ coal t, per ton of coal: the total costs are per ton of everything mined, so a block with more waste per ton of coal costs more. Waste t = the bcm of each waste layer × its density; the coal tons are ${R.M.basis === 'ar' ? 'as received' : 'in situ'}, as in the margin above. A block pays for itself (positive) while it mines fewer than price ÷ cost tons per ton of coal. Rank 1 is the highest margin.`));
+    body.append(sec('Margin rank — total costs', Q.ready && S.n ? h('span', { class: 'chip' }, `${S.n} blocks`) : null, ...parts));
+  }
+
   /* The strip ratio of every block (waste bcm ÷ coal t), ranked from the lowest; coloured green (low) to red (high) in
      robot colours, amber at the middle of the scale (the average unless set). */
   /* The depth of each block to the floor of the lowest seam mined in it (Model.blockDepth): from the ground down, on
@@ -14382,7 +14459,7 @@ const Tabs = (() => {
         h('thead', null, h('tr', null, h('th', { class: 'r' }, 'Rank'), h('th', null, 'Block'), h('th', { class: 'r' }, 'bcm/t'), h('th', { class: 'r' }, 'Waste bcm'), h('th', { class: 'r' }, 'Coal t'), R.ready ? h('th', { class: 'r', title: 'Its rank by margin' }, 'Margin rank') : null)),
         h('tbody', null, show.map(tr)))),
       R.srRanked.length > show.length ? h('div', { class: 'dt' }, `The first ${show.length} of ${R.srRanked.length}; the Excel schedule has them all.`) : null,
-      hint(`The strip ratio of a block is its waste (every layer that is not coal, topsoil too) in bcm ÷ its coal in tons${R.M.basis === 'ar' ? ' as received' : ' in situ'} (the “Coal tons” above), with depth limits and keep-out zones taken off. Rank 1 is the lowest. “Colour the blocks by strip ratio” shows them in robot colours: green for the lowest, amber at the middle of the scale, red for the highest.${R.ready ? ' The break-even strip ratio is where a block with the average revenue per ton (and plant cost) would just pay for itself: above it the waste costs more than the coal earns.' : ''} Blocks without coal have no strip ratio.`)));
+      hint(`The strip ratio of a block is its waste (every layer that is not coal, topsoil too) in bcm ÷ its coal in tons${R.M.basis === 'ar' ? ' as received' : ' in situ'} (Coal tons, in the Block Margin Rank tab), with depth limits and keep-out zones taken off. Rank 1 is the lowest. “Colour the blocks by strip ratio” shows them in robot colours: green for the lowest, amber at the middle of the scale, red for the highest.${R.ready ? ' The break-even strip ratio is where a block with the average revenue per ton (and plant cost) would just pay for itself: above it the waste costs more than the coal earns.' : ''} Blocks without coal have no strip ratio.`)));
   }
 
   // =============== PRODUCTION ===============
@@ -18170,7 +18247,7 @@ const App = {
     if (kind === 'meta') UI.setProjectName(this.P.name, this.P.isDemo);
     // the block depth follows the paths, the depth limits and the cut-offs
     if (this.colorBy === 'depth' && ['paths', 'limits', 'cutoff', 'layers', 'blocks', 'pits', 'margin', 'quality'].includes(kind)) this.refreshTint();
-    if (kind === 'margin' || kind === 'reserve') { UI.renderColorBy(); if (this.colorBy === 'margin' || this.colorBy === 'sr' || this.colorBy === 'cv' || this.colorBy === 'ash' || this.colorBy === 'ts') this.refreshTint(); else if (kind === 'reserve') UI.renderLegend(); if (this.selBlock >= 0) UI.renderInspector(); }
+    if (kind === 'margin' || kind === 'reserve') { UI.renderColorBy(); if (this.colorBy === 'margin' || this.colorBy === 'margin2' || this.colorBy === 'sr' || this.colorBy === 'cv' || this.colorBy === 'ash' || this.colorBy === 'ts') this.refreshTint(); else if (kind === 'reserve') UI.renderLegend(); if (this.selBlock >= 0) UI.renderInspector(); }
     if (kind === 'wash' && this.res) Timeline.renderAcc(); // the Product column of the running totals
     if (kind === 'quality' || kind === 'wash') { UI.renderColorBy(); if (['margin', 'sr', 'cv', 'ash', 'ts', 'attr'].includes(this.colorBy)) this.refreshTint(); if (this.selBlock >= 0) UI.renderInspector(); }
     if (this.P.isDemo && kind !== 'view') { /* editing the demo turns it into your own project */ }
@@ -18442,7 +18519,16 @@ const App = {
         const G = Margin.gradient(R.stats.lo, R.stats.hi), f = v => `${cur} ${U.fmtNum(v, Math.abs(v) < 100 ? 1 : 0)}`;
         legend = { type: 'diverge', title: `Block margin (${cur}/t)`, lo: f(R.stats.lo), hi: f(R.stats.hi), css: G.css, zero: R.stats.lo < 0 && R.stats.hi > 0 ? G.zero : -1,
           extra: [[Margin.NEG[3], `Negative: ${R.stats.neg} blocks`], [Margin.POS[3], `Positive: ${R.stats.pos} blocks`]].concat(R.stats.none ? [['#8a8f98', `No coal: ${R.stats.none}`]] : [], R.resv ? [['rgba(160,160,160,.45)', `Faded: outside the reserve boundary (${R.resv.outside.n})`]] : []) };
-      } else legend = { type: 'list', title: 'Block margin', items: [['#8a8f98', 'Type the coal price in the Reserve tab']] };
+      } else legend = { type: 'list', title: 'Block margin', items: [['#8a8f98', 'Type the coal price in the Block Margin Rank tab']] };
+    } else if (mode === 'margin2') {
+      // the second block margin (total costs per ton mined): red below zero, green above
+      const R = this.margin(), Q = R ? Margin.simple(P, R) : null, cur = ((P.margin || {}).currency || 'R').trim() || 'R';
+      if (Q && Q.ready && Q.stats.n) {
+        for (const r of Q.rows) { const c = Margin.colorOf(r.margin, Q.stats.lo, Q.stats.hi); cellColor[r.b] = c ? [c[0], c[1], c[2], r.inside ? 225 : 80] : [138, 143, 152, 110]; }
+        const G = Margin.gradient(Q.stats.lo, Q.stats.hi), f = v => `${cur} ${U.fmtNum(v, Math.abs(v) < 100 ? 1 : 0)}`;
+        legend = { type: 'diverge', title: `Block margin, total costs (${cur}/t)`, lo: f(Q.stats.lo), hi: f(Q.stats.hi), css: G.css, zero: Q.stats.lo < 0 && Q.stats.hi > 0 ? G.zero : -1,
+          extra: [[Margin.NEG[3], `Negative: ${Q.stats.neg} blocks`], [Margin.POS[3], `Positive: ${Q.stats.pos} blocks`]].concat(Q.stats.none ? [['#8a8f98', `No coal: ${Q.stats.none}`]] : []) };
+      } else legend = { type: 'list', title: 'Block margin, total costs', items: [['#8a8f98', 'Type the coal price and the total costs in the Block Margin Rank tab']] };
     } else if (mode === 'sr') {
       // the strip ratio: green for the lowest, amber at the middle of the scale, red for the highest; grey without coal
       const R = this.margin(), S = R && R.stats.sr;
@@ -18472,7 +18558,7 @@ const App = {
         for (const r of R.rows) { const v = r[mode]; if (v === v && r.coalT > 0) { const c = U.ramp(S.hi > S.lo ? (v - S.lo) / (S.hi - S.lo) : 0.5); cellColor[r.b] = [c[0], c[1], c[2], r.inside ? 210 : 80]; } else { none++; cellColor[r.b] = [138, 143, 152, 110]; } }
         const ex = (none ? [['#8a8f98', `No coal or ${Q.name}: ${none}`]] : []).concat(R.resv ? [['rgba(160,160,160,.45)', `Faded: outside the reserve boundary (${R.resv.outside.n})`]] : []);
         legend = { type: 'ramp', title: `Blended ${Q.name} (${Q.unit}) · average ${U.fmtNum(S.avg, Q.d)}`, lo: U.fmtNum(S.lo, Q.d), hi: U.fmtNum(S.hi, Q.d), extra: ex.length ? ex : null };
-      } else legend = { type: 'list', title: `Blended ${Q.name}`, items: [['#8a8f98', `Choose the ${Q.name} column of the seams in the Reserve tab`]] };
+      } else legend = { type: 'list', title: `Blended ${Q.name}`, items: [['#8a8f98', `Choose the ${Q.name} column of the seams in the Block Margin Rank tab`]] };
     } else if (mode === 'pit') {
       const pitOf = Model.blockPits(P, ws), pits = P.pits || [];
       let rest = 0;
@@ -18566,7 +18652,7 @@ const App = {
     this.selBlock = b;
     View.setSelectedBlock(b);
     UI.renderInspector();
-    if (this.tab === 'reserve') UI.renderTab(); // the margin rank shows the block selected
+    if (this.tab === 'reserve' || this.tab === 'rank' || this.tab === 'strip') UI.renderTab(); // the ranks show the block selected
   },
 
   // ---------- copies and memory ----------
