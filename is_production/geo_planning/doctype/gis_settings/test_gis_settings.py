@@ -20,6 +20,26 @@ class IntegrationTestGISSettings(IntegrationTestCase):
 		result = gis_health_service.run_worker("/nonexistent/python3", "health.py", {})
 		self.assertIn("error", result)
 
+	def test_missing_site_project_folder_is_explained(self):
+		result = gis_health_service.check_project_directory("/var/lib/qgis-server/no-such-base")
+		self.assertFalse(result["ok"])
+		self.assertTrue(result["path"].endswith("/" + frappe.local.site))
+		self.assertIn("sudo install -d -o", result["message"])
+
+	def test_unreadable_plugin_folder_is_a_warning_not_a_crash(self):
+		from unittest.mock import patch
+
+		frappe.db.set_single_value("GIS Plugin Settings", "manage_server_plugins", 1)
+		frappe.clear_document_cache("GIS Plugin Settings", "GIS Plugin Settings")
+		try:
+			with patch("is_production.geo_planning.services.gis_plugin_service.os.listdir", side_effect=PermissionError(13, "Permission denied")):
+				warnings = []
+				gis_health_service.plugin_status(warnings)
+			self.assertTrue(any("cannot be read" in w for w in warnings), warnings)
+		finally:
+			frappe.db.set_single_value("GIS Plugin Settings", "manage_server_plugins", 0)
+			frappe.clear_document_cache("GIS Plugin Settings", "GIS Plugin Settings")
+
 	def test_crs_definition_sends_axis_separately(self):
 		lo29 = gis_workstation_service.get_crs_definition("EPSG:2053")
 		self.assertEqual(lo29["axis"], "wsu")
@@ -54,3 +74,53 @@ class IntegrationTestGISSettings(IntegrationTestCase):
 				gis_workstation_service.get_workstation_config()
 		finally:
 			frappe.set_user("Administrator")
+
+
+class IntegrationTestGISSetup(IntegrationTestCase):
+	"""bench gis-setup: everything follows the bench user, site and QGIS Server group it runs with."""
+
+	def test_folders_follow_the_bench_user_site_and_group(self):
+		from is_production.geo_planning.services import gis_setup_service as setup
+
+		commands = setup.folder_commands("/srv/qgis/projects", "erp.example.org", "alice", "qgis", "/srv/qgis/plugins")
+		self.assertEqual(commands[0], ["install", "-d", "-o", "root", "-g", "qgis", "-m", "0751", "/srv/qgis/projects"])
+		self.assertEqual(commands[1], ["install", "-d", "-o", "alice", "-g", "qgis", "-m", "2750", "/srv/qgis/projects/erp.example.org"])
+		self.assertEqual(commands[2][-1], "/srv/qgis/plugins")
+
+	def test_account_is_per_database_and_select_only(self):
+		from is_production.geo_planning.services import gis_setup_service as setup
+
+		self.assertEqual(setup.account_name("_1bd3e0294da19198"), "qgis_ro__1bd3e0294da19198")
+		with self.assertRaises(setup.SetupError):
+			setup.account_name("bad`name")
+		sql = setup.account_sql("qgis_ro_x", "localhost", "Ab-c_9", "x")
+		self.assertEqual(sql[-1], "GRANT SELECT ON `x`.`tabGIS Feature` TO 'qgis_ro_x'@'localhost'")
+		with self.assertRaises(setup.SetupError):
+			setup.account_sql("qgis_ro_x", "localhost", "it's", "x")
+
+	def test_print_only_changes_nothing_and_uses_the_running_user(self):
+		from unittest.mock import patch
+
+		from is_production.geo_planning.services import gis_setup_service as setup
+
+		before = frappe.get_single("GIS Settings").as_dict()
+		lines = []
+		with patch.object(setup, "bench_user", return_value="bob"), patch.object(setup, "detect_qgis_group", return_value="qgisgrp"), patch.object(setup.subprocess, "run") as run:
+			setup.run_setup(print_only=True, skip_host_check=True, echo=lines.append)
+		self.assertFalse([c for c in run.call_args_list if c.args and c.args[0][:1] == ["sudo"]])  # nothing privileged ran
+		text = "\n".join(lines)
+		self.assertIn(f"-o bob -g qgisgrp -m 2750 ", text)
+		self.assertIn(frappe.local.site, text)
+		self.assertIn(f"'qgis_ro_{frappe.conf.db_name}'@", text)
+		self.assertNotIn("IDENTIFIED BY '" + "a", text.replace("********", ""))  # no password shown
+		after = frappe.get_single("GIS Settings").as_dict()
+		self.assertEqual((after.qgis_db_user, after.qgis_project_directory), (before.qgis_db_user, before.qgis_project_directory))
+
+	def test_another_bench_owning_the_plugin_folder_stops_setup(self):
+		from unittest.mock import patch
+
+		from is_production.geo_planning.services import gis_setup_service as setup
+
+		with patch.object(setup, "plugin_dir_owned_elsewhere", return_value="carol"), patch.object(setup.subprocess, "run"):
+			with self.assertRaises(setup.SetupError):
+				setup.run_setup(manage_server_plugins=True, print_only=True, skip_host_check=True, skip_account=True, echo=lambda *_: None)

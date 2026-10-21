@@ -25,8 +25,19 @@ from is_production.geo_planning.services.gis_storage_service import NON_SPATIAL_
 PUBLISH_FIELDS = ("title", "geometry_type", "crs", "has_z", "default_color")
 
 
+def site_project_directory(base=None):
+	"""This site's folder for its QGIS projects: ``<QGIS Project Directory>/<site>``.
+
+	One QGIS Server serves every bench and site on the host. Each site keeps its projects in its own folder
+	(owned by its bench's user and QGIS Server's group, mode 2750; bench gis-setup creates it), so dataset names cannot collide between sites
+	and no site can read another's project files (they hold its read-only database password).
+	"""
+	base = base or frappe.db.get_single_value("GIS Settings", "qgis_project_directory")
+	return os.path.join(base, frappe.local.site) if base else None
+
+
 def project_directory():
-	directory = frappe.db.get_single_value("GIS Settings", "qgis_project_directory")
+	directory = site_project_directory()
 	if not directory:
 		frappe.throw(_("Set the QGIS Project Directory in GIS Settings first."))
 	return directory
@@ -76,10 +87,18 @@ def publish_dataset(dataset_name):
 	if not settings.qgis_db_user:
 		return record(dataset, {"ok": False, "message": _("No QGIS database account is set in GIS Settings.")})
 
-	directory = settings.qgis_project_directory
+	directory = site_project_directory(settings.qgis_project_directory)
 	if not directory or not os.path.isdir(directory) or not os.access(directory, os.W_OK):
+		from is_production.geo_planning.services.gis_health_service import project_directory_command
+
 		return record(
-			dataset, {"ok": False, "message": _("QGIS Project Directory {0} is missing or not writable.").format(directory)}
+			dataset,
+			{
+				"ok": False,
+				"message": _("This site's QGIS project folder {0} is missing or not writable. Create it with: {1}").format(
+					directory, project_directory_command(directory)
+				),
+			},
 		)
 
 	extent = None
@@ -131,8 +150,8 @@ def record(dataset, report):
 
 def unpublish(dataset_name):
 	path = frappe.db.get_value("GIS Dataset", dataset_name, "qgis_project_file")
-	directory = frappe.db.get_single_value("GIS Settings", "qgis_project_directory")
-	# only ever delete a .qgs this app wrote, inside the configured directory
+	directory = site_project_directory()
+	# only ever delete a .qgs this app wrote, inside this site's project folder
 	if path and directory and os.path.isfile(path) and os.path.dirname(path) == os.path.normpath(directory):
 		os.remove(path)
 	if frappe.db.exists("GIS Dataset", dataset_name):
