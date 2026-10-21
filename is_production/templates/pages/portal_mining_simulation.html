@@ -542,7 +542,7 @@ canvas.chart { width: 100%; display: block; }
         <label class="tab-pick" for="tabSelect"><span class="tab-k">Panel</span>
           <select id="tabSelect">
             <optgroup label="Set-up"><option value="project">Project</option><option value="data">Geological Data</option><option value="layers">Feature layers</option></optgroup>
-            <optgroup label="Resource"><option value="reserve">Reserve</option><option value="rank">Block Margin Rank</option><option value="strip">Strip Ratio</option></optgroup>
+            <optgroup label="Resource"><option value="resource">Resource</option><option value="reserve">Reserve</option><option value="rank">Block Margin Rank</option><option value="strip">Strip Ratio</option></optgroup>
             <optgroup label="Mining"><option value="production">Production</option><option value="blast">Drill and Blast</option><option value="dumps">Dumps</option><option value="roads">Roads</option><option value="sequence">Sequence</option></optgroup>
             <optgroup label="Water and rehabilitation"><option value="hydro">Hydrogeological</option><option value="rehab">Rehab</option></optgroup>
             <optgroup label="Outcomes"><option value="finance">Finance</option><option value="recon">Recon</option><option value="results">Results</option></optgroup>
@@ -7770,6 +7770,74 @@ const Tons = (() => {
   return { CONT, Q, settings, ps, compute, basis, kindOf };
 })();
 
+/* ===== Resource grid: a block layout over the 3D model (Resource tab; DOM-free) =====
+   Rectangular blocks laid over the model: `length` m along the strips, which run at `angle` (degrees clockwise from north),
+   and `width` m across them, from an origin (the corner of the model unless set). A block is kept when coal (any seam, as
+   the surfaces have it) lies under at least `minCover` % of its area. The blocks are named S01-B01: the strips numbered
+   across from the origin, the blocks along each strip; the numbers are the same across the strips (a row of the grid).
+   The layout replaces the block layout of the project (P.blocks); P.gridDef keeps how it was made. */
+const Grid = (() => {
+  const DEF = { width: 50, length: 100, angle: 0, x0: null, y0: null, minCover: 25 };
+  const MAX = 20000;
+  const num = v => (v === '' || v == null || !isFinite(+v) ? null : +v);
+  function settings(P) {
+    const G = (P && P.gridDef) || {}, o = {};
+    for (const k of ['width', 'length', 'angle', 'minCover']) o[k] = num(G[k]) != null ? num(G[k]) : DEF[k];
+    o.x0 = num(G.x0); o.y0 = num(G.y0);
+    o.width = Math.max(1, o.width); o.length = Math.max(1, o.length); o.minCover = U.clamp(o.minCover, 0, 100); o.angle = ((o.angle % 180) + 180) % 180;
+    return o;
+  }
+  // the directions: d along the strips (length), e across them (width), in model coordinates (x east, y north)
+  function axes(angle) { const a = (angle * Math.PI) / 180; return { d: [Math.sin(a), Math.cos(a)], e: [Math.cos(a), -Math.sin(a)] }; }
+  // the coal thickness in each cell of the model (all seams, as the surfaces have it, below the ground)
+  function coalCells(P, ws) {
+    const S = ws.surfRaw || ws.surf, has = new Uint8Array(ws.n);
+    P.layers.forEach((L, l) => { if (L.type !== 'coal') return; for (let c = 0; c < ws.n; c++) if (Math.min(S[l][c], S[0][c]) - S[l + 1][c] > 0.05) has[c] = 1; });
+    return has;
+  }
+  /* The blocks for the settings o. → {blocks: [{id, pts, strip, row}], strips, rows, dropped (blocks with too little coal),
+     coalCells, origin} or {error} */
+  function build(P, ws, o) {
+    if (!(o.width > 0 && o.length > 0)) return { error: 'Type the width and the length of the blocks.' };
+    const { d, e } = axes(o.angle), has = coalCells(P, ws), cell = ws.cell;
+    let nc = 0; for (let c = 0; c < ws.n; c++) nc += has[c];
+    if (!nc) return { error: 'The model has no coal seam with any thickness, so there is nothing to lay blocks over.' };
+    // the origin: as typed, else the corner of the model behind every cell (the lowest u and v)
+    let O = [o.x0, o.y0];
+    if (O[0] == null || O[1] == null) {
+      const x1 = ws.x0 + ws.nx * cell, y1 = ws.y0 + ws.ny * cell; let umin = Infinity, vmin = Infinity;
+      for (const [x, y] of [[ws.x0, ws.y0], [x1, ws.y0], [ws.x0, y1], [x1, y1]]) { umin = Math.min(umin, x * e[0] + y * e[1]); vmin = Math.min(vmin, x * d[0] + y * d[1]); }
+      O = [umin * e[0] + vmin * d[0], umin * e[1] + vmin * d[1]];
+    }
+    // the coal cells in each block (i across, j along)
+    const count = new Map();
+    for (let c = 0; c < ws.n; c++) {
+      if (!has[c]) continue;
+      const x = ws.x0 + ((c % ws.nx) + 0.5) * cell - O[0], y = ws.y0 + (((c / ws.nx) | 0) + 0.5) * cell - O[1];
+      const i = Math.floor((x * e[0] + y * e[1]) / o.width), j = Math.floor((x * d[0] + y * d[1]) / o.length), k = i + ',' + j;
+      count.set(k, (count.get(k) || 0) + 1);
+    }
+    const need = (o.minCover / 100) * o.width * o.length, keep = [];
+    let dropped = 0;
+    for (const [k, n] of count) { if (n * ws.A >= need - 1e-9 && n > 0) { const [i, j] = k.split(',').map(Number); keep.push([i, j]); } else dropped++; }
+    if (!keep.length) return { error: `No block has coal under ${o.minCover}% of its area. Lower the minimum coal cover or make the blocks smaller.` };
+    if (keep.length > MAX) return { error: `That makes ${U.fmtNum(keep.length)} blocks, more than the ${U.fmtNum(MAX)} the simulator handles. Make the blocks larger.` };
+    let i0 = Infinity, i1 = -Infinity, j0 = Infinity, j1 = -Infinity;
+    for (const [i, j] of keep) { i0 = Math.min(i0, i); i1 = Math.max(i1, i); j0 = Math.min(j0, j); j1 = Math.max(j1, j); }
+    const wS = String(i1 - i0 + 1).length < 2 ? 2 : String(i1 - i0 + 1).length, wB = String(j1 - j0 + 1).length < 2 ? 2 : String(j1 - j0 + 1).length;
+    const at = (u, v) => [Math.round((O[0] + u * e[0] + v * d[0]) * 1000) / 1000, Math.round((O[1] + u * e[1] + v * d[1]) * 1000) / 1000];
+    keep.sort((p, q) => p[0] - q[0] || p[1] - q[1]);
+    const blocks = keep.map(([i, j]) => {
+      const u = i * o.width, v = j * o.length, s = i - i0 + 1, r = j - j0 + 1;
+      return { id: `S${String(s).padStart(wS, '0')}-B${String(r).padStart(wB, '0')}`, strip: s, row: r, pts: [at(u, v), at(u + o.width, v), at(u + o.width, v + o.length), at(u, v + o.length)] };
+    });
+    return { blocks, strips: new Set(blocks.map(b => b.strip)).size, rows: j1 - j0 + 1, dropped, coalCells: nc, origin: O };
+  }
+  // the mining path of a new layout: strip by strip across, each strip block by block along it
+  const defaultPath = blocks => blocks.slice().sort((p, q) => p.strip - q.strip || p.row - q.row).map(b => b.id);
+  return { DEF, MAX, settings, axes, build, defaultPath };
+})();
+
 /* ===== Reserve boundary from a strip ratio and a block margin cut-off (Block Margin Rank tab; DOM-free) =====
    The blocks to mine, from the strip ratio and the margin of each block as the block margin counts them (waste bcm ÷
    coal t, and (revenue − cost) ÷ coal t; the seam cut-off and depth limits taken off, on its in-situ or as-received
@@ -11773,7 +11841,7 @@ const Tabs = (() => {
 
   function render(tab, body) {
     if (!App.P) { body.append(h('div', { class: 'empty' }, 'Loading…')); return; }
-    ({ project, data, layers: featureLayers, sequence, roads, dumps, production, blast: drillBlast, reserve, rank, strip, hydro, rehab, finance, recon, results })[tab](body);
+    ({ project, data, layers: featureLayers, sequence, roads, dumps, production, blast: drillBlast, resource, reserve, rank, strip, hydro, rehab, finance, recon, results })[tab](body);
     if (!App.canEdit) body.querySelectorAll('input,select,textarea').forEach(i => { if (!i.closest('[data-viewer]')) i.disabled = true; });
   }
   function hud(title, sub, buttons) {
@@ -12035,6 +12103,7 @@ const Tabs = (() => {
       if (outside) bl.push(msg('warn', `${outside} block(s) fall outside the elevation model.`));
       if (!App.ws) bl.push(msg('warn', 'Build the 3D model from the elevation TIFFs to see the blocks.'));
     }
+    bl.push(P.gridDef && P.gridDef.made ? msg('info', `The block layout in use is the grid of the Resource tab (${U.fmtNum(P.gridDef.n)} blocks). Loading a layout here replaces it.`) : hint('Or lay a grid of blocks of a set width and length over the model in the Resource tab.'));
     body.append(sec('Block layout (KML or DXF)', null, ...bl));
 
     // ---- attributes
@@ -12671,6 +12740,7 @@ const Tabs = (() => {
     const old = new Map(P.blocks.map(b => [b.id, b]));
     P.blocks = blocks.map(b => ({ id: b.id, pts: b.pts, attrs: (old.get(b.id) || {}).attrs || {} }));
     P.source.dxf = Object.assign({ file: D.dxfName, fix: D.dxfFix ? D.dxfFix.name : null }, o);
+    if (P.gridDef) delete P.gridDef.made; // (a grid of the Resource tab is no longer the layout)
     const ids = new Set(P.blocks.map(b => b.id));
     P.activities.forEach(a => (a.path = a.path.filter(id => ids.has(id))));
     P.isDemo = false;
@@ -14223,6 +14293,73 @@ const Tabs = (() => {
       },
       onCancel: () => hud(null), onError: m => UI.toast(m)
     });
+  }
+
+  // =============== RESOURCE ===============
+  /* The block layout over the 3D model (Grid): it replaces the layout of the project, so every calculation before the
+     schedule (the reserve, the block margin, the strip ratio, the reserve boundary) and the schedule use it. The coal
+     qualities of its blocks come from the quality rasters (Geological Data tab). */
+  function resource(body) {
+    const P = App.P, ws = App.ws;
+    if (!ws) { body.append(h('div', { class: 'empty' }, 'Build the 3D model in the Geological Data tab first: the blocks are laid over it.')); return; }
+    const o = Grid.settings(P), GD = P.gridDef || {}, gd = () => P.gridDef || (P.gridDef = {});
+    const set = (k, v) => { gd()[k] = v; App.changed('meta'); UI.renderTab(); };
+    const inp = (k, aria, opt) => { const i = num(GD[k] == null || GD[k] === '' ? null : +GD[k], v => set(k, v), Object.assign({ allowEmpty: true }, opt)); i.setAttribute('aria-label', aria); return i; };
+    const parts = [
+      h('div', { class: 'grid2' },
+        fld('Block width (m, across the strips)', inp('width', 'Block width', { min: 1, step: 5, placeholder: String(Grid.DEF.width) })),
+        fld('Block length (m, along the strips)', inp('length', 'Block length', { min: 1, step: 5, placeholder: String(Grid.DEF.length) }))),
+      h('div', { class: 'grid2' },
+        fld('Strip direction (° clockwise from north)', inp('angle', 'Strip direction', { min: 0, max: 180, step: 1, placeholder: '0' })),
+        fld('Keep a block with coal under at least (% of it)', inp('minCover', 'Minimum coal cover', { min: 0, max: 100, step: 5, placeholder: String(Grid.DEF.minCover) }))),
+      h('div', { class: 'grid2' },
+        fld('Origin X (optional)', inp('x0', 'Origin X', { step: 1, placeholder: 'model corner' })),
+        fld('Origin Y (optional)', inp('y0', 'Origin Y', { step: 1, placeholder: 'model corner' })))
+    ];
+    const B = Grid.build(P, ws, o), kv = (k, v) => [h('span', { class: 'k' }, k), h('span', { class: 'v' }, v)];
+    if (B.error) parts.push(msg('warn', B.error));
+    else {
+      parts.push(h('div', { class: 'kv' },
+        ...kv('Blocks', `${U.fmtNum(B.blocks.length)} in ${B.strips} strip${B.strips === 1 ? '' : 's'}`),
+        ...kv('Block size', `${U.fmtNum(o.width, 0)} × ${U.fmtNum(o.length, 0)} m · ${U.fmtArea(o.width * o.length)}`),
+        ...kv('Strips run', `${U.fmtNum(o.angle, 0)}° from north`),
+        ...(B.dropped ? kv('Left out (too little coal)', `${U.fmtNum(B.dropped)} block${B.dropped === 1 ? '' : 's'}`) : [])));
+      if (Math.min(o.width, o.length) < 2 * ws.cell) parts.push(msg('warn', `Blocks narrower than two model cells (${U.fmtNum(2 * ws.cell, 1)} m) take their volumes from few cells; make them larger, or rebuild the model with smaller cells.`));
+    }
+    // the layout of the project now
+    const made = GD.made && GD.used, U_ = GD.used || {};
+    parts.push(made ? msg('info', `The project’s block layout is this grid: ${U.fmtNum(GD.n)} blocks of ${U.fmtNum(U_.width, 0)} × ${U.fmtNum(U_.length, 0)} m, strips at ${U.fmtNum(U_.angle, 0)}°, made ${U.fmtDate(U.parseISO(GD.made))}.`)
+      : msg('info', P.blocks.length ? `The project’s block layout is the one loaded in the Geological Data tab (${U.fmtNum(P.blocks.length)} blocks${P.source && P.source.dxf && P.source.dxf.file ? `, ${P.source.dxf.file}` : ''}). Creating the grid replaces it.` : 'The project has no block layout yet.'));
+    if (made && !B.error && (U_.width !== o.width || U_.length !== o.length || U_.angle !== o.angle || U_.minCover !== o.minCover || (o.x0 != null && Math.abs(o.x0 - U_.x0) > 1e-6) || (o.y0 != null && Math.abs(o.y0 - U_.y0) > 1e-6)))
+      parts.push(msg('warn', 'The settings above differ from the layout in use: make it again to use them.'));
+    if (made && (GD.missing || []).length) parts.push(msg('warn', `These quality rasters were not read for the grid, as they were not loaded in this session: ${GD.missing.join(', ')}. Add the files again in the Geological Data tab (Coal quality rasters) to give the blocks their qualities.`));
+    if (made && !(P.qrasters || []).length) parts.push(msg('warn', 'There are no coal quality rasters, so the blocks have no CV, ASH or TS (and no revenue in the block margin). Add them in the Geological Data tab.'));
+    if (edit() && !B.error) parts.push(h('div', { class: 'row edit-only' }, btn(made ? 'Make the layout again' : 'Create the block layout', () => createGrid(B, o), 'sm primary', 'Lay these blocks over the model as the project’s block layout')));
+    parts.push(hint('The blocks are rectangles of the width across the strips and the length along them, the strips running in the direction set, laid from the origin (the corner of the model unless typed) over the whole model; a block is kept where coal lies under at least the share set. They are named S01-B01: strip 1, block 1 along it. The grid becomes the project’s block layout: the reserve, the block margin, the strip ratio, the reserve boundary and the schedule all use it. Making it sets every activity’s mining path again, strip by strip; the block attributes of the Excel file are left out, and the coal qualities come from the quality rasters, read again for the new blocks.'));
+    body.append(sec('Block layout', made ? h('span', { class: 'chip' }, `${U.fmtNum(GD.n)} blocks`) : null, ...parts));
+  }
+  async function createGrid(B, o) {
+    const P = App.P, had = P.blocks.length;
+    if (had && !(await UI.confirmBox('Replace the block layout', `Replace the ${U.fmtNum(had)} blocks of the project with ${U.fmtNum(B.blocks.length)} grid blocks? Every activity’s mining path is set again, strip by strip, and the block attributes of the Excel file are left out: the coal qualities come from the quality rasters.`, 'Replace'))) return;
+    UI.busy('Laying the blocks…', 0.3); await U.nextFrame();
+    try {
+      P.blocks = B.blocks.map(b => ({ id: b.id, pts: b.pts, attrs: {} }));
+      P.attrColumns = []; P.idColumn = ''; P.stripField = '@id';
+      const path = Grid.defaultPath(B.blocks);
+      for (const a of P.activities) a.path = path.slice();
+      P.isDemo = false;
+      App.res = null; App.pb = null; App.day = -1; App.selBlock = -1;
+      App.rasterize(); Timeline.setData(null, P);
+      // the coal qualities: the rasters read in this session, on the new blocks
+      const missing = [];
+      for (const e of (P.qrasters || []).slice()) { const g = App.qgrid.get(e.id); if (g) Qual.assign(P, App.ws, e, g); else missing.push(e.file); }
+      if (P.wash) Wash.assign(P, App.ws);
+      P.gridDef = Object.assign({}, P.gridDef, { made: U.todayISO(), n: B.blocks.length, missing, used: { width: o.width, length: o.length, angle: o.angle, minCover: o.minCover, x0: B.origin[0], y0: B.origin[1] } });
+      App.changed('blocks', { now: true }); App.changed('quality'); App.changed('layers');
+      UI.busy(null); View.fit();
+      UI.renderTab(); UI.renderInspector(); UI.renderColorBy();
+      UI.toast(`${U.fmtNum(B.blocks.length)} blocks in ${B.strips} strips are the project’s block layout. ${missing.length ? `Add ${missing.length} quality raster${missing.length === 1 ? '' : 's'} again for their qualities. ` : ''}Run the simulation to schedule them.`, 9000);
+    } catch (e) { UI.busy(null); console.error(e); UI.toast('The block layout could not be made: ' + (e.message || e)); }
   }
 
   // =============== RESERVE ===============
