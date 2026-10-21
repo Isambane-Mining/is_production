@@ -87,6 +87,8 @@ class IntegrationTestGISPublish(IntegrationTestCase):
 		dataset = frappe.get_doc("GIS Dataset", DATASET)
 		self.assertEqual(dataset.qgis_publish_status, "Published")
 		self.assertEqual(dataset.qgis_publish_signature, gis_publish_service.publish_signature(dataset))
+		# each site writes into its own folder under the shared base
+		self.assertEqual(os.path.basename(os.path.dirname(dataset.qgis_project_file)), frappe.local.site)
 		mode = os.stat(dataset.qgis_project_file).st_mode & 0o777
 		self.assertEqual(mode, 0o640)
 		leftovers = [f for f in os.listdir(os.path.dirname(dataset.qgis_project_file)) if f.startswith(".publish-")]
