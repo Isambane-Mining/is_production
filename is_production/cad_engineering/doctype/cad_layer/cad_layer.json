@@ -1,0 +1,174 @@
+{
+ "actions": [],
+ "creation": "2026-10-21 10:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "cad_model",
+  "layer_name",
+  "layer_code",
+  "parent_layer",
+  "is_group",
+  "column_break_main",
+  "color",
+  "line_type",
+  "line_weight",
+  "display_order",
+  "section_flags",
+  "visible",
+  "locked",
+  "column_break_flags",
+  "printable",
+  "section_desc",
+  "description"
+ ],
+ "fields": [
+  {
+   "fieldname": "cad_model",
+   "fieldtype": "Link",
+   "label": "CAD Model",
+   "options": "CAD Model",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "layer_name",
+   "fieldtype": "Data",
+   "label": "Layer Name",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "layer_code",
+   "fieldtype": "Data",
+   "label": "Layer Code"
+  },
+  {
+   "fieldname": "parent_layer",
+   "fieldtype": "Link",
+   "label": "Parent Layer",
+   "options": "CAD Layer"
+  },
+  {
+   "fieldname": "is_group",
+   "fieldtype": "Check",
+   "label": "Is Group"
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "color",
+   "fieldtype": "Color",
+   "label": "Colour",
+   "default": "#e0e0e0"
+  },
+  {
+   "fieldname": "line_type",
+   "fieldtype": "Select",
+   "label": "Line Type",
+   "options": "Continuous\nDashed\nDotted\nDash Dot\nCentre\nHidden\nPhantom",
+   "default": "Continuous"
+  },
+  {
+   "fieldname": "line_weight",
+   "fieldtype": "Float",
+   "label": "Line Weight (mm)",
+   "default": "0.25"
+  },
+  {
+   "fieldname": "display_order",
+   "fieldtype": "Int",
+   "label": "Display Order"
+  },
+  {
+   "fieldname": "section_flags",
+   "fieldtype": "Section Break",
+   "label": "Flags"
+  },
+  {
+   "fieldname": "visible",
+   "fieldtype": "Check",
+   "label": "Visible",
+   "default": "1"
+  },
+  {
+   "fieldname": "locked",
+   "fieldtype": "Check",
+   "label": "Locked"
+  },
+  {
+   "fieldname": "column_break_flags",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "printable",
+   "fieldtype": "Check",
+   "label": "Printable",
+   "default": "1"
+  },
+  {
+   "fieldname": "section_desc",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  }
+ ],
+ "grid_page_length": 50,
+ "links": [],
+ "modified": "2026-10-21 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "CAD Engineering",
+ "name": "CAD Layer",
+ "owner": "Administrator",
+ "row_format": "Dynamic",
+ "sort_field": "display_order",
+ "sort_order": "ASC",
+ "states": [],
+ "autoname": "hash",
+ "title_field": "layer_name",
+ "show_title_field_in_link": 1,
+ "search_fields": "layer_name,cad_model",
+ "description": "A layer (or layer group) of a CAD Model with its display properties.",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production User",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1
+  }
+ ]
+}
