@@ -7504,7 +7504,7 @@ const Margin = (() => {
   const DEF = { wasteCost: null, coalCost: null, price: null, revBy: 'blend', seamPrice: {}, byCV: true, plant: false, plantCost: null, basis: 'insitu', currency: 'R', cv: {}, ash: {}, ts: {}, yield: {}, waste: {}, srMid: null };
   function settings(P) { const M = Object.assign({}, DEF, P.margin || {}); for (const k of ['cv', 'ash', 'ts', 'yield', 'waste', 'seamPrice']) M[k] = Object.assign({}, (P.margin || {})[k]); return M; }
   const num = v => (v === '' || v == null || !isFinite(+v) ? null : +v);
-  const KIND = { cv: /(^|[^a-z])(cv|mj|kcal|cal|gcv|ncv)([^a-z]|$)|calorific/i, ash: /(^|[^a-z])ash/i, ts: /(^|[^a-z])(ts|tsul|stot)([^a-z]|$)|sulph|sulfur/i, yield: /yield|yld/i };
+  const KIND = { cv: /(^|[^a-z])(cv|mj|kcal|cal|gcv|ncv)([^a-z]|$)|calorific/i, ash: /(^|[^a-z])ash/i, ts: /(^|[^a-z])(ts|tsul|stot)([^a-z]|$)|sulph|sulfur/i, yield: /yield|yld/i, vm: /(^|[^a-z])vm([^a-z]|$)|volatile/i, im: /(^|[^a-z])(im|moist|inh)([^a-z]|$)|moisture|inherent/i }; // (VM and IM: for the ADC qualities)
   // the qualities blended over the seams of a block, with their units and decimals (the CV also prices the coal)
   const QUAL = [{ k: 'cv', name: 'CV', unit: 'MJ/kg', d: 2 }, { k: 'ash', name: 'ASH', unit: '%', d: 1 }, { k: 'ts', name: 'TS', unit: '%', d: 2 }];
   // the column of a seam's attribute: the one named for the seam (S4_CV_MJkg for Seam 4), or the only one of its kind
@@ -7656,24 +7656,85 @@ const Margin = (() => {
   const srMidIn = S => Math.min(S.hi, Math.max(S.lo, S.mid));
   const srColor = (v, S) => divColor(v, S.lo, srMidIn(S), S.hi, GREEN, RED);
   const srGradient = S => divGradient(S.lo, srMidIn(S), S.hi, GREEN, RED);
-  /* The second block margin (Block Margin Rank tab): one coal price and one total cost per ton of everything mined, waste
-     and coal (P.margin2 = {price, cost}, per t). For a block:
-       margin = price − cost × (waste t + coal t) ÷ coal t
-     its waste t being the bcm of its waste layers × their density. The bcm and tons are those of the block margin (R.rows:
-     the seam cut-off and depth limits taken off, the seams counted as waste, the in-situ or as-received basis). */
-  function simple(P, R) {
-    const S2 = P.margin2 || {}, price = num(S2.price), cost = num(S2.cost), ready = price > 0 && cost != null && cost >= 0;
-    const rows = R.rows.map(r => {
-      const wasteT = r.byLayer.reduce((s, q) => s + (q.coal ? 0 : q.t), 0), tot = wasteT + r.coalT;
-      return { b: r.b, id: r.id, coalT: r.coalT, wasteT, tot, ratio: r.coalT > 0 ? tot / r.coalT : NaN, rev: r.coalT * (price || 0), cost: tot * (cost || 0), margin: ready && r.coalT > 0 ? price - (cost * tot) / r.coalT : NaN, inside: r.inside, rank: 0 };
-    });
-    const ranked = rows.filter(r => r.margin === r.margin).sort((p, q) => q.margin - p.margin || p.b - q.b);
-    ranked.forEach((r, i) => { r.rank = i + 1; });
-    let lo = Infinity, hi = -Infinity, pos = 0, neg = 0, tPos = 0, tNeg = 0, tAll = 0, rev = 0, cst = 0;
-    for (const r of ranked) { lo = Math.min(lo, r.margin); hi = Math.max(hi, r.margin); tAll += r.coalT; rev += r.rev; cst += r.cost; if (r.margin >= 0) { pos++; tPos += r.coalT; } else { neg++; tNeg += r.coalT; } }
-    return { ready, price, cost, rows, ranked, stats: { n: ranked.length, none: rows.length - ranked.length, pos, neg, tPos, tNeg, tAll, avg: tAll > 0 ? (rev - cst) / tAll : NaN, lo: ranked.length ? lo : NaN, hi: ranked.length ? hi : NaN, best: ranked[0] || null, worst: ranked[ranked.length - 1] || null } };
+  return { DEF, QUAL, settings, guess, colFor, ready, isCoal, isWasteSeam, compute, colorOf, gradient, srColor, srGradient, divColor, divGradient, NEG, POS, RED, GREEN, AMBER };
+})();
+
+/* ===== Coal tons from gross in situ to air-dry contaminated (Reserve tab; DOM-free) =====
+   Seam by seam, over the blocks:
+     GTIS (gross tons in situ)     = the seam's bcm in the blocks, as the surfaces have it × its RD (the block's RD column, else the layer's)
+     TTIS (total tons in situ)     = GTIS × (1 − geological loss)
+     MTIS (mineable tons in situ)  = TTIS of what the schedule can mine: inside the reserve boundary, past the seam and quality
+                                     cut-offs, within the depth limits, outside keep-out zones (the block margin's volumes); a
+                                     seam counted as waste in the block margin has none
+     ADC  (air-dry contaminated t) = MTIS × (1 − mining loss) × (1 + contamination) × PS
+   PS, the moisture (Preston–Sanders): the RD is air dried; the coal in the ground holds its in-situ moisture Mis, the
+   air-dried coal Mad:   PS = (100 − Mis) ÷ (100 + RD × (Mis − Mad) − Mis)
+   Mad is the block's IM column, else the seam's air-dry moisture, else the project's; Mis the seam's, else the project's.
+   Without an in-situ moisture (or with no air-dry moisture for a block) there is no moisture adjustment (PS = 1).
+   The ADC qualities, air-dried basis: the CV, ASH, TS, VM and IM of the coal of each block (its columns; the seam's average
+   where a block lacks one) weighted by its coal tons, mixed with the contamination (P.tons.cont: CV, ASH, TS, VM; its IM
+   that of the coal):  Q = (coal t × Q coal + contamination t × Q contamination) ÷ ADC t.
+   The inputs: P.tons = {mIs, mAd, seams: {layerId: {mIs, mAd}}, cont: {cv, ash, ts, vm}}. */
+const Tons = (() => {
+  const CONT = { cv: 3, ash: 80, ts: 0.5, vm: 12 };
+  const Q = [{ k: 'cv', name: 'CV', unit: 'MJ/kg', d: 2 }, { k: 'ash', name: 'ASH', unit: '%', d: 1 }, { k: 'ts', name: 'TS', unit: '%', d: 2 }, { k: 'vm', name: 'VM', unit: '%', d: 1 }, { k: 'im', name: 'IM', unit: '%', d: 1 }];
+  const num = v => (v === '' || v == null || !isFinite(+v) ? null : +v);
+  function settings(P) {
+    const T = (P && P.tons) || {}, cont = Object.assign({}, CONT);
+    for (const k in CONT) { const v = num((T.cont || {})[k]); if (v != null) cont[k] = v; }
+    return { mIs: num(T.mIs), mAd: num(T.mAd), seams: T.seams || {}, cont };
   }
-  return { DEF, QUAL, settings, guess, colFor, ready, isCoal, isWasteSeam, compute, simple, colorOf, gradient, srColor, srGradient, divColor, divGradient, NEG, POS, RED, GREEN, AMBER };
+  const ps = (rd, mis, mad) => (mis == null || mad == null ? 1 : (100 - mis) / (100 + rd * (mis - mad) - mis));
+  /* R: Margin.compute(P, ws). → {seams: [{name, gtis, ttis, mtis, coal, cont, adc, ps, q (ADC), qCoal, cols, miss, …}], total} */
+  function compute(P, ws, R) {
+    const o = settings(P), M = R.M, nB = P.blocks.length;
+    const raw = Model.blockVolumes(Object.assign({}, ws, { surf: ws.surfRaw || ws.surf }));
+    const seams = [];
+    P.layers.forEach((L, l) => {
+      if (L.type !== 'coal') return;
+      const lo = Model.losses(P, L), so = o.seams[L.id] || {}, counted = Margin.isCoal(M, L);
+      const mis = num(so.mIs) != null ? num(so.mIs) : o.mIs, mad = num(so.mAd) != null ? num(so.mAd) : o.mAd;
+      const cols = {}; for (const q of Q) cols[q.k] = Margin.colFor(P, M, L, q.k);
+      const val = (b, k) => { const c = cols[k], a = c && P.blocks[b].attrs; const v = a ? parseFloat(a[c]) : NaN; return isFinite(v) ? v : NaN; };
+      // the seam's averages (by GTIS) for the blocks that lack a value
+      const avg = {};
+      for (const q of Q) { let n = 0, d = 0; for (let b = 0; b < nB; b++) { const t = raw[b][l] * Model.blockDensity(P, b, l), v = val(b, q.k); if (t > 0 && v === v) { n += t * v; d += t; } } avg[q.k] = d > 0 ? n / d : NaN; }
+      const s = { l, id: L.id, name: L.name, counted, lo, mis, mad, cols, avg, gtis: 0, ttis: 0, mtis: 0, mined: 0, coal: 0, cont: 0, adc: 0, n: 0, miss: {}, noMad: 0, qN: {}, qD: {}, blocks: [] };
+      for (const q of Q) { s.miss[q.k] = 0; s.qN[q.k] = 0; s.qD[q.k] = 0; }
+      for (let b = 0; b < nB; b++) {
+        const v0 = raw[b][l]; if (!(v0 > 0)) continue;
+        const rd = Model.blockDensity(P, b, l), g = v0 * rd;
+        s.gtis += g; s.ttis += g * (1 - lo.geo / 100);
+        const row = { b, gtis: g, ttis: g * (1 - lo.geo / 100), mtis: 0, coal: 0, cont: 0, adc: 0, ps: 1, q: {} }; s.blocks.push(row);
+        const r = R.rows[b], vm = counted && r && r.inside ? r.byLayer[l].v : 0;
+        if (!(vm > 0)) continue;
+        const mt = vm * rd * (1 - lo.geo / 100), mined = mt * (1 - lo.mining / 100);
+        let m = val(b, 'im'); if (!(m === m)) m = mad; if (mis != null && m == null) s.noMad++;
+        const coal = mined * ps(rd, mis, m), cont = coal * (lo.contam / 100);
+        Object.assign(row, { mtis: mt, coal, cont, adc: coal + cont, ps: ps(rd, mis, m) });
+        s.mtis += mt; s.mined += mined; s.coal += coal; s.cont += cont; s.adc += coal + cont; s.n++;
+        for (const q of Q) {
+          let v = val(b, q.k);
+          if (!(v === v)) { if (cols[q.k] && avg[q.k] === avg[q.k]) s.miss[q.k]++; v = q.k === 'im' && m != null ? m : avg[q.k]; }
+          if (v === v) { s.qN[q.k] += coal * v; s.qD[q.k] += coal; row.q[q.k] = v; }
+        }
+      }
+      s.ps = s.mined > 0 ? s.coal / s.mined : 1;
+      s.qCoal = {}; s.q = {};
+      for (const q of Q) {
+        const c = s.qD[q.k] > 0 ? s.qN[q.k] / s.qD[q.k] : NaN; s.qCoal[q.k] = c;
+        // mixed with the contamination (its IM is that of the coal): (Q coal + contam × Q cont) ÷ (1 + contam)
+        const f = lo.contam / 100;
+        s.q[q.k] = c === c ? (q.k === 'im' ? c : (c + f * o.cont[q.k]) / (1 + f)) : NaN;
+      }
+      seams.push(s);
+    });
+    const total = { gtis: 0, ttis: 0, mtis: 0, mined: 0, coal: 0, cont: 0, adc: 0, q: {} };
+    for (const s of seams) for (const k of ['gtis', 'ttis', 'mtis', 'mined', 'coal', 'cont', 'adc']) total[k] += s[k];
+    for (const q of Q) { let n = 0, d = 0; for (const s of seams) if (s.q[q.k] === s.q[q.k] && s.adc > 0) { n += s.q[q.k] * s.adc; d += s.adc; } total.q[q.k] = d > 0 ? n / d : NaN; }
+    return { o, seams, total };
+  }
+  return { CONT, Q, settings, ps, compute };
 })();
 
 /* ===== Reserve boundary from a strip ratio and a block margin cut-off (Reserve tab; DOM-free) =====
@@ -11246,8 +11307,6 @@ const UI = (() => {
     else if (App.colorBy === 'pit') App.colorBy = 'status';
     if (P && Margin.ready(P)) opts.push(['margin', 'Block margin']);
     else if (App.colorBy === 'margin') App.colorBy = 'status';
-    if (P && App.ws && P.margin2 && +P.margin2.price > 0 && P.margin2.cost != null && P.margin2.cost !== '') opts.push(['margin2', 'Block margin (total costs)']);
-    else if (App.colorBy === 'margin2') App.colorBy = 'status';
     if (P && App.ws && P.layers.some(L => L.type === 'coal')) opts.push(['sr', 'Strip ratio']);
     else if (App.colorBy === 'sr') App.colorBy = 'status';
     if (P && App.ws && P.layers.some(L => L.type === 'coal')) opts.push(['depth', 'Depth to lowest seam floor']);
@@ -14145,8 +14204,8 @@ const Tabs = (() => {
   /* The block margin: what each block's coal earns less what it costs to mine (and process), per ton of coal, and the
      blocks ranked by it (Margin). Not part of the schedule: changing it does not ask for a new run. */
   /* Reserve, Block Margin Rank and Strip Ratio tabs: one body, each tab its own sections. Reserve: the losses, the reserve
-     boundary, the block depth and the volumes by layer; Block Margin Rank: the inputs of the block margin, its rank and the
-     second rank on total costs; Strip Ratio: the strip ratio of every block. */
+     boundary, the block depth and the volumes by layer; Block Margin Rank: the inputs of the block margin and its rank;
+     Strip Ratio: the strip ratio of every block. */
   function reserve(body) { reservePart(body, 'reserve'); }
   function rank(body) { reservePart(body, 'rank'); }
   function strip(body) { reservePart(body, 'strip'); }
@@ -14221,11 +14280,10 @@ const Tabs = (() => {
     }
     // ---- the margins and the rank
     if (!R) { body.append(sec(part === 'strip' ? 'Strip ratio' : part === 'rank' ? 'Margin rank' : 'Reserve boundary', null, msg('warn', 'Load the model first.'))); return; }
-    if (part === 'reserve') { reserveBoundary(body, R, cur, kp); depthSection(body, R, kp); layerTable(body, R); }
+    if (part === 'reserve') { reserveBoundary(body, R, cur, kp); tonsSection(body, R); depthSection(body, R, kp); layerTable(body, R); }
     if (part === 'rank') {
       if (!R.ready) body.append(sec('Margin rank', null, msg('warn', 'Type the coal price (and the costs) above to work out the margin of every block.')));
       else marginRank(body, R, cur, kp);
-      simpleRank(body, R, cur, kp);
     }
     if (part === 'strip') {
       stripRatio(body, R, cur, kp);
@@ -14235,6 +14293,66 @@ const Tabs = (() => {
   /* The reserve boundary: a polygon around the blocks to mine, kept in P.reserve = {pts, on, name}. Blocks whose centre lies
      inside it are scheduled; those outside are left in the ground (Model.blockLimits). Drawn over the blocks coloured by
      margin; it can be switched off without losing it. */
+  /* Coal tons from gross in situ to air-dry contaminated (Tons), seam by seam, with the ADC qualities; the moisture and
+     the contamination's quality are typed here, the losses in the section above. */
+  function tonsSection(body, R) {
+    const P = App.P, T = Tons.compute(P, App.ws, R), o = T.o, Q = Tons.Q;
+    const tp = () => P.tons || (P.tons = {});
+    const pctIn = (v, set, aria, ph) => { const i = num(v, x => { set(x == null ? null : U.clamp(x, 0, 100)); App.changed('meta'); UI.renderTab(); }, { min: 0, max: 100, step: 0.1, allowEmpty: true, placeholder: ph }); i.setAttribute('aria-label', aria); return i; };
+    const t0 = v => U.fmtNum(v, 0), qf = (v, d) => (v === v ? U.fmtNum(v, d) : '–');
+    const parts = [];
+    // ---- the moisture
+    const anyIM = T.seams.some(s => s.cols.im);
+    parts.push(h('div', { class: 'grid2' },
+      fld('In-situ moisture (%)', pctIn(o.mIs, v => (tp().mIs = v), 'In-situ moisture, all seams', 'not set')),
+      fld('Air-dry moisture (%)', pctIn(o.mAd, v => (tp().mAd = v), 'Air-dry moisture, all seams', anyIM ? 'IM column' : 'not set'))));
+    if (T.seams.length > 1 || T.seams.some(s => s.cols.im)) {
+      const rows = T.seams.map(s => {
+        const so = (tp().seams || {})[s.id] || {}, setS = (k, v) => { const S = tp().seams || (tp().seams = {}); const x = S[s.id] || (S[s.id] = {}); x[k] = v; };
+        return h('tr', null, h('td', null, s.name),
+          h('td', { style: { width: '70px' } }, pctIn(so.mIs == null ? null : so.mIs, v => setS('mIs', v), `${s.name}: in-situ moisture`, o.mIs != null ? String(o.mIs) : '–')),
+          h('td', { style: { width: '70px' } }, pctIn(so.mAd == null ? null : so.mAd, v => setS('mAd', v), `${s.name}: air-dry moisture`, o.mAd != null ? String(o.mAd) : '–')),
+          h('td', { class: 'dt' }, s.cols.im ? `IM: ${s.cols.im}` : 'no IM column'));
+      });
+      parts.push(h('div', { class: 'fld' }, h('span', null, 'By seam (empty = as above; a block’s IM value comes first for the air-dry moisture)'),
+        h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl losses' }, h('thead', null, h('tr', null, h('th', null, 'Seam'), h('th', null, 'In situ %'), h('th', null, 'Air dry %'), h('th', null, ''))), h('tbody', null, rows)))));
+    }
+    // ---- the contamination's quality
+    const C = P.tons && P.tons.cont || {};
+    const cIn = (k, label, step) => { const i = num(C[k] == null || C[k] === '' ? null : +C[k], v => { const c = tp().cont || (tp().cont = {}); c[k] = v == null ? null : Math.max(0, v); App.changed('meta'); UI.renderTab(); }, { min: 0, step, allowEmpty: true, placeholder: String(Tons.CONT[k]) }); i.setAttribute('aria-label', 'Contamination ' + label); return fld(label, i); };
+    parts.push(h('div', { class: 'fld' }, h('span', null, 'Quality of the contamination (air dried)'),
+      h('div', { class: 'grid2' }, cIn('cv', 'CV (MJ/kg)', 0.5), cIn('ash', 'ASH (%)', 1)), h('div', { class: 'grid2' }, cIn('ts', 'TS (%)', 0.1), cIn('vm', 'VM (%)', 1))));
+    // ---- the tons
+    const th = (t, title) => h('th', { class: 'r', title }, t), td = v => h('td', { class: 'r num' }, v);
+    const tRow = (nm, s, cls) => h('tr', cls ? { class: cls } : null, h('td', null, nm), td(t0(s.gtis)), td(t0(s.ttis)), td(t0(s.mtis)), td(t0(s.adc)));
+    parts.push(h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl recon-tbl' },
+      h('thead', null, h('tr', null, h('th', null, 'Seam'), th('GTIS t', 'Gross tons in situ'), th('TTIS t', 'Total tons in situ: after the geological loss'), th('MTIS t', 'Mineable tons in situ: what the schedule can mine'), th('ADC t', 'Air-dry contaminated tons: after the mining loss, the contamination and the moisture'))),
+      h('tbody', null, ...T.seams.map(s => tRow(s.name, s)), T.seams.length > 1 ? tRow('Total', T.total, 'tot') : null))));
+    // ---- the ADC qualities
+    const has = Q.filter(q => T.seams.some(s => s.q[q.k] === s.q[q.k]));
+    if (has.length) {
+      const qRow = (nm, q, cls) => h('tr', cls ? { class: cls } : null, h('td', null, nm), ...has.map(x => td(qf(q[x.k], x.d))));
+      parts.push(h('div', { class: 'fld' }, h('span', null, 'ADC qualities (air dried, with the contamination)'),
+        h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl recon-tbl' },
+          h('thead', null, h('tr', null, h('th', null, 'Seam'), ...has.map(x => th(`${x.name} ${x.unit}`)))),
+          h('tbody', null, ...T.seams.map(s => qRow(s.name, s.q)), T.seams.length > 1 ? qRow('Total', T.total.q, 'tot') : null)))));
+    } else parts.push(msg('info', 'No seam has quality columns (CV, ASH, TS, VM or IM) in the block attributes, so there are no ADC qualities. Choose the columns in the Block Margin Rank tab.'));
+    // ---- what to look at
+    if (o.mIs == null && !T.seams.some(s => s.mis != null)) parts.push(msg('info', 'Type the in-situ moisture to adjust the ADC tons for moisture; until then they are not adjusted.'));
+    for (const s of T.seams) {
+      if (!s.counted) parts.push(msg('info', `${s.name} is counted as waste in the Block Margin Rank tab, so it has no mineable or ADC tons.`));
+      if (s.noMad) parts.push(msg('warn', `${s.noMad} block${s.noMad === 1 ? '' : 's'} of ${s.name} ${s.noMad === 1 ? 'has' : 'have'} no air-dry moisture (no IM value and none typed): ${s.noMad === 1 ? 'its' : 'their'} tons are not adjusted for moisture.`));
+      const miss = Q.filter(q => s.miss[q.k]).map(q => `${s.miss[q.k]} lack ${q.name} and take the seam’s average (${qf(s.avg[q.k], q.d)} ${q.unit})`);
+      if (miss.length) parts.push(h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `${s.name}: ${miss.join('; ')}.`));
+      if (s.mis != null && s.n && Math.abs(s.ps - 1) > 1e-6) parts.push(h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `${s.name}: moisture factor ${U.fmtNum(s.ps, 4)} (in situ ${U.fmtNum(s.mis, 1)}%, air dry ${s.cols.im ? 'from ' + s.cols.im : U.fmtNum(s.mad, 1) + '%'}).`));
+    }
+    if (T.seams.length) parts.push(h('div', { class: 'row' }, btn('Export to Excel', async () => {
+      try { const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, Report.tonsSheet(P, App.ws, R), 'Coal Tons'); await App.saveFile(`${U.slug(P.name) || 'project'}_coal_tons_${U.todayISO().replace(/-/g, '')}.xlsx`, Report.toBytes(wb)); }
+      catch (e) { UI.toast('The workbook failed: ' + (e.message || e)); }
+    }, 'sm primary', 'GTIS, TTIS, MTIS and ADC tons with the ADC qualities, by seam and by block (also a sheet of the Excel schedule)')));
+    parts.push(hint('GTIS = the seam’s bcm in the blocks × its RD (air dried; the block’s RD column, else the layer’s). TTIS = GTIS × (1 − geological loss). MTIS = the TTIS the schedule can mine: inside the reserve boundary, past the seam and quality cut-offs, within the depth limits, outside keep-out zones. ADC t = MTIS × (1 − mining loss) × (1 + contamination) × (100 − in-situ moisture) ÷ (100 + RD × (in-situ moisture − air-dry moisture) − in-situ moisture), the Preston–Sanders moisture adjustment. The ADC qualities are the coal’s (its quality columns, air dried) weighted by its tons and mixed with the contamination’s: (coal t × coal quality + contamination t × its quality) ÷ ADC t; the contamination takes the IM of the coal. The totals are over the seams that have each quality, weighted by their ADC tons.'));
+    body.append(sec('Coal tons: GTIS to ADC', T.total.adc > 0 ? h('span', { class: 'chip' }, `ADC ${U.fmtBig(T.total.adc, 't')}`) : null, ...parts));
+  }
   function reserveBoundary(body, R, cur, kp) {
     const P = App.P, B = P.reserve, drawn = !!(B && B.pts && B.pts.length >= 3), on = Model.hasReserve(P), Q = R.resv;
     const f = v => (v === v ? `${cur} ${U.fmtNum(v, Math.abs(v) < 100 ? 1 : 0)}/t` : '–');
@@ -14372,39 +14490,6 @@ const Tabs = (() => {
       R.ranked.length > show.length ? h('div', { class: 'dt' }, `The first ${show.length} of ${R.ranked.length}; the Excel schedule (“Block Margin” sheet) has them all.`) : null,
       R.resv && R.resv.outside.nPos + R.resv.outside.nNeg ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `Greyed rows: ${R.resv.outside.nPos + R.resv.outside.nNeg} ranked block${R.resv.outside.nPos + R.resv.outside.nNeg === 1 ? '' : 's'} outside the reserve boundary, left out of the schedule.`) : null,
       hint((R.M.byCV !== false ? 'The revenue of a block is its coal tons × the price × its blended CV (MJ/kg); its blended ASH and TS are shown, not priced. ' : 'Its blended CV, ASH and TS are shown, not priced. ') + 'Rank 1 is the block with the highest margin. Click a row to select the block in the 3D view (the inspector gives its revenue and costs); “Colour the blocks by margin” shows them in robot colours: red below zero, amber at zero, green for the highest, with the scale in the legend. The Excel schedule has every block on the “Block Margin” sheet, with its revenue and costs.')));
-  }
-
-  /* The second margin rank (Margin.simple): a coal price and a total cost per ton of everything mined, both per t. */
-  function simpleRank(body, R, cur, kp) {
-    const P = App.P, S2 = P.margin2 || {}, Q = Margin.simple(P, R), S = Q.stats, mt = v => `${cur} ${U.fmtNum(v, Math.abs(v) < 100 ? 1 : 0)}/t`;
-    const set = (k, v) => { const m = P.margin2 || (P.margin2 = {}); m[k] = v == null ? null : Math.max(0, v); App.changed('margin'); UI.renderTab(); };
-    const inp = (k, aria) => { const i = num(S2[k] == null || S2[k] === '' ? null : +S2[k], v => set(k, v), { min: 0, step: 1, allowEmpty: true, placeholder: '0' }); i.setAttribute('aria-label', aria); return i; };
-    const parts = [h('div', { class: 'grid2' }, fld(`Coal price (${cur}/t)`, inp('price', 'Coal price, second margin')), fld(`Total costs (${cur}/t mined, waste and coal)`, inp('cost', 'Total cost per ton mined')))];
-    if (!Q.ready) parts.push(msg('warn', 'Type the coal price and the total costs to rank the blocks.'));
-    else if (S.n) {
-      const G = Margin.gradient(S.lo, S.hi), on = App.colorBy === 'margin2', show = Q.ranked.slice(0, 1000);
-      const tr = r => { const c = Margin.colorOf(r.margin, S.lo, S.hi);
-        return h('tr', { class: (r.b === App.selBlock ? 'sel ' : '') + (r.inside ? '' : 'out'), onclick: () => App.selectBlock(r.b), title: r.inside ? '' : 'Outside the reserve boundary: not mined' },
-          h('td', { class: 'r num' }, String(r.rank)), h('td', null, r.id),
-          h('td', { class: 'r num' }, h('span', { class: 'mg-chip', style: { background: c ? `rgb(${c.join(',')})` : '#8a8f98' } }), U.fmtNum(r.margin, 1)),
-          h('td', { class: 'r num' }, U.fmtNum(r.coalT, 0)), h('td', { class: 'r num' }, U.fmtNum(r.wasteT, 0)), h('td', { class: 'r num' }, U.fmtNum(r.ratio, 2)), h('td', { class: 'r num' }, U.fmtNum(r.cost / r.coalT, 1))); };
-      parts.push(
-        h('div', { class: 'kpis' },
-          kp(`Positive margin · ${S.pos} block${S.pos === 1 ? '' : 's'}`, U.fmtBig(S.tPos, 't')), kp(`Negative margin · ${S.neg} block${S.neg === 1 ? '' : 's'}`, U.fmtBig(S.tNeg, 't')),
-          kp('Average margin (by tons)', mt(S.avg)), kp('Break-even', `${U.fmtNum(Q.price / Q.cost, 2)} t mined per t of coal`),
-          kp(`Highest · ${S.best.id}`, mt(S.hi)), kp(`Lowest · ${S.worst.id}`, mt(S.lo))),
-        h('div', { class: 'mg-scale', 'aria-label': `Margin scale from ${mt(S.lo)} to ${mt(S.hi)}` },
-          h('div', { class: 'bar', style: { background: G.css } }, S.lo < 0 && S.hi > 0 ? h('span', { class: 'zero', style: { left: G.zero + '%' } }) : null),
-          h('div', { class: 'lab' }, h('span', { style: { left: 0 } }, mt(S.lo)), h('span', { style: { right: 0 } }, mt(S.hi)))),
-        h('div', { class: 'row' }, on ? btn('Stop colouring the blocks', () => { App.colorBy = 'status'; UI.renderColorBy(); App.refreshTint(); UI.renderTab(); }, 'sm') : btn('Colour the blocks by this margin', () => { App.colorBy = 'margin2'; UI.renderColorBy(); App.refreshTint(); UI.renderTab(); }, 'sm primary')),
-        S.none ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `${S.none} block${S.none === 1 ? ' has' : 's have'} no coal and ${S.none === 1 ? 'is' : 'are'} not ranked.`) : null,
-        h('div', { class: 'tbl-wrap', style: { maxHeight: '420px', overflow: 'auto' } }, h('table', { class: 'tbl mg-tbl' },
-          h('thead', null, h('tr', null, h('th', { class: 'r' }, 'Rank'), h('th', null, 'Block'), h('th', { class: 'r' }, `Margin ${cur}/t`), h('th', { class: 'r' }, 'Coal t'), h('th', { class: 'r' }, 'Waste t'), h('th', { class: 'r', title: 'Tons mined (waste and coal) per ton of coal' }, 't mined/t coal'), h('th', { class: 'r', title: 'Total costs per ton of coal' }, `Cost ${cur}/t coal`))),
-          h('tbody', null, show.map(tr)))),
-        Q.ranked.length > show.length ? h('div', { class: 'dt' }, `The first ${show.length} of ${Q.ranked.length}.`) : null);
-    }
-    parts.push(hint(`Margin = coal price − total costs × (waste t + coal t) ÷ coal t, per ton of coal: the total costs are per ton of everything mined, so a block with more waste per ton of coal costs more. Waste t = the bcm of each waste layer × its density; the coal tons are ${R.M.basis === 'ar' ? 'as received' : 'in situ'}, as in the margin above. A block pays for itself (positive) while it mines fewer than price ÷ cost tons per ton of coal. Rank 1 is the highest margin.`));
-    body.append(sec('Margin rank — total costs', Q.ready && S.n ? h('span', { class: 'chip' }, `${S.n} blocks`) : null, ...parts));
   }
 
   /* The strip ratio of every block (waste bcm ÷ coal t), ranked from the lowest; coloured green (low) to red (high) in
@@ -17014,6 +17099,33 @@ const Report = (() => {
     return sh;
   }
   /* The strip ratio of every block (Reserve tab), ranked from the lowest, when there is no block margin to carry it. */
+  /* Coal tons from GTIS to ADC (Tons; Reserve tab): seam by seam with every factor and the ADC qualities, the quality of the
+     contamination, and block by block. */
+  function tonsSheet(P, ws, R) {
+    const T = Tons.compute(P, ws, R), o = T.o, Q = Tons.Q, r0 = v => (v === v && v != null ? Math.round(v) : null), rq = (v, d) => (v === v && v != null ? Math.round(v * Math.pow(10, d)) / Math.pow(10, d) : null);
+    const pits = P.pits || [], pitOf = pits.length ? Model.blockPits(P, ws) : null, boundary = Model.hasReserve(P);
+    const aoa = [[`${P.name} – Coal tons: GTIS to ADC`], []];
+    aoa.push(['Seam', 'GTIS t', 'Geological loss %', 'TTIS t', 'MTIS t', 'Mining loss %', 'Contamination %', 'In-situ moisture %', 'Air-dry moisture %', 'Moisture factor', 'Coal t (air dry)', 'Contamination t', 'ADC t'].concat(Q.map(q => `ADC ${q.name} ${q.unit}`)));
+    for (const s of T.seams) aoa.push([s.name + (s.counted ? '' : ' (counted as waste)'), r0(s.gtis), s.lo.geo, r0(s.ttis), r0(s.mtis), s.lo.mining, s.lo.contam, s.mis, s.cols.im ? `IM column (${s.cols.im})` : s.mad, s.n ? rq(s.ps, 4) : null, r0(s.coal), r0(s.cont), r0(s.adc)].concat(Q.map(q => rq(s.q[q.k], q.d))));
+    if (T.seams.length > 1) aoa.push(['Total', r0(T.total.gtis), null, r0(T.total.ttis), r0(T.total.mtis), null, null, null, null, null, r0(T.total.coal), r0(T.total.cont), r0(T.total.adc)].concat(Q.map(q => rq(T.total.q[q.k], q.d))));
+    aoa.push([], ['Quality of the contamination (air dried)', 'CV MJ/kg', o.cont.cv, 'ASH %', o.cont.ash, 'TS %', o.cont.ts, 'VM %', o.cont.vm, 'IM: that of the coal'], []);
+    aoa.push(['By block'], ['Block'].concat(pitOf ? ['Pit'] : [], boundary ? ['In reserve'] : [], ['Seam', 'GTIS t', 'TTIS t', 'MTIS t', 'Moisture factor', 'Coal t (air dry)', 'Contamination t', 'ADC t'], Q.map(q => `Coal ${q.name} ${q.unit}`)));
+    for (const s of T.seams) for (const q of s.blocks) {
+      const B = P.blocks[q.b];
+      aoa.push([String(B.id)].concat(pitOf ? [pitOf[q.b] >= 0 ? pits[pitOf[q.b]].name : Model.REST] : [], boundary ? [R.rows[q.b].inside ? 'Yes' : 'No'] : [], [s.name, r0(q.gtis), r0(q.ttis), r0(q.mtis), q.mtis > 0 ? rq(q.ps, 4) : null, r0(q.coal), r0(q.cont), r0(q.adc)], Q.map(x => rq(q.q[x.k], x.d))));
+    }
+    aoa.push([], ['How'],
+      ['GTIS', 'the seam’s bcm in the blocks, as the surfaces have it, × its RD (air dried: the block’s RD column, else the layer’s)'],
+      ['TTIS', 'GTIS × (1 − geological loss)'],
+      ['MTIS', 'the TTIS the schedule can mine: inside the reserve boundary, past the seam and quality cut-offs, within the depth limits, outside keep-out zones'],
+      ['Moisture factor', '(100 − in-situ moisture) ÷ (100 + RD × (in-situ moisture − air-dry moisture) − in-situ moisture), Preston–Sanders; the air-dry moisture is the block’s IM value, else the one typed; 1 without moisture'],
+      ['ADC t', 'MTIS × (1 − mining loss) × moisture factor × (1 + contamination) = coal t (air dry) + contamination t'],
+      ['ADC qualities', 'air dried: the coal’s qualities (its columns; the seam’s average where a block lacks one) weighted by its tons, mixed with the contamination’s: (coal t × coal quality + contamination t × its quality) ÷ ADC t; the totals over the seams with each quality, by ADC t']);
+    const sh = sheet(aoa, [22, 14, 14, 14, 14, 13, 14, 16, 22, 14, 16, 16, 14].concat(Q.map(() => 14)));
+    delete sh['!autofilter'];
+    return sh;
+  }
+
   function stripSheet(P, ws, R) {
     const pits = P.pits || [], pitOf = pits.length ? Model.blockPits(P, ws) : null, S = R.stats.sr;
     const lay = P.layers.map((L, l) => ({ l, name: L.name, coal: Margin.isCoal(R.M, L) }));
@@ -17485,6 +17597,8 @@ const Report = (() => {
       const MR = App.margin ? App.margin() : Margin.compute(P, ws);
       if (MR.ready) XLSX.utils.book_append_sheet(wb, marginSheet(P, ws, MR), 'Block Margin'); // with the strip ratio of each block
       else if (MR.stats.sr.n) XLSX.utils.book_append_sheet(wb, stripSheet(P, ws, MR), 'Strip Ratio');
+      // the coal tons from GTIS to ADC, with the ADC qualities (Reserve tab)
+      if (typeof Tons !== 'undefined' && P.layers.some(L => L.type === 'coal')) XLSX.utils.book_append_sheet(wb, tonsSheet(P, ws, MR), 'Coal Tons');
     }
     // the sheets of the LoM workbook layout: LoM Schedule (and one per pit), Weekly Q1, the assumptions and the detail
     if (res && typeof LoM !== 'undefined') LoM.addSheets(wb, App);
@@ -17508,7 +17622,7 @@ const Report = (() => {
       return new Uint8Array(XLSX.CFB.write(cfb, { type: 'array', fileType: 'zip', compression: true }));
     } catch (e) { return u8; }
   }
-  return { build, toBytes, inventory };
+  return { build, toBytes, inventory, tonsSheet };
 })();
 
 /* ===== Excel: the LoM schedule sheets, laid out like the South Witbank LoM workbook (SW_LoM_Schedule_v6) =====
@@ -18247,7 +18361,7 @@ const App = {
     if (kind === 'meta') UI.setProjectName(this.P.name, this.P.isDemo);
     // the block depth follows the paths, the depth limits and the cut-offs
     if (this.colorBy === 'depth' && ['paths', 'limits', 'cutoff', 'layers', 'blocks', 'pits', 'margin', 'quality'].includes(kind)) this.refreshTint();
-    if (kind === 'margin' || kind === 'reserve') { UI.renderColorBy(); if (this.colorBy === 'margin' || this.colorBy === 'margin2' || this.colorBy === 'sr' || this.colorBy === 'cv' || this.colorBy === 'ash' || this.colorBy === 'ts') this.refreshTint(); else if (kind === 'reserve') UI.renderLegend(); if (this.selBlock >= 0) UI.renderInspector(); }
+    if (kind === 'margin' || kind === 'reserve') { UI.renderColorBy(); if (this.colorBy === 'margin' || this.colorBy === 'sr' || this.colorBy === 'cv' || this.colorBy === 'ash' || this.colorBy === 'ts') this.refreshTint(); else if (kind === 'reserve') UI.renderLegend(); if (this.selBlock >= 0) UI.renderInspector(); }
     if (kind === 'wash' && this.res) Timeline.renderAcc(); // the Product column of the running totals
     if (kind === 'quality' || kind === 'wash') { UI.renderColorBy(); if (['margin', 'sr', 'cv', 'ash', 'ts', 'attr'].includes(this.colorBy)) this.refreshTint(); if (this.selBlock >= 0) UI.renderInspector(); }
     if (this.P.isDemo && kind !== 'view') { /* editing the demo turns it into your own project */ }
@@ -18520,15 +18634,6 @@ const App = {
         legend = { type: 'diverge', title: `Block margin (${cur}/t)`, lo: f(R.stats.lo), hi: f(R.stats.hi), css: G.css, zero: R.stats.lo < 0 && R.stats.hi > 0 ? G.zero : -1,
           extra: [[Margin.NEG[3], `Negative: ${R.stats.neg} blocks`], [Margin.POS[3], `Positive: ${R.stats.pos} blocks`]].concat(R.stats.none ? [['#8a8f98', `No coal: ${R.stats.none}`]] : [], R.resv ? [['rgba(160,160,160,.45)', `Faded: outside the reserve boundary (${R.resv.outside.n})`]] : []) };
       } else legend = { type: 'list', title: 'Block margin', items: [['#8a8f98', 'Type the coal price in the Block Margin Rank tab']] };
-    } else if (mode === 'margin2') {
-      // the second block margin (total costs per ton mined): red below zero, green above
-      const R = this.margin(), Q = R ? Margin.simple(P, R) : null, cur = ((P.margin || {}).currency || 'R').trim() || 'R';
-      if (Q && Q.ready && Q.stats.n) {
-        for (const r of Q.rows) { const c = Margin.colorOf(r.margin, Q.stats.lo, Q.stats.hi); cellColor[r.b] = c ? [c[0], c[1], c[2], r.inside ? 225 : 80] : [138, 143, 152, 110]; }
-        const G = Margin.gradient(Q.stats.lo, Q.stats.hi), f = v => `${cur} ${U.fmtNum(v, Math.abs(v) < 100 ? 1 : 0)}`;
-        legend = { type: 'diverge', title: `Block margin, total costs (${cur}/t)`, lo: f(Q.stats.lo), hi: f(Q.stats.hi), css: G.css, zero: Q.stats.lo < 0 && Q.stats.hi > 0 ? G.zero : -1,
-          extra: [[Margin.NEG[3], `Negative: ${Q.stats.neg} blocks`], [Margin.POS[3], `Positive: ${Q.stats.pos} blocks`]].concat(Q.stats.none ? [['#8a8f98', `No coal: ${Q.stats.none}`]] : []) };
-      } else legend = { type: 'list', title: 'Block margin, total costs', items: [['#8a8f98', 'Type the coal price and the total costs in the Block Margin Rank tab']] };
     } else if (mode === 'sr') {
       // the strip ratio: green for the lowest, amber at the middle of the scale, red for the highest; grey without coal
       const R = this.margin(), S = R && R.stats.sr;
