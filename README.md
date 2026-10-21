@@ -212,13 +212,32 @@ curl -s "http://127.0.0.1:8090/ows/?SERVICE=WMS&REQUEST=GetCapabilities" | head 
 - Keep the firewall closed on port 8090. Do not add a `location` for QGIS Server to the bench-generated site config.
 - If nginx runs as a different user, change the socket owner to match. The bench nginx config for this host
   shows which user it runs as.
-- Create the project directory. The app writes one `.qgs` per published dataset into it (**GIS Settings → QGIS
-  Project Directory**). The files contain the read-only database account's password, so make the directory
-  writable by the bench user, readable by QGIS Server's group only, and closed to everyone else:
+- Create the project folders. The app writes one `.qgs` per published dataset into **a folder of its own site**:
+  `<QGIS Project Directory>/<site name>/`. The files contain that site's read-only database password, so each
+  site's folder belongs to its bench's user and QGIS Server's group, and is closed to everyone else. The shared
+  base folder belongs to root: benches can pass through it but cannot list it.
 
   ```bash
-  sudo install -d -o <bench user> -g www-data -m 2750 /var/lib/qgis-server/projects
+  sudo install -d -o root -g www-data -m 0751 /var/lib/qgis-server/projects            # once per host
+  sudo install -d -o <bench user> -g www-data -m 2750 /var/lib/qgis-server/projects/<site name>   # once per site
   ```
+
+  GIS Settings → *Check Dependencies* shows the exact command for a site whose folder is missing.
+
+#### Several benches and sites on one host
+
+One QGIS Server serves every bench and site on the host. Each Frappe bench may run as its own Unix user (e.g.
+one bench per developer plus production).
+
+| Shared | How sites stay apart |
+|---|---|
+| QGIS Server | The gateway always names the project file, and a site's projects contain only its own datasets |
+| Project folder | One subfolder per site (above): names cannot collide, and no bench can read another's files |
+| Database account | Give each site **its own** read-only account (e.g. `qgis_ro_<db name>`) with `SELECT` on its own `tabGIS Feature` only |
+| Server plugin folder | QGIS Server loads its plugins for every site, so exactly **one** site turns on GIS Plugin Settings → *Manage QGIS Server Plugins*; the others never touch that folder |
+
+Processing plugins, the algorithm registry, import/export work files and map services are per site (in the
+site's private files or database).
 
 ### 3. Database user for QGIS Server
 
@@ -227,8 +246,8 @@ QGIS never uses the site's own database user. It needs `SELECT` on **one table o
 
 ```sql
 -- run as a MariaDB admin; replace <site_db> with the site's db_name from site_config.json
-CREATE USER 'qgis_ro'@'localhost' IDENTIFIED BY '<strong password>';
-GRANT SELECT ON `<site_db>`.`tabGIS Feature` TO 'qgis_ro'@'localhost';
+CREATE USER 'qgis_ro_<site_db>'@'localhost' IDENTIFIED BY '<strong password>';
+GRANT SELECT ON `<site_db>`.`tabGIS Feature` TO 'qgis_ro_<site_db>'@'localhost';
 GRANT SELECT ON `<site_db>`.`tabGIS Dataset` TO 'qgis_ro'@'localhost';
 ```
 
@@ -246,7 +265,7 @@ To test the account (it should list the GIS features, and nothing else should be
 ogrinfo -ro -so "MySQL:<site_db>,host=127.0.0.1,user=qgis_ro,password=<password>,tables=tabGIS Feature" "tabGIS Feature"
 ```
 
-Enter the account in **GIS Settings → QGIS Database Account**. The password is stored as a Password field and is
+One account per site keeps sites apart on a shared host. Enter it in **GIS Settings → QGIS Database Account**. The password is stored as a Password field and is
 sent to the PyQGIS worker on stdin, never on a command line.
 
 ### 4. Install the app
@@ -259,9 +278,35 @@ bench build --app is_production      # builds the GIS Workstation bundle (OpenLa
 bench restart
 ```
 
-Then open **GIS Settings** (Mining Planning workspace → GIS card) and enter the QGIS Server endpoint
-(`http://127.0.0.1:8090/ows/`), the system Python path (`/usr/bin/python3`) and the read-only database account.
-Save, then click **Check Dependencies**.
+Then connect the site to the host's QGIS Server. Run this **as the bench's own user**, once per site:
+
+```bash
+bench --site <site_name> gis-setup              # add --print-only first to see what it will do
+```
+
+Nothing in the app is tied to a particular server, user or site. The command works out the bench's Unix user,
+the site and its database, and QGIS Server's group (from the `qgis-server` systemd unit). It then:
+
+1. checks that QGIS Server answers and that PyQGIS imports under the system Python;
+2. creates, with `sudo`, the shared project base folder if needed and this site's own folder `<base>/<site>`
+   (bench user, QGIS Server's group, mode 2750);
+3. creates or re-keys this site's read-only database account `qgis_ro_<db name>`. It gets a random password and
+   `SELECT` on this site's `tabGIS Feature` only. This step runs as the MariaDB administrator, using
+   `--db-root-username/--db-root-password`, the bench's `root_login`/`root_password` config, `sudo mariadb`, or a
+   prompt;
+4. fills in GIS Settings (which republishes the site's datasets) and runs the health check.
+
+It is safe to run again. Options:
+- `--qgis-url` and `--qgis-python` for a QGIS Server or Python elsewhere than the defaults;
+- `--project-dir` and `--qgis-group` to override the project base folder and QGIS Server's group;
+- `--skip-account` to keep an existing database account;
+- `--manage-server-plugins` for the one site that manages QGIS Server plugins.
+
+To set it up by hand instead, see sections 2–3 and enter the values in **GIS Settings**, then click **Check
+Dependencies**.
+
+**Per host** (once, as an administrator): install QGIS (section 1) and set up the `qgis-server` service and its
+local nginx front (section 2). **Per bench and site:** `bench --site <site> gis-setup`.
 
 ### 5. Datasets, features and the geometry schema
 
@@ -474,9 +519,10 @@ A plugin goes through these steps:
 4. **Enable.**
    - A processing plugin is loaded by the processing worker only. Its algorithms appear in the Processing
      toolbox under the plugin's provider. A plugin that fails to load is marked *Error* with the message.
-   - A server plugin is copied into QGIS Server's plugin directory (`QGIS_PLUGINPATH`). QGIS Server loads plugins
-     when it starts, so run `sudo systemctl restart qgis-server` and then *Mark QGIS Server Restarted*. The bench
-     user must be able to write that directory:
+   - A server plugin is copied into QGIS Server's plugin directory (`QGIS_PLUGINPATH`). Only the one site with
+     *Manage QGIS Server Plugins* turned on can do this, because the folder is shared by every site on the host.
+     QGIS Server loads plugins when it starts, so run `sudo systemctl restart qgis-server` and then *Mark QGIS
+     Server Restarted*. The managing site's bench user must be able to write that directory:
 
      ```bash
      sudo chown <bench user>:www-data /var/lib/qgis-server/plugins && sudo chmod 2750 /var/lib/qgis-server/plugins

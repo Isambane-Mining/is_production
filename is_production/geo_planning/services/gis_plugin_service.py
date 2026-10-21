@@ -39,6 +39,10 @@ CATEGORY_FOR = {
 	"Browser-adapter compatible": "QGIS Desktop Plugin",
 	"Requires manual adaptation": "QGIS Desktop Plugin",
 }
+SERVER_PLUGINS_ELSEWHERE = _(
+	"QGIS Server plugins are shared by every site on this host, so only one site manages them. "
+	"Turn on Manage QGIS Server Plugins in GIS Plugin Settings only on that site."
+)
 REQUIRED_COMPATIBILITY = {"QGIS Server Plugin": "Native server-compatible", "QGIS Processing Plugin": "Processing-compatible"}
 
 
@@ -190,6 +194,8 @@ def install_plugin(name):
 		frappe.throw(_("Processing plugins are not allowed (GIS Plugin Settings)."))
 	if plugin.category == "QGIS Server Plugin" and not settings.allow_server_plugins:
 		frappe.throw(_("QGIS Server plugins are not allowed (GIS Plugin Settings)."))
+	if plugin.category == "QGIS Server Plugin" and not settings.manage_server_plugins:
+		frappe.throw(SERVER_PLUGINS_ELSEWHERE)
 	if plugin.experimental and not settings.allow_experimental:
 		frappe.throw(_("Experimental plugins are not allowed (GIS Plugin Settings)."))
 	if settings.enforce_compatibility:
@@ -222,6 +228,8 @@ def set_plugin_enabled(name, enabled):
 		frappe.throw(_("Third-party plugins are switched off (GIS Plugin Settings)."))
 
 	if plugin.category == "QGIS Server Plugin":
+		if not settings.manage_server_plugins:
+			frappe.throw(SERVER_PLUGINS_ELSEWHERE)
 		target = os.path.join(settings.server_plugin_directory, plugin.plugin_id)
 		if enabled:
 			plugin_worker({"command": "extract", "zip": package_path(plugin), "destination": settings.server_plugin_directory, "plugin_id": plugin.plugin_id, "max_bytes": max_bytes()})
@@ -552,12 +560,19 @@ def scan_plugins():
 	records = frappe.get_all(PLUGIN, fields=["name", "plugin_id", "category", "status", "enabled", "installed_path", "last_error"])
 	known_paths = {r.installed_path for r in records if r.installed_path}
 	enabled_server = {r.plugin_id for r in records if r.enabled and r.category == "QGIS Server Plugin"}
-	found = {}
-	for label, directory in (("processing", processing_dir()), ("server staging", server_staging_dir()), ("QGIS Server", settings.server_plugin_directory)):
+	found, unreadable = {}, []
+	folders = [("processing", processing_dir()), ("server staging", server_staging_dir())]
+	if settings.manage_server_plugins:  # QGIS Server's own folder is shared by all sites: only its manager looks
+		folders.append(("QGIS Server", settings.server_plugin_directory))
+	for label, directory in folders:
 		entries = []
-		if directory and os.path.isdir(directory):
-			entries = sorted(d for d in os.listdir(directory) if not d.startswith(".") and os.path.isdir(os.path.join(directory, d)))
+		try:
+			if directory and os.path.isdir(directory):
+				entries = sorted(d for d in os.listdir(directory) if not d.startswith(".") and os.path.isdir(os.path.join(directory, d)))
+		except OSError as e:
+			unreadable.append(_("Plugin folder {0} cannot be read by this bench's user ({1}).").format(directory, e.strerror))
 		found[label] = entries
+	found.setdefault("QGIS Server", [])
 	orphans = [f"processing/{d}" for d in found["processing"] if os.path.join(processing_dir(), d) not in known_paths]
 	orphans += [f"QGIS Server/{d}" for d in found["QGIS Server"] if d not in enabled_server]
 	errors = {r.plugin_id or r.name: r.last_error for r in records if r.status == "Error"}
@@ -575,7 +590,7 @@ def scan_plugins():
 			"plugin_summary": summary,
 			"last_scan_on": now_datetime(),
 			"processing_plugin_directory": processing_dir(),
-			"diagnostics": json.dumps({"directories": found, "orphans": orphans, "errors": errors}, indent=1),
+			"diagnostics": json.dumps({"directories": found, "orphans": orphans, "errors": errors, "unreadable": unreadable}, indent=1),
 		},
 	)
-	return {"summary": summary, "orphans": orphans, "errors": errors}
+	return {"summary": summary, "orphans": orphans, "errors": errors, "unreadable": unreadable}

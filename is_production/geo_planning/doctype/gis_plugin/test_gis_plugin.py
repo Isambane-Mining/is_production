@@ -91,9 +91,9 @@ class IntegrationTestGISPlugin(IntegrationTestCase):
 		super().setUpClass()
 		if not frappe.db.get_single_value("GIS Settings", "qgis_python"):
 			raise cls.skipTest(cls, "GIS Settings has no PyQGIS Python")
-		cls.settings_before = {k: frappe.db.get_single_value(plugins.SETTINGS, k) for k in ("enable_third_party_plugins", "allow_server_plugins", "server_restart_required")}
+		cls.settings_before = {k: frappe.db.get_single_value(plugins.SETTINGS, k) for k in ("enable_third_party_plugins", "allow_server_plugins", "manage_server_plugins", "server_restart_required")}
 		cls.cleanup()
-		frappe.db.set_single_value(plugins.SETTINGS, {"enable_third_party_plugins": 1, "allow_processing_plugins": 1, "allow_server_plugins": 1, "enforce_compatibility": 1})
+		frappe.db.set_single_value(plugins.SETTINGS, {"enable_third_party_plugins": 1, "allow_processing_plugins": 1, "allow_server_plugins": 1, "manage_server_plugins": 1, "enforce_compatibility": 1})
 		frappe.get_doc({"doctype": "GIS Dataset", "dataset_name": DATASET, "title": "Plugin test", "geometry_type": "Point", "crs": "EPSG:2053"}).insert()
 		for x in (1, 2, 3, 4):
 			frappe.get_doc({"doctype": "GIS Feature", "dataset": DATASET, "geometry": {"type": "Point", "coordinates": [x, x]}}).insert()
@@ -173,6 +173,19 @@ class IntegrationTestGISPlugin(IntegrationTestCase):
 		self.assertTrue(frappe.db.get_single_value(plugins.SETTINGS, "server_restart_required"))
 		plugins.set_plugin_enabled(name, 0)
 		self.assertFalse(os.path.exists(os.path.join(server_dir, "isp_test_server")))
+
+	def test_server_plugins_only_on_the_managing_site(self):
+		name = register("isp server elsewhere", SERVER_PLUGIN)
+		plugins.analyse_plugin(name)
+		frappe.db.set_single_value(plugins.SETTINGS, "manage_server_plugins", 0)
+		frappe.clear_document_cache(plugins.SETTINGS, plugins.SETTINGS)
+		try:
+			with self.assertRaises(frappe.ValidationError):
+				plugins.install_plugin(name)
+			result = plugins.scan_plugins()  # does not touch QGIS Server's shared folder at all
+			self.assertEqual(result["unreadable"], [])
+		finally:
+			frappe.db.set_single_value(plugins.SETTINGS, "manage_server_plugins", 1)
 
 	def test_unsafe_and_changed_packages_are_refused(self):
 		name = register("isp unsafe", {"isp_bad/__init__.py": "", "isp_bad/metadata.txt": "[general]\nname=x\n", "../evil.py": "print(1)"})
