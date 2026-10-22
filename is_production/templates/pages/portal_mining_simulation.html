@@ -9235,6 +9235,15 @@ const Fin = (() => {
     return o;
   }
   const unitOf = (q, cur) => (q.unit || '').replace(/^R(?=\/| |$)/, cur).replace(/^R a /, cur + ' a ').replace(/, after/, ', after');
+  /* What a ton sold earns at the mine, before escalation (at the reference CV when the prices follow it): the price by the
+     export share, less marketing and the transport; and a warning when it is nothing (no price, or the transport above it) */
+  function netPrice(o) {
+    const e = o.expShare / 100, price = e * o.expPrice * o.fx + (1 - e) * o.domPrice, trans = e * (o.rail + o.port) + (1 - e) * o.domTrans;
+    const net = price * (1 - o.mkt / 100) - trans, cur = o.currency, m = v => `${cur} ${U.fmtNum(v, 0)}/t`;
+    const warn = !(price > 0) ? `There is no coal price: the ${e > 0 ? 'export and domestic prices are' : 'domestic price is'} 0, so the coal earns nothing${trans > 0 ? ` and every ton sold costs ${m(trans)} in transport` : ''}. Enter the price in Coal sales.`
+      : !(net > 0) ? `The transport (${m(trans)}) is more than the price (${m(price)}${o.byCV ? ` at ${U.fmtNum(o.cvRef, 1)} MJ/kg` : ''}), so every ton sold loses money. A domestic price is at the mine: for a price delivered to the customer, enter it and its transport.` : null;
+    return { price, trans, net, warn };
+  }
 
   // the CV of the coal mined each month (MJ/kg; from the seams' CV columns of the block margin), weighted by its tons
   function cvMonthly(P, ws, res, mOf, nM) {
@@ -9353,7 +9362,7 @@ const Fin = (() => {
     for (let k = 0; k < 200 && hi - lo > 1e-12; k++) { const mid = (lo + hi) / 2, fm = npv(mid); if (fm > 0) { lo = mid; flo = fm; } else hi = mid; }
     return Math.pow(1 + (lo + hi) / 2, 12) - 1;
   }
-  return { GROUPS, FIELDS, DEF, settings, unitOf, cvMonthly, run, irrOf };
+  return { GROUPS, FIELDS, DEF, settings, unitOf, netPrice, cvMonthly, run, irrOf };
 })();
 
 /* ===== Survey reconciliation (Recon tab; DOM-free) =====
@@ -11437,7 +11446,11 @@ const UI = (() => {
   }
   function num(value, onChange, o = {}) {
     const i = h('input', { type: 'number', value: value == null || value === '' ? '' : value, step: o.step || 'any', min: o.min, max: o.max, placeholder: o.placeholder || '', class: 'num' });
-    i.addEventListener('change', () => { const v = i.value === '' ? (o.allowEmpty ? null : 0) : parseFloat(i.value); onChange(v); });
+    i.addEventListener('change', () => {
+      // (a number the browser cannot read, such as 340,5 where it wants 340.5, reads as empty: keep the value and say so)
+      if (i.validity && i.validity.badInput) { i.value = value == null || value === '' ? '' : value; toast('That is not a number the browser can read: use a point for decimals (340.5). The value was not changed.', 6000); return; }
+      const v = i.value === '' ? (o.allowEmpty ? null : 0) : parseFloat(i.value); onChange(v);
+    });
     return i;
   }
   function txt(value, onChange, o = {}) {
@@ -14536,6 +14549,9 @@ const Tabs = (() => {
       if (M.fromFin) {
         parts.push(chk('Include the overheads and sustaining capital (spread over the coal target)', M.finOver, v => set('finOver', v)), h('div', { class: 'grid2' }, fld('Coal tons', bs), h('span')));
         if (R && R.fin) parts.push(h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' }, h('tbody', null, ...Margin.finLines(P, R).map(([k, v]) => h('tr', null, h('td', null, k), h('td', null, v)))))));
+        { const o = Fin.settings(P), NP = Fin.netPrice(o), m = v => `${o.currency} ${U.fmtNum(v, 0)}/t`;
+          if (NP.warn) parts.push(msg('error', NP.warn + ' Every block’s margin is negative until it is fixed (Finance tab).'));
+          else if (R && R.stats.n && !R.stats.pos) parts.push(msg('warn', `No block pays for itself: a ton earns ${m(NP.net)} at the mine${NP.trans > 0 ? ` (${m(NP.price)} less ${m(NP.trans)} transport)` : ''}${o.byCV ? ` at ${U.fmtNum(o.cvRef, 1)} MJ/kg` : ''}, less than the cheapest block costs to mine. Check the price and the transport in the Finance tab.`)); }
         if (R && R.fin && R.fin.overNoTarget) parts.push(msg('warn', 'The overheads are left out: set a monthly coal target in the Schedule tab to spread them over the tons.'));
         parts.push(hint('Change these numbers in the Finance tab: the block margin, the reserve boundary and the financial model then work on the same costs and price. Untick to type the margin’s own costs and price.'));
       } else {
@@ -14601,7 +14617,7 @@ const Tabs = (() => {
     if (!R) { body.append(sec(part === 'strip' ? 'Strip ratio' : part === 'rank' ? 'Margin rank' : 'Reserve boundary', null, msg('warn', 'Load the model first.'))); return; }
     if (part === 'reserve') { tonsSection(body, R); depthSection(body, R, kp); layerTable(body, R); }
     if (part === 'rank') {
-      if (!R.ready) body.append(sec('Margin rank', null, msg('warn', 'Type the coal price (and the costs) above to work out the margin of every block.')));
+      if (!R.ready) body.append(sec('Margin rank', null, msg('warn', R.fin ? 'Enter the coal price in the Finance tab (Coal sales) to work out the margin of every block.' : 'Type the coal price (and the costs) above to work out the margin of every block.')));
       else marginRank(body, R, cur, kp);
       reserveBoundary(body, R, cur, kp);
     }
@@ -15084,6 +15100,8 @@ const Tabs = (() => {
     }
     // the inputs
     const cu = txt(cur, v => { F0().currency = v.trim() || 'R'; save(); }); cu.setAttribute('aria-label', 'Finance currency'); cu.disabled = !edit();
+    const NP = Fin.netPrice(o);
+    if (NP.warn) body.append(msg('error', NP.warn));
     for (const G of Fin.GROUPS) {
       const parts = [];
       if (G.id === 'econ') parts.push(h('div', { class: 'grid2' }, fld('Currency', cu), h('span')));
@@ -15098,6 +15116,7 @@ const Tabs = (() => {
         flds.push(fld(`${q.label} (${Fin.unitOf(q, cur)})`, e));
       }
       parts.push(...flds.reduce((a, x, i, arr) => (i % 2 ? a : a.concat(h('div', { class: 'grid2' }, x, arr[i + 1] || h('span')))), []));
+      if (G.id === 'sales' && NP.warn) parts.push(msg('error', NP.warn));
       if (G.id === 'sales' && o.wash && o.yieldSrc === 'wash' && !(typeof Wash !== 'undefined' && Wash.product(P))) parts.push(msg('warn', `There is no washability data (Geological Data tab), so the plant yield is the fixed ${U.fmtNum(o.yieldFixed, 1)}%.`));
       if (G.id === 'sales') parts.push(hint(o.wash ? 'Washing: the coal mined (as received) is the plant feed; the product is sold and the discard is dumped. Untick it to sell the coal as mined (crushed and screened only).' : 'Not washed: the coal mined (as received) is crushed, screened and sold as it is. Tick “Wash the coal” to add a coal washing plant: its yield, its cost a ton of feed and the discard.'));
       if (G.id === 'mining') { const BL = Blast.settings(P); parts.push(hint(BL.on ? 'Drilling is priced on the bcm drilled and blasted, waste and coal at their own rates, and the explosives on the kg, of the drill and blast (Drill and Blast tab). Presplit is priced on the m² of presplit: one face per strip along its highwall, as high as the waste blasted, so the waste bcm drilled and blasted ÷ the strip width.' : 'Drill and blast is off (Drill and Blast tab), so there are no drilling or explosives costs.')); }
