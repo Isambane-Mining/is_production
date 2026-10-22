@@ -9163,25 +9163,26 @@ const Blast = (() => {
    All money is in the project's currency (the export price in US$, at the exchange rate). */
 const Fin = (() => {
   const f = (k, label, unit, def, o = {}) => Object.assign({ k, label, unit, def }, o);
-  /* The inputs, group by group: {k, label, unit, def, step, kind ('num' | 'sel' | 'chk'), opts, when (shown when)} */
+  /* The inputs, group by group: {k, label, unit, def, step, kind ('num' | 'sel' | 'chk'), opts, when (shown when), keep (a
+     cleared box takes the default; any other cleared box counts 0)} */
   const GROUPS = [
     { id: 'econ', title: 'Economics', fields: [
       f('disc', 'Discount rate (real)', '% a year', 10, { step: 0.5 }),
       f('escP', 'Price escalation', '% a year', 0, { step: 0.5 }),
       f('escC', 'Cost escalation', '% a year', 0, { step: 0.5 }),
-      f('fx', 'Exchange rate', 'R per US$', 18.5, { step: 0.1, cur: true }),
+      f('fx', 'Exchange rate', 'R per US$', 18.5, { step: 0.1, cur: true, keep: true }),
       f('tax', 'Company tax rate', '%', 27, { step: 0.5 }),
       f('royalty', 'Mineral royalty', '', 'sa', { kind: 'sel', opts: [['sa', 'SA formula for unrefined minerals (0.5% + EBIT ÷ (gross sales × 9), at most 7%)'], ['fixed', 'A fixed rate of gross sales'], ['none', 'None']] }),
       f('royaltyRate', 'Royalty rate', '% of gross sales', 3, { step: 0.1, when: o => o.royalty === 'fixed' })] },
     { id: 'sales', title: 'Coal sales', fields: [
       f('wash', 'Wash the coal (a coal washing plant)', '', false, { kind: 'chk' }),
       f('yieldSrc', 'Plant yield from', '', 'wash', { kind: 'sel', opts: [['wash', 'The washability data (Geological Data tab), block by block'], ['fixed', 'A fixed yield']], when: o => o.wash }),
-      f('yieldFixed', 'Plant yield', '%', 70, { step: 0.5, when: o => o.wash }),
+      f('yieldFixed', 'Plant yield', '%', 70, { step: 0.5, when: o => o.wash, keep: true }),
       f('expShare', 'Exported', '% of the coal sold', 60, { step: 5 }),
       f('expPrice', 'Export price', 'US$/t FOB', 95, { step: 1 }),
       f('domPrice', 'Domestic price', 'R/t at the mine', 700, { step: 10, cur: true }),
       f('byCV', 'Prices follow the CV of the coal (price × CV ÷ the reference CV)', '', false, { kind: 'chk' }),
-      f('cvRef', 'Reference CV', 'MJ/kg', 25.1, { step: 0.1, when: o => o.byCV }),
+      f('cvRef', 'Reference CV', 'MJ/kg', 25.1, { step: 0.1, when: o => o.byCV, keep: true }),
       f('mkt', 'Marketing and commission', '% of revenue', 1.5, { step: 0.1 })] },
     { id: 'logistics', title: 'Logistics', fields: [
       f('rail', 'Rail to the port', 'R/t exported', 320, { step: 5, cur: true }),
@@ -9196,7 +9197,7 @@ const Fin = (() => {
       f('cDrillC', 'Drilling, coal', 'R/bcm coal drilled and blasted', 4.5, { step: 0.1, cur: true }),
       f('cExpl', 'Explosives and accessories', 'R/kg', 19, { step: 0.5, cur: true }),
       f('cPresplit', 'Presplit', 'R/m² presplit', 0, { step: 1, cur: true }),
-      f('presplitW', 'Presplit strip width', 'm', 40, { step: 1 }),
+      f('presplitW', 'Presplit strip width', 'm', 40, { step: 1, keep: true }),
       f('cRehandle', 'Rehandling', 'R/m³ loose', 18, { step: 1, cur: true }),
       f('cRehab', 'Rehabilitation (topsoil back, seeding)', 'R/ha', 120000, { step: 5000, cur: true }),
       f('cWater', 'Pumping and treating pit water', 'R/m³', 3, { step: 0.5, cur: true })] },
@@ -9225,7 +9226,8 @@ const Fin = (() => {
       const v = F[q.k];
       if (q.kind === 'chk') o[q.k] = v == null ? (q.k === 'wash' ? !!(P && typeof Wash !== 'undefined' && Wash.product(P)) : q.def) : !!v;
       else if (q.kind === 'sel') o[q.k] = q.opts.some(x => x[0] === v) ? v : q.def;
-      else { const x = +v; o[q.k] = v != null && v !== '' && isFinite(x) ? x : q.def; }
+      // (a box never set takes the default; a box cleared counts 0, unless 0 makes no sense for it)
+      else { const x = +v; o[q.k] = v != null && v !== '' && isFinite(x) ? x : Object.prototype.hasOwnProperty.call(F, q.k) && !q.keep ? 0 : q.def; }
     }
     o.capexMonths = Math.max(0, Math.round(o.capexMonths)); o.expShare = U.clamp(o.expShare, 0, 100); o.yieldFixed = U.clamp(o.yieldFixed, 1, 100); o.presplitW = Math.max(1, o.presplitW);
     // (one drilling rate for waste and coal before: it stands for both until they are set)
@@ -14536,13 +14538,17 @@ const Tabs = (() => {
         if (R && R.fin) parts.push(h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' }, h('tbody', null, ...Margin.finLines(P, R).map(([k, v]) => h('tr', null, h('td', null, k), h('td', null, v)))))));
         if (R && R.fin && R.fin.overNoTarget) parts.push(msg('warn', 'The overheads are left out: set a monthly coal target in the Schedule tab to spread them over the tons.'));
         parts.push(hint('Change these numbers in the Finance tab: the block margin, the reserve boundary and the financial model then work on the same costs and price. Untick to type the margin’s own costs and price.'));
-      } else parts.push(
+      } else {
+        // (what the Finance tab sells the coal at, so the two can be compared)
+        const o = Fin.settings(P), e = o.expShare / 100, tr = e * (o.rail + o.port) + (1 - e) * o.domTrans, fc = o.currency;
+        parts.push(msg('info', `The Finance tab sells the coal at ${o.expShare > 0 ? `${U.fmtNum(o.expShare, 0)}% exported at US$${U.fmtNum(o.expPrice, 0)}/t and the rest at ` : ''}${fc} ${U.fmtNum(o.domPrice, 0)}/t${o.byCV ? ` at ${U.fmtNum(o.cvRef, 1)} MJ/kg` : ''}, less ${fc} ${U.fmtNum(tr, 0)}/t transport${o.mkt > 0 ? ` and ${U.fmtNum(o.mkt, 1)}% marketing` : ''}. The margin below uses its own price and costs, with no transport: tick the box above to use the Finance tab’s.`));
+        parts.push(
         h('div', { class: 'grid2' }, fld(`Waste mining cost (${cur}/bcm)`, wc), fld(`Coal mining cost (${cur}/t)`, cc)),
         chk('Price follows the coal quality: price × the CV of each seam, from the block attributes', M.byCV !== false, v => set('byCV', v)),
         fld('Revenue of a block', (() => { const e = sel([['blend', 'On its blended CV: coal t × price × blended CV'], ['seam', 'Seam by seam: each seam’s t × its own price × its CV']], M.revBy === 'seam' ? 'seam' : 'blend', v => set('revBy', v)); e.setAttribute('aria-label', 'Revenue of a block'); return e; })()),
         h('div', { class: 'grid2' }, fld(M.byCV !== false ? `Coal price (${cur}/t per MJ/kg)` : `Coal price (${cur}/t)`, pr), fld('Coal tons', bs)),
         chk('The coal is processed: plant cost × the yield of each seam, from the block attributes', M.plant === true, v => set('plant', v)),
-        M.plant === true ? h('div', { class: 'grid2' }, fld(`Plant cost (${cur}/t)`, pc), fld('Currency', cu)) : h('div', { class: 'grid2' }, fld('Currency', cu), h('span')));
+        M.plant === true ? h('div', { class: 'grid2' }, fld(`Plant cost (${cur}/t)`, pc), fld('Currency', cu)) : h('div', { class: 'grid2' }, fld('Currency', cu), h('span'))); }
       // the attribute columns of each seam
       const cols = [['', '— none —']].concat((P.attrColumns || []).filter(c => c !== P.idColumn && P.blocks.some(b => b.attrs && isFinite(parseFloat(b.attrs[c])))).map(c => [c, c]));
       const coalL = P.layers.filter(L => L.type === 'coal');
@@ -15088,14 +15094,14 @@ const Tabs = (() => {
         if (q.kind === 'chk') { parts.push(...flds.splice(0).reduce((a, x, i, arr) => (i % 2 ? a : a.concat(h('div', { class: 'grid2' }, x, arr[i + 1] || h('span')))), [])); const c = chk(q.label, o[q.k], set); c.querySelector('input').setAttribute('aria-label', q.label); parts.push(c); continue; }
         let e;
         if (q.kind === 'sel') { e = sel(q.opts, o[q.k], set); parts.push(...flds.splice(0).reduce((a, x, i, arr) => (i % 2 ? a : a.concat(h('div', { class: 'grid2' }, x, arr[i + 1] || h('span')))), [])); e.setAttribute('aria-label', q.label); e.disabled = !edit(); parts.push(fld(q.label, e)); continue; }
-        e = num(o[q.k], v => set(v == null ? null : v), { step: q.step, allowEmpty: true, placeholder: String(q.def) }); e.setAttribute('aria-label', q.label); e.disabled = !edit();
+        e = num(o[q.k], v => set(v == null ? (q.keep ? null : 0) : v), { step: q.step, allowEmpty: true, placeholder: q.keep ? String(q.def) : '0' }); e.setAttribute('aria-label', q.label); e.disabled = !edit();
         flds.push(fld(`${q.label} (${Fin.unitOf(q, cur)})`, e));
       }
       parts.push(...flds.reduce((a, x, i, arr) => (i % 2 ? a : a.concat(h('div', { class: 'grid2' }, x, arr[i + 1] || h('span')))), []));
       if (G.id === 'sales' && o.wash && o.yieldSrc === 'wash' && !(typeof Wash !== 'undefined' && Wash.product(P))) parts.push(msg('warn', `There is no washability data (Geological Data tab), so the plant yield is the fixed ${U.fmtNum(o.yieldFixed, 1)}%.`));
       if (G.id === 'sales') parts.push(hint(o.wash ? 'Washing: the coal mined (as received) is the plant feed; the product is sold and the discard is dumped. Untick it to sell the coal as mined (crushed and screened only).' : 'Not washed: the coal mined (as received) is crushed, screened and sold as it is. Tick “Wash the coal” to add a coal washing plant: its yield, its cost a ton of feed and the discard.'));
       if (G.id === 'mining') { const BL = Blast.settings(P); parts.push(hint(BL.on ? 'Drilling is priced on the bcm drilled and blasted, waste and coal at their own rates, and the explosives on the kg, of the drill and blast (Drill and Blast tab). Presplit is priced on the m² of presplit: one face per strip along its highwall, as high as the waste blasted, so the waste bcm drilled and blasted ÷ the strip width.' : 'Drill and blast is off (Drill and Blast tab), so there are no drilling or explosives costs.')); }
-      if (G.id === 'econ') parts.push(hint('Prices and costs are in today’s money, escalated from the start of mining by the rates set (0: a real model). The SA royalty on unrefined minerals is 0.5% + EBIT ÷ (gross sales × 9) of the gross sales at the mine, at most 7%, worked out year by year; capital spending is deducted from the EBIT and, for the tax, in full against the mining income as it is spent, with assessed losses carried forward.'));
+      if (G.id === 'econ') parts.push(hint('Prices and costs are in today’s money, escalated from the start of mining by the rates set (0: a real model). The SA royalty on unrefined minerals is 0.5% + EBIT ÷ (gross sales × 9) of the gross sales at the mine, at most 7%, worked out year by year; capital spending is deducted from the EBIT and, for the tax, in full against the mining income as it is spent, with assessed losses carried forward. A box you clear counts 0 (the exchange rate, reference CV, strip width and yield go back to their defaults); “Back to the default inputs” below puts every default back.'));
       body.append(sec(G.title, null, ...parts));
     }
     if (edit() && P.fin && Object.keys(P.fin).length) body.append(h('div', { class: 'row' }, btn('Back to the default inputs', () => { P.fin = {}; save(); }, 'sm ghost')));
