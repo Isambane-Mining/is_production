@@ -261,6 +261,26 @@ class IntegrationTestMiningSimulationProject(IntegrationTestCase):
 		svc.delete_blob(self.pid, "grid")
 		self.assertIsNone(svc.get_blob(self.pid, "grid"))
 
+	def test_survey_dtms(self):
+		svc.save_from_project(sample_project(self.pid), name=self.pid, insert=True)
+		dtm = gzip.compress(b"survey grid")
+		svc.put_blob(self.pid, "dtm_a1", base64.b64encode(dtm).decode())
+		self.assertEqual(base64.b64decode(svc.get_blob(self.pid, "dtm_a1")), dtm)
+
+		# in the project file, and back from it; a DTM the file does not have is removed
+		doc = frappe.get_doc(svc.DOCTYPE, self.pid)
+		bundle = svc.bundle_for(doc)
+		self.assertIn("dtm_a1", bundle["blobs"])
+		svc.put_blob(self.pid, "dtm_b2", base64.b64encode(dtm).decode())
+		project, blobs = svc.read_bundle(json.dumps(bundle))
+		svc.save_from_project(project, blobs, name=self.pid)
+		self.assertEqual(svc._dtm_keys(frappe.get_doc(svc.DOCTYPE, self.pid)), ["dtm_a1"])
+
+		svc.delete_blob(self.pid, "dtm_a1")
+		self.assertIsNone(svc.get_blob(self.pid, "dtm_a1"))
+		with self.assertRaises(frappe.ValidationError):
+			svc.put_blob(self.pid, "../dtm", base64.b64encode(dtm).decode())
+
 	def test_importing_a_file_again_makes_a_named_copy(self):
 		bundle = json.dumps({"format": svc.BUNDLE_FORMAT, "version": 1, "project": sample_project(self.pid), "blobs": {}})
 		upload = lambda: frappe.get_doc(
