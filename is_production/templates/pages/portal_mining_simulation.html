@@ -7527,12 +7527,12 @@ const Margin = (() => {
   }
   /* The Finance tab's price of a ton sold at the mine, before the CV: the export and domestic prices by the export share
      (per t, or per t per MJ/kg when the prices follow the CV: ÷ the reference CV) */
-  function finPrice(o) { const e = o.expShare / 100, g = e * o.expPrice * o.fx + (1 - e) * o.domPrice; return o.byCV && o.cvRef > 0 ? g / o.cvRef : g; }
+  // (the Finance tab's price as a + b × CV: Fin.priceParts)
   function settings(P) {
     const M = Object.assign({}, DEF, P.margin || {}); for (const k of ['cv', 'ash', 'ts', 'yield', 'waste', 'seamPrice']) M[k] = Object.assign({}, (P.margin || {})[k]);
     M.fromFin = typeof Fin !== 'undefined' && fromFin(P); M.finOver = !!M.finOver;
     // (on the Finance tab's numbers: its price and currency, one price for the blend, the plant when it washes the coal)
-    if (M.fromFin) { const o = Fin.settings(P); Object.assign(M, { price: finPrice(o), byCV: o.byCV, revBy: 'blend', plant: o.wash, wasteCost: null, coalCost: null, plantCost: null, currency: o.currency }); }
+    if (M.fromFin) { const o = Fin.settings(P), PP = Fin.priceParts(o); Object.assign(M, { price: PP.b > 0 ? PP.b : PP.a, priceT: PP.b > 0 ? PP.a : 0, byCV: PP.b > 0, revBy: 'blend', plant: o.wash, wasteCost: null, coalCost: null, plantCost: null, currency: o.currency }); }
     return M;
   }
   /* The Finance tab's rates for the block margin (its money, before escalation): price, the deductions from revenue, the
@@ -7543,7 +7543,7 @@ const Margin = (() => {
     const kg = (D, b, l) => D.pf * (D.pfUnit === 'kg/t' ? Model.blockDensity(P, b, l) : 1) * o.cExpl; // explosives a bcm
     const T = P.targets || {}, tg = +T.coal > 0 ? +T.coal : 0, over = M.finOver && tg > 0;
     const R = {
-      o, price: finPrice(o), keep: 1 - o.mkt / 100, logi: e * (o.rail + o.port) + (1 - e) * o.domTrans,
+      o, price: M.price, a: Fin.priceParts(o).a, b: Fin.priceParts(o).b, keep: 1 - o.mkt / 100, logi: e * (o.rail + o.port) + (1 - e) * o.domTrans,
       // a bcm of a layer mined as waste: topsoil stripped; the rest loaded and hauled, and blasted where the Drill and Blast tab blasts it
       wasteBcm: (b, l) => {
         const L = P.layers[l]; if (L.type === 'topsoil') return o.cTopsoil;
@@ -7640,7 +7640,7 @@ const Margin = (() => {
          seam CV). With one price for every seam the two are the same; seam by seam each seam can have a price of its own. */
       // (on the ADC basis the coal is sold as ADC tons at its ADC CV; the costs stay on the tons chosen)
       // (on the Finance tab's numbers: the coal sold, after the yield, at its price less marketing and transport)
-      const rev = FR ? soldT * (price * (M.byCV ? (cvB === cvB ? cvB : 0) : 1) * FR.keep - FR.logi) : M.revBy === 'seam' ? revSeams : (QB.on ? adcT : coalT) * price * (M.byCV ? (cvB === cvB ? cvB : 0) : 1);
+      const rev = FR ? soldT * ((FR.a + FR.b * (cvB === cvB ? cvB : 0)) * FR.keep - FR.logi) : M.revBy === 'seam' ? revSeams : (QB.on ? adcT : coalT) * price * (M.byCV ? (cvB === cvB ? cvB : 0) : 1);
       const costW = FR ? costWF : waste * wc, costC = FR ? costCF : coalT * cc, over = FR ? overF : 0, rehab = FR && coalT > 0 ? (ws.blockArea[b] || 0) / 1e4 * FR.cRehab : 0, cost = costW + costC + plant + over + rehab;
       const m = coalT > 0 ? (rev - cost) / coalT : NaN;
       rows.push({ b, id: P.blocks[b].id, waste, coalT, sr: coalT > 0 ? waste / coalT : NaN, cv: cvB, ash: ashB, ts: tsB, cvW, adcT, ashT: qD.ash, tsT: qD.ts, rev, costW, costC, plant, over, rehab, cost, margin: m, byLayer, bySeam, miss, rank: 0, inside: !!inside[b] });
@@ -7730,14 +7730,15 @@ const Margin = (() => {
   // the terms of the margin formula, revenue first
   function formula(M, FR) {
     if (!FR) return [M.revBy === 'seam' ? `Σ seam t × seam price${M.byCV ? ' × seam CV' : ''}` : `coal t × price${M.byCV ? ' × blended CV' : ''}`, '− waste bcm × waste cost', '− coal t × coal mining cost'].concat(M.plant ? ['− coal t × plant cost × yield'] : []);
-    return [`coal t sold${FR.wash ? ' (× yield)' : ''} × (price${M.byCV ? ' × blended CV' : ''} × (1 − marketing) − transport)`, '− Σ waste layers bcm × the layer’s cost', '− coal t as received × (mining + crushing) − coal bcm × drilling and blasting']
+    return [`coal t sold${FR.wash ? ' (× yield)' : ''} × (${FR.b > 0 ? (FR.a > 0 ? '(price a ton + price per MJ/kg × blended CV)' : 'price per MJ/kg × blended CV') : 'price'} × (1 − marketing) − transport)`, '− Σ waste layers bcm × the layer’s cost', '− coal t as received × (mining + crushing) − coal bcm × drilling and blasting']
       .concat(FR.wash ? ['− plant feed × washing − discard × disposal'] : [], FR.cRehab > 0 ? ['− area × rehabilitation'] : [], FR.over ? ['− overheads and sustaining capital'] : []);
   }
   /* The Finance tab's numbers the margin uses: [label, value] rows (the tab's table and the Excel sheet) */
   function finLines(P, R) {
     const FR = R.fin, o = FR.o, cur = FR.currency, n = (v, d = 0) => U.fmtNum(v, d), M = R.M;
     const lines = [
-      ['Coal price', `${cur} ${n(FR.price, M.byCV ? 2 : 0)}/t${M.byCV ? ' per MJ/kg' : ''}` + (o.expShare > 0 ? ` (${n(o.expShare)}% exported at US$${n(o.expPrice)}/t, the rest at ${cur} ${n(o.domPrice)}/t${M.byCV ? `, at the reference CV of ${n(o.cvRef, 1)} MJ/kg` : ''})` : M.byCV ? ` (${cur} ${n(o.domPrice)}/t at the reference CV of ${n(o.cvRef, 1)} MJ/kg)` : ' (domestic, at the mine)')],
+      ['Coal price', (FR.b > 0 ? `${cur} ${n(FR.b, 2)}/t per MJ/kg × the blended CV` + (FR.a > 0 ? ` + ${cur} ${n(FR.a)}/t` : '') : `${cur} ${n(FR.a)}/t`) + ` (${[o.expShare > 0 ? `${n(o.expShare)}% exported at US$${n(o.expPrice)}/t${o.byCV ? ` at ${n(o.cvRef, 1)} MJ/kg` : ''}` : null,
+        o.expShare < 100 ? `${o.expShare > 0 ? 'the rest' : 'domestic, at the mine'}: ${Fin.domWords(o)}${o.domBasis !== 'mj' && o.byCV ? ` at ${n(o.cvRef, 1)} MJ/kg` : ''}` : null].filter(Boolean).join('; ')})`],
       ['Less from revenue', `marketing ${n(o.mkt, 1)}%; transport ${cur} ${n(FR.logi, 1)}/t sold`],
       ['Topsoil', `${cur} ${n(o.cTopsoil, 1)}/bcm`],
       ['Waste, dug free', `${cur} ${n(o.cWaste, 1)}/bcm load and haul`],
@@ -9180,7 +9181,9 @@ const Fin = (() => {
       f('yieldFixed', 'Plant yield', '%', 70, { step: 0.5, when: o => o.wash, keep: true }),
       f('expShare', 'Exported', '% of the coal sold', 60, { step: 5 }),
       f('expPrice', 'Export price', 'US$/t FOB', 95, { step: 1 }),
-      f('domPrice', 'Domestic price', 'R/t at the mine', 700, { step: 10, cur: true }),
+      f('domBasis', 'Domestic price as', '', 't', { kind: 'sel', opts: [['t', 'A price a ton (R/t)'], ['mj', 'A price a ton per MJ/kg (R/t per MJ/kg × the CV of the coal sold)']] }),
+      f('domPrice', 'Domestic price', 'R/t at the mine', 700, { step: 10, cur: true, when: o => o.domBasis !== 'mj' }),
+      f('domPriceMJ', 'Domestic price', 'R/t per MJ/kg, at the mine', 15, { step: 0.1, cur: true, when: o => o.domBasis === 'mj' }),
       f('byCV', 'Prices follow the CV of the coal (price × CV ÷ the reference CV)', '', false, { kind: 'chk' }),
       f('cvRef', 'Reference CV', 'MJ/kg', 25.1, { step: 0.1, when: o => o.byCV, keep: true }),
       f('mkt', 'Marketing and commission', '% of revenue', 1.5, { step: 0.1 })] },
@@ -9237,13 +9240,24 @@ const Fin = (() => {
   const unitOf = (q, cur) => (q.unit || '').replace(/^R(?=\/| |$)/, cur).replace(/^R a /, cur + ' a ').replace(/, after/, ', after');
   /* What a ton sold earns at the mine, before escalation (at the reference CV when the prices follow it): the price by the
      export share, less marketing and the transport; and a warning when it is nothing (no price, or the transport above it) */
-  function netPrice(o) {
-    const e = o.expShare / 100, price = e * o.expPrice * o.fx + (1 - e) * o.domPrice, trans = e * (o.rail + o.port) + (1 - e) * o.domTrans;
-    const net = price * (1 - o.mkt / 100) - trans, cur = o.currency, m = v => `${cur} ${U.fmtNum(v, 0)}/t`;
-    const warn = !(price > 0) ? `There is no coal price: the ${e > 0 ? 'export and domestic prices are' : 'domestic price is'} 0, so the coal earns nothing${trans > 0 ? ` and every ton sold costs ${m(trans)} in transport` : ''}. Enter the price in Coal sales.`
-      : !(net > 0) ? `The transport (${m(trans)}) is more than the price (${m(price)}${o.byCV ? ` at ${U.fmtNum(o.cvRef, 1)} MJ/kg` : ''}), so every ton sold loses money. A domestic price is at the mine: for a price delivered to the customer, enter it and its transport.` : null;
-    return { price, trans, net, warn };
+  function netPrice(o, cvAvg) {
+    const e = o.expShare / 100, PP = priceParts(o), perMJ = PP.b > 0, cv = cvAvg > 0 ? cvAvg : o.cvRef, trans = e * (o.rail + o.port) + (1 - e) * o.domTrans;
+    const price = PP.a + PP.b * cv, net = price * (1 - o.mkt / 100) - trans, cur = o.currency, m = v => `${cur} ${U.fmtNum(v, 0)}/t`, at = perMJ ? ` at ${U.fmtNum(cv, 1)} MJ/kg` : '';
+    const noCV = o.domBasis === 'mj' && (1 - e) > 0 && cvAvg !== undefined && !(cvAvg > 0);
+    const warn = !(PP.a > 0 || PP.b > 0) ? `There is no coal price: the ${e > 0 ? 'export and domestic prices are' : 'domestic price is'} 0, so the coal earns nothing${trans > 0 ? ` and every ton sold costs ${m(trans)} in transport` : ''}. Enter the price in Coal sales.`
+      : noCV ? 'The domestic price is per MJ/kg, but the coal has no CV: choose the CV column of each seam (Block Margin Rank tab), or price it a ton.'
+      : !(net > 0) ? `The transport (${m(trans)}) is more than the price (${m(price)}${at}), so every ton sold loses money. A domestic price is at the mine: for a price delivered to the customer, enter it and its transport.` : null;
+    return { price, trans, net, warn, perMJ, cv };
   }
+  /* The price of a ton sold at the mine, before escalation and marketing, as a + b × CV (a: a ton; b: a ton per MJ/kg): the
+     export and domestic prices by the export share; a price a ton follows the CV (× CV ÷ the reference CV) when the prices
+     follow it; a domestic price per MJ/kg is × the CV */
+  function priceParts(o) {
+    const e = o.expShare / 100, ref = o.byCV && o.cvRef > 0, mj = o.domBasis === 'mj', exp = e * o.expPrice * o.fx, dom = (1 - e) * (mj ? o.domPriceMJ : o.domPrice);
+    return { a: (ref ? 0 : exp) + (mj || ref ? 0 : dom), b: (ref ? exp / o.cvRef : 0) + (mj ? dom : ref ? dom / o.cvRef : 0) };
+  }
+  // the domestic price in words: R 340/t, or R 18,03/t per MJ/kg
+  const domWords = o => (o.domBasis === 'mj' ? `${o.currency} ${U.fmtNum(o.domPriceMJ, 2)}/t per MJ/kg` : `${o.currency} ${U.fmtNum(o.domPrice, 0)}/t`);
 
   // the CV of the coal mined each month (MJ/kg; from the seams' CV columns of the block margin), weighted by its tons
   function cvMonthly(P, ws, res, mOf, nM) {
@@ -9269,7 +9283,8 @@ const Fin = (() => {
     const top = new Float64Array(nM); for (const a of mo.acts) if (L[a.A.layer] && L[a.A.layer].type === 'topsoil') for (let m = 0; m < nM; m++) top[m] += a.bcm[m];
     const soilTh = typeof Water !== 'undefined' ? Math.max(0.1, +Water.settings(P).topsoil || 1) : 1;
     const PR = o.wash && o.yieldSrc === 'wash' ? mo.prod : null, yF = o.yieldFixed / 100;
-    const cvKey = PR ? PR.keys.find(k => /^(cv|calorific|gcv|ncv|cv[_ ]?(ad|ar|nar|gar))/i.test(k)) : null, cvRom = o.byCV ? cvMonthly(P, ws, res, mo.mOf, nM) : null;
+    const needCV = o.byCV || o.domBasis === 'mj'; // (the CV prices the coal: × CV ÷ the reference CV, or a domestic price per MJ/kg)
+    const cvKey = PR ? PR.keys.find(k => /^(cv|calorific|gcv|ncv|cv[_ ]?(ad|ar|nar|gar))/i.test(k)) : null, cvRom = needCV ? cvMonthly(P, ws, res, mo.mOf, nM) : null;
     for (let m = 0; m < nM; m++) {
       const t = at(m), rom = mo.coalAR[m];
       X.days[t] = mo.days[m]; X.rom[t] = rom; X.insitu[t] = mo.coalT[m]; X.topsoil[t] = top[m]; X.dozed[t] = doz[m]; X.waste[t] = Math.max(0, mo.wasteB[m] - top[m] - doz[m]);
@@ -9281,14 +9296,18 @@ const Fin = (() => {
         else { X.feed[t] = rom; X.product[t] = rom * yF; }
         X.discard[t] = Math.max(0, X.feed[t] - X.product[t]);
       } else X.product[t] = rom;
-      if (o.byCV) X.cv[t] = cvKey && PR.q[cvKey][m] === PR.q[cvKey][m] ? PR.q[cvKey][m] : cvRom ? cvRom[m] : NaN;
+      if (needCV) X.cv[t] = cvKey && PR.q[cvKey][m] === PR.q[cvKey][m] ? PR.q[cvKey][m] : cvRom ? cvRom[m] : NaN;
     }
+    // (a month without a CV takes the average CV of the coal sold)
+    let cvN = 0, cvD = 0; for (let t = 0; t < N; t++) if (X.cv[t] === X.cv[t] && X.product[t] > 0) { cvN += X.cv[t] * X.product[t]; cvD += X.product[t]; }
+    const cvMean = cvD > 0 ? cvN / cvD : 0;
     // money, month by month
     const esc = (r, t) => Math.pow(1 + r / 100, (t - np) / 12), dpm = 30.4375;
     for (let t = 0; t < N; t++) {
       const eP = esc(o.escP, t), eC = esc(o.escC, t), cvf = o.byCV && X.cv[t] === X.cv[t] && o.cvRef > 0 ? X.cv[t] / o.cvRef : 1;
       X.expT[t] = X.product[t] * o.expShare / 100; X.domT[t] = X.product[t] - X.expT[t];
-      X.revExp[t] = X.expT[t] * o.expPrice * o.fx * cvf * eP; X.revDom[t] = X.domT[t] * o.domPrice * cvf * eP; X.rev[t] = X.revExp[t] + X.revDom[t];
+      X.revExp[t] = X.expT[t] * o.expPrice * o.fx * cvf * eP;
+      X.revDom[t] = o.domBasis === 'mj' ? X.domT[t] * o.domPriceMJ * (X.cv[t] === X.cv[t] ? X.cv[t] : cvMean) * eP : X.domT[t] * o.domPrice * cvf * eP; X.rev[t] = X.revExp[t] + X.revDom[t];
       X.mkt[t] = X.rev[t] * o.mkt / 100; X.logiExp[t] = X.expT[t] * (o.rail + o.port) * eC; X.logi[t] = X.logiExp[t] + X.domT[t] * o.domTrans * eC;
       const c = (k, q) => { X[k][t] = q * eC; return X[k][t]; };
       X.mining[t] = c('cTopsoil', X.topsoil[t] * o.cTopsoil) + c('cWaste', X.waste[t] * o.cWaste) + c('cDoze', X.dozed[t] * o.cDoze) + c('cCoal', X.rom[t] * o.cCoal) + (X.cDrill[t] = c('cDrillW', X.blastW[t] * o.cDrillW) + c('cDrillC', X.blastC[t] * o.cDrillC)) + c('cExpl', X.explKg[t] * o.cExpl) + c('cPresplit', X.presplitM2[t] * o.cPresplit) + c('cRehandle', X.reh[t] * o.cRehandle) + c('cRehab', X.rehabHa[t] * o.cRehab) + c('cWater', X.water[t] * o.cWater);
@@ -9362,7 +9381,7 @@ const Fin = (() => {
     for (let k = 0; k < 200 && hi - lo > 1e-12; k++) { const mid = (lo + hi) / 2, fm = npv(mid); if (fm > 0) { lo = mid; flo = fm; } else hi = mid; }
     return Math.pow(1 + (lo + hi) / 2, 12) - 1;
   }
-  return { GROUPS, FIELDS, DEF, settings, unitOf, netPrice, cvMonthly, run, irrOf };
+  return { GROUPS, FIELDS, DEF, settings, unitOf, netPrice, priceParts, domWords, cvMonthly, run, irrOf };
 })();
 
 /* ===== Survey reconciliation (Recon tab; DOM-free) =====
@@ -14549,15 +14568,15 @@ const Tabs = (() => {
       if (M.fromFin) {
         parts.push(chk('Include the overheads and sustaining capital (spread over the coal target)', M.finOver, v => set('finOver', v)), h('div', { class: 'grid2' }, fld('Coal tons', bs), h('span')));
         if (R && R.fin) parts.push(h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' }, h('tbody', null, ...Margin.finLines(P, R).map(([k, v]) => h('tr', null, h('td', null, k), h('td', null, v)))))));
-        { const o = Fin.settings(P), NP = Fin.netPrice(o), m = v => `${o.currency} ${U.fmtNum(v, 0)}/t`;
+        { const o = Fin.settings(P), NP = Fin.netPrice(o, R ? R.stats.cv.avg : undefined), m = v => `${o.currency} ${U.fmtNum(v, 0)}/t`;
           if (NP.warn) parts.push(msg('error', NP.warn + ' Every block’s margin is negative until it is fixed (Finance tab).'));
-          else if (R && R.stats.n && !R.stats.pos) parts.push(msg('warn', `No block pays for itself: a ton earns ${m(NP.net)} at the mine${NP.trans > 0 ? ` (${m(NP.price)} less ${m(NP.trans)} transport)` : ''}${o.byCV ? ` at ${U.fmtNum(o.cvRef, 1)} MJ/kg` : ''}, less than the cheapest block costs to mine. Check the price and the transport in the Finance tab.`)); }
+          else if (R && R.stats.n && !R.stats.pos) parts.push(msg('warn', `No block pays for itself: a ton earns ${m(NP.net)} at the mine${NP.trans > 0 ? ` (${m(NP.price)} less ${m(NP.trans)} transport)` : ''}${NP.perMJ ? ` at ${U.fmtNum(NP.cv, 1)} MJ/kg` : ''}, less than the cheapest block costs to mine. Check the price and the transport in the Finance tab.`)); }
         if (R && R.fin && R.fin.overNoTarget) parts.push(msg('warn', 'The overheads are left out: set a monthly coal target in the Schedule tab to spread them over the tons.'));
         parts.push(hint('Change these numbers in the Finance tab: the block margin, the reserve boundary and the financial model then work on the same costs and price. Untick to type the margin’s own costs and price.'));
       } else {
         // (what the Finance tab sells the coal at, so the two can be compared)
         const o = Fin.settings(P), e = o.expShare / 100, tr = e * (o.rail + o.port) + (1 - e) * o.domTrans, fc = o.currency;
-        parts.push(msg('info', `The Finance tab sells the coal at ${o.expShare > 0 ? `${U.fmtNum(o.expShare, 0)}% exported at US$${U.fmtNum(o.expPrice, 0)}/t and the rest at ` : ''}${fc} ${U.fmtNum(o.domPrice, 0)}/t${o.byCV ? ` at ${U.fmtNum(o.cvRef, 1)} MJ/kg` : ''}, less ${fc} ${U.fmtNum(tr, 0)}/t transport${o.mkt > 0 ? ` and ${U.fmtNum(o.mkt, 1)}% marketing` : ''}. The margin below uses its own price and costs, with no transport: tick the box above to use the Finance tab’s.`));
+        parts.push(msg('info', `The Finance tab sells the coal at ${o.expShare > 0 ? `${U.fmtNum(o.expShare, 0)}% exported at US$${U.fmtNum(o.expPrice, 0)}/t and the rest at ` : ''}${Fin.domWords(o)}${o.domBasis !== 'mj' && o.byCV ? ` at ${U.fmtNum(o.cvRef, 1)} MJ/kg` : ''}, less ${fc} ${U.fmtNum(tr, 0)}/t transport${o.mkt > 0 ? ` and ${U.fmtNum(o.mkt, 1)}% marketing` : ''}. The margin below uses its own price and costs, with no transport: tick the box above to use the Finance tab’s.`));
         parts.push(
         h('div', { class: 'grid2' }, fld(`Waste mining cost (${cur}/bcm)`, wc), fld(`Coal mining cost (${cur}/t)`, cc)),
         chk('Price follows the coal quality: price × the CV of each seam, from the block attributes', M.byCV !== false, v => set('byCV', v)),
@@ -15100,7 +15119,7 @@ const Tabs = (() => {
     }
     // the inputs
     const cu = txt(cur, v => { F0().currency = v.trim() || 'R'; save(); }); cu.setAttribute('aria-label', 'Finance currency'); cu.disabled = !edit();
-    const NP = Fin.netPrice(o);
+    const MR = App.ws ? App.margin() : null, NP = Fin.netPrice(o, MR ? MR.stats.cv.avg : undefined);
     if (NP.warn) body.append(msg('error', NP.warn));
     for (const G of Fin.GROUPS) {
       const parts = [];
@@ -15118,6 +15137,7 @@ const Tabs = (() => {
       parts.push(...flds.reduce((a, x, i, arr) => (i % 2 ? a : a.concat(h('div', { class: 'grid2' }, x, arr[i + 1] || h('span')))), []));
       if (G.id === 'sales' && NP.warn) parts.push(msg('error', NP.warn));
       if (G.id === 'sales' && o.wash && o.yieldSrc === 'wash' && !(typeof Wash !== 'undefined' && Wash.product(P))) parts.push(msg('warn', `There is no washability data (Geological Data tab), so the plant yield is the fixed ${U.fmtNum(o.yieldFixed, 1)}%.`));
+      if (G.id === 'sales' && o.domBasis === 'mj') parts.push(hint(`A domestic price per MJ/kg is × the CV of the coal sold each month (the ${MR && MR.qBasis === 'ADC' ? 'ADC ' : ''}CV of the seams mined${o.wash ? ', or of the washed product' : ''})${MR && MR.stats.cv.avg === MR.stats.cv.avg ? `: ${Fin.domWords(o)} × ${U.fmtNum(MR.stats.cv.avg, 2)} MJ/kg on average is ${o.currency} ${U.fmtNum(o.domPriceMJ * MR.stats.cv.avg, 0)}/t` : ''}. “Prices follow the CV” then applies to the export price only.`));
       if (G.id === 'sales') parts.push(hint(o.wash ? 'Washing: the coal mined (as received) is the plant feed; the product is sold and the discard is dumped. Untick it to sell the coal as mined (crushed and screened only).' : 'Not washed: the coal mined (as received) is crushed, screened and sold as it is. Tick “Wash the coal” to add a coal washing plant: its yield, its cost a ton of feed and the discard.'));
       if (G.id === 'mining') { const BL = Blast.settings(P); parts.push(hint(BL.on ? 'Drilling is priced on the bcm drilled and blasted, waste and coal at their own rates, and the explosives on the kg, of the drill and blast (Drill and Blast tab). Presplit is priced on the m² of presplit: one face per strip along its highwall, as high as the waste blasted, so the waste bcm drilled and blasted ÷ the strip width.' : 'Drill and blast is off (Drill and Blast tab), so there are no drilling or explosives costs.')); }
       if (G.id === 'econ') parts.push(hint('Prices and costs are in today’s money, escalated from the start of mining by the rates set (0: a real model). The SA royalty on unrefined minerals is 0.5% + EBIT ÷ (gross sales × 9) of the gross sales at the mine, at most 7%, worked out year by year; capital spending is deducted from the EBIT and, for the tax, in full against the mining income as it is spent, with assessed losses carried forward. A box you clear counts 0 (the exchange rate, reference CV, strip width and yield go back to their defaults); “Back to the default inputs” below puts every default back.'));
@@ -17444,7 +17464,7 @@ const Report = (() => {
     aoa.push(['Phase', '', null, ...Array.from({ length: N }, (_, t) => (t < F.np ? 'before mining' : t < F.np + F.nM ? 'mining' : 'closure'))]);
     row('Days in the month', 'days', 'days');
     title('PRODUCTION'); row('Coal mined (as received)', 't', 'rom'); if (o.wash) { row('Plant feed', 't', 'feed'); row('Product', 't', 'product'); row('Discard', 't', 'discard'); } else row('Coal sold (as mined)', 't', 'product');
-    row('Exported', 't', 'expT'); row('Sold at home', 't', 'domT'); if (o.byCV) row('CV of the coal sold', 'MJ/kg', 'cv', { dp: true, total: cvAll });
+    row('Exported', 't', 'expT'); row('Sold at home', 't', 'domT'); if (o.byCV || o.domBasis === 'mj') row('CV of the coal sold', 'MJ/kg', 'cv', { dp: true, total: cvAll });
     row('Topsoil', 'bcm', 'topsoil'); row('Waste hauled', 'bcm', 'waste'); row('Waste dozed', 'bcm', 'dozed'); row('Drilled and blasted', 'bcm', 'blastB'); row('Waste drilled and blasted', 'bcm', 'blastW'); row('Coal drilled and blasted', 'bcm', 'blastC'); row('Drill metres', 'm', 'drillM'); row('Explosives', 'kg', 'explKg'); row('Presplit', 'm²', 'presplitM2'); row('Rehandled', 'm³ loose', 'reh'); row('Rehabilitated', 'ha', 'rehabHa', { dp: true }); if (F.hydro) row('Water pumped from the pit', 'm³', 'water');
     gap(); title(`CASH FLOW (${cur})`);
     row('Revenue, export', cur, 'revExp'); row('Revenue, domestic', cur, 'revDom'); row('Revenue', cur, 'rev');
