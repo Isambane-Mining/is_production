@@ -5089,13 +5089,26 @@ const Sim = (() => {
     if (WF) {
       let wd = 0; for (let d = 0; d < 731; d++) if (isWorking(cal, U.addDays(start, d))) wd++;
       WF.hWD = Math.max(1, (wd / 731) * Monthly.AVG_MONTH); // working days in an average month
-      WF.look = 3; // months of coal ahead the queue is walked
+      WF.look = TG.smoothWaste ? 12 : 3; // months of coal ahead the queue is walked (a year with the waste smoothed, so it has waste to move ahead)
       WF.ramp = Monthly.rampMonths(P); WF.held = 0; // coal held back by the ramp-up (target units), kept exposed on top of the buffer
       WF.horizon = Math.round((WF.look + WF.months) * Monthly.AVG_MONTH); // calendar days
       WF.owner = new Int32Array(nB * nL).fill(-1); WF.stamp = new Int32Array(nB * nL).fill(-1); WF.due = new Float64Array(nB * nL);
       for (const X of acts) for (const b of X.path) if (WF.owner[b * nL + X.l] < 0) WF.owner[b * nL + X.l] = X.idx;
       events.push({ day: 0, type: 'info', msg: `Waste follows the coal: there is a coal target and no waste target, so each working day the waste activities move only the waste above the coal the target needs over the next month, keeping ${U.fmtNum(WF.months, WF.months % 1 ? 1 : 0)} month${WF.months === 1 ? '' : 's'} of coal (${U.fmtNum(WF.months * TL.coal, 0)} t${TL.prod ? ' of product' : TL.ar ? ' as received' : ''}) exposed ahead${WF.ramp ? `; during the ${WF.ramp}-month coal ramp-up the waste is stripped for the full target, so the coal the ramp-up holds back is exposed too and kept as inventory` : ''}. The teams the coal does not need stay idle.` });
     }
+    /* Steady waste (P.targets.smoothWaste, with the waste following the coal): every month the waste moves at a steady
+       rate, P.targets.smoothRate bcm in an average month, or else the waste of the schedule ÷ the months its coal takes at
+       the coal target. Each working day the waste activities that can work share what is left of the month's steady waste
+       ÷ the working days left, by the volume of their paths; an activity the coal needs more of gets that (the waste that
+       follows the coal), so the coal is exposed as before. What the waste cannot move (held by a dependency, a void or
+       the teams) is not caught up in a later month. */
+    const SW = WF && TG.smoothWaste ? (() => {
+      let wb = 0, coal = 0;
+      for (const X of acts) for (const b of X.path) { if (!scheduled[b][X.l]) continue; const v = vol0[b][X.l]; if (X.g === 1) wb += v; else coal += v * unitOf(X, b); }
+      const set = +TG.smoothRate > 0 ? +TG.smoothRate : null, months = coal / TL.coal;
+      return { rate: set || (months > 0 ? wb / months : 0), auto: !set, bud: 0, days: 0, over: 0 };
+    })() : null;
+    if (SW) events.push({ day: 0, type: 'info', msg: `Steady waste: the waste moves at ${U.fmtNum(SW.rate, 0)} bcm in an average month${SW.auto ? ' (the waste of the schedule ÷ the months its coal takes at the coal target)' : ''}; only when the coal exposed drops below the exposed coal to keep ahead does it move faster, until that is back.` });
     const exposedFor = (b, l) => { for (let q = 0; q < l; q++) if (!layerDone[b][q] && (scheduled[b][q] ? remain[b][q] > 1e-3 : vol0[b][q] > 1e-3)) return false; return true; };
     function wasteNeed() {
       for (const X of acts) { X.wNeed = 0; X.wCap = Infinity; }
@@ -5140,7 +5153,8 @@ const Sim = (() => {
         A += got;
       }
       // each waste activity: the rate that has all of its due waste out by its day, the overdue straight away
-      keys.sort((p, q) => WF.due[p] - WF.due[q]);
+      keys.sort((p, q) => WF.due[p] - WF.due[q] || (p % nL) - (q % nL)); // (the same day: the upper layer first)
+      WF.keys = keys;
       for (const key of keys) {
         const o = WF.owner[key]; if (o < 0) continue;
         const X = acts[o]; X.wNeed += remain[(key / nL) | 0][key % nL];
@@ -5165,6 +5179,7 @@ const Sim = (() => {
         let base = 0, baseC = 0, i = 0;
         for (let d = new Date(date.getTime()); d.getUTCMonth() === date.getUTCMonth(); d = new Date(d.getTime() + U.DAY_MS), i++) { const wk = isWorking(cal, d); if (wk) tg.wdLeft++; if (!TL.work || wk) { base++; baseC += Monthly.rampFactor(P, day + i); } }
         tg.bud = [TL.coal > 0 ? (TL.coal * baseC) / TL.per : Infinity, TL.waste > 0 ? (TL.waste * base) / TL.per : Infinity, (TL.team * base) / TL.per];
+        if (SW) SW.bud = (SW.rate * base) / TL.per; // (the month's steady waste, bcm)
       }
     }
     function targetSplit() {
@@ -5179,6 +5194,33 @@ const Sim = (() => {
       for (const X of acts) { X.alloc = 0; X.allocT = 0; X.act = !X.done && !X.halted && day >= X.startDay && pick(X) >= 0 && X.pool.cnt++ === 0; if (X.act) on.push(X); }
       // waste that follows the coal: what each waste activity may move today
       if (WF) wasteNeed();
+      /* steady waste: the rest of the month's steady waste ÷ the working days left. While the coal exposed is at least the
+         exposed coal to keep ahead, the waste is held to it; when it runs short, the waste moves as the coal needs (and at
+         least at the steady rate) until it is back. */
+      if (SW) {
+        const today = Math.max(0, SW.bud - tg.used[1]) / Math.max(1, tg.wdLeft), ws = on.filter(X => X.g === 1 && X.wCap !== Infinity);
+        let inv = 0;
+        for (const C of acts) {
+          if (C.g !== 0 || C.done || C.halted || !C.path.length) continue;
+          for (let k = C.ptr, m = 0; k < C.path.length && m < 80; k++, m++) { const b = C.path[k]; if (!layerDone[b][C.l] && remain[b][C.l] > 1e-3 && exposedFor(b, C.l)) inv += remain[b][C.l] * unitOf(C, b); }
+        }
+        const short = inv < WF.months * TL.coal + WF.held;
+        SW.days++; if (short) SW.over++;
+        if (!short) for (const X of ws) X.wCap = 0;
+        let need = 0, nom = 0; for (const X of ws) { need += X.wCap; nom += X.nom; }
+        // the steady waste goes to the waste the coal needs next (the queue of the waste that follows the coal, the earliest
+        // due and the upper layer first), then by the volume of the paths
+        let extra = today - need;
+        if (extra > 0) {
+          const got = new Map();
+          for (const key of WF.keys || []) {
+            const X = acts[WF.owner[key]]; if (!X || X.g !== 1 || !X.act || X.wCap === Infinity) continue;
+            const c = (got.get(X) || 0) + remain[(key / nL) | 0][key % nL]; got.set(X, c);
+            if (c > X.wCap) { const add = Math.min(c - X.wCap, extra); X.wCap += add; extra -= add; if (extra <= 1e-6) break; }
+          }
+          if (extra > 1e-6 && nom > 0) for (const X of ws) X.wCap += (extra * X.nom) / nom;
+        }
+      }
       // the targets: shared between the coal (or waste) activities by the volume of their paths; with a priority pit
       // working, its activities get them all and the others what it leaves
       const anyP = [false, false]; for (const X of on) if (X.prio) anyP[X.g] = true;
@@ -6560,6 +6602,7 @@ const Sim = (() => {
 
     return {
       startISO: P.startDate, nDays, dayStart: dayStart.slice(0, nDays + 1), wasteFollows: WF ? { months: WF.months, coal: TL.coal, ar: TL.ar, rampHeld: WF.held } : null,
+      steadyWaste: SW ? { rate: SW.rate, auto: SW.auto, days: SW.days, over: SW.over } : null,
       dCell: dCell.done(), dIns: dIns.done(), dFill: dFill.done(), dMat: dMat.done(),
       bl, vol0, blockDoneDay, backfillDay, working: working.slice(0, nDays),
       acts: acts.map(X => ({ id: X.a.id, name: X.a.name, color: X.a.color, pit: X.pit, host: X.host.id, fleetOf: X.host !== X.a ? X.host.name : null, layer: X.l, layerName: X.L.name, type: X.L.type, method: X.a.method, bcm: X.bcm, t: X.t, pathLen: X.path.length, done: X.done,
@@ -14984,6 +15027,9 @@ const Tabs = (() => {
       const wi = num(+T.waste > 0 ? T.waste : null, v => { T.waste = v > 0 ? v : null; save(); }, { min: 0, step: 1000, allowEmpty: true, placeholder: +T.coal > 0 && limit ? 'follows the coal' : 'none' });
       // with the waste following the coal: how much exposed coal to keep ahead
       const xi = num(WFo.months, v => { T.exposedMonths = v == null ? 1 : U.clamp(v, 0, 24); save(); }, { min: 0, max: 24, step: 0.5 });
+      // steady waste: the rate a month (empty: the average of the schedule)
+      const lastSW = App.res && App.res.steadyWaste, si = num(+T.smoothRate > 0 ? +T.smoothRate : null, v => { if (v > 0) T.smoothRate = v; else delete T.smoothRate; save(); }, { min: 0, step: 5000, allowEmpty: true, placeholder: lastSW && lastSW.auto ? `average: ${U.fmtNum(lastSW.rate, 0)}` : 'the average' });
+      si.setAttribute('aria-label', 'Steady waste per month');
       xi.setAttribute('aria-label', 'Exposed coal kept ahead');
       // the coal ramp-up: the target steps up over the first months
       const rN = Monthly.rampMonths(P), ri = num(rN || null, v => { T.rampMonths = v > 0 ? Math.min(60, Math.round(v)) : 0; save(); }, { min: 0, max: 60, step: 1, allowEmpty: true, placeholder: 'none' });
@@ -15004,6 +15050,9 @@ const Tabs = (() => {
         +T.waste > 0 ? h('div', { class: 'dt', style: { whiteSpace: 'normal', fontSize: 'var(--fs-xs)', color: 'var(--muted)' } }, `Waste: ${eg(+T.waste, wu)}.`) : null,
         +T.coal > 0 ? h('div', { class: 'grid2' }, fld('Coal ramp-up (months)', ri), h('span')) : null,
         +T.coal > 0 ? h('div', { class: 'dt', style: { whiteSpace: 'normal', fontSize: 'var(--fs-xs)', color: 'var(--muted)' } }, `Ramp-up: ${rampTxt}.`) : null,
+        WFo.on ? chk('Smooth the waste: a steady rate each month, faster only when the exposed coal runs short', T.smoothWaste === true, v => { if (v) T.smoothWaste = true; else delete T.smoothWaste; save(); }) : null,
+        WFo.on && T.smoothWaste ? h('div', { class: 'grid2' }, fld('Steady waste (bcm per month)', si), h('div', { class: 'dt', style: { whiteSpace: 'normal', alignSelf: 'end' } }, 'Empty: the waste of the schedule ÷ the months its coal takes at the coal target.')) : null,
+        WFo.on && T.smoothWaste ? h('div', { class: 'dt', style: { whiteSpace: 'normal', fontSize: 'var(--fs-xs)', color: 'var(--muted)' } }, 'The waste moves at the steady rate every month while the coal exposed is at least the exposed coal kept ahead (below); when it runs short the waste moves as fast as the coal needs until it is back. A month stays below the rate only when the waste cannot be moved: held by a dependency (Sequence tab), waiting for a void or a dump, or short of teams. A dependency counted in whole strips releases the waste a strip at a time, so the waste comes in bursts whatever the rate: count it in blocks, give it room, and keep a few months of coal exposed for a steady profile.') : null,
         WFo.on ? h('div', { class: 'grid2' }, fld('Exposed coal kept ahead (months)', xi), h('div', { class: 'dt', style: { whiteSpace: 'normal', alignSelf: 'end' } }, `${U.fmtNum(WFo.months * +T.coal, 0)} t${cb === 'ar' ? ' as received' : cb === 'product' ? ' of product' : ''}`)) : null,
         WFo.on ? msg('info', `The waste follows the coal: each working day the waste activities move only the waste above the coal the target needs over the next month, keeping ${U.fmtNum(WFo.months, WFo.months % 1 ? 1 : 0)} month${WFo.months === 1 ? '' : 's'} of coal exposed ahead. What a block's coal needs is due by the day the exposed coal would drop below that; what is late is moved straight away, as far as the teams allow.${rN ? ` During the ramp-up the waste is stripped for the full target, so the coal the ramp-up holds back is exposed as well and kept as inventory.` : ''} Type a waste target to hold the waste to it instead.`) : null,
         any && App.res && App.stale ? msg('warn', 'Run the simulation again to schedule to these targets.') : null,
@@ -15389,6 +15438,7 @@ const Tabs = (() => {
         h('div', { class: 'kpis' }, tiles),
         held.length ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, 'Held to the target: ' + held.map(A => `${A.name} on ${U.fmtNum(A.tgtDays, 0)} working days`).join(', ') + '.') : null,
         busy.length ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, 'Waited for the teams: ' + busy.map(A => `${A.name} on ${U.fmtNum(A.teamDays, 0)} working days`).join(', ') + '.') : null,
+        res.steadyWaste ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `The waste was smoothed to ${U.fmtNum(res.steadyWaste.rate, 0)} bcm in an average month${res.steadyWaste.auto ? ' (the average of the schedule)' : ''}; the exposed coal ran short, so the waste moved faster, on ${U.fmtNum(res.steadyWaste.over, 0)} of ${U.fmtNum(res.steadyWaste.days, 0)} working days${res.steadyWaste.over > res.steadyWaste.days / 4 ? ' (a dependency in whole strips, or little exposed coal kept ahead, keeps the waste from getting ahead: see the Production tab)' : ''}.`) : null,
         res.wasteFollows ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `The waste followed the coal, keeping ${U.fmtNum(res.wasteFollows.months, res.wasteFollows.months % 1 ? 1 : 0)} month${res.wasteFollows.months === 1 ? '' : 's'} of coal exposed ahead.` + (res.acts.some(A => A.wfDays > 0) ? ' Held to what the coal needed: ' + res.acts.filter(A => A.wfDays > 0).map(A => `${A.name} on ${U.fmtNum(A.wfDays, 0)} working days`).join(', ') + '.' : '')) : null,
         hint(`${G.coal || G.waste ? `The targets and the teams are set in the Production tab. ${ran ? 'This run mined no more than the target of each month.' : G.limit ? 'Run the simulation again to schedule to them.' : 'The targets are only compared with the schedule.'} The charts below show the target as a line; the Excel monthly summary lists it against every month.` : 'Type a coal and a waste target for an average month in the Production tab to schedule to them.'} Teams used: the loose m³ moved in a month (mining, ramps and rehandling) ÷ what one team moves in that month.`)));
     }
