@@ -1,9 +1,9 @@
 {
  "actions": [],
- "allow_rename": 0,
+ "autoname": "field:simulation_id",
  "creation": "2026-10-08 08:53:51.972282",
+ "description": "A mine plan for the Mining Simulation page: geology, blocks, mining sequence, fleet, roads and dumps",
  "doctype": "DocType",
- "editable_grid": 0,
  "engine": "InnoDB",
  "field_order": [
   "simulation_id",
@@ -170,26 +170,26 @@
    "fieldname": "simulation_id",
    "fieldtype": "Data",
    "label": "Simulation ID",
+   "no_copy": 1,
    "read_only": 1,
-   "unique": 1,
-   "no_copy": 1
+   "unique": 1
   },
   {
+   "bold": 1,
    "fieldname": "project_name",
    "fieldtype": "Data",
-   "label": "Project Name",
-   "reqd": 1,
    "in_list_view": 1,
    "in_standard_filter": 1,
-   "bold": 1
+   "label": "Project Name",
+   "reqd": 1
   },
   {
    "fieldname": "geo_project",
    "fieldtype": "Link",
-   "label": "Geo Project",
-   "options": "Geo Project",
    "in_list_view": 1,
-   "in_standard_filter": 1
+   "in_standard_filter": 1,
+   "label": "Geo Project",
+   "options": "Geo Project"
   },
   {
    "fieldname": "column_break_header",
@@ -198,10 +198,11 @@
   {
    "fieldname": "start_date",
    "fieldtype": "Date",
-   "label": "Start Date",
-   "in_list_view": 1
+   "in_list_view": 1,
+   "label": "Start Date"
   },
   {
+   "default": "0",
    "fieldname": "is_demo",
    "fieldtype": "Check",
    "label": "Example Data"
@@ -267,11 +268,11 @@
    "label": "Calendar"
   },
   {
+   "description": "What the simulator works with: the hours of the week over its working days",
    "fieldname": "hours_per_day",
    "fieldtype": "Float",
    "label": "Average Hours per Working Day",
-   "read_only": 1,
-   "description": "What the simulator works with: the hours of the week over its working days"
+   "read_only": 1
   },
   {
    "fieldname": "max_years",
@@ -279,6 +280,7 @@
    "label": "Maximum Years Simulated"
   },
   {
+   "default": "0",
    "fieldname": "sa_holidays",
    "fieldtype": "Check",
    "label": "Stop on SA Public Holidays"
@@ -318,10 +320,10 @@
    "label": "Saturday (hours)"
   },
   {
+   "description": "0: not worked",
    "fieldname": "hours_sunday",
    "fieldtype": "Float",
-   "label": "Sunday (hours)",
-   "description": "0: not worked"
+   "label": "Sunday (hours)"
   },
   {
    "fieldname": "section_break_teams",
@@ -329,6 +331,7 @@
    "label": "Losses & Topsoil"
   },
   {
+   "default": "0",
    "fieldname": "topsoil_as_waste",
    "fieldtype": "Check",
    "label": "Handle Topsoil as Waste"
@@ -386,6 +389,7 @@
    "label": "Benches"
   },
   {
+   "default": "0",
    "fieldname": "bench_on",
    "fieldtype": "Check",
    "label": "Mine Each Strip as a Bench"
@@ -437,11 +441,11 @@
    "options": "\nlimit\ncompare"
   },
   {
+   "description": "insitu: tons in situ; ar: as received (after losses); product: washed product",
    "fieldname": "target_coal_basis",
    "fieldtype": "Select",
    "label": "Coal Target Basis",
-   "options": "\ninsitu\nar\nproduct",
-   "description": "insitu: tons in situ; ar: as received (after losses); product: washed product"
+   "options": "\ninsitu\nar\nproduct"
   },
   {
    "fieldname": "ramp_up_months",
@@ -459,6 +463,7 @@
    "label": "Tipping into the Void"
   },
   {
+   "default": "0",
    "fieldname": "void_tip_on",
    "fieldtype": "Check",
    "label": "Tip Waste into the Void"
@@ -479,6 +484,7 @@
    "fieldtype": "Column Break"
   },
   {
+   "default": "0",
    "fieldname": "void_tip_roads",
    "fieldtype": "Check",
    "label": "Tip on Roads"
@@ -504,6 +510,7 @@
    "fieldtype": "Column Break"
   },
   {
+   "default": "0",
    "fieldname": "cutoff_stop",
    "fieldtype": "Check",
    "label": "Stop Mining Below Thin Seams"
@@ -514,6 +521,7 @@
    "label": "Reserve Boundary"
   },
   {
+   "default": "0",
    "fieldname": "reserve_on",
    "fieldtype": "Check",
    "label": "Use the Reserve Boundary"
@@ -539,16 +547,17 @@
    "label": "Rehabilitation & Final Landform"
   },
   {
+   "default": "0",
    "fieldname": "rehab_on",
    "fieldtype": "Check",
    "label": "Backfill the Voids to a Final Landform, with Topsoil on Top"
   },
   {
+   "description": "topo: the original topography; landform: a drained landform within it",
    "fieldname": "backfill_to",
    "fieldtype": "Select",
    "label": "Backfill To",
-   "options": "\ntopo\nlandform",
-   "description": "topo: the original topography; landform: a drained landform within it"
+   "options": "\ntopo\nlandform"
   },
   {
    "fieldname": "backfill_above",
@@ -566,6 +575,7 @@
    "label": "Surrounding Average Within (m)"
   },
   {
+   "default": "0",
    "fieldname": "topsoil_direct",
    "fieldtype": "Check",
    "label": "Put Stripped Topsoil Straight onto Ready Backfill"
@@ -575,6 +585,7 @@
    "fieldtype": "Column Break"
   },
   {
+   "default": "0",
    "fieldname": "lift_landform",
    "fieldtype": "Check",
    "label": "Lift the Final Landform above the Topography"
@@ -595,6 +606,7 @@
    "label": "Channel Bank Slope (%)"
   },
   {
+   "default": "0",
    "fieldname": "fill_final_void",
    "fieldtype": "Check",
    "label": "Fill the Final Void from the Waste Dumps"
@@ -602,7 +614,7 @@
   {
    "fieldname": "final_void_rate",
    "fieldtype": "Float",
-   "label": "Final Void Fill Rate (m³ loose / working day)"
+   "label": "Final Void Fill Rate (m\u00b3 loose / working day)"
   },
   {
    "fieldname": "column_break_rehab_2",
@@ -688,18 +700,18 @@
    "read_only": 1
   },
   {
+   "description": "All surfaces resampled to the grid (built by the simulator)",
    "fieldname": "grid_file",
    "fieldtype": "Attach",
    "label": "Surface Grid Data",
-   "read_only": 1,
    "no_copy": 1,
-   "description": "All surfaces resampled to the grid (built by the simulator)"
+   "read_only": 1
   },
   {
+   "collapsible": 1,
    "fieldname": "section_break_imagery",
    "fieldtype": "Section Break",
-   "label": "Imagery & View",
-   "collapsible": 1
+   "label": "Imagery & View"
   },
   {
    "fieldname": "imagery_provider",
@@ -739,8 +751,8 @@
    "fieldname": "imagery_file",
    "fieldtype": "Attach",
    "label": "Satellite Image Data",
-   "read_only": 1,
-   "no_copy": 1
+   "no_copy": 1,
+   "read_only": 1
   },
   {
    "fieldname": "tab_geology",
@@ -754,11 +766,11 @@
    "options": "Mining Simulation Surface"
   },
   {
+   "description": "Top to bottom",
    "fieldname": "layers",
    "fieldtype": "Table",
    "label": "Layers",
-   "options": "Mining Simulation Layer",
-   "description": "Top to bottom"
+   "options": "Mining Simulation Layer"
   },
   {
    "fieldname": "tab_blocks",
@@ -771,10 +783,10 @@
    "label": "Block ID Attribute"
   },
   {
+   "description": "Blank: automatic",
    "fieldname": "strip_field",
    "fieldtype": "Data",
-   "label": "Strip Attribute",
-   "description": "Blank: automatic"
+   "label": "Strip Attribute"
   },
   {
    "fieldname": "blocks",
@@ -783,10 +795,10 @@
    "options": "Mining Simulation Block"
   },
   {
+   "collapsible": 1,
    "fieldname": "section_break_attributes",
    "fieldtype": "Section Break",
-   "label": "Block Attributes",
-   "collapsible": 1
+   "label": "Block Attributes"
   },
   {
    "fieldname": "attribute_columns",
@@ -841,15 +853,15 @@
    "label": "Teams & Equipment"
   },
   {
+   "description": "The simulator's number of teams (may be a fraction, e.g. 6.5)",
    "fieldname": "team_count",
    "fieldtype": "Float",
-   "label": "Teams",
-   "description": "The simulator's number of teams (may be a fraction, e.g. 6.5)"
+   "label": "Teams"
   },
   {
    "fieldname": "volume_per_team",
    "fieldtype": "Float",
-   "label": "Loose m³ per Team per Month"
+   "label": "Loose m\u00b3 per Team per Month"
   },
   {
    "fieldname": "column_break_team_settings",
@@ -878,11 +890,11 @@
    "options": "Mining Simulation Team"
   },
   {
+   "description": "The equipment of each team, for asset deployment planning (the simulator does not use it)",
    "fieldname": "fleet",
    "fieldtype": "Table",
    "label": "Team Equipment",
-   "options": "Mining Simulation Equipment",
-   "description": "The equipment of each team, for asset deployment planning (the simulator does not use it)"
+   "options": "Mining Simulation Equipment"
   },
   {
    "fieldname": "equipment_summary",
@@ -964,11 +976,11 @@
    "options": "Mining Simulation Quality Raster"
   },
   {
+   "collapsible": 1,
+   "description": "The simulator's analysis modules; edited in the simulator",
    "fieldname": "section_break_analysis",
    "fieldtype": "Section Break",
-   "label": "Analysis Settings",
-   "collapsible": 1,
-   "description": "The simulator's analysis modules; edited in the simulator"
+   "label": "Analysis Settings"
   },
   {
    "fieldname": "margin_settings",
@@ -1011,21 +1023,20 @@
    "options": "JSON"
   },
   {
+   "description": "Keys, nulls and unmapped values of the simulator object (keeps import/export lossless)",
    "fieldname": "json_meta",
    "fieldtype": "Long Text",
-   "label": "JSON Meta",
    "hidden": 1,
-   "read_only": 1,
-   "no_copy": 0,
-   "description": "Keys, nulls and unmapped values of the simulator object (keeps import/export lossless)"
+   "label": "JSON Meta",
+   "read_only": 1
   }
  ],
- "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-20 09:34:43.019558",
+ "modified": "2026-10-20 13:36:58.313736",
  "modified_by": "Administrator",
  "module": "Geo Planning",
  "name": "Mining Simulation Project",
+ "naming_rule": "By fieldname",
  "owner": "Administrator",
  "permissions": [
   {
@@ -1062,14 +1073,12 @@
    "share": 1
   }
  ],
+ "row_format": "Dynamic",
+ "search_fields": "project_name,geo_project",
+ "show_title_field_in_link": 1,
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],
- "track_changes": 0,
- "autoname": "field:simulation_id",
- "naming_rule": "By fieldname",
  "title_field": "project_name",
- "show_title_field_in_link": 1,
- "search_fields": "project_name,geo_project",
- "description": "A mine plan for the Mining Simulation page: geology, blocks, mining sequence, fleet, roads and dumps"
+ "track_changes": 1
 }

@@ -33,3 +33,4 @@ def get_context(context):
 		# Frappe's theme variables and fonts are read from here (frappe_theme.js)
 		"deskCss": bundled_asset("desk.bundle.css"),
 	}
+#Test upload
