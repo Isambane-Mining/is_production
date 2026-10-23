@@ -46,6 +46,11 @@ has_permission = {
     "CAD Processing Job": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
     "CAD Block": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
     "CAD Import Export": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
+    "CAD Surface": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
+    "CAD Volume Calculation": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
+    "CAD Design Validation": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
+    "CAD Design Publication": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
+    "CAD Survey Reconciliation": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
 }
 
 permission_query_conditions = {
@@ -55,6 +60,11 @@ permission_query_conditions = {
     "CAD Processing Job": "is_production.cad_engineering.services.cad_permissions.model_condition",
     "CAD Block": "is_production.cad_engineering.services.cad_permissions.model_condition",
     "CAD Import Export": "is_production.cad_engineering.services.cad_permissions.model_condition",
+    "CAD Surface": "is_production.cad_engineering.services.cad_permissions.model_condition",
+    "CAD Volume Calculation": "is_production.cad_engineering.services.cad_permissions.model_condition",
+    "CAD Design Validation": "is_production.cad_engineering.services.cad_permissions.model_condition",
+    "CAD Design Publication": "is_production.cad_engineering.services.cad_permissions.model_condition",
+    "CAD Survey Reconciliation": "is_production.cad_engineering.services.cad_permissions.model_condition",
 }
 
 override_whitelisted_methods = {

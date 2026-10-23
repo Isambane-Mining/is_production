@@ -30,7 +30,7 @@ JOB = "CAD Processing Job"
 LOG_LIMIT = 200000
 MAX_BUILD_ITEMS = 200
 SLOT_WAIT_SECONDS = 600
-SOLID_OPS = {"box", "cylinder", "cone", "sphere", "extrude", "transform"}
+SOLID_OPS = {"box", "cylinder", "cone", "sphere", "extrude", "transform", "boolean", "revolve", "loft", "sweep", "fillet", "chamfer", "shell"}
 CURVE_OPERATIONS = {"offset"}
 
 
@@ -38,7 +38,7 @@ def start_job(job_type, cad_model=None, revision=None, parameters=None, check_pe
 	if not frappe.db.get_single_value("CAD Settings", "cad_worker_enabled"):
 		frappe.throw(_("The CAD worker is switched off (CAD Settings)."))
 	if cad_model and check_permission:
-		frappe.get_doc("CAD Model", cad_model).check_permission("write" if job_type != "Tessellate" else "read")
+		frappe.get_doc("CAD Model", cad_model).check_permission("read" if job_type in ("Tessellate", "Analysis") else "write")
 	job = frappe.get_doc(
 		{
 			"doctype": JOB,
@@ -235,11 +235,16 @@ def run_build(job, parameters, workspace, log):
 		if item.get("op") not in SOLID_OPS:
 			frappe.throw(_("Unknown solid operation {0}.").format(item.get("op")))
 		item = {**item, "key": str(item.get("key") or n)}
-		if item["op"] == "transform":
+		if item["op"] in ("transform", "fillet", "chamfer", "shell"):
 			digest = item.pop("geometry_ref", None)
 			if not storage.SHA256.match(digest or ""):
-				frappe.throw(_("Move needs the solid's geometry reference."))
+				frappe.throw(_("This operation needs the solid's geometry reference."))
 			item["brep"] = stage_blob(job.cad_model, digest, workspace, f"source_{n}")
+		elif item["op"] == "boolean":
+			digests = item.pop("geometry_refs", None) or []
+			if len(digests) < 2 or not all(storage.SHA256.match(d or "") for d in digests):
+				frappe.throw(_("A Boolean needs at least two saved solids."))
+			item["breps"] = [stage_blob(job.cad_model, d, workspace, f"source_{n}_{k}") for k, d in enumerate(digests)]
 		request_items.append(item)
 	result = run_worker(job, {"command": "build", "workspace": workspace, "items": request_items}, log)
 	occt = frappe.db.get_single_value("CAD Settings", "occt_version")
@@ -249,7 +254,7 @@ def run_build(job, parameters, workspace, log):
 		if built.get("valid") and built.get("brep"):
 			brep = checked_output(workspace, built["brep"])
 			digest = storage.store_blob(job.cad_model, brep, "brep", expected=built.get("checksum"))
-			source = {k: v for k, v in item.items() if k not in ("brep", "key")}
+			source = {k: v for k, v in item.items() if k not in ("brep", "breps", "key")}
 			record = {**entry, "source": source, "occt": occt, "job": job.name}
 			record.pop("key", None)
 			storage.provider().write(storage.blob_key(job.cad_model, digest, "json"), json.dumps(record).encode())
@@ -270,7 +275,7 @@ def checked_output(workspace, path):
 
 
 def run_validate(job, parameters, workspace, log):
-	filters = {"cad_model": job.cad_model}
+	filters = {"cad_model": job.cad_model, "entity_type": ["not in", ["Surface", "Mesh"]]}  # TINs are checked when made
 	if parameters.get("entity_ids"):
 		filters["entity_id"] = ["in", parameters["entity_ids"]]
 	elif parameters.get("not_checked"):  # after an import: everything not checked yet
@@ -296,7 +301,8 @@ def run_validate(job, parameters, workspace, log):
 	by_id = {row.entity_id: row for row in rows}
 	counts = {}
 	skipped = 0
-	for found in result["entities"]:
+	# rows in primary-key order (the order a concurrent save locks them in its own index scans), short transaction
+	for found in sorted(result["entities"], key=lambda f: by_id[f["entity_id"]].name if f["entity_id"] in by_id else ""):
 		row = by_id.get(found["entity_id"])
 		if not row:
 			continue
@@ -351,6 +357,14 @@ HANDLERS = {"Build Geometry": run_build, "Validate Model": run_validate, "Tessel
 
 
 def handler_for(job_type):
+	if job_type == "Mining Design":
+		from is_production.cad_engineering.services import cad_mining_service
+
+		return cad_mining_service.run
+	if job_type in ("Surface", "Analysis"):
+		from is_production.cad_engineering.services import cad_surface_service
+
+		return cad_surface_service.run_surface if job_type == "Surface" else cad_surface_service.run_analysis
 	if job_type in ("Inspect Import", "Import", "Export"):
 		from is_production.cad_engineering.services import cad_exchange_service
 

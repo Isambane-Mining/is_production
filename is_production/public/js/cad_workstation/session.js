@@ -157,6 +157,7 @@ export class EditSession {
 				geometry_ref: e.geometry_ref || null,
 				color: e.color || null,
 				line_type: e.line_type || null,
+				line_weight: e.line_weight || 0,
 				metadata: e.metadata || null,
 			};
 		});

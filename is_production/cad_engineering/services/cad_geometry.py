@@ -49,7 +49,11 @@ SUPPORTED_TYPES = {
 	"Hatch",
 	"Block Reference",
 	"Solid",
+	"Surface",
+	"Mesh",
 }
+SURFACE_TYPES = {"Survey Surface", "Terrain Surface", "Geological Surface", "Coal Seam", "Pit Surface", "Design Surface", "As-Built Surface"}
+BLOB_FORMATS = {"Solid": ("brep", "OCCT B-Rep"), "Surface": ("tin", "TIN"), "Mesh": ("tin", "TIN")}
 HATCH_PATTERNS = {"SOLID", "ANSI31", "ANSI37", "LINES", "GRID", "DOTS"}
 DIMENSION_KINDS = {"aligned", "linear", "angular", "radius", "diameter"}
 HALIGN = {"left", "center", "right"}
@@ -140,13 +144,18 @@ def normalise(entity_type, geometry, block_exists=None):
 		bulges = bulge_list(g.get("bulges"), points, closed, _("Polyline"))
 		if bulges:
 			out["bulges"] = bulges
+		if closed and g.get("fill"):
+			out["fill"] = True  # drawn filled (a SOLID hatch in DXF)
 		return out
 	if entity_type == "Circle":
-		return {
+		out = {
 			"center": coordinate(g.get("center"), _("Centre")),
 			"radius": number(g.get("radius"), _("Radius"), positive=True),
 			"normal": unit_vector(g.get("normal"), _("Normal")),
 		}
+		if g.get("fill"):
+			out["fill"] = True
+		return out
 	if entity_type == "Arc":
 		start, end = number(g.get("start_angle"), _("Start angle")), number(g.get("end_angle"), _("End angle"))
 		if abs(end - start) < 1e-12:
@@ -168,7 +177,7 @@ def normalise(entity_type, geometry, block_exists=None):
 			frappe.throw(_("The major axis must lie in the ellipse's plane."))
 		start = number(g.get("start_param", 0.0), _("Start parameter"))
 		end = number(g.get("end_param", TAU), _("End parameter"))
-		return {
+		out = {
 			"center": coordinate(g.get("center"), _("Centre")),
 			"major_axis": major,
 			"ratio": number(g.get("ratio"), _("Axis ratio"), positive=True, maximum=1.0),
@@ -176,6 +185,9 @@ def normalise(entity_type, geometry, block_exists=None):
 			"end_param": end,
 			"normal": normal,
 		}
+		if g.get("fill") and abs((end - start) % TAU) < 1e-9:
+			out["fill"] = True
+		return out
 	if entity_type == "Spline":
 		degree = int(number(g.get("degree", 3), _("Degree"), minimum=1, maximum=11))
 		control = points_list(g.get("control_points"), _("Spline"), degree + 1)
@@ -274,9 +286,23 @@ def normalise(entity_type, geometry, block_exists=None):
 		if any(abs(s) < 1e-12 for s in scale):
 			frappe.throw(_("Block scale cannot be zero."))
 		return {"block": name, "insert": coordinate(g.get("insert"), _("Insertion point")), "scale": scale, "rotation": number(g.get("rotation", 0.0), _("Rotation"))}
+	if entity_type in ("Surface", "Mesh"):
+		# the triangles are in the TIN file (geometry_ref); the geometry keeps the name and where it came from
+		name = str(g.get("name") or g.get("surface_name") or "").strip()
+		if not name or len(name) > 140:
+			frappe.throw(_("A {0} needs a name.").format(_(entity_type)))
+		out = {"name": name}
+		if entity_type == "Surface":
+			surface_type = g.get("surface_type") or "Design Surface"
+			if surface_type not in SURFACE_TYPES:
+				frappe.throw(_("Unknown surface type {0}.").format(surface_type))
+			out["surface_type"] = surface_type
+		if isinstance(g.get("source"), dict):
+			out["source"] = g["source"]
+		return out
 	# Solid: the source parameters are kept for reference; the B-Rep file is the authoritative shape.
 	source = g.get("source")
-	if not isinstance(source, dict) or source.get("op") not in ("box", "cylinder", "cone", "sphere", "extrude", "transform"):
+	if not isinstance(source, dict) or source.get("op") not in ("box", "cylinder", "cone", "sphere", "extrude", "transform", "boolean", "revolve", "loft", "sweep", "step"):
 		frappe.throw(_("A solid needs its source operation."))
 	return {"source": source}
 

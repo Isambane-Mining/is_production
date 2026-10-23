@@ -18,7 +18,7 @@ from is_production.cad_engineering.services import (
 	cad_revision_service,
 )
 
-IGNORE_TEST_RECORD_DEPENDENCIES = ["User", "Employee", "Company", "Branch", "Location", "Geo Project", "CAD Design Revision", "CAD Model", "CAD Processing Job"]
+IGNORE_TEST_RECORD_DEPENDENCIES = ["User", "Employee", "Company", "Branch", "Location", "Geo Project", "CAD Design Revision", "CAD Model", "CAD Processing Job", "CAD Design Standard", "CAD Design Validation", "Material Type"]
 FIXTURE = os.path.join(os.path.dirname(__file__), "..", "..", "tests", "fixtures", "sample_r2018.dxf")
 
 
@@ -155,11 +155,12 @@ class IntegrationTestCADImportExport(IntegrationTestCase):
 		self.assertEqual(io["processing_status"], "Completed", io)
 		report = io["report"]
 		self.assertEqual(report["units_name"], "Metres")
-		self.assertEqual(report["unsupported"], {"MESH": 1})
+		self.assertEqual(report["unsupported"], {})
+		self.assertEqual([s["name"] for s in report["surfaces"]], ["SURVEY"])  # the MESH entity: a 2.5D face set
 		self.assertEqual(report["invalid_count"], 1)  # the zero-length line
 		self.assertEqual(report["duplicates"], 1)
 		rows = entities(model)
-		self.assertEqual(len(rows), report["entity_count"] - 1)  # duplicate skipped
+		self.assertEqual(len(rows), report["entity_count"] - 1)  # duplicate skipped (the surface is included)
 		types = Counter(r.entity_type for r in rows)
 		self.assertEqual(types["Block Reference"], 3)
 		self.assertEqual(types["Dimension"], 5)
@@ -197,7 +198,9 @@ class IntegrationTestCADImportExport(IntegrationTestCase):
 		def signature(model):
 			out = Counter()
 			for r in entities(model):
-				if r.entity_type == "Dimension":  # exported dimensions are re-rendered by ezdxf: compare what they measure
+				if r.entity_type in ("Surface", "Mesh"):  # their source (file name) differs: compare name and shape
+					out[(r.entity_type, r.geometry["name"], round(r.area, 6))] += 1
+				elif r.entity_type == "Dimension":  # exported dimensions are re-rendered by ezdxf: compare what they measure
 					out[("Dimension", round(cad_geometry.dimension_measurement(r.geometry), 6))] += 1
 				else:
 					out[(r.entity_type, json.dumps(rounded(r.geometry), sort_keys=True))] += 1
@@ -208,6 +211,45 @@ class IntegrationTestCADImportExport(IntegrationTestCase):
 		self.assertEqual(b - a, Counter(), "added on the round trip")
 		blocks = lambda m: {r.block_name: json.dumps(rounded(json.loads(r.entities)), sort_keys=True) for r in frappe.get_all("CAD Block", filters={"cad_model": m}, fields=["block_name", "entities"])}
 		self.assertEqual(blocks(source), blocks(target))
+
+	def test_line_weight_and_fill_survive_save_and_dxf(self):
+		model = make_model("DXF-FILL").name
+		square = [[0, 0, 5], [10, 0, 5], [10, 10, 5], [0, 10, 5]]
+		cad_model_service.save_edits(
+			model,
+			0,
+			{
+				"upserts": [
+					{"entity_id": "SQ", "entity_type": "Polyline", "line_weight": 0.7, "color": "#ff8800", "geometry": {"points": square, "closed": True, "fill": True}},
+					{"entity_id": "CI", "entity_type": "Circle", "geometry": {"center": [20, 5, 5], "radius": 3, "fill": True}},
+					{"entity_id": "OPEN", "entity_type": "Polyline", "geometry": {"points": square, "closed": False, "fill": True}},  # an open polyline is never filled
+				]
+			},
+		)
+		rows = {r.entity_id: r for r in frappe.get_all("CAD Entity", filters={"cad_model": model}, fields=["entity_id", "geometry", "line_weight"])}
+		self.assertEqual(rows["SQ"].line_weight, 0.7)
+		self.assertTrue(json.loads(rows["SQ"].geometry)["fill"])
+		self.assertTrue(json.loads(rows["CI"].geometry)["fill"])
+		self.assertNotIn("fill", json.loads(rows["OPEN"].geometry))
+		io = cad_exchange_service.start_export(model, {"version": "R2018"})
+		io = cad_exchange_service.get_exchange(io["name"])
+		self.assertEqual(io["processing_status"], "Completed", io)
+		with open(frappe.get_doc("File", {"file_url": io["result_file"]}).get_full_path(), "rb") as f:
+			exported = f.read()
+		import io as _io
+
+		import ezdxf
+
+		doc = ezdxf.read(_io.StringIO(exported.decode("utf-8", "replace")))
+		msp = doc.modelspace()
+		hatches = msp.query("HATCH")
+		self.assertEqual(len(hatches), 2)  # the square and the circle
+		self.assertTrue(all(h.dxf.solid_fill for h in hatches))
+		self.assertEqual([e.dxf.lineweight for e in msp.query("LWPOLYLINE") if e.closed], [70])
+		target = make_model("DXF-FILL-B").name
+		import_dxf(target, exported)
+		weights = sorted(r.line_weight for r in frappe.get_all("CAD Entity", filters={"cad_model": target, "entity_type": "Polyline"}, fields=["line_weight"]))
+		self.assertIn(0.7, weights)
 
 	def test_import_units_axes_and_review_lock(self):
 		model = make_model("DXF-MM").name
@@ -224,9 +266,9 @@ class IntegrationTestCADImportExport(IntegrationTestCase):
 		with self.assertRaises(frappe.ValidationError):
 			cad_exchange_service.commit_import(io["name"], {"source_units": "Metres"})
 
-	def test_only_dxf_files_are_accepted(self):
+	def test_only_supported_files_are_accepted(self):
 		model = make_model("DXF-BAD").name
-		file = upload(b"not a dxf", "notes.txt")
+		file = upload(b"not a drawing", "notes.docx")
 		with self.assertRaises(frappe.ValidationError):
 			cad_exchange_service.start_import(model, file.file_url)
 		garbage = upload(b"0\nSECTION\n2\nGARBAGE\n", "broken.dxf")

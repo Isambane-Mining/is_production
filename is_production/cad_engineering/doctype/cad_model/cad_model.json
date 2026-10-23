@@ -13,6 +13,8 @@
   "approval_status",
   "current_revision",
   "working_revision",
+  "design_standard",
+  "last_design_validation",
   "section_org",
   "company",
   "column_break_org",
@@ -121,6 +123,20 @@
    "read_only": 1
   },
   {
+   "fieldname": "design_standard",
+   "fieldtype": "Link",
+   "label": "Design Standard",
+   "options": "CAD Design Standard",
+   "description": "The mining design rules this model is designed and validated against (an Active version)."
+  },
+  {
+   "fieldname": "last_design_validation",
+   "fieldtype": "Link",
+   "label": "Last Design Validation",
+   "options": "CAD Design Validation",
+   "read_only": 1
+  },
+  {
    "fieldname": "section_org",
    "fieldtype": "Section Break",
    "label": "Organisation"
@@ -194,9 +210,9 @@
    "fieldname": "plan_orientation",
    "fieldtype": "Select",
    "label": "Plan Orientation",
-   "options": "Auto from CRS\nX East, Y North\nRotated 180\u00b0 (Westing/Southing)",
+   "options": "Auto from CRS\nX East, Y North\nRotated 180° (Westing/Southing)",
    "default": "Auto from CRS",
-   "description": "South African Lo systems store westing/southing: Auto turns the plan view 180\u00b0 so north is up. Coordinates are never changed."
+   "description": "South African Lo systems store westing/southing: Auto turns the plan view 180° so north is up. Coordinates are never changed."
   },
   {
    "fieldname": "column_break_crs",
@@ -342,7 +358,7 @@
  ],
  "grid_page_length": 50,
  "links": [],
- "modified": "2026-10-21 20:00:00.000000",
+ "modified": "2026-10-22 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "CAD Engineering",
  "name": "CAD Model",

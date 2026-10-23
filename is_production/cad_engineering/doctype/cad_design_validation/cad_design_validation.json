@@ -1,0 +1,182 @@
+{
+ "actions": [],
+ "creation": "2026-10-22 16:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "fields": [
+  {
+   "fieldname": "cad_model",
+   "fieldtype": "Link",
+   "label": "CAD Model",
+   "options": "CAD Model",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "revision",
+   "fieldtype": "Link",
+   "label": "Model Revision",
+   "options": "CAD Design Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Result",
+   "options": "Pass\nWarning\nFail",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "cb_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "design_standard",
+   "fieldtype": "Link",
+   "label": "Design Standard (version)",
+   "options": "CAD Design Standard",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "standard_version",
+   "fieldtype": "Int",
+   "label": "Standard Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "checked_on",
+   "fieldtype": "Datetime",
+   "label": "Checked On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_counts",
+   "fieldtype": "Section Break",
+   "label": "Summary"
+  },
+  {
+   "fieldname": "checks_run",
+   "fieldtype": "Int",
+   "label": "Checks Run",
+   "read_only": 1
+  },
+  {
+   "fieldname": "failures",
+   "fieldtype": "Int",
+   "label": "Failures",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_counts",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "warnings",
+   "fieldtype": "Int",
+   "label": "Warnings",
+   "read_only": 1
+  },
+  {
+   "fieldname": "designs_checked",
+   "fieldtype": "Small Text",
+   "label": "Designs Checked",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_results",
+   "fieldtype": "Section Break",
+   "label": "Results"
+  },
+  {
+   "fieldname": "summary",
+   "fieldtype": "Small Text",
+   "label": "Summary",
+   "read_only": 1
+  },
+  {
+   "fieldname": "standard_snapshot",
+   "fieldtype": "JSON",
+   "label": "Standard Rules Used",
+   "read_only": 1
+  },
+  {
+   "fieldname": "results",
+   "fieldtype": "JSON",
+   "label": "Results",
+   "read_only": 1
+  }
+ ],
+ "field_order": [
+  "cad_model",
+  "revision",
+  "status",
+  "cb_main",
+  "design_standard",
+  "standard_version",
+  "checked_on",
+  "sb_counts",
+  "checks_run",
+  "failures",
+  "cb_counts",
+  "warnings",
+  "designs_checked",
+  "sb_results",
+  "summary",
+  "standard_snapshot",
+  "results"
+ ],
+ "grid_page_length": 50,
+ "links": [],
+ "modified": "2026-10-22 16:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "CAD Engineering",
+ "name": "CAD Design Validation",
+ "owner": "Administrator",
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "autoname": "format:CAD-DVAL-{YYYY}-{#####}",
+ "naming_rule": "Expression",
+ "description": "The result of checking a model's mining design (pits, benches, berms, roads, blocks) against a version of a CAD Design Standard. Never edited after it is made.",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production User",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1
+  }
+ ]
+}

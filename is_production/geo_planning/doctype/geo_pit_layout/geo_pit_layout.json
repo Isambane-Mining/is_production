@@ -12,6 +12,9 @@
   "layout_version",
   "layout_type",
   "pit_outline_batch",
+  "source_cad_model",
+  "source_cad_revision",
+  "cad_publication",
   "block_size_x",
   "block_size_y",
   "block_angle_degrees",
@@ -68,6 +71,28 @@
    "fieldtype": "Link",
    "label": "Pit Outline Batch",
    "options": "Geo Import Batch"
+  },
+  {
+   "fieldname": "source_cad_model",
+   "fieldtype": "Link",
+   "label": "Source CAD Model",
+   "options": "CAD Model",
+   "read_only": 1,
+   "description": "Set when the layout is published from an approved CAD design (no pit outline batch then)."
+  },
+  {
+   "fieldname": "source_cad_revision",
+   "fieldtype": "Link",
+   "label": "Source CAD Revision",
+   "options": "CAD Design Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cad_publication",
+   "fieldtype": "Link",
+   "label": "CAD Publication",
+   "options": "CAD Design Publication",
+   "read_only": 1
   },
   {
    "fieldname": "block_size_x",
@@ -188,7 +213,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-05-25 14:12:30.317809",
+ "modified": "2026-10-23 09:00:00.000000",
  "modified_by": "Administrator",
  "module": "Geo Planning",
  "name": "Geo Pit Layout",

@@ -6,6 +6,7 @@
 				<span class="muted"> · {{ model.name }} · {{ model.crs || __("no CRS") }} · {{ model.linear_units }}</span>
 				<span v-if="working_label" class="cad-chip warning">{{ working_label }}</span>
 				<span v-if="info.in_review" class="cad-chip info">{{ __("In review") }}</span>
+				<span v-if="model.design_standard" class="cad-chip" :title="__('Design standard (Mining → Design Standard)')">{{ model.design_standard }}</span>
 				<span v-if="!info.can_edit" class="cad-chip">{{ __("Read only") }}</span>
 			</span>
 			<span v-if="!config.worker_enabled" class="cad-chip error">{{ __("CAD worker off") }}</span>
@@ -36,6 +37,7 @@
 			<span class="cad-sep"></span>
 			<button :class="{ on: view_mode === '2d' }" @click="run('mode', '2d')">2D</button>
 			<button :class="{ on: view_mode === '3d' }" @click="run('mode', '3d')">3D</button>
+			<button :class="{ on: orbit_mode }" :title="__('Orbit (ORBIT): left-drag turns the view about the point under the cursor. Also: right-drag in 3D, Shift+middle-drag or Alt+left-drag, arrow keys.')" :disabled="!model" @click="run('toggle_orbit')"><Icon name="view3d" /></button>
 			<button :title="__('Zoom Extents')" :disabled="!model" @click="run('zoom_extents')"><Icon name="zoom_extents" /></button>
 			<button :title="__('Zoom Selection')" :disabled="!selection.length" @click="run('zoom_selection')"><Icon name="zoom_selection" /></button>
 		</div>
@@ -74,13 +76,39 @@
 						@approve="approve_revision"
 						@reject="reject_revision"
 						@restore="restore_revision"
+						@compare="run('plan_compare')"
 					/>
 				</template>
 				<div v-else-if="left_tab !== 'models'" class="muted pad">{{ __("Open a model first.") }}</div>
 			</aside>
 
 			<section class="cad-viewport-wrap">
-				<div ref="viewport_el" class="cad-viewport" @pointermove="on_pointer_move" @pointerdown="on_pointer_down" @pointerup="on_pointer_up" @contextmenu.prevent="on_context" @pointerleave="cursor = null"></div>
+				<div ref="viewport_el" class="cad-viewport" @pointermove="on_pointer_move" @pointerdown="on_pointer_down" @pointerup="on_pointer_up" @dblclick="on_double_click" @contextmenu.prevent="on_context" @pointerleave="cursor = null"></div>
+				<ObjectPanel
+					v-if="object_panel && panel_entity"
+					:entity="panel_entity"
+					:layers="session_layers"
+					:can_edit="editable"
+					:decimals="settings.decimals"
+					:mode="object_panel.mode"
+					:extrude="object_panel.extrude"
+					:targets="object_panel.targets"
+					:profiles="object_panel.profiles.length || object_panel.ids.length"
+					:editing="Boolean(object_panel.editing)"
+					:history="panel_entity && panel_entity.entity_type === 'Solid' ? solid_history(panel_entity).map(history_label) : []"
+					@history_edit="edit_history_step"
+					@history_remove="remove_history_step"
+					:stale="object_panel.stale"
+					:units="unit_symbol"
+					:worker="config.worker_enabled"
+					:busy="object_panel.busy"
+					@update="object_update"
+					@mode="object_mode"
+					@extrude="object_extrude"
+					@ok="extrude_ok"
+					@close="close_object"
+				/>
+				<div v-if="extrude_label" class="cad-extrude-label" :style="{ left: extrude_label.x + 'px', top: extrude_label.y + 'px' }">{{ extrude_label.text }}</div>
 				<div v-if="band" class="cad-band" :class="{ crossing: band.crossing }" :style="band_style"></div>
 				<div v-if="!model" class="cad-empty">
 					<h3>{{ __("CAD Engineering Workstation") }}</h3>
@@ -91,6 +119,23 @@
 				</div>
 				<div v-if="loading" class="cad-loading">{{ loading }}</div>
 				<div v-if="tool_prompt" class="cad-prompt">{{ tool_prompt }}</div>
+				<div v-if="legend" class="cad-legend-box small">
+					<div>{{ legend.mode === "slope" ? __("Slope 0° … 60°+") : __("Elevation") }}</div>
+					<div class="cad-ramp" :class="legend.mode"></div>
+					<div v-if="legend.mode !== 'slope'" class="cad-row mono"><span>{{ fmt(legend.min) }}</span><span class="cad-grow"></span><span>{{ fmt(legend.max) }}</span></div>
+				</div>
+				<div v-if="section_on" class="cad-chip info cad-section-chip" @click="run('section_plane_off')">{{ __("Section view — click to turn off") }}</div>
+				<div v-if="model" class="cad-nav" :class="{ raised: analysis }">
+					<button :title="__('Turn left 15° (←)')" @click="run('orbit', [-15, 0])">↺</button>
+					<button :title="__('Tilt up 10° (↑)')" @click="run('orbit', [0, 10])">▲</button>
+					<button :title="__('Turn right 15° (→)')" @click="run('orbit', [15, 0])">↻</button>
+					<button :title="__('Tilt down 10° (↓)')" @click="run('orbit', [0, -10])">▼</button>
+					<button :title="__('Plan (top) view')" @click="run('view', 'top')">{{ __("Top") }}</button>
+					<button :title="__('Isometric view')" @click="run('view', 'iso')">{{ __("Iso") }}</button>
+					<button :class="{ on: orbit_mode }" :title="__('Orbit with the left mouse button / trackpad (ORBIT)')" @click="run('toggle_orbit')"><Icon name="view3d" /></button>
+					<button :title="__('Zoom Extents')" @click="run('zoom_extents')"><Icon name="zoom_extents" /></button>
+				</div>
+				<AnalysisPanel v-if="analysis" :data="analysis" :decimals="settings.decimals" @close="analysis = null" @zoom="zoom_point" @select="zoom_ids" />
 			</section>
 
 			<aside class="cad-right">
@@ -103,6 +148,8 @@
 					:decimals="decimals"
 					:angular_decimals="config.angular_precision"
 					:dirty_ids="dirty_ids"
+					:surface_types="config.surface_types"
+					@edit="(id) => open_object([id])"
 					@update="update_entities"
 					@update_geometry="update_geometry"
 					@error="error"
@@ -111,6 +158,7 @@
 				<div class="cad-props">
 					<div class="cad-prop"><span>{{ __("Cursor") }}</span><span class="mono">{{ cursor ? fmt_point(cursor) : "—" }}</span></div>
 					<div class="cad-prop"><span>{{ __("Snap") }}</span><span>{{ snap_kind || "—" }}</span></div>
+					<div v-if="surface_point" class="cad-prop"><span>{{ __("Surface") }}</span><span class="mono" :title="surface_point.name">Z {{ fmt(surface_point.point[2]) }} · {{ surface_point.name }}</span></div>
 					<div class="cad-prop"><span>{{ __("Last point") }}</span><span class="mono">{{ last_point ? fmt_point(last_point) : "—" }}</span></div>
 					<div class="cad-prop">
 						<span>{{ __("Work plane Z") }}</span>
@@ -141,7 +189,7 @@
 					autocomplete="off"
 					:placeholder="tool_name ? __('x,y[,z]  @dx,dy  @dist<angle  a number, or text') : __('L PL REC POL C A EL SPL XL T MT DAL DLI DAN H M CO RO SC MI S AR O TR EX BR J X F CHA B I E BOX CYL EXT DI AA ANG U SAVE…')"
 					@keydown.enter.prevent="submit_command"
-					@keydown.esc.prevent="run('cancel')"
+					@keydown.esc.prevent.stop="on_escape"
 				/>
 			</div>
 		</div>
@@ -157,34 +205,43 @@
 			<span class="muted">OCCT {{ (config.health && config.health.occt_version) || "?" }}</span>
 		</footer>
 
-		<ImportDialog v-if="dialog === 'import'" :model="model" @close="close_import" @error="error" />
-		<ExportDialog v-if="dialog === 'export'" :model="model" :revisions="info.revisions || []" @close="dialog = null" @error="error" />
+		<ImportDialog v-if="dialog === 'import'" :model="model" :surface_types="config.surface_types" @close="close_import" @error="error" />
+		<ExportDialog v-if="dialog === 'export'" :model="model" :revisions="info.revisions || []" :selected="selected_entities" @close="dialog = null" @error="error" />
+		<FormDialog v-if="form" v-bind="form.props" @done="form.resolve" />
 	</div>
 </template>
 
 <script setup>
-import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef } from "vue";
+import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from "vue";
 
+import AnalysisPanel from "./AnalysisPanel.vue";
 import { call, get_mesh, wait_for_job } from "./api";
 import BlockPanel from "./BlockPanel.vue";
 import { ALIASES, parse_input } from "./command";
 import EntityPanel from "./EntityPanel.vue";
+import FormDialog from "./FormDialog.vue";
 import ExportDialog from "./ExportDialog.vue";
-import { entity_extent, format_number, format_point, union } from "./geometry";
+import { closed_loop, entity_extent, format_number, format_point, union } from "./geometry";
 import Icon from "./Icon.vue";
 import ImportDialog from "./ImportDialog.vue";
 import LayerPanel from "./LayerPanel.vue";
 import MenuBar from "./MenuBar.vue";
+import ObjectPanel from "./ObjectPanel.vue";
+import { ExtrudePreview } from "./extrude_preview";
 import ModelPanel from "./ModelPanel.vue";
 import PropertiesPanel from "./PropertiesPanel.vue";
 import ReferencePanel from "./ReferencePanel.vue";
 import RevisionPanel from "./RevisionPanel.vue";
 import { EditSession } from "./session";
+import { MiningCommands } from "./mining_commands";
+import { PlanningCommands } from "./planning_commands";
+import { SurfaceCommands } from "./surface_commands";
 import { load_font } from "./text";
 import { ToolController, TOOLS } from "./tools";
 import { Viewport } from "./viewport";
 
 const props = defineProps({ config: { type: Object, required: true } });
+const THREE_DEG = Math.PI / 180;
 const config = props.config;
 const PREFS_KEY = "isp-cad-workstation-v2";
 const SNAP_KINDS = ["endpoint", "midpoint", "centre", "quadrant", "intersection", "perpendicular", "tangent", "nearest", "node", "insertion"];
@@ -198,6 +255,10 @@ const model_panel = ref(null);
 const session = markRaw(new EditSession());
 let viewport = null;
 let tools = null;
+let surface_commands = null;
+let mining_commands = null;
+let planning_commands = null;
+let compare_ref = null; // an older revision drawn faded over the model (Compare Revisions)
 
 const tick = ref(0); // bumped whenever the session changes; derived lists depend on it
 const model = ref(null);
@@ -223,6 +284,20 @@ const last_command = ref(null);
 const dialog = ref(null);
 const band = ref(null);
 const view_history = [];
+const form = shallowRef(null); // {props, resolve} of the open FormDialog
+const analysis = shallowRef(null); // a result shown in the Analysis panel
+const surface_point = ref(null);
+const surface_mode = ref("elevation");
+const surface_wireframe = ref(false);
+const section_on = ref(false);
+const orbit_mode = ref(false);
+const compare_on = ref(false);
+const object_panel = ref(null); // the object tool window: {ids, mode, extrude, targets, busy}
+const extrude_label = ref(null);
+let extrude_preview = null;
+const panel_entity = computed(() => (tick.value, object_panel.value ? session.entities.get(object_panel.value.ids[0]) || null : null));
+const unit_symbol = computed(() => ({ Metres: "m", Millimetres: "mm", Kilometres: "km", Feet: "ft", "US Survey Feet": "ft" })[model.value && model.value.linear_units] || "");
+const legend = computed(() => (tick.value, surface_mode.value, model.value && viewport && viewport.surfaces.items.size && surface_mode.value !== "layer" ? viewport.surfaces.legend() : null));
 
 const settings = reactive({
 	object_snap: true,
@@ -291,6 +366,9 @@ const menus = computed(() => {
 	const has = Boolean(model.value);
 	const ed = editable.value;
 	const solid_ok = ed && config.worker_enabled;
+	const surface_ok = solid_ok; // makes or changes entities
+	const run_ok = has && config.worker_enabled; // reports only (read access is enough)
+	const mine_ok = solid_ok && config.mining_tools; // CAD Settings → Enable Mining Design Tools
 	return [
 		{
 			label: __("File"),
@@ -299,12 +377,13 @@ const menus = computed(() => {
 				{ label: __("Save"), command: "save", key: "Ctrl+S", disabled: !has || !change_count.value },
 				{ label: __("Reload from Server"), command: "reload", disabled: !has },
 				"-",
-				{ label: __("Import DXF…"), command: "import", disabled: !ed || !config.worker_enabled },
-				{ label: __("Export DXF…"), command: "export", disabled: !has || !config.worker_enabled },
-				{ label: __("Import LandXML / STL / OBJ / STEP…"), ...later(__("Phase 3")) },
+				{ label: __("Import (DXF, LandXML, CSV, STL, OBJ, LAS, STEP)…"), command: "import", disabled: !ed || !config.worker_enabled },
+				{ label: __("Export…"), command: "export", disabled: !has || !config.worker_enabled },
 				"-",
 				{ label: __("Validate Model (Open CASCADE)"), command: "validate", disabled: !has || !info.value.can_edit || !config.worker_enabled },
 				{ label: __("Submit Revision for Review…"), command: "show_revisions", disabled: !has },
+				{ label: __("Compare Revisions…"), command: "plan_compare", disabled: !has },
+				{ label: __("Compare Overlay Off"), command: "plan_compare_off", disabled: !compare_on.value },
 				"-",
 				{ label: __("Open Model in Desk"), command: "desk", disabled: !has },
 				{ label: __("Import / Export History"), command: "desk_list", args: "CAD Import Export" },
@@ -336,6 +415,11 @@ const menus = computed(() => {
 				{ label: __("Right"), command: "view", args: "right" },
 				{ label: __("Isometric (SE)"), command: "view", args: "iso" },
 				{ label: __("Isometric (SW)"), command: "view", args: "iso_sw" },
+				{ label: __("Orbit with Left Mouse Button"), command: "toggle_orbit", key: "ORBIT", checked: orbit_mode.value, disabled: !has },
+				{ label: __("Turn Left 15°"), command: "orbit", args: [-15, 0], key: "←", disabled: !has },
+				{ label: __("Turn Right 15°"), command: "orbit", args: [15, 0], key: "→", disabled: !has },
+				{ label: __("Tilt Up 10°"), command: "orbit", args: [0, 10], key: "↑", disabled: !has },
+				{ label: __("Tilt Down 10°"), command: "orbit", args: [0, -10], key: "↓", disabled: !has },
 				"-",
 				{ label: __("Zoom Extents"), command: "zoom_extents", disabled: !has },
 				{ label: __("Zoom Selection"), command: "zoom_selection", disabled: !selection.value.length },
@@ -343,8 +427,13 @@ const menus = computed(() => {
 				{ label: __("Grid"), command: "toggle_grid", key: "F7", checked: settings.show_grid },
 				{ label: __("Line Weights"), command: "toggle_lineweights", checked: settings.lineweights },
 				"-",
-				{ label: __("Section View"), ...later(__("Phase 3")) },
-				{ label: __("Split Views"), ...later(__("Phase 3")) },
+				{ label: __("Section View…"), command: "section_plane", disabled: !has },
+				{ label: __("Section View Off"), command: "section_plane_off", disabled: !section_on.value },
+				"-",
+				{ label: __("Surfaces by Elevation"), command: "surface_colour", args: "elevation", checked: surface_mode.value === "elevation" },
+				{ label: __("Surfaces by Slope"), command: "surface_colour", args: "slope", checked: surface_mode.value === "slope" },
+				{ label: __("Surfaces by Layer Colour"), command: "surface_colour", args: "layer", checked: surface_mode.value === "layer" },
+				{ label: __("Surface Triangles (Wireframe)"), command: "surface_wireframe", checked: surface_wireframe.value },
 			],
 		},
 		{
@@ -375,7 +464,22 @@ const menus = computed(() => {
 		},
 		{
 			label: __("Surface"),
-			items: [__("TIN from Points / Breaklines"), __("Contours"), __("Cross-Sections"), __("Cut and Fill Volumes")].map((label) => ({ label, ...later(__("Phase 3")) })),
+			items: [
+				{ label: __("Create Surface from Selection / GIS…"), command: "surface_create", disabled: !surface_ok },
+				{ label: __("Repair Surface…"), command: "surface_repair", disabled: !surface_ok },
+				{ label: __("Clip Surface to Boundary…"), command: "surface_clip", disabled: !surface_ok },
+				{ label: __("Smooth Surface…"), command: "surface_smooth", disabled: !surface_ok },
+				{ label: __("Surface Checks"), command: "surface_checks", disabled: !has },
+				"-",
+				{ label: __("Contours…"), command: "contours", disabled: !surface_ok },
+				{ label: __("Intersect Surfaces…"), command: "intersect", disabled: !surface_ok },
+				{ label: __("Long Section (Profile)…"), command: "profile", disabled: !run_ok },
+				{ label: __("Cross-Sections…"), command: "sections", disabled: !run_ok },
+				{ label: __("Slope and Elevation Analysis…"), command: "analyse", disabled: !run_ok },
+				"-",
+				{ label: __("Cut and Fill Volume…"), command: "volume", disabled: !run_ok },
+				{ label: __("Recorded Volumes"), command: "volume_history", disabled: !has },
+			],
 		},
 		{
 			label: __("Solid"),
@@ -384,12 +488,56 @@ const menus = computed(() => {
 				tool_item("cylinder", solid_ok),
 				tool_item("extrude", solid_ok),
 				"-",
-				...[__("Union"), __("Subtract"), __("Intersect"), __("Revolve"), __("Loft"), __("Sweep")].map((label) => ({ label, ...later(__("Phase 3")) })),
+				{ label: __("Union"), command: "solid_boolean", args: "union", disabled: !solid_ok },
+				{ label: __("Subtract…"), command: "solid_boolean", args: "subtract", disabled: !solid_ok },
+				{ label: __("Intersect"), command: "solid_boolean", args: "intersect", disabled: !solid_ok },
+				"-",
+				{ label: __("Revolve (profile + axis line)…"), command: "solid_revolve", disabled: !solid_ok },
+				{ label: __("Loft (closed profiles)…"), command: "solid_loft", disabled: !solid_ok },
+				{ label: __("Sweep (profile + path)"), command: "solid_sweep", disabled: !solid_ok },
+				"-",
+				{ label: __("Section Lines through Selection…"), command: "section_cut", disabled: !solid_ok },
+				"-",
+				{ label: __("Fillet Edges…"), command: "fillet_solid", disabled: !solid_ok || !selection.value.length },
+				{ label: __("Chamfer Edges…"), command: "chamfer_solid", disabled: !solid_ok || !selection.value.length },
+				{ label: __("Shell (hollow)…"), command: "shell_solid", disabled: !solid_ok || !selection.value.length },
+				{ label: __("Edit Extrusion (double-click the solid)"), command: "edit_feature", disabled: !solid_ok || !selection.value.length },
+				{ label: __("Rebuild Changed Extrusions"), command: "rebuild_features", disabled: !solid_ok },
 			],
 		},
 		{
 			label: __("Mining"),
-			items: [__("Pit Design"), __("Bench Generation"), __("Haul Road Alignment"), __("Mining Blocks"), __("Drill Pattern Layout")].map((label) => ({ label, ...later(__("Phase 4")) })),
+			items: [
+				{ label: __("Design Standard…"), command: "mining_standard", disabled: !has || !info.value.can_edit },
+				{ label: __("Design Standards (Desk)"), command: "desk_list", args: "CAD Design Standard" },
+				{ label: __("Edit Design (regenerate)…"), command: "edit_design", disabled: !mine_ok || !selection.value.length },
+				"-",
+				{ label: __("Generate Pit Benches from Floor…"), command: "pit_generate", disabled: !mine_ok },
+				{ label: __("Pit Stage / Pushback…"), command: "pit_generate", args: { pushback: true }, disabled: !mine_ok },
+				{ label: __("Pit Stages (automatic)…"), command: "pit_stages", disabled: !mine_ok },
+				"-",
+				{ label: __("Haul Road from Centreline…"), command: "road_design", disabled: !mine_ok },
+				"-",
+				{ label: __("Mining Blocks…"), command: "blocks_generate", disabled: !mine_ok },
+				{ label: __("Subdivide Blocks…"), command: "blocks_subdivide", disabled: !mine_ok },
+				{ label: __("Set Block Material…"), command: "blocks_material", disabled: !ed },
+				{ label: __("Sequence Blocks…"), command: "blocks_sequence", disabled: !ed },
+				{ label: __("Block Report"), command: "blocks_report", disabled: !has },
+				"-",
+				{ label: __("Validate Design against Standard"), command: "design_validate", disabled: !has || !config.mining_tools },
+				{ label: __("Design Validations (Desk)"), command: "desk_list", args: "CAD Design Validation" },
+				"-",
+				{ label: __("Drill Pattern (layout)…"), command: "drill_pattern", disabled: !mine_ok },
+				{ label: __("Drill Pattern Report"), command: "drill_report", disabled: !has },
+				"-",
+				{ label: __("Publish Approved Design to Geo Planning…"), command: "plan_publish", disabled: !has },
+				{ label: __("Schedule Selection from CAD Sequence"), command: "plan_selection", disabled: !has },
+				{ label: __("Planning View (status / schedule / % mined)…"), command: "plan_view", disabled: !has },
+				{ label: __("Planning View Off"), command: "plan_view_off", disabled: !has },
+				{ label: __("Reconcile Survey against Design…"), command: "plan_reconcile", disabled: !has || !config.worker_enabled },
+				{ label: __("Publications (Desk)"), command: "desk_list", args: "CAD Design Publication" },
+				{ label: __("Survey Reconciliations (Desk)"), command: "desk_list", args: "CAD Survey Reconciliation" },
+			],
 		},
 		{
 			label: __("Tools"),
@@ -456,11 +604,13 @@ async function run(command, args) {
 		switch (command) {
 			case "tool":
 				if (!model.value) return error(__("Open a model first."));
+				if (args === "extrude") return start_extrude(); // the Extrude tool window, with a drag handle
 				if (tools.start(args)) last_command.value = args;
 				break;
 			case "cancel":
 				tools.cancel(true);
 				select_ids([]);
+				if (orbit_mode.value) run("toggle_orbit");
 				break;
 			case "save":
 				return await save();
@@ -490,6 +640,31 @@ async function run(command, args) {
 				view_mode.value = args;
 				viewport.set_mode(args);
 				break;
+			case "fillet_solid":
+			case "chamfer_solid":
+			case "shell_solid":
+				await dress_solid(command.split("_")[0]);
+				break;
+			case "rebuild_features":
+				await rebuild_features();
+				break;
+			case "edit_feature": {
+				const solid = selection.value.map((id) => session.entities.get(id)).find((e) => feature_of(e));
+				if (!solid) return error(__("Select an extruded solid (made with the Extrude tool window)."));
+				open_object([solid.entity_id], "solid");
+				break;
+			}
+			case "toggle_orbit":
+				orbit_mode.value = !orbit_mode.value;
+				viewport.orbit_mode = orbit_mode.value;
+				message(orbit_mode.value ? __("Orbit on: left-drag turns the view (selection is off until you switch it off again or press Esc).") : __("Orbit off."));
+				break;
+			case "orbit": {
+				// args: [degrees about the vertical, degrees of tilt]
+				if (view_mode.value === "2d") view_mode.value = "3d";
+				viewport.orbit(THREE_DEG * args[0], THREE_DEG * args[1]);
+				break;
+			}
 			case "projection":
 				projection.value = projection.value === "perspective" ? "orthographic" : "perspective";
 				viewport.set_projection(projection.value);
@@ -586,6 +761,9 @@ async function run(command, args) {
 				break;
 			default:
 				if (TOOLS[command]) tools.start(command);
+				else if (surface_commands && (await surface_commands.run(command, args))) after_surface_command(command);
+				else if (mining_commands && (await mining_commands.run(command, args))) break;
+				else if (planning_commands) await planning_commands.run(command, args);
 		}
 	} catch (e) {
 		error(e.message);
@@ -593,6 +771,414 @@ async function run(command, args) {
 		tool_state.value++;
 		tick.value++;
 	}
+}
+
+// FormDialog as a promise: the values, or null when cancelled.
+function ask(props) {
+	return new Promise((resolve) => {
+		form.value = {
+			props,
+			resolve: (values) => {
+				form.value = null;
+				nextTick(() => root.value && root.value.focus({ preventScroll: true })); // keys (Ctrl+S, Esc) work again
+				resolve(values);
+			},
+		};
+	});
+}
+
+function show_result(result) {
+	analysis.value = result;
+}
+
+function after_surface_command(command) {
+	surface_mode.value = viewport.surfaces.mode;
+	surface_wireframe.value = viewport.surfaces.wireframe;
+	section_on.value = Boolean(viewport.section);
+	if (command === "section_plane" && section_on.value && view_mode.value === "2d") run("view", "iso");
+}
+
+function zoom_point(p) {
+	const r = Math.max(10 * viewport.world_per_pixel(), 5);
+	push_view();
+	viewport.zoom_to([p[0] - r, p[1] - r, p[2], p[0] + r, p[1] + r, p[2]]);
+}
+
+// Surface display tiles: a surface without tiles gets them made (once per session), then reloads.
+const tiles_requested = new Set();
+async function on_surface_loaded(event) {
+	if (event.stats) return tick.value++;
+	const e = event.missing;
+	if (!e || !config.worker_enabled || tiles_requested.has(e.geometry_ref)) return;
+	tiles_requested.add(e.geometry_ref);
+	const done = await run_job("surface_job", { model: model.value.name, operation: "tiles", params: { geometry_ref: e.geometry_ref } });
+	if (done) {
+		viewport.surfaces.remove(e.entity_id);
+		viewport.sync(session, [e.entity_id]);
+	}
+}
+
+// Elevation of the surface under the cursor, at most every 80 ms (ray cast against the display tiles).
+let surface_probe_at = 0;
+function probe_surface(event) {
+	const now = performance.now();
+	if (now - surface_probe_at < 80 || !viewport.surfaces.items.size) {
+		if (!viewport.surfaces.items.size) surface_point.value = null;
+		return;
+	}
+	surface_probe_at = now;
+	const hit = viewport.surface_at(event);
+	const e = hit && session.entities.get(hit.entity_id);
+	surface_point.value = e ? { point: hit.point, name: (e.geometry && e.geometry.name) || e.entity_id } : null;
+}
+
+// --------------------------------------------------------------------- object tool window
+
+const FILLABLE = new Set(["Polyline", "Circle", "Ellipse"]);
+
+// outline / filled for closed shapes (null: the object has no inside)
+function shape_mode(e) {
+	if (!e || !FILLABLE.has(e.entity_type)) return null;
+	const g = e.geometry || {};
+	const closed = e.entity_type === "Circle" || (e.entity_type === "Polyline" && g.closed) || (e.entity_type === "Ellipse" && Math.abs(Math.abs((g.end_param ?? 6.283185307179586) - (g.start_param ?? 0)) - 2 * Math.PI) < 1e-9);
+	if (!closed) return null;
+	return g.fill ? "filled" : "outline";
+}
+
+// the object went away (undo, erase, reload): so does its window
+watch(panel_entity, (e) => object_panel.value && !e && close_object());
+
+// An extruded solid remembers how it was made (metadata.feature): its outlines (by id, and a copy of each loop),
+// distance, direction, taper, and the body it was joined to / cut from. Editing it re-runs the extrusion with the
+// outlines as they are now; if an outline changed since, the window says so.
+function feature_of(e) {
+	const f = e && e.metadata && e.metadata.feature;
+	return f && f.type === "extrude" ? f : null;
+}
+
+function same_loop(a, b) {
+	const key = (l) => JSON.stringify([(l.points || []).map((p) => p.map((v) => Math.round(v * 1e6) / 1e6)), (l.bulges || []).map((v) => Math.round(v * 1e9) / 1e9)]);
+	return key(a) === key(b);
+}
+
+// the outlines of a feature now: the outline objects if they still exist, else the copies kept in the feature
+function feature_profiles(f) {
+	return f.profiles.map((p) => {
+		const e = p.entity_id && session.entities.get(p.entity_id);
+		const now = e && closed_loop(e);
+		return { entity_id: p.entity_id, loop: now || p.loop, changed: Boolean(now && !same_loop(now, p.loop)), missing: !now };
+	});
+}
+
+function open_object(ids, mode = null) {
+	close_object();
+	const e = session.entities.get(ids[0]);
+	if (!e) return;
+	const f = feature_of(e);
+	if (f && (mode === null || mode === "solid")) {
+		// edit the extrusion that made this solid
+		const profiles = feature_profiles(f);
+		object_panel.value = reactive({ ids, mode: "solid", extrude: null, targets: [], busy: false, editing: e.entity_id, stale: profiles.some((p) => p.changed), profiles });
+		return start_preview({ distance: f.distance, direction: f.direction, taper: f.taper, operation: f.operation, keep: true });
+	}
+	object_panel.value = reactive({ ids, mode: mode || shape_mode(e), extrude: null, targets: [], busy: false, editing: null, stale: false, profiles: [] });
+	if (object_panel.value.mode === "solid") start_preview();
+}
+
+function close_object() {
+	if (extrude_preview) extrude_preview.dispose();
+	extrude_preview = null;
+	extrude_label.value = null;
+	if (object_panel.value) nextTick(() => root.value && root.value.focus({ preventScroll: true })); // keys (Ctrl+S, Esc) work again
+	object_panel.value = null;
+}
+
+function object_update(values) {
+	const ids = object_panel.value.ids;
+	session.apply(__("Properties"), (w) => {
+		for (const id of ids) {
+			const e = session.entities.get(id);
+			if (e && !session.is_locked(e)) w.put({ ...e, ...values });
+		}
+	});
+	tick.value++;
+}
+
+function object_mode(mode) {
+	const panel = object_panel.value;
+	if (mode === "solid") {
+		const profiles = panel.ids.map((id) => session.entities.get(id)).filter((e) => closed_loop(e));
+		if (!profiles.length) return error(__("Only closed polylines and circles can be extruded (not ellipses)."));
+		panel.mode = "solid";
+		return start_preview();
+	}
+	if (extrude_preview) extrude_preview.dispose();
+	extrude_preview = null;
+	extrude_label.value = null;
+	panel.mode = mode;
+	session.apply(mode === "filled" ? __("Fill") : __("Outline"), (w) => {
+		for (const id of panel.ids) {
+			const e = session.entities.get(id);
+			if (!e || !shape_mode(e)) continue;
+			const geometry = { ...e.geometry };
+			if (mode === "filled") geometry.fill = true;
+			else delete geometry.fill;
+			w.put({ ...e, geometry, validation_status: "Not Checked" });
+		}
+	});
+	tick.value++;
+}
+
+let last_extrude = null;
+
+function start_extrude() {
+	const ids = selection.value.filter((id) => closed_loop(session.entities.get(id)));
+	if (!ids.length) return error(__("Extrude: select closed polylines or circles (or draw one: its tool window has Solid)."));
+	open_object(ids, "solid");
+}
+
+function start_preview(preset = null) {
+	const panel = object_panel.value;
+	if (!panel.editing) {
+		const outlines = panel.ids.map((id) => session.entities.get(id)).filter((e) => closed_loop(e));
+		panel.ids = outlines.map((e) => e.entity_id);
+		panel.profiles = outlines.map((e) => ({ entity_id: e.entity_id, loop: closed_loop(e) }));
+	}
+	const loops = panel.profiles.map((p) => p.loop);
+	if (loops.some((l) => l.points.some((p) => Math.abs((p[2] || 0) - (l.points[0][2] || 0)) > 1e-9))) {
+		panel.mode = panel.editing ? null : shape_mode(session.entities.get(panel.ids[0]));
+		return error(__("Extrude needs flat (horizontal) outlines."));
+	}
+	const xs = loops.flatMap((l) => l.points.map((p) => p[0])), ys = loops.flatMap((l) => l.points.map((p) => p[1]));
+	const box = [Math.min(...xs), Math.min(...ys), 0, Math.max(...xs), Math.max(...ys), 0];
+	const size = Math.max(box[3] - box[0], box[4] - box[1]);
+	const step = Math.pow(10, Math.floor(Math.log10(Math.max(size, 1e-6) / 4)));
+	const distance = preset ? preset.distance : last_extrude ? last_extrude.distance : Math.max(step, Math.round(size / 4 / step) * step);
+	// solids under or over the outlines can be joined, cut or intersected
+	const targets = panel.editing
+		? []
+		: [...session.entities.values()]
+				.filter((e) => e.entity_type === "Solid" && e.geometry_ref)
+				.filter((e) => {
+					const b = entity_extent(e);
+					return b && b[0] <= box[3] && b[3] >= box[0] && b[1] <= box[4] && b[4] >= box[1];
+				})
+				.map((e) => ({ entity_id: e.entity_id, label: `${__("Solid")} ${e.entity_id}${e.volume ? ` · ${format_number(e.volume, 1)}` : ""}` }));
+	panel.targets = targets;
+	panel.extrude = reactive({ distance, direction: "one", taper: 0, operation: "new", target: targets.length ? targets[0].entity_id : null, keep: true, error: "", ...(preset || {}) });
+	if (view_mode.value === "2d") run("orbit", [0, -35]); // the handle is dragged up and down: look at it from the side
+	extrude_preview = markRaw(
+		new ExtrudePreview(viewport, loops, (d) => {
+			panel.extrude.distance = d;
+			place_extrude_label();
+		})
+	);
+	extrude_preview.set({ distance, symmetric: panel.extrude.direction === "symmetric", taper: panel.extrude.taper });
+	place_extrude_label();
+}
+
+function object_extrude(change) {
+	const ex = object_panel.value.extrude;
+	Object.assign(ex, change, { error: "" });
+	if (extrude_preview) extrude_preview.set({ distance: ex.distance, symmetric: ex.direction === "symmetric", taper: ex.taper });
+	place_extrude_label();
+}
+
+function place_extrude_label() {
+	if (!extrude_preview || !object_panel.value || !object_panel.value.extrude) return (extrude_label.value = null);
+	const [x, y] = viewport.screen_of(extrude_preview.handle_model_point());
+	const ex = object_panel.value.extrude;
+	extrude_label.value = { x, y, text: `${format_number(ex.distance, Math.min(settings.decimals, 3))} ${unit_symbol.value}${ex.taper ? ` · ${ex.taper}°` : ""}` };
+}
+
+// Build an extrusion (and its Boolean with a base body): [{geometry_ref, …, feature}] or {error}.
+async function build_extrusion(profiles, params, base) {
+	const d = Number(params.distance);
+	if (!d) return { error: __("The distance must not be zero.") };
+	const shift = params.direction === "symmetric" ? -d / 2 : 0;
+	const items = profiles.map((p, n) => ({ key: p.entity_id || `P${n}`, op: "extrude", profile: p.loop.points.map((q) => [q[0], q[1], (q[2] || 0) + shift]), bulges: p.loop.bulges || null, vector: [0, 0, d], taper: params.taper || 0 }));
+	let results = await build_solids(items);
+	if (!results) return { error: __("The CAD worker could not build it.") };
+	const failed = results.filter((r) => !r.geometry_ref);
+	if (failed.length) return { error: failed.map((r) => r.message || __("invalid geometry")).join(" ") };
+	const feature = (ps) => ({ type: "extrude", profiles: ps.map((p) => ({ entity_id: p.entity_id || null, loop: { points: p.loop.points, ...(p.loop.bulges ? { bulges: p.loop.bulges } : {}) } })), distance: d, direction: params.direction, taper: params.taper || 0, operation: params.operation || "new", base: base || null });
+	if (params.operation && params.operation !== "new") {
+		const kind = { join: "union", cut: "subtract", intersect: "intersect" }[params.operation];
+		const out = await build_solids([{ key: kind, op: "boolean", kind, geometry_refs: [base.geometry_ref, ...results.map((r) => r.geometry_ref)] }]);
+		if (!out || !out[0].geometry_ref) return { error: (out && out[0].message) || __("Open CASCADE could not {0} these solids.", [params.operation]) };
+		return [{ ...out[0], feature: feature(profiles) }];
+	}
+	return results.map((r, n) => ({ ...r, feature: feature([profiles[n]]) })); // one solid (and feature) per outline
+}
+
+function solid_values(r) {
+	return { geometry: { source: r.source }, geometry_ref: r.geometry_ref, bbox: r.bbox, volume: r.volume, area: r.area, validation_status: r.valid ? "Valid" : "Invalid" };
+}
+
+async function extrude_ok() {
+	const panel = object_panel.value;
+	const ex = panel.extrude;
+	panel.busy = true;
+	try {
+		if (panel.editing) {
+			const solid = session.entities.get(panel.editing);
+			const f = feature_of(solid);
+			const built = await build_extrusion(panel.profiles, { ...ex, operation: f.operation }, f.base);
+			if (built.error) return (ex.error = built.error);
+			const r = await apply_history(built[0], solid_history(solid)); // the solid's fillets / chamfers / shell again
+			if (r.error) return (ex.error = r.error);
+			session.apply(__("Edit Extrude"), (w) => w.put({ ...solid, ...solid_values(r), metadata: { ...(solid.metadata || {}), feature: built[0].feature } }));
+			last_extrude = { distance: Number(ex.distance) };
+			message(__("Extrusion rebuilt: volume {0}.", [format_number(r.volume, 3)]), "result");
+			return close_object();
+		}
+		const profiles = panel.profiles;
+		let base = null;
+		if (ex.operation !== "new") {
+			const target = session.entities.get(ex.target);
+			if (!target) return (ex.error = __("Choose the body to {0}.", [ex.operation]));
+			base = { entity_id: target.entity_id, geometry_ref: target.geometry_ref, layer: target.cad_layer };
+		}
+		const built = await build_extrusion(profiles, ex, base);
+		if (built.error) return (ex.error = built.error);
+		const remove = ex.keep ? [] : profiles.map((p) => p.entity_id).filter(Boolean);
+		if (base) remove.push(base.entity_id);
+		const label = { new: __("Extrude"), join: __("Extrude (join)"), cut: __("Extrude (cut)"), intersect: __("Extrude (intersect)") }[ex.operation];
+		last_extrude = { distance: Number(ex.distance) };
+		const layer = session.entities.get(profiles[0].entity_id)?.cad_layer || current_layer_key.value;
+		surface_commands.add_solids(label, built, layer, remove, (r) => ({ metadata: { feature: r.feature } })); // each solid keeps its feature
+		close_object();
+	} finally {
+		if (object_panel.value) object_panel.value.busy = false;
+		tick.value++;
+	}
+}
+
+// Rebuild every extruded solid whose outlines changed since it was made (Solid → Rebuild Changed Extrusions).
+async function rebuild_features() {
+	const stale = [...session.entities.values()].filter((e) => feature_of(e) && feature_profiles(feature_of(e)).some((p) => p.changed));
+	if (!stale.length) return message(__("Every extrusion is up to date with its outlines."), "result");
+	let done = 0;
+	for (const solid of stale) {
+		const f = feature_of(solid);
+		const built = await build_extrusion(feature_profiles(f), f, f.base);
+		const r = built.error ? built : await apply_history(built[0], solid_history(solid));
+		if (r.error) {
+			error(__("{0}: {1}", [solid.entity_id, r.error]));
+			continue;
+		}
+		session.apply(__("Rebuild Extrusion"), (w) => w.put({ ...session.entities.get(solid.entity_id), ...solid_values(r), metadata: { ...(solid.metadata || {}), feature: built[0].feature } }));
+		done++;
+	}
+	message(__("{0} of {1} extrusion(s) rebuilt from their changed outlines.", [done, stale.length]), "result");
+	tick.value++;
+}
+
+// --------------------------------------------------------------------- finishing operations (feature history)
+
+// A solid's finishing operations, in order (metadata.history): fillet / chamfer / shell, applied after its
+// extrusion (metadata.feature) or, for other solids, after the shape it had first (metadata.base_ref).
+const DRESS = {
+	fillet: { label: __("Fillet"), size: "radius", size_label: __("Radius") },
+	chamfer: { label: __("Chamfer"), size: "distance", size_label: __("Distance") },
+	shell: { label: __("Shell"), size: "thickness", size_label: __("Wall thickness") },
+};
+
+function solid_history(e) {
+	return (e && e.metadata && e.metadata.history) || [];
+}
+
+function history_label(h) {
+	const d = DRESS[h.op];
+	if (h.op === "shell") return `${d.label} ${format_number(h.thickness, 3)} · ${h.open === "top" ? __("open top") : __("closed")}`;
+	return `${d.label} ${format_number(h[d.size], 3)} · ${__({ all: "all edges", vertical: "vertical edges", top: "top edges", bottom: "bottom edges" }[h.edges] || h.edges)}`;
+}
+
+// apply operations one after another to a built (or stored) solid: the last result, or {error}
+async function apply_history(start, history) {
+	let current = start;
+	for (const h of history) {
+		const out = await build_solids([{ key: h.op, op: h.op, geometry_ref: current.geometry_ref, ...h }]);
+		if (!out || !out[0].geometry_ref) return { error: `${history_label(h)}: ${(out && out[0].message) || __("failed")}` };
+		current = out[0];
+	}
+	return current;
+}
+
+// the solid rebuilt from its base with this history
+async function rebuild_solid(solid, history, label) {
+	let start;
+	const f = feature_of(solid);
+	if (f) {
+		const built = await build_extrusion(feature_profiles(f), f, f.base);
+		if (built.error) return error(built.error);
+		start = built[0];
+	} else {
+		start = { geometry_ref: (solid.metadata && solid.metadata.base_ref) || solid.geometry_ref };
+	}
+	const r = await apply_history(start, history);
+	if (r.error) return error(r.error);
+	session.apply(label, (w) => w.put({ ...session.entities.get(solid.entity_id), ...solid_values(r), metadata: { ...(solid.metadata || {}), history } }));
+	message(__("{0}: volume {1}.", [label, format_number(r.volume, 3)]), "result");
+	tick.value++;
+	return true;
+}
+
+async function ask_dress(op, preset = {}) {
+	const d = DRESS[op];
+	const fields = [{ key: d.size, label: d.size_label, type: "number", default: preset[d.size] ?? 1, required: true }];
+	if (op === "shell") fields.push({ key: "open", label: __("Faces"), type: "select", options: [{ value: "top", label: __("Open at the top (flat top face removed)") }, { value: "none", label: __("Closed (hollow inside)") }], default: preset.open || "top" });
+	else fields.push({ key: "edges", label: __("Edges"), type: "select", options: [{ value: "all", label: __("All edges") }, { value: "vertical", label: __("Vertical edges") }, { value: "top", label: __("Top edges") }, { value: "bottom", label: __("Bottom edges") }], default: preset.edges || "all" });
+	const values = await ask({ title: d.label, fields, submit_label: preset[d.size] !== undefined ? __("Update") : __("Apply"), check: (v) => (v[d.size] > 0 ? null : __("{0} must be greater than zero.", [d.size_label])) });
+	return values ? { op, ...values } : null;
+}
+
+// Solid → Fillet / Chamfer / Shell: a new step at the end of the selected solid's history
+async function dress_solid(op) {
+	const solid = selection.value.map((id) => session.entities.get(id)).find((e) => e && e.entity_type === "Solid" && e.geometry_ref);
+	if (!solid) return error(__("Select a solid."));
+	const step = await ask_dress(op);
+	if (!step) return;
+	const r = await apply_history({ geometry_ref: solid.geometry_ref }, [step]);
+	if (r.error) return error(r.error);
+	const metadata = { ...(solid.metadata || {}), history: [...solid_history(solid), step] };
+	if (!feature_of(solid) && !metadata.base_ref) metadata.base_ref = solid.geometry_ref; // what the history starts from
+	session.apply(DRESS[op].label, (w) => w.put({ ...solid, ...solid_values(r), metadata }));
+	message(__("{0}: volume {1}.", [DRESS[op].label, format_number(r.volume, 3)]), "result");
+	if (object_panel.value && object_panel.value.ids[0] === solid.entity_id) open_object([solid.entity_id]);
+	tick.value++;
+}
+
+async function edit_history_step(index) {
+	const solid = session.entities.get(object_panel.value.ids[0]);
+	const history = [...solid_history(solid)];
+	const step = await ask_dress(history[index].op, history[index]);
+	if (!step) return;
+	history[index] = step;
+	if (await rebuild_solid(solid, history, __("Edit {0}", [DRESS[step.op].label]))) open_object([solid.entity_id]);
+}
+
+async function remove_history_step(index) {
+	const solid = session.entities.get(object_panel.value.ids[0]);
+	const history = solid_history(solid).filter((_h, i) => i !== index);
+	if (await rebuild_solid(solid, history, __("Remove {0}", [DRESS[solid_history(solid)[index].op].label]))) open_object([solid.entity_id]);
+}
+
+// Esc: one thing at a time — the running tool, then the object tool window, then the selection
+function on_escape() {
+	if (!tools.active && object_panel.value) return close_object();
+	run("cancel");
+}
+
+function on_double_click(event) {
+	if (!model.value || tools.active) return;
+	const id = viewport.pick(event);
+	if (!id) return;
+	select_ids([id]);
+	// a pit, road, block or drill design reopens its generator (prefilled); anything else its tool window
+	const design = mining_commands && mining_commands.design_of(session.entities.get(id));
+	if (design && design.params && editable.value) return run("edit_design", id);
+	open_object([id]);
 }
 
 function submit_command() {
@@ -633,17 +1219,24 @@ function on_key(event) {
 	const in_input = ["INPUT", "SELECT", "TEXTAREA"].includes(event.target.tagName) && event.target !== command_el.value;
 	const ctrl = event.ctrlKey || event.metaKey;
 	if (ctrl && event.key.toLowerCase() === "s") return event.preventDefault(), run("save");
-	if (in_input || dialog.value) return;
+	if (in_input || dialog.value || form.value) return;
+	if (event.key === "Escape") return on_escape();
 	if (ctrl && event.key.toLowerCase() === "z") return event.preventDefault(), run("undo");
 	if (ctrl && event.key.toLowerCase() === "y") return event.preventDefault(), run("redo");
 	if (ctrl && event.key.toLowerCase() === "a" && event.target !== command_el.value) return event.preventDefault(), run("select_all");
-	if (event.key === "Escape") return run("cancel");
 	if (event.key === "F3") return event.preventDefault(), run("toggle", "object_snap");
 	if (event.key === "F7") return event.preventDefault(), run("toggle_grid");
 	if (event.key === "F8") return event.preventDefault(), run("toggle", "ortho");
 	if (event.key === "F9") return event.preventDefault(), run("toggle", "grid_snap");
 	if (event.key === "F10") return event.preventDefault(), run("toggle", "polar");
 	if (event.key === "Delete" && event.target !== command_el.value) return run("erase");
+	// arrow keys turn the view (not while typing a command)
+	const arrows = { ArrowLeft: [-15, 0], ArrowRight: [15, 0], ArrowUp: [0, 10], ArrowDown: [0, -10] };
+	if (arrows[event.key] && model.value && !(event.target === command_el.value && command_text.value)) {
+		event.preventDefault();
+		const step = event.shiftKey ? 1 / 3 : 1;
+		return run("orbit", arrows[event.key].map((v) => v * step));
+	}
 	// typing anywhere goes to the command line
 	if (event.target !== command_el.value && event.key.length === 1 && !ctrl && !event.altKey) command_el.value.focus();
 }
@@ -674,6 +1267,7 @@ function on_pointer_move(event) {
 		if (band.value || Math.hypot(x - down.x, y - down.y) > 4) band.value = { x0: down.x, y0: down.y, x1: x, y1: y, crossing: x < down.x };
 		return;
 	}
+	probe_surface(event);
 	const snapped = viewport.snap(event, session, snap_options());
 	if (!snapped) return;
 	cursor.value = snapped.point;
@@ -737,6 +1331,7 @@ function on_context(event) {
 	const was = down;
 	down = null;
 	if (was && Math.hypot(x - was.x, y - was.y) > 4) return;
+	if (viewport.orbit_just_ended()) return; // that right-drag turned the view
 	if (tools.active) {
 		Promise.resolve(tools.finish()).finally(() => {
 			tool_state.value++;
@@ -815,6 +1410,9 @@ function ensure_origin(point) {
 	}
 	origin.value = next;
 	viewport.rebase(next);
+	// the view was still on the old origin (kilometres away): look at the new geometry, or Top / orbit swing away
+	const target = viewport.to_model(viewport.controls.target);
+	if (Math.max(Math.abs(target[0] - point[0]), Math.abs(target[1] - point[1])) > FAR) viewport.look_at_point(point);
 	viewport.sync(session);
 }
 
@@ -1002,6 +1600,7 @@ async function load_references() {
 			else message(__("Save to show the new reference {0}.", [r.reference_model]), "warning");
 		}
 	}
+	if (compare_ref) refs.push(compare_ref);
 	viewport.set_references(refs, session);
 }
 
@@ -1012,6 +1611,9 @@ async function open_model(name, force = false) {
 	loading.value = __("Opening {0}…", [name]);
 	try {
 		tools.cancel(true);
+		analysis.value = null;
+		if (viewport.section) surface_commands.set_section(null);
+		section_on.value = false;
 		const data = await call("get_model", { model: name });
 		info.value = data;
 		model.value = data.model;
@@ -1048,6 +1650,9 @@ async function open_model(name, force = false) {
 		window.history.replaceState(null, "", url);
 		message(__("Opened {0}: {1} entities.", [name, rows.length]));
 		if (data.in_review) message(__("{0} is in review; the model is read-only until it is approved or rejected.", [data.in_review]), "warning");
+		// a link from Geo Planning (Mining Block → Open in CAD Workstation): show that object
+		const wanted = url.searchParams.get("entity");
+		if (wanted && session.entities.has(wanted)) zoom_ids([wanted]);
 	} catch (e) {
 		error(e.message);
 	} finally {
@@ -1126,6 +1731,11 @@ function show_help() {
 		__("Draw: L PL (A arc / L line, C close) REC POL C A A3 EL SPL XL PO T MT · Dimensions: DAL DLI DAN DRA DDI · H(atch) of selected closed objects · B(lock) / I(nsert)."),
 		__("Modify: M CO RO SC MI S(tretch) AR(ray) ARRAYPOLAR O(ffset) TR(im) EX(tend) BR(eak) J(oin) X (explode) F(illet) CHA(mfer) E(rase). Measure: DI AA ANG ID. Enter alone repeats the last command."),
 		__("Mouse: left = pick/select (Shift adds), drag left→right = window, right→left = crossing · wheel = zoom at cursor · middle-drag = pan · right-drag = pan (2D) / orbit (3D) · right-click = Enter."),
+		__("Turning the view (3D): right-drag, Shift+middle-drag or Alt+left-drag turns it about the point under the cursor (marked while you drag). The orbit button (or ORBIT) makes plain left-drag orbit, for trackpads; Esc ends it. Arrow keys turn 15° / tilt 10° (Shift: finer); the buttons at the bottom right do the same, plus Top and Iso."),
+		__("Surfaces: Surface → Create Surface builds a TIN from the selected points, lines (as breaklines), surfaces and GIS datasets, inside an optional boundary. Save before running analyses: they use the saved surfaces. Volumes are exact (TIN to TIN) and recorded."),
+		__("Solids: select two or more saved solids for Union / Subtract / Intersect; a closed polyline + a line for Revolve; closed polylines at different elevations for Loft; a closed polyline + a path for Sweep."),
+		__("Mining: choose the model's Design Standard, select a closed floor outline → Generate Pit Benches; a centreline → Haul Road; a closed limit → Mining Blocks; a blast boundary → Drill Pattern (hole layout only). Save, then Validate Design against Standard: the result is recorded with the standard version."),
+		__("Shapes: drawing a closed shape (or double-clicking an object, or Properties → Edit…) opens its tool window: layer, colour, line weight, line type, and Outline / Filled / Solid. Solid extrudes it: drag the orange arrow or type the distance; direction, taper and New body / Join / Cut / Intersect; OK builds it with Open CASCADE. EXT opens it for the selected outlines."),
 		__("Keys: Esc cancel · Enter finish · Del erase · Ctrl+S save · Ctrl+Z/Y undo/redo · F3 object snap · F7 grid · F8 ortho · F9 grid snap · F10 polar tracking."),
 	].forEach((t) => message(t, "help"));
 }
@@ -1134,6 +1744,8 @@ function show_about() {
 	[
 		__("CAD Engineering Workstation — part of is_production (GPL-3.0-or-later), Isambane Mining (Pty) Ltd."),
 		__("Geometry: Open CASCADE Technology {0} (LGPL-2.1 with exception) via cadquery-ocp (Apache-2.0), run in an isolated worker. DXF: ezdxf (MIT); reprojection: pyproj/PROJ (MIT).", [(config.health && config.health.occt_version) || ""]),
+		__("Surfaces: PythonCDT / CDT (MPL-2.0), NumPy and SciPy (BSD), Matplotlib point location (PSF-based), laspy (BSD-2-Clause) and lazrs (MIT) for LAS/LAZ."),
+		__("Mining design outlines: Shapely / GEOS (BSD-3-Clause / LGPL-2.1)."),
 		__("Viewer: three.js (MIT) · Vue (MIT) · icons: Lucide (ISC) · text: Droid Sans (Apache-2.0). No affiliation with or endorsement by these projects."),
 	].forEach((t) => message(t, "help"));
 }
@@ -1172,7 +1784,15 @@ let unsubscribe = null;
 let theme_observer = null;
 
 onMounted(async () => {
-	viewport = markRaw(new Viewport(viewport_el.value, { on_view_change: (v) => (grid_step.value = v.grid_step) }));
+	viewport = markRaw(
+		new Viewport(viewport_el.value, {
+			on_view_change: (v) => {
+				grid_step.value = v.grid_step;
+				if (extrude_preview) place_extrude_label();
+			},
+			on_mode_change: (mode) => (view_mode.value = mode), // an orbit started in plan switches to 3D
+		})
+	);
 	viewport.set_grid_visible(settings.show_grid);
 	viewport.show_lineweights = settings.lineweights;
 	viewport.decimals = settings.decimals;
@@ -1189,12 +1809,65 @@ onMounted(async () => {
 			select: (ids) => select_ids(ids),
 			build_solids,
 			offset_curves,
+			on_created: (e) => shape_mode(e) && open_object([e.entity_id]), // a drawn shape: outline / filled / solid
 			define_block,
 			visible_entities,
 			cutters: () => [...visible_entities(), ...(viewport.reference_entities || [])],
 		})
 	);
-	window.__cad = { viewport, session, tools }; // for the browser console and automated UI tests
+	surface_commands = markRaw(
+		new SurfaceCommands({
+			session,
+			viewport,
+			config,
+			model: () => model.value,
+			selection: () => selection.value,
+			select: (ids) => select_ids(ids),
+			message,
+			ask,
+			run_job,
+			build_solids,
+			current_layer: () => current_layer_key.value,
+			show_result,
+		})
+	);
+	mining_commands = markRaw(
+		new MiningCommands({
+			session,
+			viewport,
+			config,
+			model: () => model.value,
+			selection: () => selection.value,
+			select: (ids) => select_ids(ids),
+			message,
+			ask,
+			run_job,
+			current_layer: () => current_layer_key.value,
+			show_result,
+			surfaces: surface_commands,
+		})
+	);
+	planning_commands = markRaw(
+		new PlanningCommands({
+			session,
+			viewport,
+			config,
+			model: () => model.value,
+			selection: () => selection.value,
+			select: (ids) => select_ids(ids),
+			message,
+			ask,
+			run_job,
+			show_result,
+				set_compare_overlay: (ref) => {
+				compare_ref = ref;
+				compare_on.value = Boolean(ref);
+				load_references();
+			},
+		})
+	);
+	viewport.surfaces.on_loaded = on_surface_loaded;
+	window.__cad = { viewport, session, tools, surface_commands, mining_commands, select: select_ids, run }; // for the browser console and automated UI tests
 	unsubscribe = session.on_change((ids) => {
 		const first = ids.length && session.entities.get(ids[0]);
 		const box = first && entity_extent(first, viewport.blocks);
