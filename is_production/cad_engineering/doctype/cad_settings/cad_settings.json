@@ -284,7 +284,7 @@
    "fieldtype": "Float",
    "label": "Default Text Height (paper mm)",
    "default": "2.5",
-   "description": "Text and dimension height in model units = this \u00d7 annotation scale \u00f7 1000 (for metre models)."
+   "description": "Text and dimension height in model units = this × annotation scale ÷ 1000 (for metre models)."
   },
   {
    "fieldname": "section_features",
@@ -303,12 +303,13 @@
   {
    "fieldname": "enable_mining_design_tools",
    "fieldtype": "Check",
-   "label": "Enable Mining Design Tools"
+   "label": "Enable Mining Design Tools",
+   "default": "1"
   }
  ],
  "grid_page_length": 50,
  "links": [],
- "modified": "2026-10-21 20:00:00.000000",
+ "modified": "2026-10-22 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "CAD Engineering",
  "name": "CAD Settings",

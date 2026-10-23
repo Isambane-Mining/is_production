@@ -1097,22 +1097,20 @@ function calculateAndSetProductionStats(frm) {
 
     let completedDays = 0;
     let completedHours = 0;
+    const today = frappe.datetime.str_to_obj(frappe.datetime.get_today());
 
     rows.forEach(r => {
-      const actualBcm =
-        flt(r.total_daily_bcms) +
-        flt(r.total_ts_bcms) +
-        flt(r.total_dozing_bcms) +
-        flt(r.day_shift_bcms) +
-        flt(r.night_shift_bcms);
-
       const plannedHours =
         flt(r.shift_day_hours) +
         flt(r.shift_night_hours) +
         flt(r.shift_morning_hours) +
         flt(r.shift_afternoon_hours);
 
-      if (actualBcm > 0 && plannedHours > 0) {
+      // Today's production date remains in progress.
+      const rowDate = r.shift_start_date
+        ? frappe.datetime.str_to_obj(r.shift_start_date)
+        : null;
+      if (rowDate && rowDate < today && plannedHours > 0) {
         completedDays += 1;
         completedHours += plannedHours;
       }

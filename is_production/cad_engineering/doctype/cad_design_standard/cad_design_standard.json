@@ -1,0 +1,477 @@
+{
+ "actions": [],
+ "creation": "2026-10-22 16:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "fields": [
+  {
+   "fieldname": "standard_code",
+   "fieldtype": "Data",
+   "label": "Standard Code",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "Same code for every version of one standard, e.g. OP-STD-01."
+  },
+  {
+   "fieldname": "standard_name",
+   "fieldtype": "Data",
+   "label": "Standard Name",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "version",
+   "fieldtype": "Int",
+   "label": "Version",
+   "read_only": 1,
+   "default": "1",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Draft\nActive\nSuperseded",
+   "default": "Draft",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "cb_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "standard_type",
+   "fieldtype": "Select",
+   "label": "Standard Type",
+   "options": "Open Pit Mine Design\nPit Design\nHaul Road\nMining Blocks\nDrill and Blast",
+   "default": "Open Pit Mine Design",
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "applicable_location",
+   "fieldtype": "Link",
+   "label": "Applicable Location",
+   "options": "Location",
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company"
+  },
+  {
+   "fieldname": "previous_version",
+   "fieldtype": "Link",
+   "label": "Previous Version",
+   "options": "CAD Design Standard",
+   "read_only": 1
+  },
+  {
+   "fieldname": "activated_on",
+   "fieldtype": "Datetime",
+   "label": "Activated On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "activated_by",
+   "fieldtype": "Link",
+   "label": "Activated By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_pit",
+   "fieldtype": "Section Break",
+   "label": "Pit and Benches"
+  },
+  {
+   "fieldname": "bench_height",
+   "fieldtype": "Float",
+   "label": "Bench Height (m)",
+   "default": "10",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "bench_reference_elevation",
+   "fieldtype": "Float",
+   "label": "Bench Reference Elevation (m)",
+   "description": "Bench toes are at this elevation plus whole bench heights."
+  },
+  {
+   "fieldname": "face_angle",
+   "fieldtype": "Float",
+   "label": "Bench Face Angle (°)",
+   "default": "70",
+   "description": "Angle of each bench face from horizontal.",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "maximum_slope_angle",
+   "fieldtype": "Float",
+   "label": "Maximum Overall Slope Angle (°)",
+   "default": "50",
+   "description": "Toe of the pit to the top crest.",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "cb_pit",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "berm_width",
+   "fieldtype": "Float",
+   "label": "Berm Width (m)",
+   "default": "8",
+   "description": "Design width of each bench (berm) between a crest and the next toe.",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "minimum_bench_width",
+   "fieldtype": "Float",
+   "label": "Minimum Bench Width (m)",
+   "default": "6",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "geotechnical_berm_width",
+   "fieldtype": "Float",
+   "label": "Geotechnical Berm Width (m)",
+   "description": "A wider berm every few benches (0: none).",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "geotechnical_berm_every",
+   "fieldtype": "Int",
+   "label": "Geotechnical Berm Every (benches)",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "minimum_floor_width",
+   "fieldtype": "Float",
+   "label": "Minimum Pit Floor Width (m)",
+   "default": "30",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "sb_road",
+   "fieldtype": "Section Break",
+   "label": "Haul Roads"
+  },
+  {
+   "fieldname": "road_width",
+   "fieldtype": "Float",
+   "label": "Road Width (m)",
+   "default": "25",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "minimum_road_width",
+   "fieldtype": "Float",
+   "label": "Minimum Road Width (m)",
+   "default": "20",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "maximum_gradient",
+   "fieldtype": "Float",
+   "label": "Maximum Gradient (%)",
+   "default": "10",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "minimum_turning_radius",
+   "fieldtype": "Float",
+   "label": "Minimum Turning Radius (m)",
+   "default": "40",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "vertical_curve_length",
+   "fieldtype": "Float",
+   "label": "Vertical Curve Length (m)",
+   "default": "60",
+   "description": "Parabolic curve at every grade change of a road's vertical alignment."
+  },
+  {
+   "fieldname": "minimum_k_value",
+   "fieldtype": "Float",
+   "label": "Minimum K Value (m per % grade change)",
+   "description": "Validation: the flattest allowed vertical curve; 0 skips the check."
+  },
+  {
+   "fieldname": "cb_road",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "normal_crossfall",
+   "fieldtype": "Float",
+   "label": "Normal Crossfall (%)",
+   "default": "2",
+   "description": "Fall from the centreline to each edge on straights.",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "maximum_superelevation",
+   "fieldtype": "Float",
+   "label": "Maximum Superelevation (%)",
+   "default": "4",
+   "description": "Cross slope towards the inside of curves at the minimum radius; less on wider curves (0: none).",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "cut_batter_angle",
+   "fieldtype": "Float",
+   "label": "Cut Batter Angle (°)",
+   "default": "45",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "fill_batter_angle",
+   "fieldtype": "Float",
+   "label": "Fill Batter Angle (°)",
+   "default": "34",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "sb_blocks",
+   "fieldtype": "Section Break",
+   "label": "Mining Blocks"
+  },
+  {
+   "fieldname": "block_length",
+   "fieldtype": "Float",
+   "label": "Block Length (m)",
+   "default": "50",
+   "description": "Along the mining direction.",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "block_width",
+   "fieldtype": "Float",
+   "label": "Block Width (m)",
+   "default": "25",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "cb_blocks",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "mining_direction",
+   "fieldtype": "Float",
+   "label": "Default Mining Direction (° from north, clockwise)",
+   "default": "90"
+  },
+  {
+   "fieldname": "sb_drill",
+   "fieldtype": "Section Break",
+   "label": "Drill and Blast (layout geometry only)"
+  },
+  {
+   "fieldname": "drill_burden",
+   "fieldtype": "Float",
+   "label": "Burden (m)",
+   "default": "4",
+   "non_negative": 1,
+   "description": "Between rows, towards the free face."
+  },
+  {
+   "fieldname": "drill_spacing",
+   "fieldtype": "Float",
+   "label": "Spacing (m)",
+   "default": "5",
+   "non_negative": 1,
+   "description": "Between holes in a row."
+  },
+  {
+   "fieldname": "drill_pattern",
+   "fieldtype": "Select",
+   "label": "Pattern",
+   "options": "Staggered\nSquare",
+   "default": "Staggered"
+  },
+  {
+   "fieldname": "drill_crest_standoff",
+   "fieldtype": "Float",
+   "label": "Stand-off from the Blast Boundary (m)",
+   "default": "3",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "cb_drill",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "drill_hole_diameter",
+   "fieldtype": "Float",
+   "label": "Hole Diameter (mm)",
+   "default": "165",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "drill_subdrill",
+   "fieldtype": "Float",
+   "label": "Subdrill (m)",
+   "default": "1",
+   "non_negative": 1,
+   "description": "Below the bench floor."
+  },
+  {
+   "fieldname": "drill_max_inclination",
+   "fieldtype": "Float",
+   "label": "Maximum Hole Inclination (° from vertical)",
+   "default": "30",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "drill_spacing_tolerance",
+   "fieldtype": "Percent",
+   "label": "Hole Spacing Tolerance (%)",
+   "default": "10",
+   "non_negative": 1,
+   "description": "Collars closer than the burden or spacing less this are reported."
+  },
+  {
+   "fieldname": "sb_tol",
+   "fieldtype": "Section Break",
+   "label": "Tolerances"
+  },
+  {
+   "fieldname": "design_tolerance",
+   "fieldtype": "Float",
+   "label": "Length Tolerance (m)",
+   "default": "0.5",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "cb_tol",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "angle_tolerance",
+   "fieldtype": "Float",
+   "label": "Angle Tolerance (°)",
+   "default": "1",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "sb_notes",
+   "fieldtype": "Section Break",
+   "label": "Notes"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Text Editor",
+   "label": "Notes"
+  }
+ ],
+ "field_order": [
+  "standard_code",
+  "standard_name",
+  "version",
+  "status",
+  "cb_head",
+  "standard_type",
+  "applicable_location",
+  "company",
+  "previous_version",
+  "activated_on",
+  "activated_by",
+  "sb_pit",
+  "bench_height",
+  "bench_reference_elevation",
+  "face_angle",
+  "maximum_slope_angle",
+  "cb_pit",
+  "berm_width",
+  "minimum_bench_width",
+  "geotechnical_berm_width",
+  "geotechnical_berm_every",
+  "minimum_floor_width",
+  "sb_road",
+  "road_width",
+  "minimum_road_width",
+  "maximum_gradient",
+  "minimum_turning_radius",
+  "vertical_curve_length",
+  "minimum_k_value",
+  "cb_road",
+  "normal_crossfall",
+  "maximum_superelevation",
+  "cut_batter_angle",
+  "fill_batter_angle",
+  "sb_blocks",
+  "block_length",
+  "block_width",
+  "cb_blocks",
+  "mining_direction",
+  "sb_drill",
+  "drill_burden",
+  "drill_spacing",
+  "drill_pattern",
+  "drill_crest_standoff",
+  "cb_drill",
+  "drill_hole_diameter",
+  "drill_subdrill",
+  "drill_max_inclination",
+  "drill_spacing_tolerance",
+  "sb_tol",
+  "design_tolerance",
+  "cb_tol",
+  "angle_tolerance",
+  "sb_notes",
+  "notes"
+ ],
+ "grid_page_length": 50,
+ "links": [],
+ "modified": "2026-10-22 21:30:00.000000",
+ "modified_by": "Administrator",
+ "module": "CAD Engineering",
+ "name": "CAD Design Standard",
+ "owner": "Administrator",
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "naming_rule": "By script",
+ "title_field": "standard_name",
+ "show_title_field_in_link": 1,
+ "description": "Versioned mining design rules (benches, berms, slopes, roads, blocks, tolerances). An Active version is frozen; designs record the version they were validated against.",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production User",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1
+  }
+ ]
+}

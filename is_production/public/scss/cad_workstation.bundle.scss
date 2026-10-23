@@ -118,7 +118,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--cad-bg
 	padding: 4px 8px;
 	background: var(--cad-panel);
 	border-bottom: 1px solid var(--cad-line);
-	overflow-x: auto;
+	flex-wrap: wrap; /* a second row on narrow screens rather than hidden buttons */
+	row-gap: 2px;
 	button { padding: 3px 6px; }
 	.cad-sep { width: 1px; align-self: stretch; background: var(--cad-line); margin: 0 4px; }
 }
@@ -265,3 +266,106 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--cad-bg
 .cad-warnings { margin: 0; padding-left: 18px; max-height: 140px; overflow-y: auto; }
 .cad-warnings-pre { white-space: pre-wrap; max-height: 200px; overflow-y: auto; background: var(--cad-bg); padding: 6px; border-radius: 6px; }
 .cad-primary-link { align-self: flex-start; background: var(--cad-accent); color: #fff !important; padding: 5px 12px; border-radius: 6px; text-decoration: none; }
+
+/* Phase 3: surfaces and analysis */
+.cad-multi { display: flex; flex-direction: column; gap: 2px; max-height: 140px; overflow-y: auto; border: 1px solid var(--cad-line); border-radius: 6px; padding: 4px 6px; }
+.cad-table { width: 100%; border-collapse: collapse; }
+.cad-table th { text-align: left; color: var(--cad-muted); font-weight: 500; border-bottom: 1px solid var(--cad-line); padding: 2px 6px; }
+.cad-table td { border-bottom: 1px dotted var(--cad-line); padding: 2px 6px; }
+.cad-analysis {
+	position: absolute;
+	right: 12px;
+	bottom: 12px;
+	width: min(620px, calc(100% - 24px));
+	max-height: calc(100% - 24px);
+	display: flex;
+	flex-direction: column;
+	background: var(--cad-panel);
+	color: var(--cad-ink);
+	border: 1px solid var(--cad-line);
+	border-radius: 10px;
+	box-shadow: 0 10px 32px rgba(0, 0, 0, 0.35);
+	z-index: 20;
+}
+.cad-analysis-head { padding: 8px 12px; border-bottom: 1px solid var(--cad-line); }
+.cad-analysis-body { padding: 8px 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.cad-two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.cad-chart { width: 100%; height: auto; background: var(--cad-bg); border-radius: 6px; }
+.cad-chart text { font-size: 10px; fill: var(--cad-muted); font-family: var(--cad-mono); }
+.cad-chart text.label { font-family: var(--cad-font); font-size: 11px; }
+.cad-chart line.grid { stroke: var(--cad-line); stroke-width: 1; }
+.cad-legend { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; }
+.cad-legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; }
+.cad-bar-cell { width: 45%; }
+.cad-bar { display: block; height: 8px; background: var(--cad-accent); border-radius: 2px; min-width: 1px; }
+.cad-legend-box {
+	position: absolute;
+	left: 12px;
+	bottom: 12px;
+	width: 180px;
+	padding: 6px 8px;
+	border-radius: 8px;
+	background: rgba(27, 31, 36, 0.85);
+	color: var(--cad-viewport-ink);
+	z-index: 10;
+}
+.cad-ramp { height: 8px; border-radius: 3px; margin: 4px 0; background: linear-gradient(90deg, #294aa6, #2e9e9e, #61b345, #d9b84d, #9e5c38); }
+.cad-section-chip { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); cursor: pointer; z-index: 10; }
+
+/* view navigation (orbit) buttons, bottom right of the viewport */
+.cad-nav {
+	position: absolute;
+	right: 12px;
+	bottom: 12px;
+	display: grid;
+	grid-template-columns: repeat(4, 32px);
+	gap: 4px;
+	padding: 6px;
+	border-radius: 8px;
+	background: rgba(27, 31, 36, 0.85);
+	z-index: 15;
+	button {
+		height: 28px;
+		padding: 0;
+		font-size: 13px;
+		color: var(--cad-viewport-ink);
+		background: rgba(255, 255, 255, 0.06);
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		border-radius: 5px;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+	button:hover { background: rgba(255, 255, 255, 0.16); }
+	button.on { background: var(--cad-accent); border-color: var(--cad-accent); color: #fff; }
+}
+.cad-nav.raised { right: calc(min(620px, 100% - 24px) + 24px); } /* left of the Analysis panel, which is as tall as the view */
+
+/* object tool window (after drawing a shape / double-click): appearance, outline / filled / solid, extrude */
+.cad-object-panel {
+	position: absolute;
+	top: 12px;
+	left: 12px;
+	width: 300px;
+	max-height: calc(100% - 24px);
+	display: flex;
+	flex-direction: column;
+	background: var(--cad-panel);
+	color: var(--cad-ink);
+	border: 1px solid var(--cad-line);
+	border-radius: 10px;
+	box-shadow: 0 10px 32px rgba(0, 0, 0, 0.35);
+	z-index: 25;
+}
+.cad-object-head { padding: 8px 10px; border-bottom: 1px solid var(--cad-line); }
+.cad-object-body { padding: 8px 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.cad-object-foot { padding: 8px 10px; border-top: 1px solid var(--cad-line); gap: 6px; }
+.cad-form-grid.compact { grid-template-columns: 96px 1fr; gap: 5px 8px; }
+.cad-form-grid.compact select, .cad-form-grid.compact input:not([type="checkbox"]):not([type="color"]) { width: 100%; min-width: 0; }
+.cad-segmented { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--cad-line); border-radius: 6px; overflow: hidden; }
+.cad-segmented button { border: 0; border-radius: 0; padding: 5px 0; background: var(--cad-control); }
+.cad-segmented button + button { border-left: 1px solid var(--cad-line); }
+.cad-segmented button.on { background: var(--cad-accent); color: #fff; }
+.cad-extrude-label { position: absolute; transform: translate(14px, -50%); padding: 2px 6px; border-radius: 4px; background: rgba(27, 31, 36, 0.9); color: #ffb020; font: 12px var(--cad-mono); pointer-events: none; z-index: 12; }
+.cad-swatch { display: inline-block; width: 14px; height: 10px; border-radius: 2px; }

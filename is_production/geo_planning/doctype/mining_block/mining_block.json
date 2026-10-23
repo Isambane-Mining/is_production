@@ -23,7 +23,20 @@
   "polygon_geojson",
   "block_status",
   "planning_status",
-  "remarks"
+  "remarks",
+  "section_cad",
+  "cad_model",
+  "cad_revision",
+  "cad_publication",
+  "cad_entity_id",
+  "cad_sequence",
+  "column_break_cad",
+  "material",
+  "bench_bottom",
+  "bench_top",
+  "design_volume",
+  "percent_mined",
+  "last_reconciliation"
  ],
  "fields": [
   {
@@ -119,12 +132,93 @@
    "fieldname": "remarks",
    "fieldtype": "Small Text",
    "label": "Remarks"
+  },
+  {
+   "fieldname": "section_cad",
+   "fieldtype": "Section Break",
+   "label": "CAD Design",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "cad_model",
+   "fieldtype": "Link",
+   "label": "CAD Model",
+   "options": "CAD Model",
+   "read_only": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "cad_revision",
+   "fieldtype": "Link",
+   "label": "CAD Revision (approved)",
+   "options": "CAD Design Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cad_publication",
+   "fieldtype": "Link",
+   "label": "CAD Publication",
+   "options": "CAD Design Publication",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cad_entity_id",
+   "fieldtype": "Data",
+   "label": "CAD Entity",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cad_sequence",
+   "fieldtype": "Int",
+   "label": "CAD Sequence",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_cad",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "material",
+   "fieldtype": "Data",
+   "label": "Material",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bench_bottom",
+   "fieldtype": "Float",
+   "label": "Bench Bottom (m)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bench_top",
+   "fieldtype": "Float",
+   "label": "Bench Top (m)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "design_volume",
+   "fieldtype": "Float",
+   "label": "Design Volume (m³)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "percent_mined",
+   "fieldtype": "Percent",
+   "label": "Mined (last survey)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_reconciliation",
+   "fieldtype": "Link",
+   "label": "Last Survey Reconciliation",
+   "options": "CAD Survey Reconciliation",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-05-12 12:48:29.337931",
+ "modified": "2026-10-23 09:00:00.000000",
  "modified_by": "Administrator",
  "module": "Geo Planning",
  "name": "Mining Block",

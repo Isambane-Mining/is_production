@@ -2622,9 +2622,41 @@ def get_availability_dashboard_html(
         end_date,
     )
 
+    # HOD only: Koppie and Uitgevallen Hours Based charts cover
+    # the calendar month. Keep A&U and downtime on their original dates.
+    hod_month_hours_html = ""
+
+    if site in ("Koppie", "Uitgevallen"):
+        month_start = start_date.replace(day=1)
+
+        if month_start != start_date:
+            hours_filters = frappe._dict(dict(dashboard_filters))
+            hours_filters["start_date"] = str(month_start)
+            hours_filters["from_date"] = str(month_start)
+
+            month_result = module.execute(hours_filters)
+
+            if isinstance(month_result, (list, tuple)):
+                if len(month_result) >= 3:
+                    hod_month_hours_html = month_result[2] or ""
+            elif isinstance(month_result, dict):
+                hod_month_hours_html = (
+                    month_result.get("html")
+                    or month_result.get("message")
+                    or ""
+                )
+
+            if not hod_month_hours_html:
+                frappe.throw(
+                    _("Full-month Hours Based dashboard is unavailable for {0}.").format(
+                        frappe.bold(site)
+                    )
+                )
+
     return {
         "site": site,
         "html": dashboard_html + downtime_html,
+        "hours_html": hod_month_hours_html,
     }
 
 

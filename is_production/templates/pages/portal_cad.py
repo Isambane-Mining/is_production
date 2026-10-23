@@ -2,6 +2,7 @@ from urllib.parse import quote
 
 import frappe
 from frappe import _
+from frappe.utils import get_assets_json
 from frappe.utils.jinja_globals import bundled_asset
 from frappe.website.utils import abs_url
 
@@ -15,6 +16,14 @@ def get_context(context):
 	if frappe.session.user == "Guest":
 		frappe.local.flags.redirect_location = "/login?redirect-to=" + quote(frappe.request.full_path)
 		raise frappe.Redirect
+	# the app code can be deployed before `bench migrate` has created the DocTypes, or before `bench build`
+	if not frappe.db.exists("DocType", "CAD Model"):
+		frappe.throw(
+			_("The CAD Engineering module is not set up on this site yet. An administrator must run: bench --site {0} migrate").format(frappe.local.site),
+			title=_("CAD Workstation not installed"),
+		)
+	if "cad_workstation.bundle.js" not in get_assets_json():
+		frappe.throw(_("The CAD Workstation assets are not built on this server. An administrator must run: bench build --app is_production"), title=_("CAD Workstation not built"))
 	if not frappe.has_permission("CAD Model", "read"):
 		raise frappe.PermissionError
 	if not frappe.db.get_single_value("CAD Settings", "enable_cad_workstation"):

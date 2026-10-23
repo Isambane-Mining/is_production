@@ -5,6 +5,8 @@ Coordinates are model coordinates (double precision); the browser draws relative
 origin. Display meshes are served as binary files and are never used for calculations.
 """
 
+import json
+
 import frappe
 from frappe import _
 from frappe.utils import cint, flt
@@ -15,6 +17,8 @@ from is_production.cad_engineering.services import cad_storage_service as storag
 
 MODEL_FIELDS = [
 	"name",
+	"design_standard",
+	"last_design_validation",
 	"model_name",
 	"model_code",
 	"model_type",
@@ -80,6 +84,7 @@ def get_workstation_config():
 		"can_approve": bool(frappe.has_permission("CAD Design Revision", "write")),
 		"can_manage_settings": bool(frappe.has_permission("CAD Settings", "write")),
 		"model_types": frappe.get_meta("CAD Model").get_field("model_type").options.split("\n"),
+		"surface_types": frappe.get_meta("CAD Surface").get_field("surface_type").options.split("\n"),
 		"linear_units": frappe.get_meta("CAD Model").get_field("linear_units").options.split("\n"),
 		"user": frappe.session.user,
 	}
@@ -321,3 +326,227 @@ def list_exchanges(model, limit=20):
 	from is_production.cad_engineering.services import cad_exchange_service
 
 	return cad_exchange_service.list_exchanges(model, limit)
+
+
+# ---------------------------------------------------------------------------
+# surfaces and analyses (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+@frappe.whitelist(methods=["POST"])
+def surface_job(model, operation, params=None):
+	check_enabled()
+	from is_production.cad_engineering.services import cad_surface_service
+
+	return cad_surface_service.start_surface(model, operation, params)
+
+
+@frappe.whitelist(methods=["POST"])
+def analysis_job(model, analysis, params=None):
+	from is_production.cad_engineering.services import cad_surface_service
+
+	return cad_surface_service.start_analysis(model, analysis, params)
+
+
+def check_surface_ref(model, geometry_ref):
+	"""Only surfaces of this model (saved, or just made by one of its jobs) are served."""
+	frappe.get_doc("CAD Model", model).check_permission("read")
+	if not storage.SHA256.match(geometry_ref or ""):
+		raise frappe.PermissionError
+	if frappe.db.exists("CAD Entity", {"cad_model": model, "geometry_ref": geometry_ref}):
+		return
+	if frappe.db.exists("CAD Processing Job", {"cad_model": model, "job_type": ["in", ["Surface", "Import", "Mining Design"]], "results": ["like", f"%{geometry_ref}%"]}):
+		return
+	raise frappe.PermissionError
+
+
+@frappe.whitelist(methods=["GET"])
+def get_surface_index(model, geometry_ref):
+	"""The display tile index of a surface (JSON), or 404 while the tiles are not made."""
+	from is_production.cad_engineering.services.cad_surface_service import sidecar, tile_key
+
+	check_surface_ref(model, geometry_ref)
+	store = storage.provider()
+	key = tile_key(model, geometry_ref, "index.json")
+	if not store.exists(key):
+		return Response(b"", status=404)
+	index = json.loads(store.read(key))
+	meta = sidecar(model, geometry_ref) or {}
+	index["stats"] = meta.get("stats")
+	response = Response(json.dumps(index), mimetype="application/json")
+	response.headers["Cache-Control"] = "private, max-age=31536000, immutable"
+	return response
+
+
+@frappe.whitelist(methods=["GET"])
+def get_surface_tile(model, geometry_ref, file):
+	from is_production.cad_engineering.services.cad_surface_service import tile_key
+
+	check_surface_ref(model, geometry_ref)
+	store = storage.provider()
+	key = tile_key(model, geometry_ref, file)
+	if not store.exists(key):
+		return Response(b"", status=404)
+	response = Response(store.read(key), mimetype="application/octet-stream")
+	response.headers["Cache-Control"] = "private, max-age=31536000, immutable"  # content-addressed
+	return response
+
+
+@frappe.whitelist()
+def list_volume_calculations(model, limit=50):
+	frappe.get_doc("CAD Model", model).check_permission("read")
+	return frappe.get_all(
+		"CAD Volume Calculation",
+		filters={"cad_model": model},
+		fields=["name", "title", "calculation_type", "cut_volume", "fill_volume", "net_volume", "plan_area", "units", "valid", "creation", "owner"],
+		order_by="creation desc",
+		limit_page_length=min(cint(limit) or 50, 200),
+	)
+
+
+@frappe.whitelist()
+def get_volume_calculation(name):
+	doc = frappe.get_doc("CAD Volume Calculation", name)
+	doc.check_permission("read")
+	return doc.as_dict()
+
+
+@frappe.whitelist()
+def list_gis_datasets():
+	"""GIS datasets with elevations, usable as surface sources (only those the user may read)."""
+	if not frappe.has_permission("GIS Dataset", "read"):
+		return []
+	return frappe.get_list(
+		"GIS Dataset",
+		filters={"has_z": 1, "status": ["!=", "Archived"]},
+		fields=["name", "title", "dataset_name", "geometry_type", "feature_count", "crs"],
+		order_by="modified desc",
+		limit_page_length=500,
+	)
+
+
+# ---------------------------------------------------------------------------
+# mining design (Phase 4)
+# ---------------------------------------------------------------------------
+
+
+@frappe.whitelist()
+def list_design_standards():
+	from is_production.cad_engineering.services import cad_mining_service
+
+	return cad_mining_service.list_standards()
+
+
+@frappe.whitelist()
+def get_design_standard(model):
+	from is_production.cad_engineering.services import cad_mining_service
+
+	frappe.get_doc("CAD Model", model).check_permission("read")
+	return cad_mining_service.model_standard(model)
+
+
+@frappe.whitelist(methods=["POST"])
+def set_design_standard(model, standard=None):
+	from is_production.cad_engineering.services import cad_mining_service
+
+	return cad_mining_service.set_standard(model, standard)
+
+
+@frappe.whitelist(methods=["POST"])
+def mining_job(model, operation, params=None):
+	check_enabled()
+	from is_production.cad_engineering.services import cad_mining_service
+
+	return cad_mining_service.start(model, operation, params)
+
+
+@frappe.whitelist(methods=["POST"])
+def validate_design(model):
+	from is_production.cad_engineering.services import cad_mining_service
+
+	return cad_mining_service.validate(model)
+
+
+@frappe.whitelist()
+def get_design_validation(name):
+	doc = frappe.get_doc("CAD Design Validation", name)
+	doc.check_permission("read")
+	return {**doc.as_dict(), "results": frappe.parse_json(doc.results), "standard_snapshot": frappe.parse_json(doc.standard_snapshot)}
+
+
+@frappe.whitelist()
+def list_material_types():
+	if not frappe.has_permission("Material Type", "read"):
+		return []
+	return frappe.get_list("Material Type", pluck="name", order_by="name asc", limit_page_length=500)
+
+
+# ---------------------------------------------------------------------------
+# mine planning integration (Phase 5)
+# ---------------------------------------------------------------------------
+
+
+@frappe.whitelist()
+def publish_preview(model, revision):
+	from is_production.cad_engineering.services import cad_planning_service
+
+	return cad_planning_service.publish_preview(model, revision)
+
+
+@frappe.whitelist(methods=["POST"])
+def publish_design(model, revision, geo_project=None, materials=None, make_selection=1):
+	from is_production.cad_engineering.services import cad_planning_service
+
+	return cad_planning_service.publish(model, revision, geo_project, materials, bool(cint(make_selection)))
+
+
+@frappe.whitelist()
+def list_publications(model):
+	frappe.get_doc("CAD Model", model).check_permission("read")
+	return frappe.get_list(
+		"CAD Design Publication",
+		filters={"cad_model": model},
+		fields=["name", "revision", "revision_label", "status", "published_on", "blocks_published", "total_volume", "total_tonnes", "geo_pit_layout", "schedule_selection", "validation_status"],
+		order_by="creation desc",
+		limit_page_length=50,
+	)
+
+
+@frappe.whitelist(methods=["POST"])
+def selection_from_sequence(model, block_entity_ids=None):
+	from is_production.cad_engineering.services import cad_planning_service
+
+	return cad_planning_service.selection_from_sequence(model, block_entity_ids)
+
+
+@frappe.whitelist()
+def planning_overlay(model, scenario=None):
+	from is_production.cad_engineering.services import cad_planning_service
+
+	return cad_planning_service.overlay(model, scenario or None)
+
+
+@frappe.whitelist()
+def compare_revisions(model, older, newer=None):
+	from is_production.cad_engineering.services import cad_planning_service
+
+	return cad_planning_service.compare(model, older, newer or None)
+
+
+@frappe.whitelist()
+def get_revision_content(model, revision):
+	from is_production.cad_engineering.services import cad_planning_service
+
+	return cad_planning_service.revision_content(model, revision)
+
+
+@frappe.whitelist()
+def list_reconciliations(model):
+	frappe.get_doc("CAD Model", model).check_permission("read")
+	return frappe.get_list(
+		"CAD Survey Reconciliation",
+		filters={"cad_model": model},
+		fields=["name", "survey_date", "survey_name", "planned_volume", "mined_volume", "remaining_volume", "over_mined_volume", "scheduled_volume", "blocks_complete", "blocks_in_progress", "valid"],
+		order_by="survey_date desc, creation desc",
+		limit_page_length=50,
+	)

@@ -34,12 +34,13 @@ def emit(**data):
 	sys.stdout.flush()
 
 
-def start_qgis():
+def start_qgis(gui=False):
+	"""gui: with Qt widgets (still offscreen), needed when desktop plugins are started with the iface stand-in."""
 	os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 	os.environ["QGIS_CUSTOM_CONFIG_PATH"] = tempfile.mkdtemp(prefix="isp-qgis-processing-")
 	from qgis.core import QgsApplication
 
-	app = QgsApplication([], False)
+	app = QgsApplication([], gui)
 	app.initQgis()
 	sys.path.append(os.path.join(QgsApplication.pkgDataPath(), "python", "plugins"))
 	from processing.core.Processing import Processing
@@ -51,15 +52,26 @@ def start_qgis():
 def load_plugins(plugins):
 	"""Start enabled processing plugins (GIS Plugin) in this worker process only.
 
-	Returns ({id: error}, {id: [provider ids it added]}).
+	A plugin with ``initProcessing()`` is started the server way. A desktop plugin that registers its
+	provider in ``initGui()`` is started against the iface stand-in (``iface_standin.py``): unchanged, its
+	dialogs never opened.
+
+	Returns ({id: error}, {id: [provider ids it added]}); ``LOAD_ROUTES`` records how each one started.
 	"""
 	errors, providers = {}, {}
 	if not plugins:
 		return errors, providers
+	import traceback
+
 	import qgis.utils as qgis_utils
 	from qgis.core import QgsApplication
 
+	sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+	from iface_standin import make_iface
+
 	registry = QgsApplication.processingRegistry()
+	iface = make_iface()
+	qgis_utils.iface = iface  # what classFactory(iface) receives, and what plugins import from qgis.utils
 
 	for plugin in plugins:
 		parent = plugin["parent"]
@@ -69,16 +81,32 @@ def load_plugins(plugins):
 			qgis_utils.plugin_paths.insert(0, parent)
 	qgis_utils.updateAvailablePlugins()
 	for plugin in plugins:
+		pid = plugin["id"]
 		before = {p.id() for p in registry.providers()}
 		try:
-			if not qgis_utils.loadPlugin(plugin["id"]):
+			if not qgis_utils.loadPlugin(pid):
 				raise RuntimeError("QGIS could not load it")
-			if not qgis_utils.startProcessingPlugin(plugin["id"]):
-				raise RuntimeError("it did not start a processing provider")
+			if qgis_utils.startProcessingPlugin(pid):
+				LOAD_ROUTES[pid] = "initProcessing"
+			else:
+				# no initProcessing(): start it as QGIS Desktop would, against the stand-in iface
+				if not qgis_utils.loadPlugin(pid):
+					raise RuntimeError("QGIS could not load it")
+				instance = sys.modules[pid].classFactory(iface)
+				instance.initGui()
+				qgis_utils.plugins[pid] = instance
+				qgis_utils.active_plugins.append(pid)
+				LOAD_ROUTES[pid] = "initGui (iface stand-in)"
 		except Exception as e:
-			errors[plugin["id"]] = str(e)
-		providers[plugin["id"]] = sorted(p.id() for p in registry.providers() if p.id() not in before)
+			lines = traceback.format_exception(type(e), e, e.__traceback__)
+			errors[pid] = (str(e) or type(e).__name__) + " | " + "".join(lines[-3:]).strip()[-600:]
+		providers[pid] = sorted(p.id() for p in registry.providers() if p.id() not in before)
+		if pid not in errors and not providers[pid]:
+			errors[pid] = "it started, but registered no Processing provider"
 	return errors, providers
+
+
+LOAD_ROUTES = {}
 
 
 def plain(value):
@@ -201,7 +229,7 @@ def describe(request):
 				}
 			)
 	return {"qgis_version": Qgis.version(), "algorithms": algorithms, "plugin_errors": request.get("_plugin_errors", {}),
-		"plugin_providers": request.get("_plugin_providers", {})}
+		"plugin_providers": request.get("_plugin_providers", {}), "plugin_routes": LOAD_ROUTES}
 
 
 class Feedback:
@@ -312,7 +340,7 @@ def main():
 
 		limit = int(request["memory_limit_mb"]) * 1024 * 1024
 		resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
-	app = start_qgis()
+	app = start_qgis(gui=bool(request.get("plugins")))
 	try:
 		from qgis.core import QgsApplication
 

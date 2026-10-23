@@ -706,6 +706,7 @@ export class ToolController {
 		const entities = rows.map((row) => ({ entity_id: new_entity_id(), cad_layer: layer, validation_status: "Not Checked", ...row }));
 		this.ctx.session.apply(label, (w) => entities.forEach((e) => w.put(e)));
 		this.ctx.message(__("{0} added.", [label]));
+		if (entities.length === 1 && this.ctx.on_created) this.ctx.on_created(entities[0]); // the object tool window
 		if (end) {
 			const name = this.name;
 			this.cancel(true);
