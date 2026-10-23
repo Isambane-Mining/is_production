@@ -2,7 +2,7 @@
 	<div class="cad-panel-body">
 		<template v-if="entities.length === 1">
 			<div class="cad-props">
-				<div class="cad-prop"><span>{{ __("Type") }}</span><b>{{ __(e.entity_type) }}</b></div>
+				<div class="cad-prop"><span>{{ __("Type") }}</span><span class="cad-row"><b class="cad-grow">{{ __(e.entity_type) }}</b><button class="small" :title="__('Object tool window (or double-click the object)')" @click="$emit('edit', e.entity_id)">{{ __("Edit…") }}</button></span></div>
 				<div class="cad-prop"><span>{{ __("Identifier") }}</span><span class="mono">{{ e.entity_id }}</span></div>
 				<div class="cad-prop">
 					<span>{{ __("Layer") }}</span>
@@ -64,6 +64,13 @@
 				</template>
 			</div>
 
+			<template v-if="design_rows.length">
+				<h4 class="cad-subhead">{{ design_title }}</h4>
+				<div class="cad-props">
+					<div v-for="row in design_rows" :key="row[0]" class="cad-prop"><span>{{ row[0] }}</span><span class="mono">{{ row[1] }}</span></div>
+				</div>
+			</template>
+			
 			<h4 class="cad-subhead">{{ __("Measures (Open CASCADE)") }}</h4>
 			<div class="cad-props">
 				<div v-if="dirty || e.validation_status === 'Not Checked'" class="muted small pad">{{ __("Measured by the CAD worker after the model is saved.") }}</div>
@@ -96,6 +103,7 @@
 <script setup>
 import { computed } from "vue";
 import { dimension_measurement, format_number, format_point, loop_area } from "./geometry";
+import { tin_problems } from "./surface_commands";
 
 const props = defineProps({
 	entities: Array,
@@ -104,8 +112,9 @@ const props = defineProps({
 	decimals: Number,
 	dirty_ids: Set,
 	angular_decimals: Number,
+	surface_types: { type: Array, default: () => [] },
 });
-const emit = defineEmits(["update", "update_geometry", "error"]);
+const emit = defineEmits(["update", "update_geometry", "error", "edit"]);
 const line_types = ["Continuous", "Dashed", "Dotted", "Dash Dot", "Centre", "Hidden", "Phantom"];
 
 const e = computed(() => props.entities[0]);
@@ -208,11 +217,45 @@ const geometry_fields = computed(() => {
 				point_field("scale", __("Scale X, Y, Z"), ["scale"]),
 				ang("rot", __("Rotation (°)"), ["rotation"], g.rotation),
 			];
+		case "Surface":
+		case "Mesh": {
+			const st = e.value._stats || {};
+			const v = st.validation || {};
+			return [
+				{ key: "name", label: __("Name"), kind: "text", path: ["name"], value: g.name || "" },
+				...(e.value.entity_type === "Surface" ? [select("stype", __("Surface type"), ["surface_type"], g.surface_type || "", props.surface_types)] : []),
+				info("tris", __("Triangles"), st.triangle_count != null ? st.triangle_count.toLocaleString() : __("loading…")),
+				info("verts", __("Vertices"), st.vertex_count != null ? st.vertex_count.toLocaleString() : ""),
+				info("parea", __("Plan area"), format_number(st.plan_area, props.decimals)),
+				info("sarea", __("Surface area"), format_number(st.surface_area, props.decimals)),
+				info("zr", __("Elevations"), st.min_elevation != null ? `${format_number(st.min_elevation, props.decimals)} … ${format_number(st.max_elevation, props.decimals)}` : ""),
+				info("checks", __("Checks"), v.ok === undefined ? "" : v.ok ? (v.spike_count ? __("OK · {0} possible spike(s)", [v.spike_count]) : __("OK")) : tin_problems(v)),
+				info("op", __("Made by"), (g.source && (g.source.operation || g.source.op)) || ""),
+				info("ref", __("TIN (SHA-256)"), (e.value.geometry_ref || "").slice(0, 16) + "…"),
+			];
+		}
 		case "Solid":
 			return [info("op", __("Made by"), (g.source && g.source.op) || ""), info("ref", __("B-Rep (SHA-256)"), (e.value.geometry_ref || "").slice(0, 16) + "…")];
 		default:
 			return [];
 	}
+});
+
+// mining design data (pit rings, roads, blocks) kept in the entity's metadata
+const DESIGN = {
+	pit_design: [__("Pit design"), { stage: __("Stage"), kind: __("Part"), bench: __("Bench"), elevation: __("Elevation"), standard: __("Standard") }],
+	haul_road: [__("Haul road"), { name: __("Road"), role: __("Part"), width: __("Width"), standard: __("Standard") }],
+	drill_hole: [__("Drill hole"), { pattern: __("Pattern"), hole_id: __("Hole"), row: __("Row"), number: __("Number"), length: __("Length (design)"), inclination: __("Inclination (°)"), dip: __("Dip direction (°)"), diameter_mm: __("Diameter (mm)"), subdrill: __("Subdrill"), burden: __("Burden"), spacing: __("Spacing"), standard: __("Standard") }],
+	mining_block: [__("Mining block"), { block_id: __("Block"), sequence: __("Sequence"), bench_bottom: __("Bench bottom"), bench_top: __("Bench top"), material: __("Material"), volume: __("Volume (m³)"), plan_area: __("Plan area"), direction: __("Mining direction (°)"), upper: __("Upper surface"), lower: __("Lower surface"), standard: __("Standard") }],
+};
+const design_key = computed(() => Object.keys(DESIGN).find((k) => e.value.metadata && e.value.metadata[k]));
+const design_title = computed(() => (design_key.value ? DESIGN[design_key.value][0] : ""));
+const design_rows = computed(() => {
+	if (!design_key.value) return [];
+	const data = e.value.metadata[design_key.value];
+	return Object.entries(DESIGN[design_key.value][1])
+		.filter(([k]) => data[k] !== undefined && data[k] !== null && data[k] !== "")
+		.map(([k, label]) => [label, typeof data[k] === "number" && !Number.isInteger(data[k]) ? format_number(data[k], props.decimals) : __(String(data[k]))]);
 });
 
 function update(values) {

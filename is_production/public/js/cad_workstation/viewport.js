@@ -19,6 +19,7 @@ import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeome
 import { dimension_graphics, hatch_graphics } from "./annotate";
 import { entity_nearest, intersect, perpendicular_foot, primitives, tangent_points } from "./geom2d";
 import { block_extent, block_matrix, curve_points, entity_extent, snap_points } from "./geometry";
+import { SurfaceLayer } from "./surfaces";
 import { font_ready, glyph_geometry, mtext_glyphs, text_glyphs } from "./text";
 
 const PICK_PIXELS = 6;
@@ -28,10 +29,24 @@ const XLINE_REACH = 1e5;
 const DASHES = { Dashed: [12, 6], Dotted: [1.5, 5], "Dash Dot": [12, 5], Centre: [18, 5], Hidden: [6, 4], Phantom: [20, 6] };
 const SNAP_PRIORITY = { endpoint: 0, node: 0, insertion: 0, midpoint: 1, centre: 1, quadrant: 1, intersection: 2, perpendicular: 3, tangent: 3, nearest: 4 };
 
+// The area inside a closed curve as triangles (its first point's elevation).
+function fill_part(pts) {
+	let ring = pts.map((p) => new THREE.Vector2(p[0], p[1]));
+	if (ring.length > 1 && ring[0].distanceTo(ring[ring.length - 1]) < 1e-9) ring = ring.slice(0, -1);
+	const tris = { positions: [], index: [] };
+	if (ring.length < 3) return { lines: [], points: [], tris, glyphs: [] };
+	const z = pts[0][2] || 0;
+	for (const p of ring) tris.positions.push(p.x, p.y, z);
+	for (const f of THREE.ShapeUtils.triangulateShape(ring, [])) tris.index.push(f[0], f[1], f[2]);
+	return { lines: [], points: [], tris, glyphs: [] };
+}
+
 export class Viewport {
-	constructor(container, { on_view_change } = {}) {
+	constructor(container, { on_view_change, on_mode_change } = {}) {
 		this.container = container;
 		this.on_view_change = on_view_change || (() => {});
+		this.on_mode_change = on_mode_change || (() => {});
+		this.orbit_mode = false; // left-drag orbits (for trackpads); see start_orbit
 		this.origin = [0, 0, 0];
 		this.elevation = 0;
 		this.mode = "2d";
@@ -62,9 +77,14 @@ export class Viewport {
 		this.overlay = new THREE.Group();
 		this.grid = new THREE.Group();
 		this.scene.add(this.grid, this.reference_group, this.content, this.highlight);
+		this.surfaces = new SurfaceLayer(this);
+		this.content.add(this.surfaces.group);
 		// the cursor, snap marker and previews are drawn over a cached image of the rest (see render)
 		this.overlay_scene = new THREE.Scene();
 		this.overlay_scene.add(this.overlay);
+		this.feature_overlay = new THREE.Group(); // feature previews (extrude handle): not cleared by the drawing tools
+		this.overlay_scene.add(this.feature_overlay);
+		this.extrude_preview = null;
 		this.blit_camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 		this.blit_material = new THREE.MeshBasicMaterial({ depthTest: false, depthWrite: false });
 		this.blit_scene = new THREE.Scene();
@@ -87,6 +107,11 @@ export class Viewport {
 		this.controls.enableDamping = false;
 		this.controls.rotateSpeed = 0.6;
 		this.controls.addEventListener("change", () => this.view_changed());
+		this.controls.enableRotate = false; // rotation is ours: orbit about the point under the cursor (start_orbit)
+		this.orbit_drag = null;
+		this.orbit_moved_at = 0;
+		this.on_orbit_down = (event) => this.start_orbit(event);
+		this.renderer.domElement.addEventListener("pointerdown", this.on_orbit_down, true);
 
 		this.raycaster = new THREE.Raycaster();
 		this.axes = this.make_axes_inset();
@@ -98,6 +123,7 @@ export class Viewport {
 	}
 
 	dispose() {
+		this.renderer.domElement.removeEventListener("pointerdown", this.on_orbit_down, true);
 		this.observer.disconnect();
 		if (this.static_target) this.static_target.dispose();
 		this.controls.dispose();
@@ -125,9 +151,20 @@ export class Viewport {
 	rebase(origin) {
 		const d = new THREE.Vector3(this.origin[0] - origin[0], this.origin[1] - origin[1], this.origin[2] - origin[2]);
 		this.set_origin(origin);
+		this.surfaces.clear(); // tiles are placed relative to the origin: they reload
 		this.camera.position.add(d);
 		this.controls.target.add(d);
 		this.controls.update();
+	}
+
+	// Centre the view on a model point (same direction and zoom): the camera target moves there.
+	look_at_point(model_point) {
+		const t = this.to_local(model_point);
+		const d = t.clone().sub(this.controls.target);
+		this.camera.position.add(d);
+		this.controls.target.copy(t);
+		this.controls.update();
+		this.view_changed();
 	}
 
 	to_local(p) {
@@ -151,6 +188,7 @@ export class Viewport {
 	}
 
 	screen_of(model_point) {
+		this.camera.updateMatrixWorld(); // the view may have changed since the last frame
 		const v = this.to_local(model_point).project(this.camera);
 		const rect = this.renderer.domElement.getBoundingClientRect();
 		return [((v.x + 1) / 2) * rect.width, ((1 - v.y) / 2) * rect.height];
@@ -227,6 +265,7 @@ export class Viewport {
 		this.raycaster.params.Line2 = { threshold: PICK_PIXELS };
 		this.raycaster.params.Points.threshold = tolerance;
 		const hits = this.raycaster.intersectObjects(this.content.children, true);
+		let surface = null; // a surface is picked only when nothing else is under the cursor (it covers lines drawn on it)
 		for (const hit of hits) {
 			let object = hit.object;
 			if (object.userData.batch) {
@@ -242,9 +281,12 @@ export class Viewport {
 				continue;
 			}
 			while (object && !object.userData.entity_id) object = object.parent;
-			if (object && object.visible) return object.userData.entity_id;
+			if (object && object.visible) {
+				if (object.parent !== this.surfaces.group) return object.userData.entity_id;
+				surface = surface || object.userData.entity_id;
+			}
 		}
-		return null;
+		return surface;
 	}
 
 	// Entities inside (window) or touching (crossing) a screen rectangle [x0, y0, x1, y1] in CSS pixels.
@@ -271,6 +313,23 @@ export class Viewport {
 		return out;
 	}
 
+	// Elevation of the surfaces under the cursor (display meshes; for reading only).
+	surface_at(event) {
+		this.raycaster.setFromCamera(this.ndc(event), this.camera);
+		return this.surfaces.z_under(this.raycaster);
+	}
+
+	// Clip everything on one side of a plane (section view); null removes it. normal/point in model coordinates.
+	set_section_plane(section) {
+		if (!section) this.renderer.clippingPlanes = [];
+		else {
+			const n = new THREE.Vector3(...section.normal).normalize();
+			this.renderer.clippingPlanes = [new THREE.Plane().setFromNormalAndCoplanarPoint(n, this.to_local(section.point))];
+		}
+		this.section = section;
+		this.invalidate();
+	}
+
 	// The plan box (model XY) under a screen rectangle (2D mode).
 	model_rect(rect) {
 		const a = this.cursor_point({ clientX: rect[0] + this.renderer.domElement.getBoundingClientRect().left, clientY: rect[1] + this.renderer.domElement.getBoundingClientRect().top });
@@ -286,10 +345,13 @@ export class Viewport {
 
 	style_of(session, entity, inherited = null) {
 		const layer = this.layer_of(session, entity);
-		const color = entity.color || (inherited && (!layer || layer.layer_name === "0") ? inherited.color : null) || (layer && layer.color) || this.ink;
+		const override = this.colour_override && this.colour_override.get(entity.entity_id); // planning view (not saved)
+		const color = override || entity.color || (inherited && (!layer || layer.layer_name === "0") ? inherited.color : null) || (layer && layer.color) || this.ink;
 		const line_type = entity.line_type || (layer && layer.line_type) || "Continuous";
-		const weight = (layer && layer.line_weight) || 0.25;
-		return { color, line_type, weight };
+		// an entity's own line weight is always shown; layer weights only with LWT on (as in AutoCAD)
+		const own = Number(entity.line_weight) || 0;
+		const weight = own || (layer && layer.line_weight) || 0.25;
+		return { color, line_type, weight, own_weight: own > 0 };
 	}
 
 	// Drawable parts of an entity in model coordinates (JS doubles):
@@ -340,6 +402,8 @@ export class Viewport {
 			default: {
 				const pts = curve_points(entity);
 				if (pts) for (let i = 0; i < pts.length - 1; i++) part.lines.push(...pts[i], ...pts[i + 1]);
+				const planned = this.colour_override && this.colour_override.has(entity.entity_id); // planning view: blocks filled
+				if ((g.fill || planned) && pts && pts.length > 3) out.push({ ...fill_part(pts), style: { ...style, line_type: "Continuous", fill: true } }); // filled shape
 			}
 		}
 		return out;
@@ -410,7 +474,7 @@ export class Viewport {
 		const color = new THREE.Color(style.color).getHexString();
 		if (style.text_height) return `${color}|text|${Math.round(Math.log2(style.text_height) * 2)}`; // text, by size (level of detail)
 		if (style.fill) return `${color}|fill`;
-		const weight = this.show_lineweights ? Math.round((style.weight || 0.25) * 100) : 25;
+		const weight = this.show_lineweights || style.own_weight ? Math.round((style.weight || 0.25) * 100) : 25;
 		return `${color}|${style.line_type}|${weight}`;
 	}
 
@@ -425,6 +489,8 @@ export class Viewport {
 		if (all) {
 			this.draw_cache = new WeakMap();
 			this.entity_keys.clear();
+			this.surfaces.model = session.model && session.model.name;
+			for (const id of [...this.surfaces.items.keys()]) if (!session.entities.has(id)) this.surfaces.remove(id);
 			for (const b of this.batches.values()) b.members.clear();
 			this.snap_index.rebuild(session, this.blocks);
 		}
@@ -447,8 +513,13 @@ export class Viewport {
 			}
 			const entity = session.entities.get(id);
 			if (!all) this.snap_index.update(id, entity, this.blocks);
+			if (!entity || !["Surface", "Mesh"].includes(entity.entity_type)) this.surfaces.remove(id);
 			if (!entity) continue;
 			const layer = this.layer_of(session, entity);
+			if (entity.entity_type === "Surface" || entity.entity_type === "Mesh") {
+				this.surfaces.sync(entity, this.style_of(session, entity).color, !layer || Boolean(layer.visible));
+				continue;
+			}
 			if (layer && !layer.visible) continue;
 			if (entity.entity_type === "Solid") {
 				const object = this.build_solid(entity, this.style_of(session, entity).color);
@@ -562,7 +633,7 @@ export class Viewport {
 
 	line_object(positions, style, color) {
 		const dash = DASHES[style.line_type];
-		const weight_px = this.show_lineweights ? Math.max(1, (style.weight || 0.25) * 4) : 1;
+		const weight_px = this.show_lineweights || style.own_weight ? Math.max(1, (style.weight || 0.25) * 4) : 1;
 		if (weight_px > 1.25) {
 			const geometry = new LineSegmentsGeometry().setPositions(positions);
 			const material = new LineMaterial({ color, linewidth: weight_px, dashed: Boolean(dash), worldUnits: false });
@@ -691,6 +762,7 @@ export class Viewport {
 
 	set_selection(ids, session) {
 		this.selected = new Set(ids);
+		this.surfaces.set_selection(ids);
 		this.rebuild_highlight(session);
 		this.invalidate();
 	}
@@ -805,15 +877,122 @@ export class Viewport {
 		this.mode = mode;
 		if (mode === "2d") {
 			this.use_camera(this.ortho);
-			this.controls.enableRotate = false;
 			this.controls.mouseButtons = { LEFT: -1, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.PAN };
 			this.set_view("top");
 		} else {
 			this.use_camera(this.projection === "perspective" ? this.perspective : this.ortho);
-			this.controls.enableRotate = true;
-			this.controls.mouseButtons = { LEFT: -1, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
+			this.controls.mouseButtons = { LEFT: -1, MIDDLE: THREE.MOUSE.PAN, RIGHT: -1 }; // right-drag orbits (start_orbit)
 		}
 		this.view_changed();
+	}
+
+	// ------------------------------------------------------------------ orbit
+
+	// Which drags orbit: right-drag (3D), Shift+middle-drag, Alt+left-drag, or left-drag while orbit mode is on.
+	// The view turns about the point under the cursor where the drag starts (what you look at stays put).
+	start_orbit(event) {
+		const wants =
+			(event.button === 2 && this.mode === "3d") ||
+			(event.button === 1 && event.shiftKey) ||
+			(event.button === 0 && (event.altKey || this.orbit_mode));
+		if (!wants) return;
+		event.stopImmediatePropagation(); // not a selection, pick or pan
+		event.preventDefault();
+		if (this.mode === "2d") {
+			this.set_mode("3d");
+			this.on_mode_change("3d");
+		}
+		const pivot = this.pivot_at(event);
+		this.orbit_drag = { x: event.clientX, y: event.clientY, pivot, moved: false };
+		this.show_pivot(pivot);
+		const el = this.renderer.domElement;
+		el.setPointerCapture(event.pointerId);
+		const move = (e) => {
+			const d = this.orbit_drag;
+			if (!d) return;
+			const dx = e.clientX - d.x, dy = e.clientY - d.y;
+			d.x = e.clientX;
+			d.y = e.clientY;
+			if (Math.abs(dx) + Math.abs(dy) > 0) d.moved = true;
+			const per_pixel = Math.PI / Math.max(this.container.clientHeight, 300); // half a turn per viewport height
+			this.orbit(-dx * per_pixel, dy * per_pixel, d.pivot);
+		};
+		const up = (e) => {
+			el.removeEventListener("pointermove", move);
+			el.removeEventListener("pointerup", up);
+			el.removeEventListener("pointercancel", up);
+			if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
+			if (this.orbit_drag && this.orbit_drag.moved) this.orbit_moved_at = performance.now();
+			this.orbit_drag = null;
+			this.show_pivot(null);
+		};
+		el.addEventListener("pointermove", move);
+		el.addEventListener("pointerup", up);
+		el.addEventListener("pointercancel", up);
+	}
+
+	// A right-click that ended an orbit is not "Enter" for the drawing tools.
+	orbit_just_ended() {
+		return performance.now() - this.orbit_moved_at < 400;
+	}
+
+	// The point to turn about: geometry or surface under the cursor, else the view centre.
+	pivot_at(event) {
+		this.raycaster.setFromCamera(this.ndc(event), this.camera);
+		const tolerance = 4 * this.world_per_pixel();
+		this.raycaster.params.Line.threshold = tolerance;
+		this.raycaster.params.Points.threshold = tolerance;
+		let hits = [];
+		try {
+			hits = this.raycaster.intersectObjects(this.content.children, true);
+		} catch (e) {
+			hits = [];
+		}
+		const hit = hits.find((h) => h.object.visible !== false);
+		return hit ? hit.point.clone() : this.controls.target.clone();
+	}
+
+	// Turn the view about pivot (local coordinates): d_azimuth about the vertical, d_elevation up/down (radians).
+	orbit(d_azimuth, d_elevation, pivot = null) {
+		if (this.mode === "2d") {
+			this.set_mode("3d");
+			this.on_mode_change("3d");
+		}
+		pivot = pivot || this.controls.target.clone();
+		const camera = this.camera;
+		const target = this.controls.target;
+		const dir = camera.position.clone().sub(target).normalize(); // from the target towards the camera
+		const limit = THREE.MathUtils.degToRad(89.9);
+		const elevation = Math.asin(THREE.MathUtils.clamp(dir.z, -1, 1));
+		// never past straight down/up; a view already steeper than the limit (plan) only tilts away from it
+		let next = THREE.MathUtils.clamp(elevation + d_elevation, -limit, limit);
+		if ((d_elevation > 0 && next < elevation) || (d_elevation < 0 && next > elevation) || !d_elevation) next = elevation;
+		const turn = new THREE.Quaternion();
+		if (Math.abs(next - elevation) > 1e-12) {
+			const azimuth = Math.atan2(dir.y, dir.x);
+			const to = new THREE.Vector3(Math.cos(next) * Math.cos(azimuth), Math.cos(next) * Math.sin(azimuth), Math.sin(next));
+			turn.setFromUnitVectors(dir, to);
+		}
+		turn.premultiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), d_azimuth));
+		for (const v of [camera.position, target]) v.sub(pivot).applyQuaternion(turn).add(pivot);
+		camera.up.set(0, 0, 1);
+		camera.lookAt(target);
+		this.controls.update();
+		this.view_changed();
+	}
+
+	show_pivot(pivot) {
+		if (this.pivot_marker) {
+			this.overlay.remove(this.pivot_marker);
+			this.pivot_marker.geometry.dispose();
+			this.pivot_marker = null;
+		}
+		if (pivot) {
+			const geometry = new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute(pivot.toArray(), 3));
+			this.pivot_marker = new THREE.Points(geometry, new THREE.PointsMaterial({ color: 0xffb020, size: 9, sizeAttenuation: false, depthTest: false }));
+			this.overlay.add(this.pivot_marker);
+		}
+		this.render();
 	}
 
 	set_projection(projection) {
@@ -909,6 +1088,7 @@ export class Viewport {
 	}
 
 	view_changed() {
+		this.camera.updateMatrixWorld(); // picks and projections right after a view change use the new view
 		if (this.camera.isPerspectiveCamera) {
 			const distance = this.camera.position.distanceTo(this.controls.target);
 			this.camera.near = Math.max(distance / 1e4, 1e-3);
@@ -922,6 +1102,9 @@ export class Viewport {
 		this.update_grid();
 		this.apply_text_lod();
 		this.invalidate();
+		clearTimeout(this.surface_timer);
+		this.surface_timer = setTimeout(() => this.surfaces.update(), 150); // load the surface tiles the view needs
+		if (this.extrude_preview) this.extrude_preview.refresh(); // the handle keeps its size on screen
 		this.on_view_change(this);
 	}
 
@@ -1006,6 +1189,9 @@ export class Viewport {
 				this.static_target = new THREE.WebGLRenderTarget(W, H, { samples: 4 });
 				this.static_dirty = true;
 			}
+			// fat lines (LineSegments2) take their pixel size from the renderer's viewport: it must be the whole view here,
+			// not the axes inset the previous frame ended with (that made highlighted lines ~14× too wide)
+			r.setViewport(0, 0, w, h);
 			if (this.static_dirty) {
 				r.setRenderTarget(this.static_target);
 				r.render(this.scene, this.camera);
@@ -1030,6 +1216,7 @@ export class Viewport {
 			r.clearDepth();
 			r.render(this.axes.scene, this.axes.camera);
 			r.setScissorTest(false);
+			r.setViewport(0, 0, w, h);
 			r.autoClear = true;
 		});
 	}

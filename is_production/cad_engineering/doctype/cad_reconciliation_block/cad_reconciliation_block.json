@@ -1,0 +1,117 @@
+{
+ "actions": [],
+ "creation": "2026-10-23 09:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "fields": [
+  {
+   "fieldname": "block_id",
+   "fieldtype": "Data",
+   "label": "Block",
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "mining_block",
+   "fieldtype": "Link",
+   "label": "Mining Block",
+   "options": "Mining Block"
+  },
+  {
+   "fieldname": "cad_entity_id",
+   "fieldtype": "Data",
+   "label": "CAD Entity"
+  },
+  {
+   "fieldname": "bench_bottom",
+   "fieldtype": "Float",
+   "label": "Bench",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "material",
+   "fieldtype": "Data",
+   "label": "Material",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "planned_volume",
+   "fieldtype": "Float",
+   "label": "Planned",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "mined_volume",
+   "fieldtype": "Float",
+   "label": "Mined",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "remaining_volume",
+   "fieldtype": "Float",
+   "label": "Remaining",
+   "columns": 1
+  },
+  {
+   "fieldname": "over_mined_volume",
+   "fieldtype": "Float",
+   "label": "Beyond Design",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "scheduled_volume",
+   "fieldtype": "Float",
+   "label": "Scheduled",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "percent_complete",
+   "fieldtype": "Percent",
+   "label": "Complete",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "block_state",
+   "fieldtype": "Select",
+   "label": "State",
+   "options": "Not Started\nIn Progress\nComplete",
+   "in_list_view": 1,
+   "columns": 1
+  }
+ ],
+ "field_order": [
+  "block_id",
+  "mining_block",
+  "cad_entity_id",
+  "bench_bottom",
+  "material",
+  "planned_volume",
+  "mined_volume",
+  "remaining_volume",
+  "over_mined_volume",
+  "scheduled_volume",
+  "percent_complete",
+  "block_state"
+ ],
+ "grid_page_length": 50,
+ "links": [],
+ "modified": "2026-10-23 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "CAD Engineering",
+ "name": "CAD Reconciliation Block",
+ "owner": "Administrator",
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "istable": 1,
+ "editable_grid": 0,
+ "permissions": []
+}

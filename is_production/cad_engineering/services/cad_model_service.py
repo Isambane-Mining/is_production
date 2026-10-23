@@ -9,6 +9,7 @@ saved here are checked by the CAD worker afterwards (Validate Model job), which 
 import json
 import math
 import re
+import time
 
 import frappe
 from frappe import _
@@ -98,27 +99,41 @@ def save_edits(model, edit_version, changes):
 			title=_("Edit Conflict"),
 		)
 
-	frappe.db.savepoint("cad_save_edits")
-	frappe.flags.cad_batch = True
-	try:
-		working = cad_revision_service.ensure_working_revision(model)
-		apply_layer_changes(model, layer_changes, working)
-		layers = layer_names(model)
-		apply_blocks_in_order(model, block_changes)
-		changed_blocks = [b["block_name"] for b in block_changes]
-		removed = delete_entities(model, deletes, layers)
-		saved = [upsert_entity(model, row, layers, working) for row in upserts]
-		delete_blocks(model, deleted_blocks)
-		delete_layers(model, deleted_layers, layers)
-		if "references" in changes:
-			set_references(model, changes.get("references") or [])
-		refresh_block_references(model, changed_blocks)
-		stats = refresh_model(model)
-	except Exception:
-		frappe.db.rollback(save_point="cad_save_edits")
-		raise
-	finally:
-		frappe.flags.cad_batch = False
+	for attempt in range(3):
+		frappe.db.savepoint("cad_save_edits")
+		frappe.flags.cad_batch = True
+		try:
+			working = cad_revision_service.ensure_working_revision(model)
+			apply_layer_changes(model, layer_changes, working)
+			layers = layer_names(model)
+			apply_blocks_in_order(model, block_changes)
+			changed_blocks = [b["block_name"] for b in block_changes]
+			removed = delete_entities(model, deletes, layers)
+			saved = [upsert_entity(model, row, layers, working) for row in upserts]
+			delete_blocks(model, deleted_blocks)
+			delete_layers(model, deleted_layers, layers)
+			if "references" in changes:
+				set_references(model, changes.get("references") or [])
+			refresh_block_references(model, changed_blocks)
+			stats = refresh_model(model)
+			sync_surfaces(model)
+			break
+		except Exception as error:
+			# a deadlock (e.g. with a validation job writing the same rows) ends the whole transaction, savepoint
+			# included: start again from a clean transaction (this request has written nothing else)
+			retry = (frappe.db.is_deadlocked(error) or frappe.db.is_timedout(error)) and attempt < 2
+			try:
+				frappe.db.rollback(save_point="cad_save_edits")
+			except Exception:
+				frappe.db.rollback()
+				if not retry:
+					raise error from None
+			if not retry:
+				raise
+			frappe.db.rollback()
+			time.sleep(0.2 * (attempt + 1))
+		finally:
+			frappe.flags.cad_batch = False
 
 	changed = [row["entity_id"] for row in saved if row["changed"] and row["entity_type"] not in cad_geometry.BLOB_TYPES]
 	job = None
@@ -200,6 +215,7 @@ def upsert_entity(model, row, layers, working):
 			"cad_layer": layer,
 			"color": row.get("color") or None,
 			"line_type": row.get("line_type") or None,
+			"line_weight": flt(row.get("line_weight")) if row.get("line_weight") else 0,
 			"source_id": row.get("source_id") or doc.source_id,
 			"metadata": json.dumps(row["metadata"]) if isinstance(row.get("metadata"), dict) else row.get("metadata") or doc.metadata,
 		}
@@ -228,7 +244,7 @@ def upsert_entity(model, row, layers, working):
 
 def signature(doc):
 	return json.dumps(
-		[doc.entity_type, doc.cad_layer, doc.color or None, doc.line_type or None, doc.geometry_ref or None, frappe.parse_json(doc.geometry or "null"), frappe.parse_json(doc.metadata or "null")],
+		[doc.entity_type, doc.cad_layer, doc.color or None, doc.line_type or None, flt(doc.line_weight), doc.geometry_ref or None, frappe.parse_json(doc.geometry or "null"), frappe.parse_json(doc.metadata or "null")],
 		sort_keys=True,
 	)
 
@@ -280,6 +296,7 @@ ENTITY_FIELDS = [
 	"cad_layer",
 	"color",
 	"line_type",
+	"line_weight",
 	"geometry",
 	"geometry_ref",
 	"geometry_format",
@@ -377,12 +394,20 @@ def replace_content(model, content, working):
 			entity.insert()
 	finally:
 		frappe.flags.cad_batch = False
-	return refresh_model(model)
+	stats = refresh_model(model)
+	sync_surfaces(model)
+	return stats
+
+
+def sync_surfaces(model):
+	from is_production.cad_engineering.services.cad_surface_service import sync_surfaces as sync
+
+	sync(model)
 
 
 def create_model(values):
 	values = frappe.parse_json(values) if isinstance(values, str) else values or {}
-	allowed = ("model_name", "model_code", "model_type", "geo_project", "company", "branch", "location", "crs", "source_crs", "vertical_datum", "linear_units", "angular_units", "description", "plan_orientation", "annotation_scale", "drawing_template")
+	allowed = ("model_name", "model_code", "model_type", "geo_project", "company", "branch", "location", "crs", "source_crs", "vertical_datum", "linear_units", "angular_units", "description", "plan_orientation", "annotation_scale", "drawing_template", "design_standard")
 	doc = frappe.get_doc({"doctype": MODEL, **{k: values.get(k) for k in allowed if values.get(k) not in (None, "")}})
 	doc.insert()
 	return doc
@@ -558,6 +583,7 @@ BULK_FIELDS = [
 	"entity_version",
 	"color",
 	"line_type",
+	"line_weight",
 	"source_id",
 	"geometry",
 	"metadata",
@@ -608,6 +634,7 @@ def bulk_insert_entities(model, rows, working, layer_map, on_progress=None):
 				1,
 				row.get("color"),
 				row.get("line_type"),
+				flt(row.get("line_weight")),
 				row.get("source_id"),
 				json.dumps(geometry),
 				json.dumps(row["metadata"]) if row.get("metadata") else None,

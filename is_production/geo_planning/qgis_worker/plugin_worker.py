@@ -229,10 +229,11 @@ def classify(metadata, scan, compiled, dependencies, version_ok):
 		return "Unsupported", unsupported
 
 	is_server = metadata.get("server", "").lower() in ("true", "yes", "1") or scan["server_class_factory"]
-	has_processing = (
-		metadata.get("hasprocessingprovider", "").lower() in ("yes", "true", "1")
-		or scan["processing_provider"]
-	) and (scan["init_processing"] or metadata.get("hasprocessingprovider", "").lower() in ("yes", "true", "1"))
+	declared = metadata.get("hasprocessingprovider", "").lower() in ("yes", "true", "1")
+	# a provider class, or the metadata flag: its algorithms can run headless. Without initProcessing() the
+	# provider is registered in initGui(), which the processing worker runs against the iface stand-in.
+	has_processing = declared or scan["processing_provider"]
+	via_init_gui = has_processing and not scan["init_processing"]
 	gui = bool(scan["gui_imports"]) or scan["uses_iface"]
 	if compiled:
 		reasons.append("contains compiled modules (" + ", ".join(compiled[:3]) + "), which must match this system's Python and QGIS build")
@@ -240,7 +241,11 @@ def classify(metadata, scan, compiled, dependencies, version_ok):
 		reasons.append("has a QGIS Server entry point (serverClassFactory / server=True)")
 		return ("Requires manual adaptation" if compiled else "Native server-compatible"), reasons
 	if has_processing:
-		reasons.append("adds a QGIS Processing provider" + (" (its desktop interface is not used here)" if gui else ""))
+		reasons.append(
+			"adds a QGIS Processing provider"
+			+ (" from initGui(): it is started with the desktop iface stand-in" if via_init_gui else "")
+			+ (" (its dialogs are not used here; its algorithms run in the Processing toolbox)" if gui else "")
+		)
 		return ("Requires manual adaptation" if compiled else "Processing-compatible"), reasons
 	if gui:
 		reasons.append("is a desktop plugin: it uses the QGIS Desktop interface (" + ", ".join(sorted(scan["gui_imports"]))[:200] + ("; iface" if scan["uses_iface"] else "") + ")")

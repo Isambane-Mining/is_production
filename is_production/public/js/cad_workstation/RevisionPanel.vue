@@ -5,6 +5,8 @@
 				{{ __("Submit {0} for Review", [working.revision_label]) }}
 			</button>
 			<span v-else-if="in_review" class="muted small">{{ __("{0} is in review: editing is locked until it is approved or rejected.", [in_review]) }}</span>
+			<span class="cad-grow"></span>
+			<button :disabled="revisions.filter((r) => r.geometry_checksum).length < 1" :title="__('What changed between two revisions')" @click="$emit('compare')">{{ __("Compare…") }}</button>
 		</div>
 		<div class="cad-list">
 			<div v-for="r in revisions" :key="r.name" class="cad-revision">
@@ -42,7 +44,7 @@
 import { computed } from "vue";
 
 const props = defineProps({ revisions: Array, can_edit: Boolean, can_approve: Boolean, in_review: String, unsaved: Boolean });
-const emit = defineEmits(["submit", "approve", "reject", "restore"]);
+const emit = defineEmits(["submit", "approve", "reject", "restore", "compare"]);
 const working = computed(() => props.revisions.find((r) => r.revision_status === "Working"));
 
 function chip(status) {

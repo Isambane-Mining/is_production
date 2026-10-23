@@ -2,13 +2,14 @@
 	<div class="cad-modal" @click.self="$emit('close')">
 		<div class="cad-dialog">
 			<div class="cad-row">
-				<h3 class="cad-grow">{{ __("Import DXF into {0}", [model.name]) }}</h3>
+				<h3 class="cad-grow">{{ __("Import into {0}", [model.name]) }}</h3>
 				<button class="cad-icon-btn" @click="$emit('close')"><Icon name="close" /></button>
 			</div>
 
 			<template v-if="!exchange">
 				<p class="muted">{{ __("The file is checked first; nothing is added to the model until you commit. The original file is kept.") }}</p>
-				<input type="file" accept=".dxf,.DXF" @change="file = $event.target.files[0]" />
+				<input type="file" :accept="ACCEPT" @change="file = $event.target.files[0]" />
+				<p class="muted small">{{ __("DXF drawings · LandXML, CSV / XYZ points or STL / OBJ surfaces · LAS / LAZ point clouds · STEP solids.") }}</p>
 				<div class="cad-row">
 					<button class="cad-primary" :disabled="!file || busy" @click="upload">{{ busy ? __("Uploading…") : __("Upload and Check") }}</button>
 				</div>
@@ -17,6 +18,85 @@
 			<template v-else-if="exchange.processing_status === 'Inspecting' || exchange.processing_status === 'Importing'">
 				<p>{{ exchange.processing_status === "Inspecting" ? __("Checking the file…") : __("Importing…") }} {{ job ? `${job.progress || 0}%` : "" }}</p>
 				<p class="muted small">{{ job && job.status_message }}</p>
+			</template>
+
+			<template v-else-if="exchange.processing_status === 'Ready to Commit' && report && !is_dxf">
+				<h4 class="cad-subhead">{{ __("Validation report") }} · {{ exchange.file_format }}</h4>
+				<div class="cad-report">
+					<div v-if="report.solids !== undefined"><span>{{ __("Solids") }}</span><b>{{ report.solids }}</b></div>
+					<div v-if="report.invalid_solids"><span>{{ __("Invalid solids (skipped)") }}</span><b class="is-warning">{{ report.invalid_solids }}</b></div>
+					<div v-if="(report.surfaces || []).length"><span>{{ __("Surfaces") }}</span><b>{{ report.surfaces.length }}</b></div>
+					<div v-if="(report.meshes || []).length"><span>{{ __("Meshes (not 2.5D)") }}</span><b>{{ report.meshes.length }}</b></div>
+					<div v-if="report.points"><span>{{ __("Points") }}</span><b>{{ report.points.toLocaleString() }}</b></div>
+					<div v-if="report.points_total && report.points_total !== report.points"><span>{{ __("Points in file") }}</span><b>{{ report.points_total.toLocaleString() }}</b></div>
+					<div><span>{{ __("Extents") }}</span><b class="mono">{{ extents }}</b></div>
+				</div>
+				<table v-if="(report.surfaces || []).length || (report.meshes || []).length" class="cad-table small">
+					<tr><th>{{ __("Name") }}</th><th>{{ __("Triangles") }}</th><th>{{ __("Plan area") }}</th><th>{{ __("Elevations") }}</th><th>{{ __("Checks") }}</th></tr>
+					<tr v-for="(s, i) in [...(report.surfaces || []), ...(report.meshes || [])]" :key="i">
+						<td>{{ s.name }}</td>
+						<td class="mono">{{ s.stats.triangle_count.toLocaleString() }}</td>
+						<td class="mono">{{ s.stats.plan_area.toFixed(2) }}</td>
+						<td class="mono">{{ s.stats.min_elevation.toFixed(2) }} … {{ s.stats.max_elevation.toFixed(2) }}</td>
+						<td :class="checks_ok(s) ? 'is-ok' : 'is-warning'">{{ checks_text(s) }}</td>
+					</tr>
+				</table>
+				<ul v-if="(report.warnings || []).length" class="small is-warning cad-warnings">
+					<li v-for="(w, i) in report.warnings" :key="i">{{ w }}</li>
+				</ul>
+
+				<h4 class="cad-subhead">{{ __("Options") }}</h4>
+				<div class="cad-form-grid">
+					<label>{{ __("File units") }}</label>
+					<select v-model="options.source_units">
+						<option v-for="u in units" :key="u" :value="u">{{ u }}</option>
+					</select>
+					<label>{{ __("Axis mapping") }}</label>
+					<select v-model="options.axis_mapping">
+						<option>As in file</option>
+						<option>Negate X and Y</option>
+						<option>Swap X and Y</option>
+					</select>
+					<label>{{ __("Layer") }}</label>
+					<input v-model="options.layer" :placeholder="exchange.file_format" />
+					<template v-if="exchange.file_format !== 'STEP'">
+						<label>{{ __("Surface type") }}</label>
+						<select v-model="options.surface_type">
+							<option v-for="t in surface_types" :key="t">{{ t }}</option>
+						</select>
+					</template>
+					<template v-if="report.points">
+						<label>{{ __("Points become") }}</label>
+						<select v-model="options.points_as">
+							<option value="">{{ __("Automatic (surface when large)") }}</option>
+							<option value="surface">{{ __("A surface (TIN)") }}</option>
+							<option value="points">{{ __("Point objects") }}</option>
+							<option value="both">{{ __("Both") }}</option>
+						</select>
+						<label>{{ __("Longest triangle edge") }}</label>
+						<input v-model.number="options.max_edge" type="number" min="0" step="any" :placeholder="__('no limit')" />
+					</template>
+					<template v-if="['CSV', 'XYZ'].includes(exchange.file_format)">
+						<label>{{ __("Columns") }}</label>
+						<input v-model="options.columns" :placeholder="__('automatic, e.g. id,x,y,z or y,x,z')" />
+					</template>
+					<template v-if="['LAS', 'LAZ'].includes(exchange.file_format)">
+						<label>{{ __("Classes") }}</label>
+						<label class="cad-row"><input v-model="options.ground_only" type="checkbox" /> {{ __("Ground points only (class 2)") }}</label>
+						<label>{{ __("Thin to grid") }}</label>
+						<input v-model.number="options.thin" type="number" min="0" step="any" :placeholder="__('keep all points')" />
+					</template>
+					<template v-if="['STL', 'OBJ'].includes(exchange.file_format)">
+						<label>{{ __("Triangles") }}</label>
+						<label class="cad-row"><input v-model="options.as_mesh" type="checkbox" /> {{ __("Keep as a mesh (not a 2.5D surface)") }}</label>
+					</template>
+				</div>
+				<p class="muted small">{{ __("These formats carry no units or CRS: coordinates are taken in the model's CRS ({0}). Everything goes into the Working revision.", [model.crs || __("none")]) }}</p>
+				<div class="cad-row">
+					<span class="cad-grow"></span>
+					<button @click="$emit('close')">{{ __("Cancel") }}</button>
+					<button class="cad-primary" :disabled="!options.source_units || busy" @click="commit">{{ __("Import") }}</button>
+				</div>
 			</template>
 
 			<template v-else-if="exchange.processing_status === 'Ready to Commit' && report">
@@ -97,20 +177,49 @@
 import { computed, reactive, ref } from "vue";
 import { call, wait_for_job } from "./api";
 import { format_point } from "./geometry";
+import { tin_problems } from "./surface_commands";
 import Icon from "./Icon.vue";
 
-const props = defineProps({ model: Object });
+const props = defineProps({ model: Object, surface_types: Array });
+const ACCEPT = ".dxf,.xml,.landxml,.csv,.xyz,.txt,.pts,.stl,.obj,.las,.laz,.step,.stp";
 const emit = defineEmits(["close", "error"]);
 const file = ref(null);
 const busy = ref(false);
 const exchange = ref(null);
 const job = ref(null);
 const units = ["Metres", "Millimetres", "Centimetres", "Kilometres", "Feet", "US Survey Feet", "Inches", "Yards"];
-const options = reactive({ source_units: "", source_crs: "", axis_mapping: "As in file", layers: "all", block_conflict: "rename", skip_duplicates: true });
+const options = reactive({
+	source_units: "",
+	source_crs: "",
+	axis_mapping: "As in file",
+	layers: "all",
+	block_conflict: "rename",
+	skip_duplicates: true,
+	layer: "",
+	surface_type: "Survey Surface",
+	points_as: "",
+	max_edge: null,
+	columns: "",
+	ground_only: false,
+	thin: null,
+	as_mesh: false,
+});
+const is_dxf = computed(() => !exchange.value || exchange.value.file_format === "DXF");
 
 const report = computed(() => exchange.value && exchange.value.report);
 const extents = computed(() => (report.value && report.value.extents ? `${format_point(report.value.extents.slice(0, 3), 1)} → ${format_point(report.value.extents.slice(3), 1)}` : "—"));
 const elevations = computed(() => (report.value && report.value.elevation_range ? report.value.elevation_range.map((v) => v.toFixed(2)).join(" … ") : "—"));
+
+function checks_ok(s) {
+	const v = s.stats.validation || {};
+	return v.ok !== false && s.stats.closed !== false;
+}
+
+function checks_text(s) {
+	const v = s.stats.validation || {};
+	if (s.stats.closed !== undefined) return s.stats.closed ? __("Closed") : __("Open ({0} edges)", [s.stats.open_edges]);
+	return v.ok === false ? v.message || tin_problems(v) : v.spike_count ? __("{0} possible spike(s)", [v.spike_count]) : __("OK");
+}
 
 function list(counts) {
 	return Object.entries(counts || {})
@@ -124,7 +233,7 @@ async function follow(name) {
 	exchange.value = io;
 	if (io.processing_job) job.value = await wait_for_job(io.processing_job, (j) => (job.value = j));
 	exchange.value = await call("get_exchange", { name });
-	if (exchange.value.processing_status === "Ready to Commit") options.source_units = exchange.value.source_units || "";
+	if (exchange.value.processing_status === "Ready to Commit") options.source_units = exchange.value.source_units || (is_dxf.value ? "" : props.model.linear_units || "Metres");
 }
 
 async function upload() {

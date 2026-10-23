@@ -145,7 +145,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "CAD Engineering",
-   "link_count": 5,
+   "link_count": 12,
    "link_type": "DocType",
    "onboard": 0,
    "type": "Card Break"
@@ -193,6 +193,76 @@
   {
    "hidden": 0,
    "is_query_report": 0,
+   "label": "Surfaces",
+   "link_count": 0,
+   "link_to": "CAD Surface",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Volume Calculations",
+   "link_count": 0,
+   "link_to": "CAD Volume Calculation",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Import / Export",
+   "link_count": 0,
+   "link_to": "CAD Import Export",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Design Standards",
+   "link_count": 0,
+   "link_to": "CAD Design Standard",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Design Validations",
+   "link_count": 0,
+   "link_to": "CAD Design Validation",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Design Publications",
+   "link_count": 0,
+   "link_to": "CAD Design Publication",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Survey Reconciliations",
+   "link_count": 0,
+   "link_to": "CAD Survey Reconciliation",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
    "label": "CAD Settings",
    "link_count": 0,
    "link_to": "CAD Settings",
@@ -201,7 +271,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-10-21 17:43:02.505226",
+ "modified": "2026-10-22 21:36:13.355453",
  "modified_by": "Administrator",
  "module": "Production",
  "name": "Mining Planning",

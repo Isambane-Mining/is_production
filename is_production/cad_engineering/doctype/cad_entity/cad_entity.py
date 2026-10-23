@@ -41,7 +41,7 @@ class CADEntity(Document):
 		if self.entity_type in cad_geometry.BLOB_TYPES:
 			meta = self.blob_meta()
 			box = meta.get("bbox")
-			self.geometry_format = "OCCT B-Rep"
+			self.geometry_format = cad_geometry.BLOB_FORMATS[self.entity_type][1]
 			self.validation_status = "Valid" if meta.get("valid") else "Invalid"
 			self.validation_message = meta.get("message")
 			self.volume, self.area, self.length = meta.get("volume") or 0, meta.get("area") or 0, 0
@@ -60,7 +60,7 @@ class CADEntity(Document):
 
 		if not storage.SHA256.match(self.geometry_ref or ""):
 			frappe.throw(_("A {0} needs its geometry file reference.").format(_(self.entity_type)))
-		if not storage.blob_exists(self.cad_model, self.geometry_ref):
+		if not storage.blob_exists(self.cad_model, self.geometry_ref, cad_geometry.BLOB_FORMATS[self.entity_type][0]):
 			frappe.throw(_("Geometry file {0} is not in model {1}'s storage.").format(self.geometry_ref[:12], self.cad_model))
 		meta = blob_meta(self.cad_model, self.geometry_ref)
 		if not meta:
