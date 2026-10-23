@@ -15511,6 +15511,24 @@ const Tabs = (() => {
           hint(`Coal the schedule still has to mine. Exposed: the waste above it has been stripped; covered: still under waste. Months of production at ${iv.C.rateFrom === 'target' ? 'the monthly coal target' : `the schedule’s average of ${U.fmtBig(iv.C.perMonth, 't')} a month`}. The Excel schedule has the closing inventory of every month (“Coal Inventory” sheet); the report gives it block by block on any day.${iv.C.rom.some(r => r.tracked) ? '' : ' Give the ROM tip a plant feed rate (Dumps tab) to keep its stockpile in the inventory too.'}`)));
         requestAnimationFrame(() => Charts.inventory(ch, IV, P));
       } }
+    /* The total waste (bcm: every activity that is not coal, the ramps and the highwall batters), the coal mined as ADC
+       tons (the coal t × the Reserve tab's factor of its block and seam: losses, contamination, moisture; as received
+       without ADC settings) and the closing coal inventory (exposed, t in situ, at the end of the month), month by month */
+    { const iso = P.startDate, mk = d => { const t = U.dayDate(iso, d); return t.getUTCFullYear() * 12 + t.getUTCMonth(); }, k0 = mk(0), nM = mk(res.nDays - 1) - k0 + 1;
+      const waste = new Float64Array(nM), coal = new Float64Array(nM), QB = Tons.basis(P), labels = [];
+      for (const A of res.acts) if (A.type !== 'coal') for (let d = 0; d < res.nDays; d++) waste[mk(d) - k0] += A.bcm[d];
+      for (let d = 0; d < res.nDays; d++) waste[mk(d) - k0] += (res.rampDaily ? res.rampDaily[d] : 0) + (res.batterDaily ? res.batterDaily[d] : 0);
+      if (QB.on) { for (const r of res.records) { const A = res.acts[r.a]; if (A.type === 'coal' && r.t > 0) coal[mk(r.d) - k0] += r.t * QB.factor(r.b, A.layer); } }
+      else for (const A of res.acts) if (A.type === 'coal') for (let d = 0; d < res.nDays; d++) coal[mk(d) - k0] += A.t[d] * (A.arF || 1);
+      for (let m = 0; m < nM; m++) { const k = k0 + m; labels.push(`${U.MONTHS[k % 12]}/${Math.floor(k / 12)}`); }
+      const IVm = App.invMonths(), inv = IVm && IVm.rows.length === nM ? Float64Array.from(IVm.rows, r => r.tot.closing / 1000) : null;
+      const series = [{ name: 'Total waste (bcm)', color: '#b07a3b', v: waste.map(v => v / 1000), unit: 'bcm' }, { name: QB.on ? 'Coal mined, ADC (t)' : 'Coal mined, as received (t)', color: '#3c7fb0', v: coal.map(v => v / 1000), unit: 't' }]
+        .concat(inv ? [{ name: 'Closing coal inventory (t)', color: '#d64550', v: inv, unit: 't' }] : []);
+      const ch = h('div', { class: 'chart-box' });
+      body.append(sec('Waste, coal and inventory', h('span', { class: 'chip' }, 'a month'), ch,
+        hint(`Month by month, in thousands: the total waste moved (bcm: the waste activities, the ramps and the highwall batters), the coal mined ${QB.on ? 'as air dry contaminated (ADC) tons (the losses, contamination and moisture of the Reserve tab)' : 'as received (after the losses; set the contamination and moisture in the Reserve tab for ADC tons)'}${inv ? ' and the closing coal inventory: the coal exposed at the end of the month, still to be mined (t in situ)' : ''}. Point at a month for its figures.`)));
+      requestAnimationFrame(() => Charts.lines(ch, labels, series, 'thousand'));
+    }
     // the rehandling jobs (the final landform of the run is in the Rehab tab)
     if (res.rehandles && res.rehandles.length) {
       const trs = res.rehandles.map(J => h('tr', null, h('td', null, h('span', { class: 'sw', style: { background: J.color, display: 'inline-block', width: '10px', height: '10px', marginRight: '6px', verticalAlign: '-1px' } }), J.name),
@@ -15712,6 +15730,46 @@ const Charts = (() => {
     cv.addEventListener('pointerleave', () => { draw(null); UI.tip(null); });
   }
 
+  /* Lines over the months, on one axis: labels (a name for each month) and series [{name, color, v (thousands, one a
+     month; NaN: no value), unit}]. The tip gives each series' value of the month under the pointer, in full. */
+  function lines(container, labels, series, yTitle) {
+    const nM = labels.length;
+    if (!nM || !series.length) { container.append(h('div', { class: 'hint' }, 'Nothing to show.')); return; }
+    const H = 200, { cv, ctx, w } = setup(container, H);
+    legend(container, series.map(s2 => [s2.name, s2.color, true]));
+    let max = 0; for (const s2 of series) for (const v of s2.v) if (v > max) max = v;
+    const step = niceStep(max || 1), top = Math.ceil((max || 1) / step) * step;
+    const L = 44, R = 8, T = 16, B = 20, pw = w - L - R, ph = H - T - B, y = v => T + ph - (v / top) * ph;
+    const band = pw / nM, xOf = m => L + band * (m + 0.5);
+    const draw = hover => {
+      ctx.clearRect(0, 0, w, H);
+      ctx.font = `10.5px ${css('--font-mono') || 'monospace'}`; ctx.fillStyle = css('--muted'); ctx.strokeStyle = css('--grid') || '#e1e0d9'; ctx.lineWidth = 1;
+      ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+      for (let v = 0; v <= top + 1e-9; v += step) { const yy = Math.round(y(v)) + 0.5; ctx.beginPath(); ctx.moveTo(L, yy); ctx.lineTo(w - R, yy); ctx.stroke(); ctx.fillText(U.fmtNum(v, step < 1 ? 1 : 0), L - 5, yy); }
+      if (yTitle) { ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(yTitle, 2, 0); }
+      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      const every = Math.max(1, Math.ceil(64 / band));
+      for (let m = 0; m < nM; m += every) ctx.fillText(labels[m], xOf(m), H - B + 5);
+      if (hover != null) { ctx.strokeStyle = css('--axis') || '#c3c2b7'; ctx.beginPath(); ctx.moveTo(Math.round(xOf(hover)) + 0.5, T); ctx.lineTo(Math.round(xOf(hover)) + 0.5, T + ph); ctx.stroke(); }
+      for (const s2 of series) {
+        ctx.strokeStyle = s2.color; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.beginPath();
+        let on = false;
+        for (let m = 0; m < nM; m++) { const v = s2.v[m]; if (!(v === v)) { on = false; continue; } const X = xOf(m), Y = y(v); if (on) ctx.lineTo(X, Y); else { ctx.moveTo(X, Y); on = true; } }
+        ctx.stroke();
+        if (hover != null && s2.v[hover] === s2.v[hover]) { ctx.fillStyle = s2.color; ctx.beginPath(); ctx.arc(xOf(hover), y(s2.v[hover]), 3.5, 0, Math.PI * 2); ctx.fill(); }
+      }
+      ctx.lineWidth = 1; ctx.strokeStyle = css('--axis') || '#c3c2b7'; ctx.beginPath(); ctx.moveTo(L, Math.round(y(0)) + 0.5); ctx.lineTo(w - R, Math.round(y(0)) + 0.5); ctx.stroke();
+    };
+    draw(null);
+    cv.addEventListener('pointermove', e => {
+      const r = cv.getBoundingClientRect(), m = Math.floor((e.clientX - r.left - L) / band);
+      if (m < 0 || m >= nM) { draw(null); UI.tip(null); return; }
+      draw(m);
+      UI.tip(e.clientX, e.clientY - 20 - 18 * series.length, `<b>${U.esc(labels[m])}</b><br>` + series.map(s2 => `${U.esc(s2.name)}: ${s2.v[m] === s2.v[m] ? `${U.fmtNum(s2.v[m] * 1000, 0)} ${s2.unit}` : '–'}`).join('<br>'));
+    });
+    cv.addEventListener('pointerleave', () => { draw(null); UI.tip(null); });
+  }
+
   /* The closing coal inventory at each month end (Inventory.months): exposed coal by seam, stacked (kt). */
   function inventory(container, IV, P) {
     const rows = IV.rows, nM = rows.length;
@@ -15885,7 +15943,7 @@ const Charts = (() => {
     });
     cv.addEventListener('pointerleave', () => { draw(null); UI.tip(null); });
   }
-  return { monthly, inventory, profile, water, cash };
+  return { monthly, lines, inventory, profile, water, cash };
 })();
 
 /* ===== Slicing: controls for the 3D cut and the 2D cross-section drawing ===== */
