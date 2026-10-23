@@ -113,6 +113,24 @@ frappe.query_reports["HOD Presentation"] = {
     ],
 
     onload(report) {
+        frappe.require(
+            "/assets/is_production/js/hod_presentation_shared.js"
+        ).then(() => {
+            const dashboard = window.HODPresentationShared;
+
+            dashboard.injectStyles();
+            dashboard.bindTabs(report);
+            dashboard.ensureInteractiveReport();
+
+            report.page.add_inner_button(
+                __("Download Presentation"),
+                () => dashboard.download(report)
+            );
+        }).catch(error => {
+            console.error(
+                "Unable to initialise HOD Presentation.",
+                error
+            );
         injectHodPresentationStyles();
         bindHodDashboardTabs(report);
         ensureHodInteractiveReport();
@@ -123,8 +141,17 @@ frappe.query_reports["HOD Presentation"] = {
     },
 
     after_refresh(report) {
-        window.requestAnimationFrame(() => {
-            renderHodPresentationLayout(report);
+        frappe.require(
+            "/assets/is_production/js/hod_presentation_shared.js"
+        ).then(() => {
+            window.requestAnimationFrame(() => {
+                window.HODPresentationShared.render(report);
+            });
+        }).catch(error => {
+            console.error(
+                "Unable to render HOD Presentation.",
+                error
+            );
         });
     },
 

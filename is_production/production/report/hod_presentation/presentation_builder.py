@@ -202,6 +202,20 @@ def build_hod_presentation(
                 stretch_to_fill=False,
             )
 
+            # Hours Based only: standardise the presentation image area.
+            # Keep the whole captured image visible with no cropping.
+            # This intentionally expands short chart images vertically.
+            if hours_heading:
+                for picture in slide.shapes:
+                    if (
+                        picture.shape_type == 13
+                        and picture.width > Inches(5)
+                    ):
+                        picture.left = Inches(0.22)
+                        picture.top = Inches(0.92)
+                        picture.width = Inches(12.89)
+                        picture.height = Inches(5.95)
+
             # Engineering only: extend the picture downwards.
             # Preserve its width and horizontal position.
             # Leave clearance above the black footer.
