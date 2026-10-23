@@ -2,10 +2,14 @@
 
 Isambane Mining Frappe App for Production Records
 
+- [Mining Simulation](#mining-simulation)
+- [GIS Workstation (QGIS)](#gis-workstation-qgis)
+- [Acknowledgements and Licensing](#acknowledgements-and-licensing)
+
 #### Mining Simulation
 
-The Mining Simulation page (Geo Planning) runs the mine planner's simulator on
-**Mining Simulation Project** documents. Import a `.rollover.json` project file from the
+The Mining Simulation portal page (`/portal_mining_simulation`, full screen, login required) runs the mine planner's simulator on
+**Mining Simulation Project** documents. Import a project file (`.isamiq.json`, or an older `.rollover.json`) from the
 Mining Simulation Project list (*Import Simulation File*); *Export Simulation File* on a
 project gives the same file back for the standalone simulator.
 
@@ -16,6 +20,1323 @@ When she sends a new version, rebuild the page and test it:
 bench --site <site> execute is_production.geo_planning.mining_simulation_sync.sync --kwargs "{'source': '/path/to/simulator.html'}"
 ```
 
-#### License
+---
 
-mit
+## GIS Workstation (QGIS)
+
+> **Status: in development.** This section describes the planned design and the host setup it needs.
+> Parts that are not built yet are marked *(planned)*. The phases are listed under [Development phases](#development-phases).
+
+### Introduction
+
+The GIS Workstation is a browser alternative to QGIS Desktop, built into this app. It opens from the
+**Mining Planning** workspace as a full-screen portal page (`/portal_gis`, login required), in the same way
+as the Mining Simulation.
+
+For now the GIS Workstation and the Mining Simulation are **separate projects** in the same app. When the GIS
+works as expected, its datasets will be linked to the simulation viewer.
+
+The main rule of the design:
+
+- **Frappe owns** the app, the user interface, permissions, datasets and links to business records.
+- **QGIS owns** map rendering and processing, through QGIS Server, PyQGIS, GDAL/OGR and PROJ.
+
+The app does not rewrite algorithms that QGIS, GDAL or PROJ already provide.
+
+The GIS Workstation is part of `is_production` and is built for Isambane's production and mine-planning work.
+It is not designed as a general-purpose GIS app for other Frappe apps. Mining-specific features are built
+directly into it.
+
+### Architecture overview
+
+```
+ Browser (/portal_gis — OpenLayers)
+        │  HTTPS, Frappe session
+        ▼
+ Frappe web worker ── GIS API (whitelisted methods; checks permissions on every call)
+        │                      │                                 │
+        │ edits                │ map / feature requests          │ processing, import, export
+        ▼                      ▼                                 ▼
+ Spatial storage adapter   QGIS gateway (authenticated     RQ job → PyQGIS worker
+ (MariaDB geometry          proxy, localhost only)          (system /usr/bin/python3,
+  columns + indexes)           │                             separate process)
+        │                      ▼                                 │
+        │               QGIS Server (FastCGI, 127.0.0.1) ◄───────┘
+        │                      │ read-only DB user
+        ▼                      ▼
+ ┌─────────────────── Frappe MariaDB database ───────────────────┐
+ │ GIS DocTypes + native GEOMETRY columns with SPATIAL indexes   │
+ └───────────────────────────────────────────────────────────────┘
+```
+
+- **Edits** follow this path: browser → GIS API → spatial storage adapter → Frappe database. QGIS Server only reads.
+- **QGIS Server** listens only on the local host. The browser never connects to it directly. Every map request
+  goes through a Frappe endpoint that checks the user's permissions first.
+- **PyQGIS cannot be imported in the bench virtual environment.** The bench runs Python 3.14, but the Debian
+  `python3-qgis` bindings are built for the system Python (`/usr/bin/python3`, 3.13 on Debian 13). All PyQGIS
+  work therefore runs in a separate worker process under the system Python. The Frappe web worker never
+  imports `qgis`.
+- **MariaDB stays the main data store.** PostgreSQL/PostGIS is not required. The storage provider can be swapped
+  out, so PostGIS, GeoPackage, WFS and similar sources can be added later without changing the frontend.
+
+### Requirements and supported versions
+
+| Component | Version | Notes |
+|---|---|---|
+| OS | Debian 13 (trixie) / Ubuntu 24.04 LTS | Same host as the bench |
+| Frappe / ERPNext | v16 | See `required_apps` in `hooks.py` |
+| MariaDB | 10.6+ (11.x recommended) | Needs `GEOMETRY` types, `SPATIAL` indexes and `ST_*` functions |
+| QGIS Server + PyQGIS | Current QGIS **LTR** from qgis.org | Record the installed version in GIS Settings; test before upgrading |
+| GDAL/OGR | As shipped with the QGIS packages | The OGR **MySQL** driver must be present (see the checks below) |
+| PROJ | As shipped with the QGIS packages | |
+| GRASS GIS | Optional | Adds the GRASS processing provider |
+| Web server | nginx (as configured by bench) | Also acts as the local FastCGI front for QGIS Server |
+
+### 1. Install QGIS on Ubuntu / Debian
+
+Use **one** package source for every QGIS, GDAL and PROJ package. If you mix the distribution's packages with
+packages from qgis.org, the installation can break.
+
+**Option A: qgis.org repository (recommended).** This repository has the current LTR and the newest release.
+The official guide is https://qgis.org/resources/installation-guide/. Check that guide for the current repository
+URLs and which distributions are supported before you copy the commands below.
+
+```bash
+sudo apt install gnupg software-properties-common wget
+sudo mkdir -m755 -p /etc/apt/keyrings
+sudo wget -O /etc/apt/keyrings/qgis-archive-keyring.gpg \
+    https://download.qgis.org/downloads/qgis-archive-keyring.gpg
+
+# Use the codename of your distribution (trixie, bookworm, noble, ...) — see `lsb_release -cs`.
+# Use https://qgis.org/debian-ltr for the Long Term Release (recommended for servers),
+# or https://qgis.org/debian for the latest release.
+# On Ubuntu, use https://qgis.org/ubuntu-ltr or https://qgis.org/ubuntu instead.
+sudo tee /etc/apt/sources.list.d/qgis.sources >/dev/null <<EOF
+Types: deb deb-src
+URIs: https://qgis.org/debian-ltr
+Suites: $(lsb_release -cs)
+Architectures: amd64
+Components: main
+Signed-By: /etc/apt/keyrings/qgis-archive-keyring.gpg
+EOF
+```
+
+**Option B: distribution packages.** Debian and Ubuntu ship QGIS in their own archives. These versions are older,
+but they get updates with the rest of the system. Skip the repository step above.
+
+**Install the packages:**
+
+```bash
+sudo apt update
+sudo apt install qgis-server python3-qgis \
+    gdal-bin python3-gdal proj-bin spawn-fcgi
+```
+
+**Optional processing providers:**
+
+```bash
+sudo apt install grass qgis-plugin-grass   # GRASS GIS provider for QGIS Processing
+```
+
+**Never** `pip install` QGIS, PyQGIS or the system GDAL bindings into the bench `env/`. PyQGIS runs only under
+the system Python.
+
+**Check the installation:**
+
+```bash
+dpkg -s qgis-server | grep '^Version'
+/usr/bin/python3 -c "from qgis.core import Qgis; print(Qgis.version())"
+ogrinfo --version
+ogrinfo --formats | grep -i mysql          # must list the MySQL driver used to read MariaDB
+projinfo EPSG:2053 -o PROJ                 # Hartebeesthoek94 / Lo29 — confirms PROJ data is installed
+
+# Call QGIS Server once in CGI mode (no project file needed for this check):
+QT_QPA_PLATFORM=offscreen QUERY_STRING="SERVICE=WMS&REQUEST=GetCapabilities" \
+    /usr/lib/cgi-bin/qgis_mapserv.fcgi | head -20
+```
+
+### 2. Configure QGIS Server
+
+Run QGIS Server as its own service on a local socket. Put an nginx server block in front of it that listens
+**only on 127.0.0.1**. Frappe talks to that local address. The public site never forwards to it.
+
+**`/etc/systemd/system/qgis-server.service`**
+
+```ini
+[Unit]
+Description=QGIS Server (FastCGI) for Frappe GIS
+After=network.target
+
+[Service]
+User=www-data
+Group=www-data
+RuntimeDirectory=qgis-server
+Environment=QT_QPA_PLATFORM=offscreen
+Environment=QGIS_SERVER_LOG_STDERR=1
+Environment=QGIS_SERVER_LOG_LEVEL=1
+Environment=QGIS_SERVER_PARALLEL_RENDERING=1
+Environment=QGIS_SERVER_MAX_THREADS=4
+Environment=QGIS_SERVER_IGNORE_BAD_LAYERS=1
+Environment=QGIS_PLUGINPATH=/var/lib/qgis-server/plugins
+ExecStart=/usr/bin/spawn-fcgi -n -s /run/qgis-server/qgis.sock -M 0660 -U www-data -G www-data \
+    -F 2 -- /usr/lib/cgi-bin/qgis_mapserv.fcgi
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**`/etc/nginx/conf.d/qgis-server-local.conf`**
+
+```nginx
+server {
+    listen 127.0.0.1:8090;          # local only — never expose this port
+    server_name localhost;
+
+    location /ows/ {
+        fastcgi_pass unix:/run/qgis-server/qgis.sock;
+        include fastcgi_params;
+        fastcgi_param QGIS_PROJECT_FILE $arg_map;   # the project is chosen by the Frappe gateway
+    }
+}
+```
+
+```bash
+sudo mkdir -p /var/lib/qgis-server/plugins
+sudo systemctl daemon-reload
+sudo systemctl enable --now qgis-server
+sudo nginx -t && sudo systemctl reload nginx
+curl -s "http://127.0.0.1:8090/ows/?SERVICE=WMS&REQUEST=GetCapabilities" | head -5
+```
+
+- Keep the firewall closed on port 8090. Do not add a `location` for QGIS Server to the bench-generated site config.
+- If nginx runs as a different user, change the socket owner to match. The bench nginx config for this host
+  shows which user it runs as.
+- Create the project folders. The app writes one `.qgs` per published dataset into **a folder of its own site**:
+  `<QGIS Project Directory>/<site name>/`. The files contain that site's read-only database password, so each
+  site's folder belongs to its bench's user and QGIS Server's group, and is closed to everyone else. The shared
+  base folder belongs to root: benches can pass through it but cannot list it.
+
+  ```bash
+  sudo install -d -o root -g www-data -m 0751 /var/lib/qgis-server/projects            # once per host
+  sudo install -d -o <bench user> -g www-data -m 2750 /var/lib/qgis-server/projects/<site name>   # once per site
+  ```
+
+  GIS Settings → *Check Dependencies* shows the exact command for a site whose folder is missing.
+
+#### Several benches and sites on one host
+
+One QGIS Server serves every bench and site on the host. Each Frappe bench may run as its own Unix user (e.g.
+one bench per developer plus production).
+
+| Shared | How sites stay apart |
+|---|---|
+| QGIS Server | The gateway always names the project file, and a site's projects contain only its own datasets |
+| Project folder | One subfolder per site (above): names cannot collide, and no bench can read another's files |
+| Database account | Give each site **its own** read-only account (e.g. `qgis_ro_<db name>`) with `SELECT` on its own `tabGIS Feature` only |
+| Server plugin folder | QGIS Server loads its plugins for every site, so exactly **one** site turns on GIS Plugin Settings → *Manage QGIS Server Plugins*; the others never touch that folder |
+
+Processing plugins, the algorithm registry, import/export work files and map services are per site (in the
+site's private files or database).
+
+### 3. Database user for QGIS Server
+
+QGIS Server reads features through the GDAL/OGR MySQL driver, using its **own read-only** MariaDB account.
+QGIS never uses the site's own database user. It needs `SELECT` on **one table only**:
+
+```sql
+-- run as a MariaDB admin; replace <site_db> with the site's db_name from site_config.json
+CREATE USER 'qgis_ro_<site_db>'@'localhost' IDENTIFIED BY '<strong password>';
+GRANT SELECT ON `<site_db>`.`tabGIS Feature` TO 'qgis_ro_<site_db>'@'localhost';
+GRANT SELECT ON `<site_db>`.`tabGIS Dataset` TO 'qgis_ro'@'localhost';
+```
+
+How QGIS reads a dataset: each dataset becomes one layer on `tabGIS Feature`. The layer is filtered with
+`dataset = '<dataset_name>'`, and its geometry type and CRS are set on the layer. The feature ID is the table's
+integer primary key (`name`), so it stays the same between requests. QGIS sees the attributes as one JSON column
+(`attributes`). The published QGIS project adds a typed expression field for each attribute (see [Publishing and the QGIS gateway](#7-publishing-and-the-qgis-gateway)).
+
+This was chosen over per-dataset SQL views because the OGR MySQL driver finds no primary key on a view. It then
+numbers features 0, 1, 2… on every read, which breaks identify, selection and editing.
+
+To test the account (it should list the GIS features, and nothing else should be readable):
+
+```bash
+ogrinfo -ro -so "MySQL:<site_db>,host=127.0.0.1,user=qgis_ro,password=<password>,tables=tabGIS Feature" "tabGIS Feature"
+```
+
+One account per site keeps sites apart on a shared host. Enter it in **GIS Settings → QGIS Database Account**. The password is stored as a Password field and is
+sent to the PyQGIS worker on stdin, never on a command line.
+
+### 4. Install the app
+
+```bash
+bench get-app <is_production_repository_url>
+bench --site <site_name> install-app is_production
+bench --site <site_name> migrate
+bench build --app is_production      # builds the GIS Workstation bundle (OpenLayers, proj4js, Vue)
+bench restart
+```
+
+Then connect the site to the host's QGIS Server. Run this **as the bench's own user**, once per site:
+
+```bash
+bench --site <site_name> gis-setup              # add --print-only first to see what it will do
+```
+
+Nothing in the app is tied to a particular server, user or site. The command works out the bench's Unix user,
+the site and its database, and QGIS Server's group (from the `qgis-server` systemd unit). It then:
+
+1. checks that QGIS Server answers and that PyQGIS imports under the system Python;
+2. creates, with `sudo`, the shared project base folder if needed and this site's own folder `<base>/<site>`
+   (bench user, QGIS Server's group, mode 2750);
+3. creates or re-keys this site's read-only database account `qgis_ro_<db name>`. It gets a random password and
+   `SELECT` on this site's `tabGIS Feature` only. This step runs as the MariaDB administrator, using
+   `--db-root-username/--db-root-password`, the bench's `root_login`/`root_password` config, `sudo mariadb`, or a
+   prompt;
+4. fills in GIS Settings (which republishes the site's datasets) and runs the health check.
+
+It is safe to run again. Options:
+- `--qgis-url` and `--qgis-python` for a QGIS Server or Python elsewhere than the defaults;
+- `--project-dir` and `--qgis-group` to override the project base folder and QGIS Server's group;
+- `--skip-account` to keep an existing database account;
+- `--manage-server-plugins` for the one site that manages QGIS Server plugins.
+
+To set it up by hand instead, see sections 2–3 and enter the values in **GIS Settings**, then click **Check
+Dependencies**.
+
+**Per host** (once, as an administrator): install QGIS (section 1) and set up the `qgis-server` service and its
+local nginx front (section 2). **Per bench and site:** `bench --site <site> gis-setup`.
+
+### 5. Datasets, features and the geometry schema
+
+- **GIS Dataset** (named by `dataset_name`, which is also the QGIS layer name) sets the geometry type, the CRS
+  (an EPSG code; nothing is reprojected on save) and the attribute schema (**GIS Attribute Definition** rows:
+  Text, Integer, Float, Boolean, Date, Datetime, with required, default and allowed values). Once a dataset has
+  features, its type, CRS, Z setting and existing attributes are locked. New attributes can still be added.
+- **GIS Feature** (integer ID) keeps its geometry twice. The `geometry` field holds GeoJSON in the dataset's CRS,
+  with full precision and any Z values. The native `geom` column (`GEOMETRY`, `SPATIAL` index, dataset SRID) is a
+  2D copy written in the same transaction, and it is what spatial queries and QGIS use. Attributes are checked
+  against the schema. Invalid geometries are saved and marked *Invalid*, or refused if the dataset sets
+  *Reject Invalid Geometry*. Single parts are stored as one-part multis in Multi* datasets. The revision number
+  goes up on every change to the geometry, attributes or label.
+- **Elevation:** in datasets with *Has Z*, every coordinate keeps its Z in the GeoJSON. Each feature also stores
+  its **Min Z / Max Z**, and the dataset its Z extent, as normal columns. QGIS can therefore filter, label and
+  style by elevation even though the `geom` column is 2D.
+- **Permissions:** a User Permission on GIS Dataset also restricts that user's access to the dataset's features.
+
+Frappe's schema sync does not know about the `geom` column. The `after_install` and `after_migrate` hooks
+(`gis_storage_service.ensure_geometry_schema`) add the column and its index if either is missing, and they are
+safe to run any number of times. To check by hand:
+
+```sql
+SHOW INDEX FROM `tabGIS Feature` WHERE Index_type = 'SPATIAL';
+```
+
+### 6. Health check
+
+**GIS Settings → Check Dependencies** runs the check. It also runs once a day from the scheduler. The result is
+stored on GIS Settings as *OK*, *Warning* or *Error*, with a list of problems and the full report. It checks:
+
+- QGIS Server: whether it answers at the configured URL, its version (from its `Server` response header), and
+  whether the URL is local
+- PyQGIS, through the system Python in a separate process (`geo_planning/qgis_worker/health.py`): the QGIS,
+  GDAL and PROJ versions, the OGR MySQL driver, and the processing providers (native, GDAL, GRASS, ...)
+- the QGIS database account: it connects, can read `tabGIS Feature` with a stable FID column, QGIS can open the
+  table as a layer, and the account **cannot** read other Frappe tables
+- the geometry schema (the `geom` column and its spatial index), and the project directory if one is set
+- plugin status *(planned, with the plugin phase)*
+
+The workstation's status bar shows the last result.
+
+### GIS Workstation
+
+Open it from the **Mining Planning** workspace (*GIS Workstation* shortcut), or go to `/portal_gis`. It needs read
+permission on GIS Dataset.
+
+**Laid out like QGIS Desktop.** It has QGIS's menus, toolbar groups, docks, layer tree, status bar and keyboard
+shortcuts. The toolbar and menu icons are **QGIS's own default-theme icons** (by Robert Szczepanek and Anita Graser,
+CC-BY-SA 3.0), shipped unmodified as separate files in `public/qgis_icons/` with their licence and attribution.
+Small interface-chrome icons (close, expand, visibility) come from [Lucide](https://lucide.dev) (ISC). The About
+box says the workstation is not an official QGIS product.
+
+- **Menu bar:**
+  - **Project, Edit, View, Layer, Settings, Plugins, Processing, Help**, as in QGIS. View → *Panels* and
+    *Toolbars* show and hide each panel and toolbar, and View → *Basemap* switches the basemap.
+  - **Vector** and **Raster** menus with QGIS's entries (Geoprocessing Tools → Buffer, Clip, Dissolve…; Analysis →
+    Slope, Hillshade, Contour…). Each entry opens its Processing algorithm. Entries are greyed out when the
+    algorithm is not installed or cannot run from the web.
+- **Toolbars**, each of which can be hidden:
+  - **Project:** New, Open, Save, Export to QGIS.
+  - **Data Source:** Import, Export.
+  - **Map Navigation:** Pan, Zoom In/Out (click or drag a box), Zoom Full, Zoom to Selection, Zoom to Layer, Zoom
+    Last/Next, Refresh.
+  - **Attributes:** Identify, Select by area or click, Deselect all, Attribute Table.
+  - **Digitizing:** Toggle Editing, Save Layer Edits, Add Feature, Vertex Tool, Move, Delete, Undo, Redo.
+  - **Advanced Digitizing:** Rotate, Split, Merge, Duplicate, Add Part, Snapping, Tracing, Z for new vertices,
+    Validate, Discard.
+  - **Processing / Plugins:** Toolbox, History, Plugin Manager.
+- **Docks:**
+  - **Browser** over **Layers** on the left. Datasets are grouped by category, map-service overlays are listed,
+    and you can drag a dataset onto the Layers panel or double-click it to add it.
+  - **Processing Toolbox**, **Identify Results** (or **Edit Feature** while editing) and **Processing History** as
+    tabs on the right.
+  - **Attribute Table** under the map.
+
+  Panels can be closed and resized.
+- **Layer tree:**
+  - visibility check boxes, and legends that expand (QGIS GetLegendGraphic);
+  - a pencil on the layer being edited;
+  - drag-and-drop ordering, with the basemap and its opacity at the bottom;
+  - a right-click menu: Zoom to Layer/Selection, Open Attribute Table, Toggle Editing, Export (Save Features /
+    Save Selected Features As…), Drawn By (QGIS Server / Browser), Opacity, Change Colour, Move to Top, Remove
+    Layer, Properties.
+- **Selection** works outside editing too. Select by click, Shift+click or box on the active layer, including
+  layers drawn by QGIS. *Zoom to Selection*, *Save Selected Features As…* and the Processing *Selected features
+  only* option all use it.
+- **Status bar:** messages, the pointer *Coordinate* (type x, y and press Enter to go there), *Scale* (choose or
+  type 1:N), *Rotation*, the *CRS* button, and the QGIS health check.
+- **Shortcuts** as in QGIS, listed under Settings → *Keyboard Shortcuts*:
+  - Ctrl+N/O/S, Ctrl+Shift+S
+  - Ctrl+Shift+I (Identify), Ctrl+Shift+F (Zoom Full), Ctrl+J (Zoom to Selection)
+  - F5 (Refresh), F6 (Attribute Table), Ctrl+Alt+T (Toolbox), Ctrl+Shift+A (Deselect)
+  - Ctrl+. (Add Feature), Del, Ctrl+Z / Ctrl+Shift+Z, Ctrl+D (Remove Layer)
+- **Loading per view:** layers load only the features in the current view, simplified to the pixel size on the
+  server, with at most *Max Features per Request* per view.
+- **Drawn by QGIS:** published datasets are drawn by QGIS Server through the gateway, and Identify uses
+  GetFeatureInfo. Each layer can be switched to *Browser*.
+- **Projects:** *Project → New / Open / Save / Save As* store the map as a **GIS Project** (layers, overlays,
+  basemap, display CRS, extent). `/portal_gis?project=GISP-00001` opens one directly.
+
+The page follows the user's Desk light/dark theme.
+
+**Editing.** Users with write permission on GIS Feature (Production Manager, Production User) get **Edit Layer**
+for the active layer. While a layer is being edited, it is drawn in the browser at full detail, so unsaved
+edits show and no vertices are lost to simplification. The editing toolbar has:
+
+- **Select:** click, Shift/Ctrl+click to add or remove, Ctrl+drag for a box. The attribute table's rows select
+  too.
+- **Add** (point, line or polygon by dataset type; *Geometry* datasets choose), **Add Part** (Multi and
+  Geometry datasets), **Vertices** (drag a vertex, click an edge to add one, Alt+click to remove one), **Move**,
+  **Rotate…**, **Duplicate**, **Split** (draw the cutting line), **Merge** (the oldest saved feature is kept with
+  its attributes) and **Delete**.
+- **Snap** to the vertices and edges of every visible layer, and **Trace** along existing features while
+  drawing.
+- **Attributes:** a form in the Feature panel, typed by the attribute schema. Select several features to set one
+  field on all of them, or double-click an attribute table cell.
+- **Undo/Redo** (Ctrl+Z / Ctrl+Y) for every change, including split, merge and attribute edits.
+- **Validate** checks the edited geometries on the server without saving.
+- **Save** sends every change in one request, saved as one transaction: if any change fails, nothing is saved,
+  and each failure is listed in the Feature panel.
+- **Conflict check:** each change carries the revision the browser loaded. A feature that someone else changed
+  or deleted since then is refused as a conflict.
+
+Changes go through the GIS Feature document (`gis_edit_service.save_edits`), so permissions, validation,
+revisions and version history apply as in Desk. The browser warns before you leave a page with unsaved changes.
+
+**Elevation while editing.** For datasets with *Has Z*:
+
+- vertices that did not move keep their stored Z;
+- new vertices are interpolated along their line or ring;
+- a moved single point keeps its Z;
+- anything else takes the **Z** entered in the editing toolbar. Without that Z, the save is refused rather than
+  guessing an elevation.
+
+### 7. Publishing and the QGIS gateway
+
+**Publishing.** Each active spatial dataset gets its own QGIS project, `<QGIS Project Directory>/<dataset>.qgs`,
+written by the PyQGIS worker `geo_planning/qgis_worker/publish.py`:
+
+- One layer (a group of six layers, one per geometry type, for *Geometry* datasets) reads `tabGIS Feature`
+  through the read-only account, filtered to the dataset, with the dataset's geometry type and CRS. The QGIS
+  feature ID is the GIS Feature ID.
+- A typed expression field for each attribute (Text, Integer, Float, Boolean, Date, Datetime), using the
+  attribute labels as aliases.
+- Only the feature ID, label, revision, validation status, Min/Max Z (datasets with Z) and the attributes are
+  visible in WMS and WFS. The raw JSON and Frappe's own columns are hidden.
+- A single-symbol style in the dataset's *Default Colour*. Fuller styling comes with the cartography phase.
+- WMS, plus WFS for reading only (no WFS-T), with EPSG:3857, EPSG:4326 and the dataset's CRS.
+
+The worker writes the project in a temporary directory, loads it back to check it, and moves it into place
+with mode 0640.
+
+Features are read live, so editing features does **not** need a republish. A dataset is republished in the
+background when its title, geometry type, CRS, Z setting, colour or attribute schema changes, and every
+dataset is republished when the QGIS account or the project directory changes in GIS Settings. The dataset
+form shows the publish status and has a **Publish to QGIS** button. GIS Settings has **Publish All Datasets**.
+Archived and deleted datasets are unpublished, and their project file is removed.
+
+**Gateway.** Browsers never reach QGIS Server. Every map, legend and feature request goes to:
+
+```
+GET /api/method/is_production.geo_planning.services.gis_gateway_service.ows?dataset=<name>&SERVICE=WMS&REQUEST=GetMap&...
+```
+
+The gateway:
+
+- checks the session's read permission on the dataset, including User Permissions;
+- allows only WMS GetMap / GetFeatureInfo / GetLegendGraphic / GetCapabilities and WFS GetCapabilities /
+  DescribeFeatureType / GetFeature;
+- sets the project itself from the dataset, ignoring any `MAP` sent by the client. Each project contains only
+  its own dataset, so a request cannot reach other data;
+- caps image sizes (4096 px), WFS feature counts (*Max Features per Request*) and GetFeatureInfo counts.
+
+### 8. Plugins
+
+**GIS Plugin Settings** (Single) controls plugins:
+- **Policy:** third-party plugins are switched **off** by default. Separate switches allow processing plugins
+  and QGIS Server plugins. *Enforce Compatibility* is on, experimental plugins are off, and packages are limited
+  in size.
+- **Sources:** an *Allowed Download Sources* list (default `https://plugins.qgis.org/`) and the plugin
+  repository URL.
+- **Directories:** where server plugins go.
+- **Diagnostics:** a summary, folders that have no plugin record, plugins with errors, and *QGIS Server Restart
+  Required*.
+
+**GIS Plugin** records each plugin, its package (a private file with a SHA-256 checksum), metadata, analysis,
+dependencies, installation and history. Only **System Managers** change plugins. The web workers never import
+plugin code.
+
+A plugin goes through these steps:
+
+1. **Register:** upload the plugin's `.zip`, set a *Source URL* from an allowed source and click *Download
+   Package*, or use **GIS Plugin Settings → Browse QGIS Plugin Repository**. That lists plugins for the
+   installed QGIS version from plugins.qgis.org, and *Register* downloads one.
+2. **Analyse** (`qgis_worker/plugin_worker.py`, system Python): this never imports or runs the plugin.
+   - It checks the zip is safe: one top-level package containing `__init__.py` and `metadata.txt`, no absolute
+     paths, no `..`, no links, and a capped size.
+   - It reads `metadata.txt` and parses the Python with `ast` to find imports, Qt widgets and `iface` use,
+     processing providers, `initProcessing`, `serverClassFactory` and compiled modules.
+   - It checks Python dependencies against the system Python and the QGIS version range against the installed
+     QGIS.
+   - The result is one of:
+     *Native server-compatible*, *Processing-compatible*, *Browser-adapter compatible*, *Requires manual
+     adaptation* or *Unsupported*.
+3. **Install:** allowed only by policy, and only when the analysis matches the plugin's kind with every
+   dependency met. The package checksum must still match the analysed one.
+   - **Processing plugins** are unpacked into `sites/<site>/private/gis_plugins/processing/`.
+   - **Server plugins** go to a private staging folder first.
+   - **Desktop plugins** and **Frappe GIS plugins** are registered and classified only: a QGIS Desktop
+     plugin's Qt interface cannot run in a browser (adapters are the *Desktop plugin compatibility* phase).
+4. **Enable.**
+   - A processing plugin is loaded by the processing worker only. Its algorithms appear in the Processing
+     toolbox under the plugin's provider. A plugin that fails to load is marked *Error* with the message.
+   - **Desktop plugins that add a Processing provider.** Many QGIS plugins add their provider in `initGui()`,
+     next to their toolbar buttons and dialogs, instead of `initProcessing()`. The worker starts these
+     unchanged against a stand-in for QGIS Desktop's `iface` (`qgis_worker/iface_standin.py`):
+     - the main window, map canvas, message bar, menus and toolbars are real Qt objects, but never shown
+       (offscreen platform, no display);
+     - anything else the plugin asks `iface` for returns a null object that accepts every call and does nothing.
+
+     Only the plugin's Processing algorithms are used; its dialogs never open. Analysis therefore classes any
+     plugin with a `QgsProcessingProvider` as *Processing-compatible*. A plugin whose `initGui()` still fails
+     against the stand-in is marked *Error* with the traceback when it is enabled. A desktop plugin with no
+     Processing provider (all its work happens in dialogs) remains *Requires manual adaptation*.
+   - A server plugin is copied into QGIS Server's plugin directory (`QGIS_PLUGINPATH`). Only the one site with
+     *Manage QGIS Server Plugins* turned on can do this, because the folder is shared by every site on the host.
+     QGIS Server loads plugins when it starts, so run `sudo systemctl restart qgis-server` and then *Mark QGIS
+     Server Restarted*. The managing site's bench user must be able to write that directory:
+
+     ```bash
+     sudo chown <bench user>:www-data /var/lib/qgis-server/plugins && sudo chmod 2750 /var/lib/qgis-server/plugins
+     ```
+5. **Disable / Uninstall:** removes the plugin from the worker's list or from QGIS Server's directory, then
+   deletes its unpacked files.
+
+**Plugin catalogue (Plugins → Manage and Install Plugins…).** The workstation has a plugin window laid out like
+QGIS's, with tabs *All*, *Installed*, *Not Installed*, *Upgradeable*, *Invalid* and *Requests*. Search covers
+plugins.qgis.org (for the installed QGIS version) together with the plugins registered here.
+
+- **Every GIS user** sees the approved (enabled) plugins. They can switch an approved processing plugin **off or
+  on for their own Processing Toolbox**; the choice is stored per user, and its algorithms are hidden from them
+  and refused if they try to run one. They can also **request** a repository plugin with a reason. The request
+  becomes a GIS Plugin record (*Requested*), and System Managers are notified in Frappe.
+- **System Managers** act on requests (*Download and Analyse*, or *Decline* with a reason, which notifies the
+  requester), register repository plugins directly, and install, *Enable for Everyone*, disable, **upgrade**
+  (download the newer version, analyse, reinstall, re-enable) and uninstall.
+
+The worker records which Processing providers each plugin adds, so a user's choices hide exactly that plugin's
+algorithms.
+
+The daily health check scans the plugin directories and reports plugin errors and a pending QGIS Server
+restart.
+
+### Map services (basemaps and overlays)
+
+**GIS Map Service** records are the basemaps and overlay layers offered in the workstation (Mining Planning →
+GIS → Map Services). The same imagery choices as the Mining Simulation are created on install:
+
+| Service | Use | Notes |
+|---|---|---|
+| OpenStreetMap | Basemap (street) | OSM tile usage policy applies |
+| Esri World Imagery | Basemap (**satellite**) | No key needed |
+| Esri World Topographic, OpenTopoMap | Basemap (topographic) | |
+| Google Satellite | Basemap (**satellite**) | **Disabled** until a Google Maps Platform key with the Map Tiles API is entered |
+| Place Names and Boundaries (Esri) | Overlay | Labels to put over satellite imagery |
+
+You can add more:
+- **XYZ** tile URLs, e.g. Mapbox, MapTiler, Thunderforest or an in-house tile server;
+- **WMS** layers;
+- more **Google Map Tiles** types (satellite, roadmap, terrain, with optional label layers).
+
+**Access to locked services.** A service can use an API key (in the URL as `{api_key}`, or in a named query
+parameter), an HTTP header, or basic authentication. The secrets are stored as Password fields.
+
+*Delivery* decides who fetches the tiles:
+- **Direct:** the browser fetches them. An API key is visible to the browser, so restrict the key to this site's
+  address in the provider's console, as Google and Mapbox recommend.
+- **Through Frappe:** the server fetches them and adds the credentials, which never reach the browser. HTTP
+  header and basic authentication always work this way. The proxy only reaches public internet addresses: a
+  service that resolves to a private, loopback or link-local address is refused, so it cannot be pointed at
+  QGIS Server or other internal systems. Tiles are cached by browsers for a day, not on the server.
+
+In the workstation:
+- the **Basemap** picker (bottom of the Layers panel, or *View*) chooses the basemap and its opacity;
+- overlays are listed in the Browser and added like layers;
+- projects save the basemap and overlays.
+
+Exported QGIS projects include the services that need no credentials, as QGIS XYZ/WMS layers. Keyed services
+are left out of packages and the job log says so.
+
+Check each provider's terms of use. Most require the attribution, which the map shows.
+
+### 9. Import and export
+
+Imports and exports run as background jobs. Each one is recorded as a **GIS Import Export Job** (Mining
+Planning → GIS → Import / Export Jobs) with the user, time, datasets, format, CRS, counts and a log. GDAL and
+QGIS do the reading and writing in the worker `geo_planning/qgis_worker/gis_io.py` under the system Python.
+In the workstation, use **Layer → Import Dataset… / Export…** and **Project → Export Project to QGIS… /
+Import QGIS Project Package…**.
+
+**Import** works in three steps:
+
+1. **Upload and inspect.** Supported files are GeoPackage, GeoJSON, KML/KMZ, GML, GPX, CSV with coordinates and
+   DXF, plus a `.zip` holding Shapefiles (`.shp/.shx/.dbf/.prj`) or a File Geodatabase. Every layer is listed
+   with the geometry types actually found in it, its feature count, Z values, CRS (ESRI `.prj` files are matched
+   to an EPSG code) and fields.
+2. **Map each layer.** Choose *Create a new dataset* (name, title, geometry type and CRS are all suggested),
+   *Append to a dataset* (fields go to attributes of the same name), or *Skip*. Fields can be renamed, retyped
+   or left out. Their original names are kept on the dataset (*Source Field Name*), so exports restore them.
+   - **CSV:** choose the X/Y/Z columns. For South African Lo data the **Y** column (westing) is x and the **X**
+     column (southing) is y.
+   - **Reprojection is never silent.** If the file's CRS differs from the dataset's, the import is refused until
+     *Reproject* is ticked. A file without a CRS is taken to be in the dataset's CRS, and the log says so. The
+     original CRS is kept on the dataset (*Source CRS*, *Import Metadata*).
+3. **Run.** Features are inserted in chunks as GIS Features, so they are validated, typed and permission-checked
+   like any other save. Curves are converted to straight segments. A feature that fails is skipped and listed in
+   the log; the rest import. New datasets are published to QGIS automatically.
+
+**Export.** The workstation can export the active layer, the selected features, all layers in the map, or a saved
+GIS Project, in each dataset's own CRS or a chosen one:
+
+| Format | Notes |
+|---|---|
+| GeoPackage | One file, one layer per dataset. The main format for QGIS Desktop. |
+| GeoJSON, GML | One file per dataset (zipped when there are several). |
+| Shapefile | Zipped. Field names are cut to 10 characters, and the job log lists the new names. |
+| KML | Always WGS 84 (EPSG:4326). |
+| CSV | Geometry as WKT, with a `.csvt` file giving the field types (zipped). |
+
+- Exports contain only the features the user may read. Each feature carries `gis_feature_id` and `label`, then
+  its attributes under their original source names, and keeps its Z values.
+- The file is attached to the job as a private file, and only the job's owner and Production Managers can
+  download it. Deleting the job deletes the file.
+
+**QGIS project packages.** *Export Project to QGIS* writes a zip holding a GeoPackage of the project's datasets
+and a `.qgz` project. The project has the layer order, visibility, opacity, colour, display CRS and saved extent,
+with relative paths, so it opens in QGIS Desktop wherever it is unpacked. *Import QGIS Project Package* takes
+such a zip back, including one edited in QGIS Desktop. Its file-based vector layers become datasets, and a
+new **GIS Project** recreates the map. Layers whose data is not inside the zip are listed in the log as
+skipped. Styling beyond a single colour is not carried yet; that comes with the cartography phase.
+
+**Upload size.** Frappe limits uploads to 10 MB unless the site sets a larger limit (`max_file_size` in
+`site_config.json`, in bytes, or *System Settings*). Raise it for real survey files. The web server's own body
+limit (`client_max_body_size` in the bench nginx config) must allow the same size. Exports are written on the
+server and are not affected by these limits.
+
+### 9a. QGIS Processing
+
+**Processing → Toolbox…** in the workstation runs the QGIS Processing algorithms installed on the host:
+QGIS native, GDAL and GRASS (730 on QGIS 3.44, 581 of them usable from the web).
+
+- **Registry.** `qgis_worker/processing_worker.py` lists every algorithm with its parameter and output
+  definitions. The list is cached in `sites/<site>/private/gis_processing/registry.json` and rebuilt by
+  **GIS Settings → Refresh Processing Algorithms**, or by the daily health check when the QGIS version changes.
+  Some algorithms need what a browser cannot provide: a QGIS Desktop project, folder outputs, database
+  connections, or mesh or file inputs. These are listed with the reason and cannot be run.
+- **Form.** The toolbox builds each algorithm's form from its definition:
+  - datasets are filtered by geometry type, with *Selected features only* for the active layer;
+  - numbers are checked against the algorithm's minimum and maximum;
+  - choice lists, booleans, text and expressions get matching inputs;
+  - field lists come from the chosen dataset's attributes;
+  - CRS, extent and point parameters can be filled from the current map view.
+- **Running.** Each run is a **GIS Processing Job**, executed in the background by its own PyQGIS process:
+  1. **Inputs:** the input datasets are written to GeoPackages in a private workspace. Only the features the
+     user may read are included, with Z values kept and the dataset's attribute names, so field and expression
+     parameters match.
+  2. **Run:** the algorithm runs at lower CPU priority, with a timeout and an optional memory limit (GIS
+     Settings → Processing). Progress and log lines stream into the job, and **Cancel** stops it.
+  3. **Clean up:** the workspace is deleted afterwards.
+- **Outputs.**
+  - Vector outputs become **new** GIS Datasets (category *Processing Output*, source = the job). Processing
+    never writes into an existing dataset: an output name that already exists is refused.
+  - Raster outputs become *Raster* datasets, with their GeoTIFF as a private file.
+  - Reports and other files are attached to the job.
+  - Numbers and text (e.g. statistics) are stored in the job's results.
+
+  New datasets are published to QGIS, and the toolbox can add them to the map.
+- **History.** The toolbox's *History* tab and Mining Planning → GIS → Processing Jobs list past runs with their
+  parameters, log and outputs.
+- **Permissions.** Running a job needs create permission on GIS Processing Job (Production Manager, Production
+  User). Algorithms that produce a dataset also need create permission on GIS Dataset, which only Production
+  Manager has. Production Users can therefore run algorithms that only return values or files. Users see only
+  their own jobs; Production Managers see all.
+
+### 10. Security and permissions
+
+- The GIS uses the app's existing roles. No GIS-specific roles are added. **Production Manager** has full access to
+  datasets and features. **Production User** can read datasets and can create, edit and delete features.
+  **System Manager** keeps full access and manages plugins.
+- Every GIS API call and every request through the QGIS gateway checks Frappe permissions on the project, the
+  dataset and, where it applies, the feature.
+- Users cannot reach QGIS Server directly. Only the Frappe gateway calls it.
+- QGIS Server uses a read-only database account, and all writes go through the Frappe GIS API.
+- Processing outputs and exported files get the permissions of the dataset they came from.
+- No processing job overwrites an existing dataset unless the user gives explicit permission. Every change to a
+  dataset creates a new revision.
+
+### 11. Known limitations
+
+- The app is not on par with every QGIS Desktop feature or plugin, and Qt plugin dialogs do not run in the browser.
+- MariaDB's spatial functions are fewer than PostGIS's. Advanced analysis runs through QGIS Processing, not SQL.
+- MariaDB geometries are 2D. Z values are kept in the feature's GeoJSON, plus Min/Max Z columns; QGIS layers read
+  from MariaDB have 2D geometry.
+- The Python packages `pyproj`, `rasterio` and `geopandas` in the bench `env/` bring their **own** copies of PROJ
+  and GDAL, which can be different versions from the system ones that QGIS uses. CRS transforms done in the bench
+  and in QGIS can therefore differ slightly. GIS transforms should always run through QGIS/PROJ in the worker.
+- The GIS datasets are not linked to the Mining Simulation yet. That link is a later step.
+- Editing works on the features loaded for the current view (*Max Features per Request*). Zoom in to edit
+  a dense area completely.
+- Coordinates are edited in Web Mercator in the browser and transformed back to the dataset's CRS with PROJ on
+  the server. Unmoved vertices come back within a fraction of a millimetre.
+
+### 12. Upgrades and backups
+
+- **Before upgrading QGIS**, note the current version shown in GIS Settings. Run the upgrade on the lab site
+  first, then run the dependency check and the GIS tests. Hold the packages on production
+  (`sudo apt-mark hold qgis-server python3-qgis`) until the new version has been tested.
+- After `bench migrate`, check that the spatial columns and indexes are still there (see [Datasets, features and the geometry schema](#5-datasets-features-and-the-geometry-schema)).
+- **Backups:** the vector data is in MariaDB and is included in `bench backup`. Back these up together with the
+  database, using `bench backup --with-files` plus the paths below:
+  - raster files and uploaded datasets (Frappe private files)
+  - plugin packages (private files attached to GIS Plugin). `sites/<site>/private/gis_plugins/` and
+    `/var/lib/qgis-server/plugins` can be rebuilt by installing and enabling the plugins again
+  - `sites/<site>/private/gis_processing/` holds the algorithm registry (rebuilt on demand) and running jobs'
+    workspaces, and does not need backing up
+  - `sites/<site>/private/gis_io/` holds the working files of running import and export jobs only, and does
+    not need backing up
+  - the project directory is **not** essential: GIS Settings → *Publish All Datasets* rebuilds every project file
+  - `/etc/systemd/system/qgis-server.service` and `/etc/nginx/conf.d/qgis-server-local.conf`
+
+### Development phases
+
+| Phase | Deliverables |
+|---|---|
+| 1 — Foundation ✅ | GIS Settings, QGIS health checks, `/portal_gis` workstation shell, Mining Planning shortcut |
+| 2 — Spatial storage ✅ | GIS Dataset, GIS Feature, MariaDB geometry adapter, Z range |
+| 3 — Server integration ✅ | Publishing layers, QGIS rendering through the gateway, reading features |
+| 4 — Editing ✅ | Vector tools, attribute editing, saving and validation |
+| 5 — Exchange with QGIS Desktop ✅ | GeoPackage, GeoJSON, Shapefile, transfer of QGIS projects |
+| 6 — Processing ✅ | Algorithm registry, PyQGIS jobs, saving outputs |
+| 7 — Cartography and raster | Styling, labels, layouts, raster tools |
+| 8 — Plugins ✅ | Plugin Settings, Plugin registry, server and processing plugins |
+| 9 — Desktop plugin compatibility | Research and adapters for the desktop plugin interface |
+| 10 — Hardening | Performance, security, tests, documentation |
+
+---
+
+## CAD Engineering Workstation (Open CASCADE)
+
+### 1. Introduction and purpose
+
+The CAD Engineering Workstation (`/portal_cad`, module **CAD Engineering**) is a browser-based 2D/3D CAD
+environment for mine design, built into `is_production` next to the GIS Workstation and the Mining Simulation.
+Frappe owns users, permissions, records, revisions and workflow; **Open CASCADE Technology (OCCT)** does the
+precision geometry in an isolated worker; **three.js** draws it in the browser. QGIS stays responsible for GIS.
+The aim is an open-source alternative for selected workflows of commercial mining CAD tools (for example Deswik
+CAD or MicroStation); those names describe the kind of work only, and no code, assets or algorithms of them are
+used.
+
+Open it from **Mining Planning → CAD Workstation**, from a CAD Model (**Open in CAD Workstation**), or at
+`/portal_cad?model=<Model Code>`.
+
+### 2. Architecture
+
+```text
+Browser (/portal_cad: Vue + three.js)        draws relative to the model's local origin
+        │  whitelisted API, CSRF, Frappe permissions on every call
+        ▼
+cad_engineering/services/                   Frappe (bench Python)
+  cad_workstation_service   API             cad_model_service     edits, conflict check, model stats
+  cad_revision_service      revisions       cad_storage_service   geometry files (provider interface)
+  cad_job_service           CAD Processing Job (RQ "long" queue)
+        │  JSON request on stdin, private job folder, no database credentials
+        ▼
+cad_engineering/cad_worker/geometry_worker.py   isolated Python + OCP (OCCT): build, validate, measure, mesh
+```
+
+**Geometry storage.** Three kinds of data are kept apart:
+
+| What | Where | Authoritative? |
+|---|---|---|
+| Identity, layer, bounding box, measures, exact parametric geometry of points/curves/text (JSON doubles) | `CAD Entity` rows | yes |
+| Solids (and later meshes/surfaces): OCCT B-Rep files, content-addressed by SHA-256, plus the server's record of how each was built | `<site>/private/cad/models/<model>/blobs/` | yes |
+| Frozen revision snapshots (gzip JSON, write-once, SHA-256 over the canonical content) | `<site>/private/cad/models/<model>/revisions/` | yes (immutable) |
+| Display meshes (float32 relative to their own origin) | `<site>/private/cad/mesh_cache/` | **no** — a cache, safe to delete |
+
+A display mesh is never used for a calculation; lengths, areas, volumes and topology checks come from OCCT on
+the authoritative geometry. Coordinates keep full double precision in the database (`decimal(21,9)`) and in
+OCCT; the browser subtracts the model's local origin before anything becomes float32, so survey coordinates
+such as `X = -19 500, Y = 2 860 500` draw to sub-millimetre precision.
+
+**Revisions.** A model has one *Working* revision (its live entities and layers). *Submit for Review* freezes a
+snapshot; from then on that revision can never change. A Production Manager approves or rejects it. The next edit
+opens a new Working revision whose parent is the last one. *Restore as New Revision* copies an old snapshot back
+into the working state (the snapshot's checksum is verified first). Models with approved revisions are archived,
+not deleted.
+
+### 3. Software dependencies
+
+| Component | Version tested | Where |
+|---|---|---|
+| Python for the worker | 3.13 (Debian 13 system `python3.13` + `python3-venv`) | system |
+| [cadquery-ocp](https://pypi.org/project/cadquery-ocp/) (OCP bindings, bundles OCCT) | **7.9.3.1.1** → OCCT 7.9.3 | worker venv |
+| vtk (dependency of cadquery-ocp) | 9.6.2 | worker venv |
+| ezdxf (DXF import/export) | 1.4.5 | worker venv |
+| pyproj (reprojection during DXF import) | 3.8 (PROJ 9.8) | worker venv |
+| numpy / scipy (surfaces, Phase 3) | 2.5 / 1.18 | worker venv |
+| [PythonCDT](https://pypi.org/project/PythonCDT/) (constrained Delaunay triangulation, import name `pythoncdt`) | 2.0.2 | worker venv |
+| matplotlib (point location in small TINs) | 3.11 | worker venv |
+| laspy + lazrs (LAS / LAZ point clouds) | 2.7 / 0.8 | worker venv (optional) |
+| three.js | 0.184 (`package.json`) | browser bundle |
+
+`cadquery-ocp` has manylinux wheels for CPython 3.11–3.14 on x86-64 and aarch64; versions 7.9.x and 8.0.x both
+work with the worker. Keep to an explicitly pinned version and re-run the health check after upgrading.
+
+### 4. Supported operating systems
+
+Tested on Debian 13 (trixie) x86-64. Any Linux with glibc ≥ 2.28 that runs CPython 3.11–3.14 can install the
+wheels (Ubuntu 22.04+, Debian 12+, RHEL 9+). The worker needs no display server and no GPU.
+
+### 5. Open CASCADE installation
+
+OCCT comes inside the `cadquery-ocp` wheel; nothing is installed system-wide and the Debian `libocct-*`
+packages are **not** needed. Do not install OCCT into the bench's virtual environment.
+
+### 6. Python / CAD binding requirements
+
+The worker runs under a separate Python, never the bench's (`env/`): the bench uses its own Python and native
+geometry libraries in the web process could crash it. The worker imports only OCP, NumPy/SciPy and ezdxf; it
+does not import Frappe.
+
+### 7. CAD worker installation
+
+Once per host (shared by every bench and site on it, like QGIS):
+
+```bash
+sudo apt install python3 python3-venv          # Debian 13: Python 3.13
+sudo install -d -o root -g root -m 0755 /opt/cad-worker
+sudo python3 -m venv /opt/cad-worker/venv
+sudo /opt/cad-worker/venv/bin/pip install --upgrade pip
+sudo /opt/cad-worker/venv/bin/pip install "cadquery-ocp==7.9.3.1.1" "ezdxf==1.4.5" "pyproj>=3.7,<4" "numpy>=2.2,<3" "scipy>=1.15,<2" \
+    "PythonCDT==2.0.2" "matplotlib>=3.9,<4" "laspy==2.7.0" "lazrs==0.8.2"
+
+# check: prints the OCCT self-test result (a boolean cut at survey coordinates)
+echo '{"command": "health"}' | /opt/cad-worker/venv/bin/python -I \
+    apps/is_production/is_production/cad_engineering/cad_worker/geometry_worker.py
+```
+
+The venv is owned by root and read-only to the bench users. About 1.3 GB on disk.
+
+### 8. Service configuration (systemd)
+
+No extra systemd unit is needed. The worker is an **isolated process started per job** by the bench's existing
+RQ `long` workers (managed by the bench's supervisor or systemd units), so it inherits nothing from the web
+process, ends with the job, and cannot leak state between sites. Restart the bench workers after deploying new
+`cad_engineering` code: `sudo supervisorctl restart '<bench>-workers:'` (and `<bench>-web:` for Python changes
+in the web process). A long-running worker service on a separate processing host can be added later behind the
+same JSON request format.
+
+### 9. Worker isolation
+
+Each run gets `python -I` (no user site, no `PYTHON*` variables), a minimal environment (`PATH`, `HOME`, `LANG`),
+a fresh private folder `<site>/private/cad/jobs/<job>/` (removed afterwards) as its working directory, and only
+copies of the files it needs. It refuses any path outside that folder, never receives database credentials, and
+applies CPU priority (`nice`), an address-space limit (`RLIMIT_AS`) and a CPU-time limit (`RLIMIT_CPU`) before
+it touches geometry. The bench kills it at the wall-clock limit or on **Cancel**. The bench recomputes the
+SHA-256 of every file the worker returns before storing it. Imported files are parsed only as data; macros or
+scripts in CAD files are never executed.
+
+### 10. CAD Settings configuration
+
+**CAD Settings** (Production Manager / System Manager):
+
+| Field | Default | Meaning |
+|---|---|---|
+| Enable CAD Workstation / CAD Worker Enabled | on | switch the page or the worker off |
+| CAD Worker Python | `/opt/cad-worker/venv/bin/python` | must not be the bench's Python |
+| Maximum Processing Time | 30 min | wall-clock and CPU limit per job |
+| Maximum Concurrent Jobs | 2 | per site; further jobs wait |
+| Worker Memory Limit | 4096 MB | `RLIMIT_AS`; 0 = none |
+| Worker CPU Priority | 10 | `nice` |
+| Model Storage / Mesh Cache Directory | `private/cad/models`, `private/cad/mesh_cache` | relative to the site folder |
+| Maximum Import Size | 200 MB | (Phase 2 imports) |
+| Default units, CRS, precision, export format | Metres, Degrees, EPSG:2053, 3 / 4 decimals, DXF | new models and display |
+
+### 11. Storage directory permissions
+
+The directories are created by the bench user on first use with mode `0750` (files `0640`) inside
+`<site>/private/`, so each site's models are separate and not web-readable. The storage service only accepts
+keys of the form `models|mesh/<model code>/...` and refuses anything that resolves outside its root.
+
+### 12. Model storage and backup
+
+`bench backup --with-files` includes `private/cad/models/` (authoritative geometry and snapshots) because it is
+inside the site's private files. `private/cad/mesh_cache/` can be excluded or deleted at any time; meshes are
+rebuilt on demand (**Tessellate** jobs). Restore the database and `private/cad/models/` together: entity rows
+refer to B-Rep files by checksum, and revision records refer to their snapshot files.
+
+### 13. Supported CAD formats
+
+| Format | Direction | Status |
+|---|---|---|
+| Native: entity JSON + OCCT B-Rep (`.brep`) + snapshot JSON | read/write | Phase 1 ✅ |
+| DXF R12–R2018 (ASCII and binary) | import/export (ezdxf) | Phase 2 ✅ |
+| GeoJSON (via GIS datasets) | import/export | Phase 5 (GIS ↔ CAD) |
+| LandXML 1.2 surfaces (TIN `Pnts`/`Faces`, N E Z order) | import/export | Phase 3 ✅ |
+| CSV / XYZ / TXT / PTS points (columns detected, or given as e.g. `id,y,x,z`) | import/export | Phase 3 ✅ |
+| STL (ASCII and binary), OBJ (triangles; polygons fanned) | import/export | Phase 3 ✅ |
+| LAS / LAZ point clouds (laspy + lazrs; ground class only, grid thinning) | import | Phase 3 ✅ |
+| STEP AP214 solids (OCCT) | import/export | Phase 3 ✅ |
+| DXF 3DFACE / MESH / polyface | import as surfaces or meshes; surfaces export as MESH (3DFACE for R12) | Phase 3 ✅ |
+| GeoJSON of the mining design (pit rings, roads, block outlines with their design data) | export | Phase 4 ✅ |
+| Mining blocks table (CSV: id, sequence, bench, material, volume, area, centroid, WKT outline) | export | Phase 4 ✅ |
+| Drill holes (CSV: pattern, hole id, row, collar and toe XYZ, length, inclination, dip, diameter, subdrill, burden, spacing) | export | Phase 4 ✅ |
+| IFC, DWG/DGN, E57 | conditional | later; only after interoperability testing |
+
+No export is described as lossless unless round-trip tests prove it for the entities concerned.
+
+#### DXF exchange (Phase 2)
+
+**Import** (File → Import DXF, or `IMPORT`) is two steps. The uploaded file is read by the isolated worker and a
+**validation report** is shown — DXF version, units (`$INSUNITS`), layers, blocks, counts per type, unsupported,
+exploded and invalid entities (with handles), exact duplicates, extents and elevation range, repaired file errors —
+before anything is written. On **Import**, the choices are applied: drawing units (a similarity: arcs stay exact),
+axis mapping (*Negate X and Y* / *Swap X and Y* for Lo data drawn with other sign conventions), and an optional
+source CRS (reprojection with PROJ; curved entities are then densified and blocks exploded — reported). Everything
+goes into the model's Working revision in one transaction; a model in review refuses imports; approved revisions are
+never touched. The original file stays attached to the **CAD Import Export** record, and the model's
+*Transformation History* records the import.
+
+| DXF | Becomes |
+|---|---|
+| LINE, POINT, CIRCLE, ARC, ELLIPSE, SPLINE (control points, knots, weights; fit points kept) | the same, exact |
+| LWPOLYLINE / 2D POLYLINE (bulges = arc segments) · 3D POLYLINE | Polyline |
+| XLINE / RAY | Construction Line |
+| TEXT (alignment kept) · MTEXT (formatting codes removed) · visible ATTRIBs | Text · Multiline Text · Text |
+| DIMENSION linear/aligned/radius/diameter/angular-3-point | Dimension (others exploded into lines and text) |
+| HATCH (polyline and line/arc edges exact; ellipse/spline edges densified) · SOLID/TRACE | Hatch |
+| INSERT (+ the BLOCKs it uses, nested) | Block Reference + CAD Block |
+| LEADER, MLEADER, MLINE, ACAD_TABLE, … | exploded into simple entities |
+| 3DSOLID, BODY, REGION, MESH, 3DFACE, IMAGE, OLE2FRAME, VIEWPORT, paper space | not imported (listed) |
+
+Object coordinate systems are resolved exactly: arcs, circles and polylines drawn with extrusion `0,0,-1` (mirrored
+in AutoCAD) are stored as the same curves about +Z. Mirrored and rotated block references keep their exact transform.
+
+**Export** (File → Export DXF) writes the saved working state or any frozen revision (historical revisions included)
+as DXF R12–R2018 in the model's coordinates and units, with layers (true colour, line type, line weight, off/locked),
+blocks, every 2D entity type, dimensions (rendered by ezdxf) and hatches. Solids are written as MESH approximations of
+their display meshes, which the record states. Round-trip tests (export → import) reproduce every entity's exact
+geometry (to 1e-6) and every block definition.
+
+#### Drawing tools (Phase 2)
+
+Draw: point, line, polyline (with tangent arc segments, `A`/`L`), rectangle, polygon, circle, arc (centre/3-point),
+ellipse, spline (interpolated through fit points, stored as a NURBS), construction line, text, multiline text, aligned/
+linear/angular/radius/diameter dimensions, hatch (SOLID, ANSI31, ANSI37, LINES, GRID, DOTS) of selected closed objects,
+blocks (create from a selection, insert with scale and rotation). Modify: move, copy, rotate, scale, mirror, stretch
+(crossing window), rectangular and polar arrays, offset, trim, extend, break, join, explode, fillet, chamfer, erase.
+Solids follow move/rotate/scale/mirror/array exactly (OCCT transforms). Offsets of polylines are made by OCCT
+(`BRepOffsetAPI_MakeOffset`); trims, extends, fillets and joins use exact line/arc intersections in the browser and
+are re-checked and measured by OCCT after Save. Snaps: endpoint, midpoint, centre, quadrant, intersection,
+perpendicular, tangent, nearest, node, insertion (each switchable, adjustable aperture), grid snap, ortho, polar
+tracking. Selection: click, Shift+click, window (drag left→right), crossing (right→left). External references
+(other models, live or a pinned revision) are drawn faded, read-only and snappable. A drawing template copies
+layers and blocks into new models; the annotation scale sets text and dimension sizes.
+
+**Plan orientation.** Models in a westing/southing CRS (South African Lo, e.g. EPSG:2053) are shown with north up:
+the plan view is turned 180° (CAD Model → Plan Orientation; *Auto from CRS* by default). Coordinates are never
+changed, and text is drawn upright in the turned view.
+
+#### Surfaces and volumes (Phase 3)
+
+A **surface** is a CAD Entity of type *Surface* whose `geometry_ref` is the SHA-256 of a TIN file in model storage
+(`ISPTIN01`: double-precision vertices, triangles, per-vertex breakline/boundary flags). The TIN is authoritative;
+the browser only ever draws display tiles made from it. A **CAD Surface** record mirrors each Surface entity
+(name, type, source, triangle/vertex counts, plan and surface areas, elevation range, checks) and is reconciled
+after every save, import and revision restore. Triangulated objects that are not 2.5D (overhangs, closed shells)
+are kept as *Mesh* entities (open/closed, open-edge and non-manifold counts, enclosed volume when closed).
+
+| Surface menu | What it does |
+|---|---|
+| Create Surface | constrained Delaunay TIN (PythonCDT) from the selected points, lines, polylines, arcs, splines and other surfaces, plus GIS datasets with elevations (reprojected into the model's CRS). Lines can be **breaklines**: triangle edges follow them, and crossing breaklines are split (at different elevations the crossing takes their average, reported). Optional outer boundary, holes, and a longest-edge limit that peels long triangles off the outline. |
+| Repair | removes degenerate and duplicate triangles, re-orients flipped ones, optionally removes spikes |
+| Clip | keeps the surface inside (or outside) a closed polyline; the cut runs exactly along the boundary |
+| Smooth | Laplacian smoothing; breakline and outline vertices do not move |
+| Surface Checks | degenerate, flipped and duplicate triangles, non-manifold edges, duplicate plan points, outline loops, possible spikes (vertices far from their neighbours' median; Zoom goes to each) |
+| Contours | marching triangles at an interval and base, major every *n*; polylines on CONTOUR-MINOR / CONTOUR-MAJOR at their true elevation |
+| Intersect Surfaces | lines where two surfaces meet (e.g. daylight lines), on layer INTERSECTION |
+| Long Section (Profile) | elevations of every chosen surface along a selected line/polyline, exact at each triangle edge crossed; gaps where a surface stops |
+| Cross-Sections | sections at an interval along the alignment, given widths left/right; browsed with a slider, drawn at true scale |
+| Slope and Elevation Analysis | area-weighted mean and maximum slope, mean aspect, plan area per slope class and per elevation band |
+| Cut and Fill Volume | between two surfaces or a surface and an elevation, optionally inside a boundary; recorded as **CAD Volume Calculation** |
+| Recorded Volumes | the model's volume records |
+
+Analyses run on **saved** surfaces (Save first); new geometry from them is one undoable edit. View → *Surfaces by
+Elevation / Slope / Layer Colour* and *Surface Triangles* change the display; the elevation under the cursor is shown
+under Coordinates.
+
+**Volumes are exact for the TINs given.** Both surfaces (and the boundary) are overlaid in one constrained Delaunay
+triangulation in which every edge of both surfaces is a constraint, so every composite triangle lies inside exactly
+one triangle of each surface and the elevation difference is linear over it. Cut and fill are integrated in closed
+form, splitting triangles exactly where the difference changes sign. Only the area covered by both surfaces is
+measured. Each result carries checks (net = direct integral of the difference; cut area + fill area = plan area; no
+negative parts) and is stored with its inputs by checksum, method text, units, revision and processing job, so the
+figure can be traced and repeated. Surfaces of more than 250 000 triangles are overlaid block by block, with the
+block rectangles as further constraints, which keeps memory bounded and gives the same sums. Cut = the base surface
+above the comparison; fill = below.
+
+*Validation.* The worker tests compare against closed-form answers (tilted planes, cones, pyramids). On the lab, a
+volume between a LandXML survey and a design made in the workstation (89 053.933 m³) was checked by midpoint
+integration of the two stored TINs on 800² and 3 200² grids (89 054.005 → 89 053.938, converging at the expected
+rate); a 4.2-million-triangle surface against an elevation agreed with the direct integral over its own triangles to
+1e-14; and a 25-block surface-to-surface volume matched the analytic value to 1e-9 m³.
+
+**Display tiles.** After a surface is stored the server writes a tile pyramid next to the mesh cache: about 60 000
+triangles per tile at full resolution, plus resampled 96×96 and 24×24 grids per tile. The workstation fetches only
+the tiles in view, at the level their size on screen needs (at most six requests at a time), and drops
+full-resolution tiles that leave the view. Tiles are content-addressed and cached by the browser. A surface without
+tiles gets them made automatically the first time it is opened.
+
+#### Solids (Phase 3)
+
+Solid → *Union*, *Subtract* (choose the solid to cut from), *Intersect* (two or more saved solids; originals can be
+kept), *Revolve* (a closed polyline about a selected line, any angle), *Loft* (closed polylines in order of
+elevation, ruled or smooth), *Sweep* (a closed polyline along a line or open polyline, round corners) — all made by
+OCCT in the worker and validated, with volume and area. *Section Lines through Selection* cuts selected solids
+(OCCT section) and surfaces (exact profile or contour) with a vertical plane along a selected line or a horizontal
+plane, and adds the lines on layer SECTION. View → *Section View* hides everything on one side of the same kind of
+plane (display only).
+
+#### Surface and solid exchange (Phase 3)
+
+File → *Import* takes every format in the table above with the same two steps as DXF: a validation report
+(surfaces with triangle counts, areas, elevation range and checks; meshes; points; STEP solids and their validity),
+then the options — file units, axis mapping, layer, surface type, points as a surface / point objects / both (up to
+200 000 point objects), longest triangle edge, CSV columns, LAS ground class and thinning, STL/OBJ as a mesh.
+These formats carry no CRS: coordinates are taken in the model's CRS. File → *Export* writes LandXML, STL, OBJ, CSV
+or XYZ of the surfaces (all, or the selected ones) and STEP of the solids, from the saved state or a frozen revision.
+Round trips (LandXML, OBJ, STL, CSV, DXF MESH, STEP) are covered by the tests.
+
+#### Object tool window, fills and extrude
+
+Drawing a closed shape (rectangle, polygon, circle, ellipse, closed polyline) opens its **tool window** at the top left
+of the view; so does double-clicking any object, or *Edit…* in Properties. It sets the layer, colour, **line weight**
+(per object, shown whether or not LWT is on; LWT shows the layers' weights) and line type, and for closed shapes the
+**shape**: *Outline* (lines only), *Filled* (the inside filled with its colour; exported to DXF as the outline plus a
+SOLID hatch) or *Solid*. *Solid* extrudes it, as in Fusion: a translucent preview with an orange arrow handle — drag it
+up or down (snaps to round steps; Shift finer), or type the distance — and the direction (one side / symmetric), a
+taper angle (+ narrows the far end; sharp corners stay sharp), the operation (New body, or Join / Cut / Intersect with
+a solid under the outline) and whether to keep the outline. *OK* builds the solid with Open CASCADE (bulged polylines
+and circles included). `EXT` or the toolbar's Extrude opens the same window for the selected outlines. Esc ends the
+running tool first, then closes the window.
+
+**Parametric solids (Phase 6).** A solid made by the window remembers how it was made (its outlines, distance,
+direction, taper, operation and, for Join / Cut / Intersect, the body it was combined with). Double-clicking it (or
+Solid → *Edit Extrusion*) reopens the window with those values; *OK* rebuilds it in place. Moving or reshaping an
+outline marks its solids out of date (shown in the window); Solid → *Rebuild Changed Extrusions* rebuilds them all.
+Solid → *Fillet*, *Chamfer* (all, vertical, top or bottom edges) and *Shell* (closed hollow, or open at the top) are
+finishing **features** kept in order on the solid: the window lists them, any one can be edited or removed, and a
+change to the extrusion or a step rebuilds the solid with every step (Open CASCADE; an impossible radius is
+refused with the reason). Pits, roads, block grids and drill patterns are parametric the same way: double-click one
+(or Mining → *Edit Design*) and its generator opens with the values it was made with; *Regenerate* replaces it from
+the source outline as it is now, as one undo step.
+
+#### Mine planning integration (Phase 5)
+
+An approved design becomes a traceable engineering reference in Geo Planning and scheduling.
+
+| Mining menu / File | What it does |
+|---|---|
+| Publish Approved Design to Geo Planning | only an **Approved** revision whose **design validation** did not fail. Its blocks are read from the revision's frozen snapshot (checksum verified) and become **Mining Blocks** of a Geo Pit Layout named after the model (`CAD <model>`, *Source CAD Model / Revision* instead of a pit-outline batch): code = CAD block id, cut = bench (1 = top), block number = CAD sequence, outline, area, design volume, material, bench elevations and the CAD model / revision / entity. A **material stack** (*CAD Materials*) gets one item per material with the density given when publishing, and each block a **Material Summary** (volume, tonnes = volume × density, Mineable or Waste) — so the Mining Block Selector, schedule selections and the scheduler use them as they use any other blocks. A **CAD Design Publication** records the revision, its snapshot checksum, the design standard version and validation, the layout, stack, counts and totals. Optionally the CAD mining sequence becomes a **Mining Schedule Selection** in that order. |
+| (publishing a later revision) | blocks still *Draft / Available / Planned* follow the new design; *Scheduled / Mining / Complete* blocks keep their planning record and are set to *Review* (with the reason) when the design changed them, as are blocks the new design dropped — nothing is deleted. The previous publication becomes *Superseded*. |
+| Schedule Selection from CAD Sequence | a new selection of the published blocks (all, or the selected ones) in CAD sequence |
+| Planning View | colours (and fills) the design's blocks by Mining Block status, schedule period of a Mining Schedule Scenario (its scheduled blocks or allocations), % mined at the last survey, or CAD sequence; view only |
+| Reconcile Survey against Design | a saved survey surface against the published design, per block and bench: **planned** (pre-mining surface to design), **mined to date** (pre-mining surface to survey), **remaining** (survey to design), **mined beyond the design** (design to survey) — exact, like the block volumes — and, with a schedule scenario, what it planned to the survey date (allocations in BCM, else its scheduled blocks pro rata by date). Checks: the recomputed planned volumes match the publication, and mined − beyond + remaining = planned for every block (it does not where the survey is above the pre-mining surface — dumped material — which is reported). Recorded as **CAD Survey Reconciliation** (per-block table); Mining Blocks get % mined and become *Mining* / *Complete*. |
+| File → Compare Revisions | added / removed / changed entities (and what changed) between two revisions or a revision and the working state, design totals before and after, select the added or changed ones, the older state drawn faded over the model |
+
+A Mining Block published from CAD has **Open in CAD Workstation** (opens the model at that block); a block set to
+*Review* shows why.
+
+The lab model **DEMO-MINE-DESIGN** is published (CAD-PUB in the demo Geo Project *Demo CAD Mine (synthetic)*) and
+reconciled against a simulated survey (*Survey 2026-11-30*: the pit mined to design down to 1 500 m).
+
+#### Viewing in 3D
+
+In 3D the view turns about the point under the cursor where the drag starts (marked while turning): **right-drag**,
+**Shift + middle-drag** or **Alt + left-drag**. The orbit button (toolbar and the panel at the bottom right of the
+viewport, or the `ORBIT` command) makes a plain left-drag orbit — for trackpads; Esc ends it. The arrow keys turn the
+view 15° and tilt it 10° (Shift: a third of that), as do the buttons beside *Top* and *Iso*. Middle-drag pans and
+the wheel zooms at the cursor, as in 2D. An orbit started in the plan view switches to 3D.
+
+#### Mining design (Phase 4)
+
+**CAD Design Standard** holds versioned design rules: bench height and reference elevation, bench face angle,
+berm width and minimum bench width, a wider geotechnical berm every *n* benches, maximum overall slope, minimum
+floor width, road width and minimum width, maximum gradient, minimum turning radius, vertical curve length and
+minimum K value, crossfall, superelevation,
+cut/fill batter angles, block size and mining direction, and length/angle tolerances. A version is a *Draft* until
+it is activated; an *Active* version is frozen (its rules cannot change) and activating a new version supersedes the
+old one (*New Version* copies it). A model uses one Active version (Mining → Design Standard, shown in the title
+bar). All tools below take their defaults from it and can be overridden per design; the validation always checks
+against the standard. Turn the tools on or off in CAD Settings → *Enable Mining Design Tools*.
+
+| Mining menu | What it does |
+|---|---|
+| Generate Pit Benches from Floor | from a closed floor outline outward and upward: toe and crest rings at every bench (each the floor offset by the whole distance to it, rounded or square corners), geotechnical berms, the floor on the standard's bench levels if wanted, up to a top elevation or the ground; the pit surface (rings as breaklines), the daylight line where it meets the ground, the post-mining surface (pit inside the daylight line, ground outside — an exact overlay) and the pit's void below the ground. A bench table (toe, crest, face width and angle, berm) is shown. |
+| — with an in-pit ramp (Phase 6) | *In-pit ramp* adds a ramp spiralling down the wall (clockwise or anticlockwise) at the design gradient from where the pit meets the ground in the entry direction (a bearing from the floor centre) to the floor. At each elevation its inner edge is on the wall line (floor edge, middle of every berm, top crest), so it is cut into the benches above that line and stands on rock left in place below it, with batters at the face angle; the ramp is merged exactly into the post-mining surface (or into the pit surface without a ground). The report gives its length, steepest grade, the extra cut and the rock left in place (both measured on the stored surface); its centreline is also checked as a haul road (gradient, curve radius, width) |
+| Pit Stage / Pushback | the same from a previous stage's floor pushed back by a distance, as a new stage on its own layers |
+| Pit Stages (automatic) (Phase 6) | *n* nested pits from one floor outline in one run: floor elevations evenly from the first stage's down to the final floor, and an optional floor offset (negative shrinks) growing to 0 at the final stage; every stage a full pit (benches, ramp, post-mining surface). The report gives each stage's volume, its **incremental volume** (the previous stage's post-mining surface down to this one's), whether it contains the previous stage (the volume above it otherwise) and the narrowest **pushback** between consecutive daylight lines against a minimum width. *Edit Design* regenerates the whole run |
+| Haul Road from Centreline | circular curves of the turning radius fitted at every bend (smaller where the legs are too short, reported); vertical alignment kept, draped on a surface, at a constant grade, straight between two elevations, or through vertical intersection points (PVIs, `chainage:elevation`), with a **parabolic vertical curve** at every grade change (Phase 6; keep: at the centreline's vertices; shortened where the tangents are too short, reported; K = curve length / grade change, listed per curve); curve radius 0 keeps the polyline's own bends; crossfall, and superelevation towards the inside of curves (smaller on wider curves, with run-off); edges; cut and fill batters to the ground; the road surface; its cut and fill, recorded as a CAD Volume Calculation; a long section of the centreline |
+| Mining Blocks | a grid along the mining direction (azimuth from north, westing/southing models included) inside a closed limit, one block per bench, each holding the in-situ material between an upper (ground) and a lower (pit) surface within its bench; numbered from the top bench down along the mining direction |
+| Subdivide Blocks | splits blocks *n × m* along/across their mining direction; the parts' volumes are recalculated and they take their place in the sequence |
+| Set Block Material | a Material Type (Geo Planning) or any name, for the selection or for benches between two elevations; blocks are coloured by material |
+| Sequence Blocks | renumbers blocks for a mining direction |
+| Block Report | blocks, volumes per bench and per material, the block list, CSV download |
+| Validate Design against Standard | checks the saved design and records a **CAD Design Validation** |
+
+Design entities keep their meaning in *CAD Entity → Metadata* (`pit_design`, `haul_road`, `mining_block`), shown in
+the Properties panel and read back by the validation and the exports.
+
+**Validation** (on saved geometry; every result has a value, the limit, the place to zoom to and the entities):
+pits — every ring a simple closed outline, rings nested, bench heights, steepest bench face, narrowest berm
+(warning below the design width, failure below the minimum), steepest overall slope (floor to top crest), floor
+width; haul roads (and in-pit ramp centrelines) — steepest gradient, tightest curve, smallest vertical-curve K against
+the standard's *Minimum K Value*, road width; blocks — simple closed outlines, no overlaps
+within a bench, benches on the standard's levels, material set, blocks with material. The record keeps the standard
+version and a copy of its rules; the model points to its latest validation, and submitting a revision records the
+validation, standard and version in the revision's validation results, so an approved design shows which standard
+it was checked against.
+
+**Volumes are exact** as in Phase 3. Block volumes overlay both surfaces and every block outline in one constrained
+triangulation, cut triangles exactly where the surfaces cross, and integrate each bench slab in closed form
+(∫clip(z, bottom, top)); the blocks therefore add up to the pit volume. The tests check a benched rectangular pit
+against the frustum formula, the post-mining surface, blocks against the pit and subdivided blocks against their
+parent, and road fill against its closed form. Measured widths and angles of rounded corners include the chord error
+of the drawn arcs (16 segments per quarter circle: a few centimetres on an 8 m berm).
+
+**Drill patterns (layout geometry only, spec §12.4 — no explosive loading).** Mining → *Drill Pattern* fills a
+selected blast boundary (less a stand-off) with rows of holes along a row direction, *burden* apart (measured to the
+right of the rows) and *spacing* apart in a row, square or staggered. Collars sit on a surface or at an elevation; each
+toe is the subdrill below the bench floor (an elevation, or a surface followed by iteration) along the hole's
+inclination (degrees from vertical) towards its dip direction. Every hole is a Line (collar → toe) with a collar Point,
+carrying its pattern data (`drill_hole` metadata). The report gives holes, rows, drilled length, hole lengths and
+B × S × H rock per hole; the validation checks that holes go down, the inclination limit, collars inside the blast
+boundary, the closest collar spacing (burden or spacing less a tolerance) and burden/spacing/diameter against the
+standard (version 2 of a standard can add these rules — *Drill and Blast* section). File → Export → *Drill holes
+(CSV)* writes the hole table for the rigs.
+
+The lab has **DEMO-MINE-DESIGN** (survey, a floor outline and a road centreline, then a pit, 175 blocks, materials,
+a haul road and a passing validation made in the workstation against **ISP-OP-STD-V1**, a demonstration standard) and
+**DEMO-3D-PIT** (Phase 3 surfaces and solids).
+
+### 14. Performance configuration
+
+Entities are loaded in pages of 5 000; the viewport draws them in a few large buffers per colour and line style
+(not one object each), text as instanced glyphs (one shared triangle set per character), hides text smaller than two
+pixels, and keeps a cached image of the drawing so pointer moves only redraw the cursor, snaps and previews. Snapping
+uses a grid index of snap points and of curve segments. Solids are drawn from cached display meshes fetched as binary.
+Measured on the lab with a 24 MB DXF of 51 500 entities (1 500 contours with 360 000 vertices, 20 000 spot heights and
+labels, 8 000 lines, 2 000 block references): inspection 17 s, import 44 s, OCCT validation of all 51 500 entities
+116 s (background jobs); opening in the browser about 20 s; about 400 MB of browser memory. Raise *Maximum
+Concurrent Jobs* only if the host has spare cores: each OCCT worker is single-threaded and starts in about 1 s.
+Surfaces are loaded by view (display tiles, see Phase 3 above).
+
+Measured on the lab with a LAZ cloud of 2.1 million points (a 2.9 × 2.9 km terrain, 4.2 million triangles):
+inspection 4 s, import with triangulation, checks and display tiles 52 s; opening the model shows the whole surface
+(81 tiles at the coarsest level, 92 000 triangles drawn) in 2 s; zooming to a 200 m window loads its
+full-resolution tiles in 0.4 s; about 30 MB of browser JavaScript memory. Cut/fill against an elevation over the
+whole surface: 72 s; a surface-to-surface volume of two such surfaces inside a boundary: about 2 minutes; profile 4 s;
+191 cross-sections 17 s — all within the default 4 GB worker memory limit. (Frame times were measured with software
+rendering only and are not representative of a GPU.)
+
+### 15. Dependency health checks
+
+**CAD Settings → Check Dependencies** (and daily) reports: worker Python, OCP/OCCT version, an OCCT boolean
+self-test at survey coordinates (volume must match to 1e-6), job-folder access, model and mesh storage
+writability and free space, optional libraries (ezdxf, NumPy, SciPy, PythonCDT, matplotlib, laspy, lazrs — warnings
+only) and whether the browser
+bundle is built. Missing optional features are warnings; anything needed for Phase 1 is an error.
+
+### 16. Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| *CAD worker Python … does not exist* | install the worker (step 7) or correct CAD Settings → CAD Worker Python |
+| *Cannot import the OCP binding* | `pip install` failed or the Python version has no wheel; reinstall in the venv |
+| Jobs stay *Queued* | the bench's `long` workers are not running, or *Maximum Concurrent Jobs* are busy |
+| *The CAD Workstation assets are not built* | `bench build --app is_production` |
+| *Edit Conflict* on save | someone saved the model after you opened it: reload, redo the change |
+| *Model Locked* | a revision is In Review: approve or reject it first |
+| A solid shows as a box outline | its display mesh is missing; it is rebuilt automatically (Tessellate job) |
+| Python changes do not take effect | restart the bench's web and worker processes |
+
+### 17. Licensing and attribution
+
+See *Acknowledgements and Licensing* below: Open CASCADE Technology (LGPL-2.1 with the OCCT exception),
+cadquery-ocp (Apache-2.0), VTK (BSD-3-Clause), ezdxf (MIT), NumPy/SciPy (BSD-3-Clause), PythonCDT (MPL-2.0),
+matplotlib (PSF-based), laspy (BSD-2-Clause), lazrs (MIT), three.js (MIT), Vue (MIT), Lucide (ISC), pyproj (MIT),
+Droid Sans (Apache-2.0). OCCT and the other worker libraries are installed on the host
+from PyPI and are not part of this repository.
+
+**Tests.** `bench --site <site> run-tests --skip-before-tests --module is_production.cad_engineering.doctype.cad_model.test_cad_model`
+(models, edits, revisions, permissions, OCCT measures) and `…cad_import_export.test_cad_import_export` (geometry,
+blocks, offsets, DXF import report/commit, units/axes, exact DXF round trip), `…cad_surface.test_cad_surface`
+(surface build, tiles and their permissions, CAD Surface records, exact recorded volumes, contours/profiles/sections/
+intersections/analysis, repair/clip/smooth, LandXML/CSV/OBJ/STL/DXF surface exchange, Booleans/revolve/loft/sweep/
+sections, STEP round trip), `…cad_design_standard.test_cad_design_standard` (standard versions, pit benches and void
+against the frustum formula, daylight and post-mining surface, blocks and subdivision against the pit volume, haul
+road fill and volume record, design validation and its record on the revision, GeoJSON and block CSV exports, drill
+pattern layout against closed-form hole counts and lengths, its validation and the hole CSV),
+`…cad_design_publication.test_cad_design_publication` (publishing an approved design with exact volumes and tonnes,
+the sequence selection, republishing a changed design with updated / kept / flagged blocks, revision comparison,
+survey reconciliation against an analytic survey with the schedule to date, the planning overlay), the DXF tests also cover
+per-object line weights and filled shapes; the
+mining worker: `/opt/cad-worker/venv/bin/python -I is_production/cad_engineering/tests/test_mining_worker.py
+is_production/cad_engineering/cad_worker <empty folder>`; the surface worker against closed-form answers:
+`/opt/cad-worker/venv/bin/python -I is_production/cad_engineering/tests/test_surface_worker.py
+is_production/cad_engineering/cad_worker/surface_worker.py <empty folder>`; browser geometry:
+`node is_production/cad_engineering/tests/js/run.js`. The DXF fixture is made by `tests/make_sample_dxf.py`.
+
+### 18. Development phases
+
+| Phase | Scope | Status |
+|---|---|---|
+| 1 — Foundation | module, CAD Settings + health check, CAD Model / Layer / Entity / Design Revision / Processing Job, isolated OCCT worker, storage adapter, revisions with frozen snapshots, `/portal_cad` (menus, panels, 2D/3D viewport, local origin, point/line/polyline/rectangle/circle/arc/text, move/copy/erase, box/cylinder/extrude via OCCT, object/grid snap, ortho, absolute/relative/polar input, undo/redo, save/reopen), permissions, tests | ✅ |
+| 2 — 2D CAD | full draw/modify set, all snaps, polar tracking, window/crossing selection, dimensions, hatches, blocks, external references, drawing templates, annotation scale, plan orientation, DXF import (validation report) and export, CAD Import Export, CAD Block | ✅ |
+| 3 — 3D and surfaces | CAD Surface, CAD Volume Calculation, TIN with breaklines/boundary/holes (from entities, GIS datasets, surfaces), repair/clip/smooth, checks, contours, intersections, profiles, cross-sections, slope/elevation analysis, exact cut/fill volumes, Booleans/revolve/loft/sweep, section lines and section view, LandXML/CSV/XYZ/STL/OBJ/LAS/LAZ/STEP exchange, view-driven surface tiles | ✅ |
+| 4 — Mining design | CAD Design Standard (versioned, frozen when Active), CAD Design Validation, pit bench generation (floor → crest, berms, geotechnical berms, stages/pushbacks, daylight, post-mining surface), haul roads (fitted curves, vertical alignment, superelevation, batters, cut/fill), mining blocks (bench slabs, exact volumes, subdivision, materials, sequencing, report), design validation recorded on revisions, drill-pattern layout (geometry only) with hole table, GeoJSON / block / hole CSV exports, 3D orbit navigation, object tool window (line weight, outline / filled / solid) with a draggable Fusion-style extrude | ✅ |
+| 5 — Integration | CAD Design Publication (approved revision → Geo Pit Layout, Mining Blocks, material stack and summaries), CAD sequence → Mining Schedule Selection, republishing with review flags, planning view (status / schedule period / % mined), CAD Survey Reconciliation (planned vs actual, beyond design, schedule to date), revision comparison with overlay, Mining Block ↔ CAD links | ✅ |
+| 6 — Advanced | ✅ parametric extrusions and regenerable pit / road / block / drill designs; fillet, chamfer, shell and tapered extrusions as an editable feature history; in-pit ramps, automatic pit stages with incremental volumes and pushback checks, road vertical curves — *next:* geological modelling from drillholes, pit-shell optimisation, point-cloud editing, more formats (IFC, E57) | in progress |
+
+**Permissions.** There are no CAD-specific roles. *Production Manager* administers settings, creates and edits
+models and **approves or rejects revisions**; *Production User* creates and edits models and submits revisions
+but cannot approve or delete; *System Manager* has full access. Layers, entities, revisions and jobs follow their
+model's record permissions, so User Permissions on Company, Branch, Location, Geo Project or CAD Model limit what
+a user sees in the workstation and in list views. Every API method checks permissions on the server. When a
+reviewer approves a revision, the Employee linked to their user is recorded with the approval.
+
+---
+
+## Acknowledgements and Licensing
+
+#### QGIS
+
+The GIS Workstation uses **QGIS Server** and **PyQGIS** for map rendering and processing.
+
+**QGIS — Open Source Geographic Information System**
+Developed by the QGIS contributors and community.
+
+- Website: https://qgis.org/
+- Source: https://github.com/qgis/QGIS
+- License: GNU General Public License, version 2 or later (GPL-2.0-or-later), as it applies to each QGIS
+  component. https://github.com/qgis/QGIS/blob/master/COPYING
+
+This app is an independent product of Isambane Mining (Pty) Ltd. It is **not** an official QGIS product. It is
+not endorsed by, and has no official link to, the QGIS project or QGIS.ORG.
+
+#### Open CASCADE Technology
+
+The CAD Engineering Workstation uses **Open CASCADE Technology** (https://dev.opencascade.org/), © OPEN CASCADE
+SAS, through the OCP bindings of the CadQuery project. This app is not affiliated with or endorsed by OPEN
+CASCADE SAS, the CadQuery project or three.js.
+
+#### Third-party components
+
+| Component | Used for | License |
+|---|---|---|
+| [Frappe Framework](https://github.com/frappe/frappe) | App framework | MIT |
+| [ERPNext](https://github.com/frappe/erpnext) | Required app | GPL-3.0 |
+| [QGIS Server / PyQGIS](https://qgis.org/) | Rendering, processing (system package, not bundled) | GPL-2.0-or-later |
+| [GDAL/OGR](https://gdal.org/) | Format I/O, MySQL/MariaDB reading (system package) | MIT/X style |
+| [PROJ](https://proj.org/) | Coordinate transforms (system package) | MIT/X style |
+| [GRASS GIS](https://grass.osgeo.org/) | Optional processing provider | GPL-2.0-or-later |
+| [OpenLayers](https://openlayers.org/) | GIS Workstation map | BSD-2-Clause |
+| [proj4js](https://github.com/proj4js/proj4js) | Coordinate readout in other CRSs | MIT |
+| QGIS default-theme icons (Robert Szczepanek, Anita Graser) | Workstation toolbar and menu icons, unmodified, in `public/qgis_icons/` with `LICENSE-CC-BY-SA-3.0.txt` | CC-BY-SA 3.0 |
+| [Lucide](https://lucide.dev) | Workstation interface-chrome icons (close, expand, visibility) | ISC |
+| [Vue](https://vuejs.org/) | GIS Workstation interface (from Frappe's build) | MIT |
+| [OpenStreetMap](https://www.openstreetmap.org/copyright) | Optional basemap tiles | ODbL (data), attribution shown on the map |
+| [three.js](https://threejs.org/) | Mining Simulation 3D view (vendored); CAD Workstation viewport (npm, bundled) | MIT |
+| [Open CASCADE Technology](https://dev.opencascade.org/) | CAD worker geometry kernel (installed on the host inside cadquery-ocp, not bundled) | LGPL-2.1 with the Open CASCADE exception |
+| [cadquery-ocp](https://github.com/CadQuery/OCP) | Python bindings for OCCT in the CAD worker (host venv) | Apache-2.0 |
+| [VTK](https://vtk.org/) | Dependency of cadquery-ocp (host venv) | BSD-3-Clause |
+| [ezdxf](https://github.com/mozman/ezdxf) | DXF import/export in the CAD worker (host venv) | MIT |
+| [NumPy](https://numpy.org/) / [SciPy](https://scipy.org/) | Numerical and surface work in the CAD worker (host venv) | BSD-3-Clause |
+| [pyproj](https://pyproj4.github.io/pyproj/) | Reprojection during DXF import (host venv) | MIT |
+| [PythonCDT](https://github.com/artem-ogre/PythonCDT) / [CDT](https://github.com/artem-ogre/CDT) | Constrained Delaunay triangulation of surfaces and volume overlays (host venv) | MPL-2.0 |
+| [matplotlib](https://matplotlib.org/) | Point location in TINs (host venv) | PSF-based (matplotlib licence) |
+| [laspy](https://github.com/laspy/laspy) / [lazrs](https://github.com/laz-rs/laz-rs-python) | LAS / LAZ import (host venv) | BSD-2-Clause / MIT |
+| Droid Sans (The Android Open Source Project) | CAD Workstation text, unmodified, in `public/cad_fonts/` with its NOTICE | Apache-2.0 |
+| Python packages in `pyproject.toml` (shapely, geopandas, pyproj, rasterio, ...) | Geo Planning | See each package |
+
+The copyright notices and license files of vendored libraries are kept next to the libraries under `public/`.
+
+#### Licence
+
+Copyright (C) 2025-2026 Isambane Mining (Pty) Ltd. All contributions were made by Isambane employees under copyright assignment.
+
+This app is free software: you can redistribute it and/or modify it under the terms of the **GNU General Public
+License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any
+later version** (GPL-3.0-or-later). It is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See
+`license.txt` for the full licence text.
+
+**Why GPL-3.0-or-later.** It fits every GPL component the app depends on:
+
+- **QGIS** (QGIS Server, PyQGIS) and **GRASS GIS** are GPL-2.0-or-later. The PyQGIS workers in
+  `geo_planning/qgis_worker/` import QGIS, and QGIS plugins load into it; GPL-2.0-or-later code may be combined
+  with GPL-3.0 code.
+- **ERPNext**, a required app, is GPL-3.0.
+- The permissively licensed parts are compatible with GPL-3.0: Frappe (MIT), OpenLayers (BSD-2-Clause), proj4js
+  (MIT), Lucide (ISC), three.js (MIT), GDAL and PROJ (MIT/X), cadquery-ocp (Apache-2.0, compatible with GPL-3.0
+  but not GPL-2.0), VTK, NumPy and SciPy (BSD-3-Clause), ezdxf (MIT).
+- **Open CASCADE Technology** is LGPL-2.1 with an additional exception; LGPL-2.1 code may be used by GPL-3.0
+  code. The CAD worker (`cad_engineering/cad_worker/`) runs as a separate process and only imports the OCCT
+  bindings installed on the host; this repository neither contains nor modifies OCCT. Anyone who redistributes
+  OCCT itself must follow its licence (source of OCCT, licence text, the right to relink). Keep their copyright notices and licence texts
+  with them, as the table above lists.
+- The **QGIS icons** in `public/qgis_icons/` are not GPL: they are artwork under **CC-BY-SA 3.0**, which cannot be
+  merged into GPL code. They are therefore kept as separate, unmodified files, loaded by the workstation as
+  images, with their licence text and attribution in that folder. The app's licence does not apply to them.
+  Changed icons stay CC-BY-SA 3.0. The author asks to be told when the icons are used in other software.
+
+**If you distribute the app** (give a copy to anyone outside Isambane, or ship it with QGIS or as a package):
+
+- pass on the source code with it, or a written offer to provide it;
+- keep the GPL licence text and every copyright and licence notice, and say what you changed;
+- the QGIS packages themselves are distributed by QGIS.org / Debian under their own GPL terms. Installing them on
+  a host, as described above, does not make this repository a QGIS distribution.
+
+Running the app for Isambane's own users on Isambane's servers is not distribution. GPL-3.0 (unlike AGPL-3.0)
+does not require offering the source to people who only use it over the network.

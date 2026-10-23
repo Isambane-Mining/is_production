@@ -1,0 +1,195 @@
+{
+ "actions": [],
+ "creation": "2026-10-20 19:06:53.651882",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "section_policy",
+  "enable_third_party_plugins",
+  "allow_processing_plugins",
+  "allow_server_plugins",
+  "manage_server_plugins",
+  "column_break_pol",
+  "enforce_compatibility",
+  "allow_experimental",
+  "max_package_mb",
+  "section_sources",
+  "allowed_sources",
+  "repository_url",
+  "section_dirs",
+  "server_plugin_directory",
+  "column_break_dirs",
+  "processing_plugin_directory",
+  "section_diagnostics",
+  "plugin_summary",
+  "server_restart_required",
+  "column_break_diag",
+  "last_scan_on",
+  "diagnostics"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_policy",
+   "fieldtype": "Section Break",
+   "label": "Policy"
+  },
+  {
+   "fieldname": "enable_third_party_plugins",
+   "fieldtype": "Check",
+   "label": "Enable Third-Party Plugins",
+   "default": "0",
+   "description": "Off: no plugin can be installed or run. Only System Managers install, enable or remove plugins."
+  },
+  {
+   "fieldname": "allow_processing_plugins",
+   "fieldtype": "Check",
+   "label": "Allow Processing Plugins",
+   "default": "1",
+   "description": "Plugins that add QGIS Processing algorithms; they run only in the processing worker."
+  },
+  {
+   "fieldname": "allow_server_plugins",
+   "fieldtype": "Check",
+   "label": "Allow QGIS Server Plugins",
+   "default": "0",
+   "description": "Plugins loaded by QGIS Server itself (restart QGIS Server after a change)."
+  },
+  {
+   "fieldname": "manage_server_plugins",
+   "fieldtype": "Check",
+   "label": "Manage QGIS Server Plugins",
+   "default": "0",
+   "description": "QGIS Server and its plugin folder are shared by every bench and site on this host. Turn this on for exactly one site; only that site installs or removes server plugins, and only it reads the folder."
+  },
+  {
+   "fieldname": "column_break_pol",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "enforce_compatibility",
+   "fieldtype": "Check",
+   "label": "Enforce Compatibility",
+   "default": "1",
+   "description": "Only install plugins whose analysis matches their kind (e.g. Processing-compatible for processing plugins) and whose QGIS version range includes this QGIS."
+  },
+  {
+   "fieldname": "allow_experimental",
+   "fieldtype": "Check",
+   "label": "Allow Experimental Plugins",
+   "default": "0"
+  },
+  {
+   "fieldname": "max_package_mb",
+   "fieldtype": "Int",
+   "label": "Max Package Size (MB)",
+   "default": "50"
+  },
+  {
+   "fieldname": "section_sources",
+   "fieldtype": "Section Break",
+   "label": "Sources"
+  },
+  {
+   "fieldname": "allowed_sources",
+   "fieldtype": "Small Text",
+   "label": "Allowed Download Sources",
+   "default": "https://plugins.qgis.org/",
+   "description": "One URL prefix per line. A plugin package can be downloaded from these; any other package must be uploaded by a System Manager."
+  },
+  {
+   "fieldname": "repository_url",
+   "fieldtype": "Data",
+   "label": "QGIS Plugin Repository",
+   "default": "https://plugins.qgis.org/plugins/plugins.xml",
+   "description": "Searched by Browse Repository; the installed QGIS version is added to the request."
+  },
+  {
+   "fieldname": "section_dirs",
+   "fieldtype": "Section Break",
+   "label": "Directories"
+  },
+  {
+   "fieldname": "server_plugin_directory",
+   "fieldtype": "Data",
+   "label": "QGIS Server Plugin Directory",
+   "default": "/var/lib/qgis-server/plugins",
+   "description": "QGIS_PLUGINPATH of the qgis-server service. The bench user must be able to write it, QGIS Server's user to read it.",
+   "depends_on": "manage_server_plugins"
+  },
+  {
+   "fieldname": "column_break_dirs",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "processing_plugin_directory",
+   "fieldtype": "Data",
+   "label": "Processing Plugin Directory",
+   "read_only": 1,
+   "description": "Inside the site's private files; only the processing worker loads from it."
+  },
+  {
+   "fieldname": "section_diagnostics",
+   "fieldtype": "Section Break",
+   "label": "Diagnostics",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "plugin_summary",
+   "fieldtype": "Small Text",
+   "label": "Summary",
+   "read_only": 1
+  },
+  {
+   "fieldname": "server_restart_required",
+   "fieldtype": "Check",
+   "label": "QGIS Server Restart Required",
+   "read_only": 1,
+   "description": "A server plugin was installed, enabled, disabled or removed: run sudo systemctl restart qgis-server, then clear this with Mark Restarted."
+  },
+  {
+   "fieldname": "column_break_diag",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "last_scan_on",
+   "fieldtype": "Datetime",
+   "label": "Last Scan On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "diagnostics",
+   "fieldtype": "Code",
+   "label": "Diagnostics",
+   "options": "JSON",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "links": [],
+ "modified": "2026-10-21 09:43:05.497357",
+ "modified_by": "Administrator",
+ "module": "Geo Planning",
+ "name": "GIS Plugin Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "print": 1,
+   "create": 1,
+   "write": 1
+  },
+  {
+   "role": "Production Manager",
+   "read": 1,
+   "print": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "issingle": 1,
+ "description": "Who may install QGIS plugins, from where, and where they go.",
+ "track_changes": 1
+}

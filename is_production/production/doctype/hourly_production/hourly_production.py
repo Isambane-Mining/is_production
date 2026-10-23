@@ -312,9 +312,9 @@ class HourlyProduction(Document):
         self.populate_truck_material_types()
         self.apply_planning_tub_factors()
         self.validate_truck_loads()
-        self.validate_dozer_production()
         # self.validate_and_apply_tub_factors()
         self.before_save_logic()  # <-- NOW RUNS AUTOMATICALLY
+        self.validate_dozer_production()
 
     def populate_truck_loads_if_blank(self):
         """Populate truck_loads from Asset if the form only has blank/default rows."""
@@ -645,7 +645,7 @@ class HourlyProduction(Document):
 
     def validate_dozer_production(self):
         for row in getattr(self, "dozer_production", []):
-            if (row.bcm_hour or 0) > 0:
+            if (row.bcm_hour or 0) > 0 or row.get("dozer_service") == "Tip Dozing":
                 if not row.dozer_geo_mat_layer:
                     frappe.throw(
                         _("Row {0}: Please select a Geo Material Layer for dozer {1}")
@@ -1771,7 +1771,7 @@ def get_user_whatsapp_number(user):
 
 
 @frappe.whitelist()
-def get_previous_hour_defaults(location, prod_date, current_hour_sort_key=None, current_name=None):
+def get_previous_hour_defaults(location, prod_date, current_hour_sort_key=None, current_name=None, current_shift=None):
     """
     Return the latest previous Hourly Production record for same site/date.
     Copies setup only: truck/excavator assignment, areas, geo/material layer,
@@ -1786,6 +1786,9 @@ def get_previous_hour_defaults(location, prod_date, current_hour_sort_key=None, 
         ["prod_date", "=", prod_date],
         ["docstatus", "<", 2],
     ]
+
+    if current_shift:
+        filters.append(["shift", "=", current_shift])
 
     if current_name and not str(current_name).startswith("new-"):
         filters.append(["name", "!=", current_name])

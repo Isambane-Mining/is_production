@@ -1,10 +1,10 @@
-// Import of .rollover.json project files into Mining Simulation Project (desk form and list).
+// Import of simulator project files (.isamiq.json, older .rollover.json) into Mining Simulation Project (desk form and list).
 (() => {
 	const API = "is_production.geo_planning.services.mining_simulation_service.";
 
 	frappe.provide("is_production.mining_simulation");
 
-	// Upload a .rollover.json file and check what is in it.
+	// Upload a project file and check what is in it.
 	is_production.mining_simulation.pick_file = function (on_checked) {
 		new frappe.ui.FileUploader({
 			allow_multiple: false,
@@ -38,10 +38,9 @@
 	};
 
 	// From the list: import as a new project, or replace the project the file came from.
-	// `on_done(name)` runs after the import; by default the project form opens.
-	is_production.mining_simulation.import_new = function (on_done) {
+	is_production.mining_simulation.import_new = function () {
 		is_production.mining_simulation.pick_file((file_url, info) => {
-			const open = on_done || ((name) => frappe.set_route("Form", "Mining Simulation Project", name));
+			const open = (name) => frappe.set_route("Form", "Mining Simulation Project", name);
 			if (!info.existing) {
 				is_production.mining_simulation.run_import(file_url, "new").then(open);
 				return;

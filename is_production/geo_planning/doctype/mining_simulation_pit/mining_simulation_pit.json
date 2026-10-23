@@ -8,7 +8,11 @@
  "field_order": [
   "pit_name",
   "color",
+  "start_date",
+  "priority",
+  "boxcut_months",
   "pit_id",
+  "boxcut_points",
   "points",
   "json_meta"
  ],
@@ -19,20 +23,45 @@
    "label": "Pit",
    "in_list_view": 1,
    "reqd": 1,
-   "columns": 4
+   "columns": 3
   },
   {
    "fieldname": "color",
    "fieldtype": "Color",
    "label": "Colour",
    "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "start_date",
+   "fieldtype": "Date",
+   "label": "Start Date",
+   "in_list_view": 1,
    "columns": 2
+  },
+  {
+   "fieldname": "priority",
+   "fieldtype": "Check",
+   "label": "Priority",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "boxcut_months",
+   "fieldtype": "Float",
+   "label": "Box Cut Months"
   },
   {
    "fieldname": "pit_id",
    "fieldtype": "Data",
    "label": "Pit ID",
    "read_only": 1
+  },
+  {
+   "fieldname": "boxcut_points",
+   "fieldtype": "Code",
+   "label": "Box Cut Outline",
+   "options": "JSON"
   },
   {
    "fieldname": "points",
@@ -52,7 +81,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-08 08:53:51.972282",
+ "modified": "2026-10-20 09:20:31.604101",
  "modified_by": "Administrator",
  "module": "Geo Planning",
  "name": "Mining Simulation Pit",

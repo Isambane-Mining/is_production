@@ -35,6 +35,9 @@ class GeoPitLayoutMaterialStack(Document):
         if not self.get("item"):
             return
 
+        # a layout published from an approved CAD design takes its materials from the design, not a geology run
+        from_cad = bool(frappe.db.get_value("Geo Pit Layout", self.geo_pit_layout, "source_cad_model")) if self.geo_pit_layout else False
+
         for row in self.get("item"):
             if not row.material_seam:
                 frappe.throw(f"Material / Seam is required in row {row.idx}.")
@@ -42,7 +45,7 @@ class GeoPitLayoutMaterialStack(Document):
             if not row.value_type:
                 frappe.throw(f"Value Type is required in row {row.idx}.")
 
-            if not row.geology_run:
+            if not row.geology_run and not from_cad:
                 frappe.throw(f"Geology Run is required in row {row.idx}.")
 
             run_layout = frappe.db.get_value("Geo Pit Layout Geology Run", row.geology_run, "geo_pit_layout")

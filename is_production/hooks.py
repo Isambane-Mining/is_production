@@ -3,7 +3,7 @@ app_title = "Production"
 app_publisher = "Isambane Mining (Pty) Ltd"
 app_description = "Isambane Mining Frappe App for Production Records"
 app_email = "eben@isambane.co.za"
-app_license = "mit"
+app_license = "gpl-3.0"
 required_apps = ["frappe/erpnext", "shridarpatil/frappe_whatsapp"]
 source_link = "http://github.com/buff0k/is_production"
 app_logo_url = "/assets/is_production/images/is-logo.png"
@@ -25,8 +25,47 @@ fixtures = [
 # Asset Categories (Dozer, ADT, Excavator) are not a fixture: they need
 # company-specific accounts. They are created against the site's default
 # company by is_production.setup.asset_categories instead.
-after_install = "is_production.setup.asset_categories.ensure_asset_categories"
-after_migrate = "is_production.setup.asset_categories.ensure_asset_categories"
+after_install = [
+    "is_production.setup.asset_categories.ensure_asset_categories",
+    "is_production.geo_planning.services.gis_storage_service.ensure_geometry_schema",
+]
+after_migrate = [
+    "is_production.setup.asset_categories.ensure_asset_categories",
+    # GIS Feature's native GEOMETRY column + SPATIAL index are not Frappe fields.
+    "is_production.geo_planning.services.gis_storage_service.ensure_geometry_schema",
+    "is_production.geo_planning.services.gis_map_service.ensure_default_map_services",
+    "is_production.geo_planning.services.gis_plugin_service.ensure_single_defaults",
+    "is_production.cad_engineering.services.cad_health_service.ensure_settings_defaults",
+]
+
+# CAD records follow their CAD Model's record permissions (Company / Branch / Location restrictions).
+has_permission = {
+    "CAD Entity": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
+    "CAD Layer": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
+    "CAD Design Revision": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
+    "CAD Processing Job": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
+    "CAD Block": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
+    "CAD Import Export": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
+    "CAD Surface": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
+    "CAD Volume Calculation": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
+    "CAD Design Validation": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
+    "CAD Design Publication": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
+    "CAD Survey Reconciliation": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
+}
+
+permission_query_conditions = {
+    "CAD Entity": "is_production.cad_engineering.services.cad_permissions.model_condition",
+    "CAD Layer": "is_production.cad_engineering.services.cad_permissions.model_condition",
+    "CAD Design Revision": "is_production.cad_engineering.services.cad_permissions.model_condition",
+    "CAD Processing Job": "is_production.cad_engineering.services.cad_permissions.model_condition",
+    "CAD Block": "is_production.cad_engineering.services.cad_permissions.model_condition",
+    "CAD Import Export": "is_production.cad_engineering.services.cad_permissions.model_condition",
+    "CAD Surface": "is_production.cad_engineering.services.cad_permissions.model_condition",
+    "CAD Volume Calculation": "is_production.cad_engineering.services.cad_permissions.model_condition",
+    "CAD Design Validation": "is_production.cad_engineering.services.cad_permissions.model_condition",
+    "CAD Design Publication": "is_production.cad_engineering.services.cad_permissions.model_condition",
+    "CAD Survey Reconciliation": "is_production.cad_engineering.services.cad_permissions.model_condition",
+}
 
 override_whitelisted_methods = {
     # Override the PDF‐body renderer
@@ -61,6 +100,12 @@ page_js = {
 }
 
 scheduler_events = {
+    "daily": [
+        # GIS dependency health (QGIS Server, PyQGIS, database account), shown on GIS Settings.
+        "is_production.geo_planning.services.gis_health_service.scheduled_health_check",
+        # CAD worker (Open CASCADE) and model storage, shown on CAD Settings.
+        "is_production.cad_engineering.services.cad_health_service.scheduled_health_check",
+    ],
     "hourly": [
         "is_production.production.doctype.monthly_production_planning.monthly_production_planning.update_all_active_mpp_mtd",
     ],

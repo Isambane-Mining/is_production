@@ -1,0 +1,75 @@
+{
+ "actions": [],
+ "creation": "2026-10-20 18:18:18.146828",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "dataset",
+  "map_service",
+  "visible",
+  "opacity",
+  "color",
+  "renderer"
+ ],
+ "fields": [
+  {
+   "fieldname": "dataset",
+   "fieldtype": "Link",
+   "label": "Dataset",
+   "options": "GIS Dataset",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "map_service",
+   "fieldtype": "Link",
+   "label": "Map Service",
+   "options": "GIS Map Service",
+   "in_list_view": 1,
+   "description": "An overlay map service instead of a dataset."
+  },
+  {
+   "fieldname": "visible",
+   "fieldtype": "Check",
+   "label": "Visible",
+   "default": "1",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "opacity",
+   "fieldtype": "Float",
+   "label": "Opacity",
+   "default": "1",
+   "in_list_view": 1,
+   "description": "0 (transparent) to 1."
+  },
+  {
+   "fieldname": "color",
+   "fieldtype": "Color",
+   "label": "Colour",
+   "in_list_view": 1,
+   "description": "Browser drawing colour; QGIS uses the dataset's own style."
+  },
+  {
+   "fieldname": "renderer",
+   "fieldtype": "Select",
+   "label": "Drawn By",
+   "options": "qgis\nbrowser",
+   "default": "qgis",
+   "in_list_view": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "links": [],
+ "modified": "2026-10-20 18:56:37.128990",
+ "modified_by": "Administrator",
+ "module": "Geo Planning",
+ "name": "GIS Project Layer",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "istable": 1,
+ "editable_grid": 1
+}

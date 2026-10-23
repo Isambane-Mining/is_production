@@ -1,0 +1,412 @@
+{
+ "actions": [],
+ "creation": "2026-10-21 10:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "model_name",
+  "model_code",
+  "model_type",
+  "geo_project",
+  "column_break_main",
+  "model_status",
+  "approval_status",
+  "current_revision",
+  "working_revision",
+  "design_standard",
+  "last_design_validation",
+  "section_org",
+  "company",
+  "column_break_org",
+  "branch",
+  "column_break_org2",
+  "location",
+  "section_crs",
+  "crs",
+  "source_crs",
+  "vertical_datum",
+  "linear_units",
+  "angular_units",
+  "plan_orientation",
+  "column_break_crs",
+  "local_origin_x",
+  "local_origin_y",
+  "local_origin_z",
+  "transformation_history",
+  "annotation_scale",
+  "drawing_template",
+  "section_desc",
+  "description",
+  "source_file",
+  "section_references",
+  "references",
+  "section_bbox",
+  "min_x",
+  "min_y",
+  "min_z",
+  "column_break_bbox",
+  "max_x",
+  "max_y",
+  "max_z",
+  "section_stats",
+  "entity_count",
+  "layer_count",
+  "column_break_stats",
+  "edit_version"
+ ],
+ "fields": [
+  {
+   "fieldname": "model_name",
+   "fieldtype": "Data",
+   "label": "Model Name",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "model_code",
+   "fieldtype": "Data",
+   "label": "Model Code",
+   "reqd": 1,
+   "unique": 1,
+   "description": "Short identifier, e.g. SW-PIT-01. Becomes the record name."
+  },
+  {
+   "fieldname": "model_type",
+   "fieldtype": "Select",
+   "label": "Model Type",
+   "options": "General CAD\nSurvey\nGeological\nTerrain\nPit Design\nHaul Road\nDrill and Blast\nInfrastructure\nMining Layout",
+   "default": "General CAD",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "geo_project",
+   "fieldtype": "Link",
+   "label": "Geo Project",
+   "options": "Geo Project",
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "model_status",
+   "fieldtype": "Select",
+   "label": "Model Status",
+   "options": "Draft\nActive\nArchived",
+   "default": "Draft",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "approval_status",
+   "fieldtype": "Select",
+   "label": "Approval Status",
+   "options": "Not Submitted\nIn Review\nApproved\nRejected",
+   "default": "Not Submitted",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "current_revision",
+   "fieldtype": "Link",
+   "label": "Approved Revision",
+   "options": "CAD Design Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "working_revision",
+   "fieldtype": "Link",
+   "label": "Working Revision",
+   "options": "CAD Design Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "design_standard",
+   "fieldtype": "Link",
+   "label": "Design Standard",
+   "options": "CAD Design Standard",
+   "description": "The mining design rules this model is designed and validated against (an Active version)."
+  },
+  {
+   "fieldname": "last_design_validation",
+   "fieldtype": "Link",
+   "label": "Last Design Validation",
+   "options": "CAD Design Validation",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_org",
+   "fieldtype": "Section Break",
+   "label": "Organisation"
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company",
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "column_break_org",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "branch",
+   "fieldtype": "Link",
+   "label": "Branch",
+   "options": "Branch",
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "column_break_org2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "location",
+   "fieldtype": "Link",
+   "label": "Location",
+   "options": "Location"
+  },
+  {
+   "fieldname": "section_crs",
+   "fieldtype": "Section Break",
+   "label": "Coordinates and Units"
+  },
+  {
+   "fieldname": "crs",
+   "fieldtype": "Data",
+   "label": "Coordinate Reference System",
+   "description": "Working CRS, e.g. EPSG:2053 (Hartebeesthoek94 / Lo29). Engineering coordinates are never assumed to be latitude/longitude."
+  },
+  {
+   "fieldname": "source_crs",
+   "fieldtype": "Data",
+   "label": "Source CRS",
+   "description": "CRS of the data the model was made from, if different."
+  },
+  {
+   "fieldname": "vertical_datum",
+   "fieldtype": "Data",
+   "label": "Vertical Datum",
+   "description": "Recorded only; differences are flagged, never corrected silently."
+  },
+  {
+   "fieldname": "linear_units",
+   "fieldtype": "Select",
+   "label": "Linear Units",
+   "options": "Metres\nMillimetres\nKilometres\nFeet\nUS Survey Feet",
+   "default": "Metres"
+  },
+  {
+   "fieldname": "angular_units",
+   "fieldtype": "Select",
+   "label": "Angular Units",
+   "options": "Degrees\nRadians\nGradians",
+   "default": "Degrees"
+  },
+  {
+   "fieldname": "plan_orientation",
+   "fieldtype": "Select",
+   "label": "Plan Orientation",
+   "options": "Auto from CRS\nX East, Y North\nRotated 180° (Westing/Southing)",
+   "default": "Auto from CRS",
+   "description": "South African Lo systems store westing/southing: Auto turns the plan view 180° so north is up. Coordinates are never changed."
+  },
+  {
+   "fieldname": "column_break_crs",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "local_origin_x",
+   "fieldtype": "Float",
+   "label": "Local Origin X",
+   "description": "Render origin: the viewport draws relative to this point so large survey coordinates keep full precision. Set automatically from the first geometry."
+  },
+  {
+   "fieldname": "local_origin_y",
+   "fieldtype": "Float",
+   "label": "Local Origin Y"
+  },
+  {
+   "fieldname": "local_origin_z",
+   "fieldtype": "Float",
+   "label": "Local Origin Z"
+  },
+  {
+   "fieldname": "transformation_history",
+   "fieldtype": "JSON",
+   "label": "Transformation History",
+   "read_only": 1
+  },
+  {
+   "fieldname": "annotation_scale",
+   "fieldtype": "Int",
+   "label": "Annotation Scale (1:n)",
+   "description": "Sets default text and dimension sizes."
+  },
+  {
+   "fieldname": "drawing_template",
+   "fieldtype": "Link",
+   "label": "Drawing Template",
+   "options": "CAD Model",
+   "description": "Layers and blocks are copied from this model when the model is created."
+  },
+  {
+   "fieldname": "section_desc",
+   "fieldtype": "Section Break",
+   "label": "Description"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Text Editor",
+   "label": "Description"
+  },
+  {
+   "fieldname": "source_file",
+   "fieldtype": "Attach",
+   "label": "Source File"
+  },
+  {
+   "fieldname": "section_references",
+   "fieldtype": "Section Break",
+   "label": "External References",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "references",
+   "fieldtype": "Table",
+   "label": "External References",
+   "options": "CAD Model Reference"
+  },
+  {
+   "fieldname": "section_bbox",
+   "fieldtype": "Section Break",
+   "label": "Model Bounding Box",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "min_x",
+   "fieldtype": "Float",
+   "label": "Min X",
+   "read_only": 1
+  },
+  {
+   "fieldname": "min_y",
+   "fieldtype": "Float",
+   "label": "Min Y",
+   "read_only": 1
+  },
+  {
+   "fieldname": "min_z",
+   "fieldtype": "Float",
+   "label": "Min Z",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_bbox",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "max_x",
+   "fieldtype": "Float",
+   "label": "Max X",
+   "read_only": 1
+  },
+  {
+   "fieldname": "max_y",
+   "fieldtype": "Float",
+   "label": "Max Y",
+   "read_only": 1
+  },
+  {
+   "fieldname": "max_z",
+   "fieldtype": "Float",
+   "label": "Max Z",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_stats",
+   "fieldtype": "Section Break",
+   "label": "Statistics",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "entity_count",
+   "fieldtype": "Int",
+   "label": "Entities",
+   "read_only": 1
+  },
+  {
+   "fieldname": "layer_count",
+   "fieldtype": "Int",
+   "label": "Layers",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_stats",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "edit_version",
+   "fieldtype": "Int",
+   "label": "Edit Version",
+   "read_only": 1,
+   "description": "Raised on every save from the workstation; used to detect conflicting edits."
+  }
+ ],
+ "grid_page_length": 50,
+ "links": [],
+ "modified": "2026-10-22 16:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "CAD Engineering",
+ "name": "CAD Model",
+ "owner": "Administrator",
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "autoname": "field:model_code",
+ "naming_rule": "By fieldname",
+ "title_field": "model_name",
+ "show_title_field_in_link": 1,
+ "search_fields": "model_name,geo_project,model_type",
+ "track_changes": 1,
+ "description": "A CAD drawing/model linked to a Geo Project: coordinate system, units, layers, entities and controlled revisions.",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production User",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1
+  }
+ ]
+}

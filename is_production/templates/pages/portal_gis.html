@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GIS Workstation</title>
+<link rel="icon" href="{{ favicon }}" data-frappe-favicon>
+<script>
+	window.FRAPPE_PAGE_THEME = {{ page_theme | tojson }};
+	window.FRAPPE_GIS = {{ gis | tojson }};
+</script>
+<script src="/assets/is_production/mining_simulation/frappe_theme.js"></script>
+<link rel="stylesheet" href="{{ gis_css }}">
+</head>
+<body>
+<div id="gis-app"></div>
+<script src="{{ gis_js }}"></script>
+</body>
+</html>

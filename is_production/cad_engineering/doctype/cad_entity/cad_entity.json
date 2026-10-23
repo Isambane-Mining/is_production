@@ -1,0 +1,306 @@
+{
+ "actions": [],
+ "creation": "2026-10-21 10:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "cad_model",
+  "entity_id",
+  "entity_type",
+  "cad_layer",
+  "column_break_main",
+  "validation_status",
+  "validation_message",
+  "revision",
+  "entity_version",
+  "section_style",
+  "color",
+  "line_type",
+  "line_weight",
+  "column_break_style",
+  "source_id",
+  "section_geometry",
+  "geometry",
+  "geometry_ref",
+  "geometry_format",
+  "block_name",
+  "metadata",
+  "section_bbox",
+  "min_x",
+  "min_y",
+  "min_z",
+  "column_break_bbox",
+  "max_x",
+  "max_y",
+  "max_z",
+  "section_measures",
+  "length",
+  "area",
+  "column_break_measures",
+  "volume"
+ ],
+ "fields": [
+  {
+   "fieldname": "cad_model",
+   "fieldtype": "Link",
+   "label": "CAD Model",
+   "options": "CAD Model",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "entity_id",
+   "fieldtype": "Data",
+   "label": "Entity Identifier",
+   "reqd": 1,
+   "in_list_view": 1,
+   "description": "Stable handle within the model."
+  },
+  {
+   "fieldname": "entity_type",
+   "fieldtype": "Select",
+   "label": "Entity Type",
+   "options": "Point\nLine\nPolyline\nArc\nCircle\nEllipse\nSpline\nConstruction Line\nText\nMultiline Text\nDimension\nHatch\nBlock Reference\nMesh\nSurface\nSolid",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "cad_layer",
+   "fieldtype": "Link",
+   "label": "CAD Layer",
+   "options": "CAD Layer",
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "validation_status",
+   "fieldtype": "Select",
+   "label": "Validation Status",
+   "options": "Not Checked\nValid\nWarning\nInvalid",
+   "default": "Not Checked",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "validation_message",
+   "fieldtype": "Small Text",
+   "label": "Validation Message",
+   "read_only": 1
+  },
+  {
+   "fieldname": "revision",
+   "fieldtype": "Link",
+   "label": "Revision",
+   "options": "CAD Design Revision",
+   "read_only": 1,
+   "description": "Working revision in which this entity last changed."
+  },
+  {
+   "fieldname": "entity_version",
+   "fieldtype": "Int",
+   "label": "Entity Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_style",
+   "fieldtype": "Section Break",
+   "label": "Style"
+  },
+  {
+   "fieldname": "color",
+   "fieldtype": "Color",
+   "label": "Colour",
+   "description": "Blank = by layer."
+  },
+  {
+   "fieldname": "line_type",
+   "fieldtype": "Select",
+   "label": "Line Type",
+   "options": "\nContinuous\nDashed\nDotted\nDash Dot\nCentre\nHidden\nPhantom",
+   "description": "Blank = by layer."
+  },
+  {
+   "fieldname": "line_weight",
+   "fieldtype": "Float",
+   "label": "Line Weight (mm)",
+   "description": "0: the layer's line weight.",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "column_break_style",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "source_id",
+   "fieldtype": "Data",
+   "label": "Source Identifier",
+   "description": "Handle in the source file, for imported entities."
+  },
+  {
+   "fieldname": "section_geometry",
+   "fieldtype": "Section Break",
+   "label": "Geometry"
+  },
+  {
+   "fieldname": "geometry",
+   "fieldtype": "JSON",
+   "label": "Geometry",
+   "description": "Exact definition in model coordinates (double precision). Solids, meshes and surfaces keep only parameters here; their shape is in the geometry file."
+  },
+  {
+   "fieldname": "geometry_ref",
+   "fieldtype": "Data",
+   "label": "Geometry File",
+   "read_only": 1,
+   "description": "Content address (SHA-256) of the authoritative geometry file, e.g. an OCCT B-Rep."
+  },
+  {
+   "fieldname": "geometry_format",
+   "fieldtype": "Data",
+   "label": "Geometry Format",
+   "read_only": 1
+  },
+  {
+   "fieldname": "block_name",
+   "fieldtype": "Data",
+   "label": "Block",
+   "read_only": 1,
+   "search_index": 1,
+   "description": "For Block References: the block they show."
+  },
+  {
+   "fieldname": "metadata",
+   "fieldtype": "JSON",
+   "label": "Metadata"
+  },
+  {
+   "fieldname": "section_bbox",
+   "fieldtype": "Section Break",
+   "label": "Bounding Box",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "min_x",
+   "fieldtype": "Float",
+   "label": "Min X",
+   "read_only": 1
+  },
+  {
+   "fieldname": "min_y",
+   "fieldtype": "Float",
+   "label": "Min Y",
+   "read_only": 1
+  },
+  {
+   "fieldname": "min_z",
+   "fieldtype": "Float",
+   "label": "Min Z",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_bbox",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "max_x",
+   "fieldtype": "Float",
+   "label": "Max X",
+   "read_only": 1
+  },
+  {
+   "fieldname": "max_y",
+   "fieldtype": "Float",
+   "label": "Max Y",
+   "read_only": 1
+  },
+  {
+   "fieldname": "max_z",
+   "fieldtype": "Float",
+   "label": "Max Z",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_measures",
+   "fieldtype": "Section Break",
+   "label": "Measures",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "length",
+   "fieldtype": "Float",
+   "label": "Length",
+   "read_only": 1
+  },
+  {
+   "fieldname": "area",
+   "fieldtype": "Float",
+   "label": "Area",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_measures",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "volume",
+   "fieldtype": "Float",
+   "label": "Volume",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "links": [],
+ "modified": "2026-10-22 18:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "CAD Engineering",
+ "name": "CAD Entity",
+ "owner": "Administrator",
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "autoname": "hash",
+ "title_field": "entity_id",
+ "search_fields": "cad_model,entity_type,cad_layer",
+ "description": "Identity and index record of one CAD entity: type, layer, bounding box, measures and its exact geometry (or a reference to its geometry file). Display meshes are never stored here.",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production User",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1
+  }
+ ]
+}

@@ -1,0 +1,298 @@
+{
+ "actions": [],
+ "creation": "2026-10-23 09:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "fields": [
+  {
+   "fieldname": "cad_model",
+   "fieldtype": "Link",
+   "label": "CAD Model",
+   "options": "CAD Model",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "revision",
+   "fieldtype": "Link",
+   "label": "Approved Revision",
+   "options": "CAD Design Revision",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "revision_label",
+   "fieldtype": "Data",
+   "label": "Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "geometry_checksum",
+   "fieldtype": "Data",
+   "label": "Snapshot Checksum (SHA-256)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Published\nSuperseded",
+   "default": "Published",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "published_by",
+   "fieldtype": "Link",
+   "label": "Published By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "published_on",
+   "fieldtype": "Datetime",
+   "label": "Published On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "superseded_by",
+   "fieldtype": "Link",
+   "label": "Superseded By",
+   "options": "CAD Design Publication",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_design",
+   "fieldtype": "Section Break",
+   "label": "Design Basis"
+  },
+  {
+   "fieldname": "design_standard",
+   "fieldtype": "Link",
+   "label": "Design Standard (version)",
+   "options": "CAD Design Standard",
+   "read_only": 1
+  },
+  {
+   "fieldname": "standard_version",
+   "fieldtype": "Int",
+   "label": "Standard Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_design",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "design_validation",
+   "fieldtype": "Link",
+   "label": "Design Validation",
+   "options": "CAD Design Validation",
+   "read_only": 1
+  },
+  {
+   "fieldname": "validation_status",
+   "fieldtype": "Data",
+   "label": "Validation Result",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_planning",
+   "fieldtype": "Section Break",
+   "label": "Geo Planning"
+  },
+  {
+   "fieldname": "geo_project",
+   "fieldtype": "Link",
+   "label": "Geo Project",
+   "options": "Geo Project",
+   "read_only": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "geo_pit_layout",
+   "fieldtype": "Link",
+   "label": "Geo Pit Layout",
+   "options": "Geo Pit Layout",
+   "read_only": 1
+  },
+  {
+   "fieldname": "material_stack",
+   "fieldtype": "Link",
+   "label": "Material Stack",
+   "options": "Geo Pit Layout Material Stack",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_planning",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "schedule_selection",
+   "fieldtype": "Link",
+   "label": "Schedule Selection (CAD sequence)",
+   "options": "Mining Schedule Selection",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_counts",
+   "fieldtype": "Section Break",
+   "label": "Blocks"
+  },
+  {
+   "fieldname": "blocks_published",
+   "fieldtype": "Int",
+   "label": "Blocks Published",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "blocks_created",
+   "fieldtype": "Int",
+   "label": "Created",
+   "read_only": 1
+  },
+  {
+   "fieldname": "blocks_updated",
+   "fieldtype": "Int",
+   "label": "Updated",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_counts",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "blocks_unchanged",
+   "fieldtype": "Int",
+   "label": "Unchanged",
+   "read_only": 1
+  },
+  {
+   "fieldname": "blocks_flagged",
+   "fieldtype": "Int",
+   "label": "Flagged for Review",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_volume",
+   "fieldtype": "Float",
+   "label": "In-situ Volume (m³)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_tonnes",
+   "fieldtype": "Float",
+   "label": "Tonnes",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_report",
+   "fieldtype": "Section Break",
+   "label": "Report"
+  },
+  {
+   "fieldname": "materials",
+   "fieldtype": "JSON",
+   "label": "Materials (density, status, volume, tonnes)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "report",
+   "fieldtype": "JSON",
+   "label": "Report",
+   "read_only": 1
+  }
+ ],
+ "field_order": [
+  "cad_model",
+  "revision",
+  "revision_label",
+  "geometry_checksum",
+  "cb_main",
+  "status",
+  "published_by",
+  "published_on",
+  "superseded_by",
+  "sb_design",
+  "design_standard",
+  "standard_version",
+  "cb_design",
+  "design_validation",
+  "validation_status",
+  "sb_planning",
+  "geo_project",
+  "geo_pit_layout",
+  "material_stack",
+  "cb_planning",
+  "schedule_selection",
+  "sb_counts",
+  "blocks_published",
+  "blocks_created",
+  "blocks_updated",
+  "cb_counts",
+  "blocks_unchanged",
+  "blocks_flagged",
+  "total_volume",
+  "total_tonnes",
+  "sb_report",
+  "materials",
+  "report"
+ ],
+ "grid_page_length": 50,
+ "links": [],
+ "modified": "2026-10-23 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "CAD Engineering",
+ "name": "CAD Design Publication",
+ "owner": "Administrator",
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "autoname": "format:CAD-PUB-{YYYY}-{#####}",
+ "naming_rule": "Expression",
+ "description": "An approved CAD design revision published to Geo Planning as Mining Blocks: what was published (revision, snapshot checksum, design standard version, validation) and what it created or changed.",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production User",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1
+  }
+ ]
+}

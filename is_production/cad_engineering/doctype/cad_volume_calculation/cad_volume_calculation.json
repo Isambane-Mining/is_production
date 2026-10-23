@@ -1,0 +1,288 @@
+{
+ "actions": [],
+ "creation": "2026-10-22 09:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "fields": [
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Title",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "cad_model",
+   "fieldtype": "Link",
+   "label": "CAD Model",
+   "options": "CAD Model",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "calculation_type",
+   "fieldtype": "Select",
+   "label": "Calculation Type",
+   "options": "Surface to Surface\nSurface to Elevation",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "revision",
+   "fieldtype": "Link",
+   "label": "Model Revision",
+   "options": "CAD Design Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "processing_job",
+   "fieldtype": "Link",
+   "label": "Processing Job",
+   "options": "CAD Processing Job",
+   "read_only": 1
+  },
+  {
+   "fieldname": "valid",
+   "fieldtype": "Check",
+   "label": "Checks Passed",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "section_inputs",
+   "fieldtype": "Section Break",
+   "label": "Inputs"
+  },
+  {
+   "fieldname": "base_surface",
+   "fieldtype": "Link",
+   "label": "Base Surface",
+   "options": "CAD Surface",
+   "read_only": 1
+  },
+  {
+   "fieldname": "base_name",
+   "fieldtype": "Data",
+   "label": "Base Surface Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "base_geometry_ref",
+   "fieldtype": "Data",
+   "label": "Base Geometry (SHA-256)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_inputs",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "comparison_surface",
+   "fieldtype": "Link",
+   "label": "Comparison Surface",
+   "options": "CAD Surface",
+   "read_only": 1
+  },
+  {
+   "fieldname": "comparison_name",
+   "fieldtype": "Data",
+   "label": "Comparison Surface Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "comparison_geometry_ref",
+   "fieldtype": "Data",
+   "label": "Comparison Geometry (SHA-256)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "elevation",
+   "fieldtype": "Float",
+   "label": "Elevation",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_boundary",
+   "fieldtype": "Section Break",
+   "label": "Boundary",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "boundary_entity",
+   "fieldtype": "Data",
+   "label": "Boundary Entity",
+   "read_only": 1
+  },
+  {
+   "fieldname": "boundary",
+   "fieldtype": "JSON",
+   "label": "Boundary Polygon",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_results",
+   "fieldtype": "Section Break",
+   "label": "Results"
+  },
+  {
+   "fieldname": "cut_volume",
+   "fieldtype": "Float",
+   "label": "Cut Volume",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "fill_volume",
+   "fieldtype": "Float",
+   "label": "Fill Volume",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "net_volume",
+   "fieldtype": "Float",
+   "label": "Net Volume (fill \u2212 cut)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_results",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "cut_area",
+   "fieldtype": "Float",
+   "label": "Cut Area",
+   "read_only": 1
+  },
+  {
+   "fieldname": "fill_area",
+   "fieldtype": "Float",
+   "label": "Fill Area",
+   "read_only": 1
+  },
+  {
+   "fieldname": "plan_area",
+   "fieldtype": "Float",
+   "label": "Plan Area Compared",
+   "read_only": 1
+  },
+  {
+   "fieldname": "units",
+   "fieldtype": "Data",
+   "label": "Units",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_method",
+   "fieldtype": "Section Break",
+   "label": "Method and Checks"
+  },
+  {
+   "fieldname": "method",
+   "fieldtype": "Small Text",
+   "label": "Method",
+   "read_only": 1
+  },
+  {
+   "fieldname": "validation",
+   "fieldtype": "JSON",
+   "label": "Validation",
+   "read_only": 1
+  },
+  {
+   "fieldname": "statistics",
+   "fieldtype": "JSON",
+   "label": "Statistics",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "links": [],
+ "modified_by": "Administrator",
+ "module": "CAD Engineering",
+ "name": "CAD Volume Calculation",
+ "owner": "Administrator",
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production User",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1
+  }
+ ],
+ "autoname": "format:CAD-VOL-{YYYY}-{#####}",
+ "naming_rule": "Expression",
+ "title_field": "title",
+ "description": "A cut/fill volume between two surfaces (or a surface and an elevation): result, method, units, the exact geometry files used and the checks that were run. Never edited after it is made.",
+ "field_order": [
+  "title",
+  "cad_model",
+  "calculation_type",
+  "column_break_main",
+  "revision",
+  "processing_job",
+  "valid",
+  "section_inputs",
+  "base_surface",
+  "base_name",
+  "base_geometry_ref",
+  "column_break_inputs",
+  "comparison_surface",
+  "comparison_name",
+  "comparison_geometry_ref",
+  "elevation",
+  "section_boundary",
+  "boundary_entity",
+  "boundary",
+  "section_results",
+  "cut_volume",
+  "fill_volume",
+  "net_volume",
+  "column_break_results",
+  "cut_area",
+  "fill_area",
+  "plan_area",
+  "units",
+  "section_method",
+  "method",
+  "validation",
+  "statistics"
+ ],
+ "modified": "2026-10-22 09:00:00.000000"
+}

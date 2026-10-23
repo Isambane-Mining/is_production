@@ -1,10 +1,10 @@
 """Mining Simulation Project <-> the simulator's project model.
 
-The simulator (www/mining_simulation.html) works on one JSON project object. Each part of it
+The simulator (portal page /portal_mining_simulation) works on one JSON project object. Each part of it
 is kept in its own fields here: the header settings on the parent, and surfaces, layers,
 blocks, activities, fleet, roads, dumps, overlays, depth limits and pits in child tables.
-The terrain grid (and an optional satellite image) are binary and stay private File
-attachments.
+The terrain grid (and an optional satellite image, and the survey DTMs of the Recon tab) are binary and
+stay private File attachments.
 
 The mapping is lossless: per document and per row, `json_meta` records which mapped keys the
 source object had, which of them were null (numeric fields cannot hold null), and any keys
@@ -26,7 +26,8 @@ DOCTYPE = "Mining Simulation Project"
 BUNDLE_FORMAT = "rollover-mine-sim"
 BLOB_FIELDS = {"grid": "grid_file", "sat": "imagery_file"}
 
-# (path in the project object, fieldname, kind)
+# (path in the project object, fieldname, kind). A kind ending in "?" is an optional value: blank in a
+# row made in the desk, it is left out of the object, as the simulator reads 0 as a value there.
 HEADER_MAP = [
 	("name", "project_name", "str"),
 	("description", "description", "str"),
@@ -39,8 +40,7 @@ HEADER_MAP = [
 	("crs.preset", "crs_preset", "str"),
 	("crs.proj4", "crs_proj4", "str"),
 	("crs.axis", "crs_axis", "str"),
-	("calendar.hoursPerDay", "hours_per_day", "float"),
-	("calendar.workDays", "work_days", "weekdays"),
+	("calendar", "hours", "weekhours"),
 	("calendar.saHolidays", "sa_holidays", "bool"),
 	("calendar.maxYears", "max_years", "int"),
 	("grid.x0", "grid_x0", "float"),
@@ -50,11 +50,43 @@ HEADER_MAP = [
 	("grid.cell", "grid_cell", "float"),
 	("cutoff.by", "cutoff_by", "str"),
 	("cutoff.stop", "cutoff_stop", "bool"),
-	("targets.coal", "target_coal", "float"),
-	("targets.waste", "target_waste", "float"),
+	("targets.coal", "target_coal", "float?"),
+	("targets.waste", "target_waste", "float?"),
 	("targets.wasteUnit", "target_waste_unit", "str"),
 	("targets.basis", "target_basis", "str"),
 	("targets.mode", "target_mode", "str"),
+	("targets.coalBasis", "target_coal_basis", "str"),
+	("targets.rampMonths", "ramp_up_months", "int"),
+	("targets.exposedMonths", "exposed_coal_months", "float"),
+	("teams.count", "team_count", "float"),
+	("teams.perTeam", "volume_per_team", "float"),
+	("losses.geo", "geological_loss", "float"),
+	("losses.mining", "mining_loss", "float"),
+	("losses.contam", "contamination", "float"),
+	("topsoilAsWaste", "topsoil_as_waste", "bool"),
+	("startBy.topsoil", "start_topsoil_by", "date"),
+	("startBy.waste", "start_waste_by", "date"),
+	("startBy.coal", "start_coal_by", "date"),
+	("bench.on", "bench_on", "bool"),
+	("bench.lead", "bench_lead", "int"),
+	("reserve.on", "reserve_on", "bool"),
+	("reserve.name", "reserve_name", "str"),
+	("reserve.pts", "reserve_points", "json"),
+	("rehab.on", "rehab_on", "bool"),
+	("rehab.backfillTo", "backfill_to", "str"),
+	("rehab.above", "backfill_above", "float"),
+	("rehab.topsoil", "topsoil_thickness", "float"),
+	("rehab.radius", "surrounding_radius", "float"),
+	("rehab.soilDirect", "topsoil_direct", "bool"),
+	("rehab.lift", "lift_landform", "bool"),
+	("rehab.liftMax", "lift_by", "float"),
+	("rehab.liftTie", "lift_tie_slope", "float"),
+	("rehab.liftBank", "lift_bank_slope", "float"),
+	("rehab.finalVoid", "fill_final_void", "bool"),
+	("rehab.finalRate", "final_void_rate", "float?"),
+	("rehab.pathFall", "flow_path_fall", "float"),
+	("rehab.bank", "drain_bank_slope", "float"),
+	("rehab.cutDepth", "drain_depth", "float"),
 	("voidTip.on", "void_tip_on", "bool"),
 	("voidTip.ref", "void_tip_ref", "str"),
 	("voidTip.afterStrips", "void_tip_after_strips", "int"),
@@ -70,8 +102,20 @@ HEADER_MAP = [
 	("attrColumns", "attribute_columns", "json"),
 	("attrReport", "attribute_report", "json"),
 	("source", "source_json", "json"),
+	("stripField", "strip_field", "str"),
+	# the analysis modules: nested settings with per-seam values, kept as JSON
+	("margin", "margin_settings", "json"),
+	("wash", "washability", "json"),
+	("hydro", "hydrogeology", "json"),
+	("blast", "drill_and_blast", "json"),
+	("fin", "finance", "json"),
+	("accTable", "accumulation_table", "json"),
 ]
-WEEKDAY_FIELDS = ["work_monday", "work_tuesday", "work_wednesday", "work_thursday", "work_friday", "work_saturday", "work_sunday"]
+# Working hours for each weekday (Monday first, as the simulator's calendar.workDays). The simulator's engine
+# takes one figure, calendar.hoursPerDay: it gets the average over the working days, so the hours of a week are
+# the same. The list itself goes along as calendar.hoursByDay, for a simulator that reads it.
+HOUR_FIELDS = ["hours_monday", "hours_tuesday", "hours_wednesday", "hours_thursday", "hours_friday", "hours_saturday", "hours_sunday"]
+PRODUCTION_EQUIPMENT_KINDS = {"ADT": "truck", "Rigid": "truck", "Excavator": "excavator", "Dozer": "dozer"}
 
 # project key -> (table fieldname, id key, [(path, fieldname, kind)])
 TABLE_MAP = {
@@ -89,6 +133,9 @@ TABLE_MAP = {
 		("density", "density", "float"),
 		("swell", "swell", "float"),
 		("minThick", "min_thickness", "float"),
+		("losses.geo", "geological_loss", "float?"),
+		("losses.mining", "mining_loss", "float?"),
+		("losses.contam", "contamination", "float?"),
 		("color", "color", "str"),
 		("densityField", "density_field", "str"),
 		("qualityFields", "quality_fields", "json"),
@@ -109,7 +156,7 @@ TABLE_MAP = {
 		("pushBearing", "push_bearing", "float"),
 		("lookahead", "lookahead", "int"),
 		("startDate", "start_date", "date"),
-		("maxRate", "max_rate", "float"),
+		("maxRate", "max_rate", "float?"),
 		("dozeShare", "doze_share", "float"),
 		("mixMode", "mix_mode", "str"),
 		("fleetOf", "shared_fleet_of", "str"),
@@ -124,6 +171,9 @@ TABLE_MAP = {
 		("kind", "equipment_kind", "str"),
 		("name", "equipment_name", "str"),
 		("activityId", "activity_id", "str"),
+		("team", "team", "str"),
+		("assetCategory", "asset_category", "str"),
+		("item", "item", "str"),
 		("qty", "qty", "float"),
 		("avail", "availability", "float"),
 		("util", "utilisation", "float"),
@@ -152,6 +202,10 @@ TABLE_MAP = {
 		("leaveInBlocks", "leave_in_blocks", "bool"),
 		("follow", "follows_pit", "bool"),
 		("spoilDumpId", "spoil_dump_id", "str"),
+		("cutBlocks", "cut_blocks", "bool"),
+		("toeSurf", "toe_surface", "str"),
+		("useFrom", "use_from", "date"),
+		("useTo", "use_to", "date"),
 		("pts", "points", "json"),
 	]),
 	"dumps": ("dumps", "id", [
@@ -159,7 +213,7 @@ TABLE_MAP = {
 		("name", "dump_name", "str"),
 		("kind", "dump_kind", "str"),
 		("maxHeight", "max_height", "float"),
-		("crestElev", "crest_elevation", "float"),
+		("crestElev", "crest_elevation", "float?"),
 		("fillTo", "fill_to", "str"),
 		("liftHeight", "lift_height", "float"),
 		("faceAngle", "face_angle", "float"),
@@ -189,7 +243,79 @@ TABLE_MAP = {
 		("id", "pit_id", "str"),
 		("name", "pit_name", "str"),
 		("color", "color", "str"),
+		("startDate", "start_date", "date"),
+		("priority", "priority", "bool"),
+		("boxcut.months", "boxcut_months", "float?"),
+		("boxcut.pts", "boxcut_points", "json?"),
 		("pts", "points", "json"),
+	]),
+	# the teams the equipment is allocated to (ERP planning; the simulator works with teams.count)
+	"teamList": ("teams", "id", [
+		("id", "team_id", "str"),
+		("name", "team_name", "str"),
+		("remarks", "remarks", "str"),
+	]),
+	"batters": ("batters", "id", [
+		("id", "batter_id", "str"),
+		("name", "batter_name", "str"),
+		("angle", "wall_angle", "float"),
+		("side", "side", "str"),
+		("surfId", "surface_id", "str"),
+		("pts", "points", "json"),
+	]),
+	"oldDumps": ("old_dumps", "id", [
+		("id", "old_dump_id", "str"),
+		("name", "old_dump_name", "str"),
+		("elev", "elevation", "float?"),
+		("start", "start_date", "date"),
+		("rate", "rate", "float"),
+		("dest", "destination_dump_id", "str"),
+		("pts", "points", "json"),
+	]),
+	"rehandles": ("rehandles", "id", [
+		("id", "rehandle_id", "str"),
+		("name", "rehandle_name", "str"),
+		("from", "from_dump_id", "str"),
+		("to", "destination", "str"),
+		("when", "timing", "str"),
+		("start", "start_date", "date"),
+		("rate", "rate", "float"),
+		("qty", "quantity", "float?"),
+		("color", "color", "str"),
+	]),
+	"fills": ("fills", "id", [
+		("id", "fill_id", "str"),
+		("name", "fill_name", "str"),
+		("start", "start_date", "date"),
+		("pts", "points", "json"),
+	]),
+	"raises": ("raises", "id", [
+		("id", "raise_id", "str"),
+		("name", "raise_name", "str"),
+		("height", "height", "float"),
+		("slope", "slope", "float"),
+		("pts", "points", "json"),
+	]),
+	"drains": ("drains", "id", [
+		("id", "drain_id", "str"),
+		("name", "drain_name", "str"),
+		("pts", "points", "json"),
+	]),
+	"qrasters": ("quality_rasters", "id", [
+		("id", "raster_id", "str"),
+		("label", "label", "str"),
+		("kind", "quality_kind", "str"),
+		("layerId", "layer_id", "str"),
+		("file", "source_file", "str"),
+		("col", "attribute_column", "str"),
+		("res", "resolution", "float"),
+		("read", "read_on", "date"),
+		("guessed", "guessed", "bool"),
+		("seamGuessed", "seam_guessed", "bool"),
+		("sig", "signature", "str"),
+		("stats", "statistics", "json"),
+		("prev", "previous", "json"),
+		("cmp", "comparison", "json"),
 	]),
 }
 
@@ -312,16 +438,10 @@ def _read(target, source, mapping, options=None):
 	extra = copy.deepcopy(source)
 	keys, nulls = [], []
 	for path, field, kind in mapping:
+		kind = kind.rstrip("?")
 		value = _get(source, path)
-		if kind == "weekdays":
-			days = value if isinstance(value, list) else []
-			for i, f in enumerate(WEEKDAY_FIELDS):
-				target[f] = 1 if (i < len(days) and days[i]) else 0
-			if isinstance(value, list) and len(value) == 7 and all(d in (0, 1) for d in value):
-				keys.append(path)
-				if any(isinstance(d, bool) for d in value):
-					nulls.append(path + ":bool")
-				_pop(extra, path)
+		if kind == "weekhours":
+			_read_week(target, value if isinstance(value, dict) else {}, keys, nulls, extra)
 			continue
 		target[field] = _blank(kind)
 		if value is _MISSING:
@@ -336,6 +456,48 @@ def _read(target, source, mapping, options=None):
 	return {"keys": keys, "nulls": nulls, "extra": extra}
 
 
+def _number(v):
+	return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _read_week(target, cal, keys, nulls, extra):
+	"""calendar.workDays / hoursPerDay / hoursByDay -> hours_<weekday> and hours_per_day."""
+	days, hpd, by_day = cal.get("workDays"), cal.get("hoursPerDay"), cal.get("hoursByDay")
+	days_ok = isinstance(days, list) and len(days) == 7 and all(d in (0, 1) for d in days)
+	by_day_ok = isinstance(by_day, list) and len(by_day) == 7 and all(_number(h) and h >= 0 for h in by_day)
+	worked = [bool(d) for d in days] if days_ok else [True] * 7
+	if by_day_ok and [h > 0 for h in by_day] == worked and _number(hpd):
+		working = [h for h in by_day if h > 0]
+		if working and abs(sum(working) / len(working) - hpd) > 1e-6:
+			by_day_ok = False  # hours per day changed in the simulator since: it wins
+	else:
+		by_day_ok = False
+	hours = by_day if by_day_ok else [(hpd if _number(hpd) else 0) if w else 0 for w in worked]
+	for f, h in zip(HOUR_FIELDS, hours):
+		target[f] = flt(h)
+	target["hours_per_day"] = flt(hpd) if _number(hpd) else 0
+	for key, ok in (("workDays", days_ok), ("hoursPerDay", _number(hpd)), ("hoursByDay", by_day_ok)):
+		if key in cal and ok:
+			keys.append("calendar." + key)
+			_pop(extra, "calendar." + key)
+	if days_ok and any(isinstance(d, bool) for d in days):
+		nulls.append("calendar.workDays:bool")
+
+
+def _write_week(out, source, keys, nulls):
+	hours = [flt(source.get(f)) for f in HOUR_FIELDS]
+	working = [h for h in hours if h > 0]
+	hpd = round(sum(working) / len(working), 6) if working else flt(source.get("hours_per_day"))
+	hpd = int(hpd) if float(hpd).is_integer() else hpd
+	days = [1 if h > 0 else 0 for h in hours]
+	if keys is None or "calendar.workDays" in keys:
+		_set(out, "calendar.workDays", [bool(d) for d in days] if "calendar.workDays:bool" in nulls else days)
+	if keys is None or "calendar.hoursPerDay" in keys:
+		_set(out, "calendar.hoursPerDay", hpd)
+	if (keys is not None and "calendar.hoursByDay" in keys) or len(set(working)) > 1:
+		_set(out, "calendar.hoursByDay", [int(h) if h.is_integer() else h for h in hours])
+
+
 def _dump(meta):
 	return json.dumps(meta, separators=(",", ":"), ensure_ascii=False)
 
@@ -347,16 +509,15 @@ def _write(source, mapping, meta_json):
 	nulls = set(meta["nulls"]) if meta else set()
 	out = {}
 	for path, field, kind in mapping:
-		if kind == "weekdays":
-			days = [cint(source.get(f)) for f in WEEKDAY_FIELDS]
-			if keys is None or path in keys:
-				_set(out, path, [bool(d) for d in days] if path + ":bool" in nulls else days)
+		optional, kind = kind.endswith("?"), kind.rstrip("?")
+		if kind == "weekhours":
+			_write_week(out, source, keys, nulls)
 			continue
 		value = _from_field(source.get(field), kind)
 		if path in nulls and _empty(value):
 			value = None
-		elif keys is not None and path not in keys and _empty(value):
-			continue
+		elif (keys is not None or optional) and (keys is None or path not in keys) and _empty(value):
+			continue  # not in the source object (or, made in the desk, an optional value left blank)
 		_set(out, path, value)
 	if meta:
 		_merge(out, meta["extra"])
@@ -407,11 +568,13 @@ def build_project(doc):
 	project.update(_write(doc, HEADER_MAP, doc.json_meta))
 	if not meta and not (cint(doc.grid_nx) and cint(doc.grid_ny)):
 		project["grid"] = None  # created in the desk: no terrain grid yet
-	for key, (table, _id_key, mapping) in TABLE_MAP.items():
-		if key in meta.get("extra", {}) or key in meta.get("absent", []):
-			continue
-		project[key] = [_write(row, mapping, row.json_meta) for row in doc.get(table) or []]
 	order = meta.get("order") or []
+	for key, (table, _id_key, mapping) in TABLE_MAP.items():
+		if key in meta.get("extra", {}) and not doc.get(table):
+			continue  # kept as it was in json_meta (e.g. null)
+		if (key in meta.get("absent", []) or (order and key not in order)) and not doc.get(table):
+			continue  # not in the source object (or added to this model since), and still empty
+		project[key] = [_write(row, mapping, row.json_meta) for row in doc.get(table) or []]
 	return {k: project[k] for k in order if k in project} | project
 
 
@@ -424,19 +587,53 @@ def _clean_id(value):
 	return value if re.fullmatch(r"[A-Za-z0-9_\-]{3,100}", value) else None
 
 
-# ---------------------------------------------------------------- blobs (grid, satellite image)
+# ---------------------------------------------------------------- blobs (grid, satellite image, survey DTMs)
+# The survey DTMs of the Recon tab ('dtm_…', one per survey): private attachments known by their file name,
+# as their number varies and the doctype has no field for each.
+DTM_KEY = re.compile(r"dtm_[A-Za-z0-9_]{1,80}")
+
+
 def _blob_field(key):
-	if key not in BLOB_FIELDS:
-		frappe.throw(_("Unknown project data: {0}").format(key))
-	return BLOB_FIELDS[key]
+	"""The field holding a blob's file, or None for a survey DTM."""
+	if key in BLOB_FIELDS:
+		return BLOB_FIELDS[key]
+	if isinstance(key, str) and DTM_KEY.fullmatch(key):
+		return None
+	frappe.throw(_("Unknown project data: {0}").format(key))
+
+
+def _blob_file_name(doc, key):
+	return f"{doc.name}-{key}.gz"
+
+
+def _blob_files(doc, key):
+	field = _blob_field(key)
+	filters = {"attached_to_doctype": DOCTYPE, "attached_to_name": doc.name}
+	filters.update({"attached_to_field": field} if field else {"file_name": _blob_file_name(doc, key)})
+	return frappe.get_all("File", filters=filters, pluck="name")
+
+
+def _dtm_keys(doc):
+	"""The survey DTMs stored for a project."""
+	names = frappe.get_all(
+		"File",
+		filters={"attached_to_doctype": DOCTYPE, "attached_to_name": doc.name, "file_name": ["like", f"{doc.name}-dtm\\_%.gz"]},
+		pluck="file_name",
+	)
+	keys = (n[len(doc.name) + 1 : -3] for n in names)
+	return sorted(k for k in keys if DTM_KEY.fullmatch(k))
 
 
 def _read_blob(doc, key):
 	"""The stored bytes (gzip, as the simulator writes them)."""
-	url = doc.get(_blob_field(key))
-	if not url:
-		return None
-	name = frappe.db.get_value("File", {"file_url": url, "attached_to_doctype": DOCTYPE, "attached_to_name": doc.name})
+	field = _blob_field(key)
+	if field:
+		url = doc.get(field)
+		if not url:
+			return None
+		name = frappe.db.get_value("File", {"file_url": url, "attached_to_doctype": DOCTYPE, "attached_to_name": doc.name})
+	else:
+		name = next(iter(_blob_files(doc, key)), None)
 	if not name:
 		return None
 	with open(frappe.get_doc("File", name).get_full_path(), "rb") as f:
@@ -446,17 +643,16 @@ def _read_blob(doc, key):
 def _write_blob(doc, key, data):
 	"""Replace a blob attachment with `data` (gzip bytes) or remove it (None). Saves no document."""
 	field = _blob_field(key)
-	for name in frappe.get_all(
-		"File", filters={"attached_to_doctype": DOCTYPE, "attached_to_name": doc.name, "attached_to_field": field}, pluck="name"
-	):
+	for name in _blob_files(doc, key):
 		frappe.delete_doc("File", name, ignore_permissions=True)
 	if data is None:
-		doc.set(field, None)
+		if field:
+			doc.set(field, None)
 		return
 	f = frappe.get_doc(
 		{
 			"doctype": "File",
-			"file_name": f"{doc.name}-{key}.gz",
+			"file_name": _blob_file_name(doc, key),
 			"is_private": 1,
 			"content": data,
 			"attached_to_doctype": DOCTYPE,
@@ -466,10 +662,11 @@ def _write_blob(doc, key, data):
 	)
 	f.flags.ignore_permissions = True
 	f.save()
-	doc.set(field, f.file_url)
+	if field:
+		doc.set(field, f.file_url)
 
 
-# ---------------------------------------------------------------- bundles (.rollover.json files)
+# ---------------------------------------------------------------- bundles (.isamiq.json / older .rollover.json files)
 def read_bundle(text):
 	try:
 		bundle = json.loads(text)
@@ -496,6 +693,9 @@ def save_from_project(project, blobs=None, name=None, insert=False):
 		doc.insert()
 	if blobs is not None:
 		for key in BLOB_FIELDS:
+			_write_blob(doc, key, blobs.get(key))
+		# the survey DTMs: those of the file, and none left over from before
+		for key in sorted(set(_dtm_keys(doc)) | {k for k in blobs if k not in BLOB_FIELDS}):
 			_write_blob(doc, key, blobs.get(key))
 	if not insert or blobs is not None:
 		doc.save()
@@ -531,7 +731,7 @@ def check_import_file(file_url):
 
 @frappe.whitelist()
 def import_simulation_file(file_url, mode="new", target=None):
-	"""Import a .rollover.json project file.
+	"""Import a project file (.isamiq.json, or an older .rollover.json).
 
 	mode 'new': a new project (with the file's project id, or a fresh one when that is taken);
 	mode 'replace': overwrite `target` (or the existing project with the file's id) with the file.
@@ -562,21 +762,28 @@ def import_simulation_file(file_url, mode="new", target=None):
 def bundle_for(doc):
 	project = build_project(doc)
 	blobs = {}
-	for key in BLOB_FIELDS:
+	for key in list(BLOB_FIELDS) + _dtm_keys(doc):
 		data = _read_blob(doc, key)
 		if data:
 			blobs[key] = base64.b64encode(data).decode()
-	return {"format": BUNDLE_FORMAT, "version": 1, "exported": frappe.utils.now_datetime().isoformat(), "project": project, "blobs": blobs}
+	return {
+		"format": BUNDLE_FORMAT,
+		"version": 1,
+		"app": "ISAMIQ",
+		"exported": frappe.utils.now_datetime().isoformat(),
+		"project": project,
+		"blobs": blobs,
+	}
 
 
 @frappe.whitelist()
 def export_simulation_file(name):
-	"""Download the project as a .rollover.json file the standalone simulator can open."""
+	"""Download the project as a .isamiq.json file the standalone simulator can open."""
 	doc = frappe.get_doc(DOCTYPE, name)
 	doc.check_permission("read")
 	bundle = bundle_for(doc)
 	slug = re.sub(r"[^a-z0-9]+", "_", (doc.project_name or doc.name).lower()).strip("_") or "project"
-	frappe.response.filename = f"{slug}.rollover.json"
+	frappe.response.filename = f"{slug}.isamiq.json"
 	frappe.response.filecontent = json.dumps(bundle, separators=(",", ":"), ensure_ascii=False)
 	frappe.response.type = "download"
 
@@ -650,7 +857,8 @@ def put_blob(name, key, data):
 	doc = frappe.get_doc(DOCTYPE, name)
 	doc.check_permission("write")
 	_write_blob(doc, key, base64.b64decode(data))
-	doc.save()
+	if _blob_field(key):  # (a survey DTM has no field to set)
+		doc.save()
 
 
 @frappe.whitelist(methods=["POST"])
@@ -660,7 +868,8 @@ def delete_blob(name, key):
 	doc = frappe.get_doc(DOCTYPE, name)
 	doc.check_permission("write")
 	_write_blob(doc, key, None)
-	doc.save()
+	if _blob_field(key):
+		doc.save()
 
 
 def asset_version():

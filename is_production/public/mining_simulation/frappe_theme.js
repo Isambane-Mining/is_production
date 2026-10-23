@@ -8,8 +8,11 @@
    The page stays hidden until the variables are in (at most a few seconds), so it does not
    flash in the simulator's own colours first. */
 (() => {
-  const CFG = window.MINING_SIM || {};
+  // also used by the GIS Workstation page, which sets FRAPPE_PAGE_THEME instead
+  const CFG = window.FRAPPE_PAGE_THEME || window.MINING_SIM || {};
   const root = document.documentElement;
+  // the site's favicon, not the simulator's own (kept in its Share copies)
+  for (const l of document.querySelectorAll('link[rel~="icon"]:not([data-frappe-favicon])')) l.remove();
   const os_dark = window.matchMedia('(prefers-color-scheme: dark)');
   root.classList.add('frappe-theme-loading');
 

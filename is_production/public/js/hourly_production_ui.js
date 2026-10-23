@@ -52,6 +52,8 @@ is_production.ui.HourlyProductionUI = class {
         const me = this;
         const ns = this.eventNamespace;
 
+
+
         // Use namespaced events to prevent conflicts
         $(document).on(`change.${ns}`, '.truck-loads', function(e) {
             const rowName = this.getAttribute('data-row-name');
@@ -390,6 +392,7 @@ is_production.ui.HourlyProductionUI = class {
                                        class="form-control exc-end-load-time exc-load-time-input exc-compact-control"
                                        data-excavator-name="${excavator}"
                                        value="${endLoadTime}">
+
                             </div>
                         </div>
                     </div>
@@ -557,7 +560,7 @@ is_production.ui.HourlyProductionUI = class {
                     <div class="dozer-field">
                         <label>
                             Hauling Distance Meter
-                            <span class="production-required-marker">*</span>
+
                         </label>
 
                         <input type="text"
@@ -1740,6 +1743,32 @@ async handleDozerServiceChange(row) {
         frappe.model.set_value(row.doctype, row.name, 'dozer_geo_mat_layer', '');
         frappe.model.set_value(row.doctype, row.name, 'mining_areas_dozer_child', '');
         frappe.model.set_value(row.doctype, row.name, 'mat_type', '');
+    }
+
+    // Clear setup when the user selects No Dozing.
+    if (row.dozer_service === 'No Dozing') {
+        const fields = [
+            'mining_areas_dozer_child',
+            'area_to',
+            'dozer_geo_mat_layer',
+            'dozer_hauling_distance_meter'
+        ];
+
+        fields.forEach(field => {
+            row[field] = '';
+            frappe.model.set_value(row.doctype, row.name, field, '');
+        });
+
+        const wrapper = this.frm.fields_dict.dnd_html_excavator_ui.$wrapper;
+        const card = wrapper.find('.dozer-block').filter(function() {
+            return $(this).attr('data-dozer-name') === row.asset_name;
+        });
+
+        card.find('.dozer-area, .dozer-area-to, .dozer-geo-layer').val('');
+        card.find('.dozer-hauling-distance')
+            .val('')
+            .attr('data-current-value', '')
+            .removeData('current-value');
     }
 
     // Apply BCM/hour

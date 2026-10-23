@@ -1,0 +1,390 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:dataset_name",
+ "creation": "2026-10-20 11:49:07.043827",
+ "description": "A geographic dataset: its geometry type, coordinate reference system and attribute schema. Its features are GIS Feature records.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "dataset_name",
+  "title",
+  "category",
+  "status",
+  "column_break_dsmn",
+  "geometry_type",
+  "crs",
+  "srid",
+  "has_z",
+  "data_custodian",
+  "description",
+  "section_attributes",
+  "attributes",
+  "section_validation",
+  "reject_invalid_geometry",
+  "column_break_vldn",
+  "default_color",
+  "section_statistics",
+  "feature_count",
+  "last_feature_change",
+  "column_break_stat",
+  "extent_min_x",
+  "extent_min_y",
+  "extent_max_x",
+  "extent_max_y",
+  "extent_min_z",
+  "extent_max_z",
+  "section_source",
+  "source_type",
+  "source_reference",
+  "source_file",
+  "column_break_srce",
+  "source_crs",
+  "import_metadata",
+  "section_storage",
+  "storage_provider",
+  "column_break_strg",
+  "qgis_layer_name",
+  "qgis_provider",
+  "qgis_publish_status",
+  "qgis_published_on",
+  "qgis_project_file",
+  "qgis_publish_message",
+  "qgis_publish_signature"
+ ],
+ "fields": [
+  {
+   "description": "Lower case letters, digits and underscores, starting with a letter. Used as the record name and the QGIS layer name; cannot be changed later.",
+   "fieldname": "dataset_name",
+   "fieldtype": "Data",
+   "label": "Dataset Name",
+   "reqd": 1,
+   "set_only_once": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title",
+   "reqd": 1
+  },
+  {
+   "fieldname": "category",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Category",
+   "options": "\nSurvey\nGeology\nMine Plan\nInfrastructure\nEnvironmental\nBoundary\nReference\nProcessing Output\nOther"
+  },
+  {
+   "default": "Active",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Draft\nActive\nArchived",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_dsmn",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "\"Geometry\" accepts any type. Multi types also accept single parts (they are stored as one-part multis).",
+   "fieldname": "geometry_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Geometry Type",
+   "options": "Point\nMultiPoint\nLineString\nMultiLineString\nPolygon\nMultiPolygon\nGeometry\nNo Geometry\nRaster",
+   "reqd": 1
+  },
+  {
+   "default": "EPSG:4326",
+   "description": "An EPSG code, e.g. EPSG:2053 (Hartebeesthoek94 / Lo29) or EPSG:4326 (WGS 84). Coordinates are stored in this CRS; nothing is reprojected on save.",
+   "fieldname": "crs",
+   "fieldtype": "Data",
+   "label": "Coordinate Reference System",
+   "reqd": 1
+  },
+  {
+   "fieldname": "srid",
+   "fieldtype": "Int",
+   "label": "SRID",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Features carry Z values. Z is kept in the feature's GeoJSON; the database geometry column is 2D only (MariaDB limitation).",
+   "fieldname": "has_z",
+   "fieldtype": "Check",
+   "label": "Has Z (Elevation)"
+  },
+  {
+   "fieldname": "data_custodian",
+   "fieldtype": "Link",
+   "label": "Data Custodian",
+   "options": "User"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  },
+  {
+   "fieldname": "section_attributes",
+   "fieldtype": "Section Break",
+   "label": "Attribute Schema"
+  },
+  {
+   "fieldname": "attributes",
+   "fieldtype": "Table",
+   "label": "Attributes",
+   "options": "GIS Attribute Definition"
+  },
+  {
+   "fieldname": "section_validation",
+   "fieldtype": "Section Break",
+   "label": "Validation and Display"
+  },
+  {
+   "default": "0",
+   "description": "Refuse to save features whose geometry is invalid (e.g. self-intersecting polygons). When off, they are saved and marked Invalid.",
+   "fieldname": "reject_invalid_geometry",
+   "fieldtype": "Check",
+   "label": "Reject Invalid Geometry"
+  },
+  {
+   "fieldname": "column_break_vldn",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "default_color",
+   "fieldtype": "Color",
+   "label": "Default Colour"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_statistics",
+   "fieldtype": "Section Break",
+   "label": "Statistics"
+  },
+  {
+   "default": "0",
+   "fieldname": "feature_count",
+   "fieldtype": "Int",
+   "label": "Feature Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_feature_change",
+   "fieldtype": "Datetime",
+   "label": "Last Feature Change",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_stat",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "extent_min_x",
+   "fieldtype": "Float",
+   "label": "Extent Min X",
+   "read_only": 1
+  },
+  {
+   "fieldname": "extent_min_y",
+   "fieldtype": "Float",
+   "label": "Extent Min Y",
+   "read_only": 1
+  },
+  {
+   "fieldname": "extent_max_x",
+   "fieldtype": "Float",
+   "label": "Extent Max X",
+   "read_only": 1
+  },
+  {
+   "fieldname": "extent_max_y",
+   "fieldtype": "Float",
+   "label": "Extent Max Y",
+   "read_only": 1
+  },
+  {
+   "fieldname": "extent_min_z",
+   "fieldtype": "Float",
+   "label": "Extent Min Z",
+   "read_only": 1,
+   "depends_on": "has_z"
+  },
+  {
+   "fieldname": "extent_max_z",
+   "fieldtype": "Float",
+   "label": "Extent Max Z",
+   "read_only": 1,
+   "depends_on": "has_z"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_source",
+   "fieldtype": "Section Break",
+   "label": "Source"
+  },
+  {
+   "default": "Manual",
+   "fieldname": "source_type",
+   "fieldtype": "Select",
+   "label": "Source Type",
+   "options": "Manual\nImport\nProcessing\nExternal"
+  },
+  {
+   "fieldname": "source_reference",
+   "fieldtype": "Data",
+   "label": "Source Reference"
+  },
+  {
+   "fieldname": "source_file",
+   "fieldtype": "Attach",
+   "label": "Source File"
+  },
+  {
+   "fieldname": "column_break_srce",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The CRS the source data was in, if it was reprojected on import.",
+   "fieldname": "source_crs",
+   "fieldtype": "Data",
+   "label": "Source CRS"
+  },
+  {
+   "fieldname": "import_metadata",
+   "fieldtype": "JSON",
+   "label": "Import Metadata",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_storage",
+   "fieldtype": "Section Break",
+   "label": "Storage and QGIS"
+  },
+  {
+   "default": "MariaDB",
+   "fieldname": "storage_provider",
+   "fieldtype": "Select",
+   "label": "Storage Provider",
+   "options": "MariaDB",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_strg",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "qgis_layer_name",
+   "fieldtype": "Data",
+   "label": "QGIS Layer Name",
+   "read_only": 1
+  },
+  {
+   "default": "ogr",
+   "fieldname": "qgis_provider",
+   "fieldtype": "Data",
+   "label": "QGIS Provider",
+   "read_only": 1
+  },
+  {
+   "default": "Not Published",
+   "fieldname": "qgis_publish_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "QGIS Publish Status",
+   "options": "Not Published\nQueued\nPublished\nError",
+   "read_only": 1
+  },
+  {
+   "fieldname": "qgis_published_on",
+   "fieldtype": "Datetime",
+   "label": "QGIS Published On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "qgis_project_file",
+   "fieldtype": "Data",
+   "label": "QGIS Project File",
+   "read_only": 1
+  },
+  {
+   "depends_on": "qgis_publish_message",
+   "fieldname": "qgis_publish_message",
+   "fieldtype": "Small Text",
+   "label": "QGIS Publish Message",
+   "read_only": 1
+  },
+  {
+   "fieldname": "qgis_publish_signature",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "QGIS Publish Signature",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "links": [
+  {
+   "link_doctype": "GIS Feature",
+   "link_fieldname": "dataset"
+  }
+ ],
+ "modified": "2026-10-20 17:23:45.882653",
+ "modified_by": "Administrator",
+ "module": "Geo Planning",
+ "name": "GIS Dataset",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "share": 1,
+   "write": 1,
+   "role": "System Manager"
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "import": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "share": 1,
+   "write": 1,
+   "role": "Production Manager"
+  },
+  {
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Production User"
+  }
+ ],
+ "row_format": "Dynamic",
+ "show_title_field_in_link": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "title",
+ "track_changes": 1
+}

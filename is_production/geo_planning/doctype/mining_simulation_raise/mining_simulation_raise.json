@@ -1,0 +1,73 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-10-20 09:20:31.604101",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "fields": [
+  {
+   "fieldname": "raise_name",
+   "fieldtype": "Data",
+   "label": "Raised Area",
+   "in_list_view": 1,
+   "reqd": 1,
+   "columns": 4
+  },
+  {
+   "fieldname": "height",
+   "fieldtype": "Float",
+   "label": "Height (m)",
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "slope",
+   "fieldtype": "Float",
+   "label": "Edge Slope (%)",
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "raise_id",
+   "fieldtype": "Data",
+   "label": "Raised Area ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "points",
+   "fieldtype": "Code",
+   "label": "Outline Points",
+   "options": "JSON"
+  },
+  {
+   "fieldname": "json_meta",
+   "fieldtype": "Long Text",
+   "label": "JSON Meta",
+   "hidden": 1,
+   "read_only": 1,
+   "description": "Keys, nulls and unmapped values of the simulator object (keeps import/export lossless)"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified_by": "Administrator",
+ "module": "Geo Planning",
+ "name": "Mining Simulation Raise",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0,
+ "field_order": [
+  "raise_name",
+  "height",
+  "slope",
+  "raise_id",
+  "points",
+  "json_meta"
+ ],
+ "modified": "2026-10-20 09:20:31.604101"
+}

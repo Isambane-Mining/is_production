@@ -1,0 +1,292 @@
+{
+ "actions": [],
+ "creation": "2026-10-23 09:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "fields": [
+  {
+   "fieldname": "cad_model",
+   "fieldtype": "Link",
+   "label": "CAD Model",
+   "options": "CAD Model",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "publication",
+   "fieldtype": "Link",
+   "label": "Design Publication",
+   "options": "CAD Design Publication",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "survey_date",
+   "fieldtype": "Date",
+   "label": "Survey Date",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "cb_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "survey_name",
+   "fieldtype": "Data",
+   "label": "Survey Surface",
+   "read_only": 1
+  },
+  {
+   "fieldname": "survey_surface",
+   "fieldtype": "Link",
+   "label": "Survey Surface (record)",
+   "options": "CAD Surface",
+   "read_only": 1
+  },
+  {
+   "fieldname": "survey_geometry_ref",
+   "fieldtype": "Data",
+   "label": "Survey Geometry (SHA-256)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "processing_job",
+   "fieldtype": "Link",
+   "label": "Processing Job",
+   "options": "CAD Processing Job",
+   "read_only": 1
+  },
+  {
+   "fieldname": "valid",
+   "fieldtype": "Check",
+   "label": "Checks Passed",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "sb_inputs",
+   "fieldtype": "Section Break",
+   "label": "Compared With"
+  },
+  {
+   "fieldname": "pre_mining_name",
+   "fieldtype": "Data",
+   "label": "Pre-mining Surface",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pre_mining_geometry_ref",
+   "fieldtype": "Data",
+   "label": "Pre-mining Geometry (SHA-256)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "design_name",
+   "fieldtype": "Data",
+   "label": "Design Surface",
+   "read_only": 1
+  },
+  {
+   "fieldname": "design_geometry_ref",
+   "fieldtype": "Data",
+   "label": "Design Geometry (SHA-256)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_inputs",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "schedule_scenario",
+   "fieldtype": "Link",
+   "label": "Schedule Scenario",
+   "options": "Mining Schedule Scenario",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_totals",
+   "fieldtype": "Section Break",
+   "label": "Totals (m³)"
+  },
+  {
+   "fieldname": "planned_volume",
+   "fieldtype": "Float",
+   "label": "Planned (design)",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "mined_volume",
+   "fieldtype": "Float",
+   "label": "Mined to Date",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "remaining_volume",
+   "fieldtype": "Float",
+   "label": "Remaining in Design",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_totals",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "over_mined_volume",
+   "fieldtype": "Float",
+   "label": "Mined Beyond Design",
+   "read_only": 1
+  },
+  {
+   "fieldname": "scheduled_volume",
+   "fieldtype": "Float",
+   "label": "Scheduled to Survey Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "variance_to_schedule",
+   "fieldtype": "Float",
+   "label": "Mined − Scheduled",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_totals2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "blocks_complete",
+   "fieldtype": "Int",
+   "label": "Blocks Complete",
+   "read_only": 1
+  },
+  {
+   "fieldname": "blocks_in_progress",
+   "fieldtype": "Int",
+   "label": "Blocks in Progress",
+   "read_only": 1
+  },
+  {
+   "fieldname": "blocks_not_started",
+   "fieldtype": "Int",
+   "label": "Blocks Not Started",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_blocks",
+   "fieldtype": "Section Break",
+   "label": "Blocks"
+  },
+  {
+   "fieldname": "blocks",
+   "fieldtype": "Table",
+   "label": "Blocks",
+   "options": "CAD Reconciliation Block",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_method",
+   "fieldtype": "Section Break",
+   "label": "Method and Checks"
+  },
+  {
+   "fieldname": "method",
+   "fieldtype": "Small Text",
+   "label": "Method",
+   "read_only": 1
+  },
+  {
+   "fieldname": "checks",
+   "fieldtype": "JSON",
+   "label": "Checks",
+   "read_only": 1
+  }
+ ],
+ "field_order": [
+  "cad_model",
+  "publication",
+  "survey_date",
+  "cb_main",
+  "survey_name",
+  "survey_surface",
+  "survey_geometry_ref",
+  "processing_job",
+  "valid",
+  "sb_inputs",
+  "pre_mining_name",
+  "pre_mining_geometry_ref",
+  "design_name",
+  "design_geometry_ref",
+  "cb_inputs",
+  "schedule_scenario",
+  "sb_totals",
+  "planned_volume",
+  "mined_volume",
+  "remaining_volume",
+  "cb_totals",
+  "over_mined_volume",
+  "scheduled_volume",
+  "variance_to_schedule",
+  "cb_totals2",
+  "blocks_complete",
+  "blocks_in_progress",
+  "blocks_not_started",
+  "sb_blocks",
+  "blocks",
+  "sb_method",
+  "method",
+  "checks"
+ ],
+ "grid_page_length": 50,
+ "links": [],
+ "modified": "2026-10-23 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "CAD Engineering",
+ "name": "CAD Survey Reconciliation",
+ "owner": "Administrator",
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "autoname": "format:CAD-REC-{YYYY}-{#####}",
+ "naming_rule": "Expression",
+ "description": "A survey surface measured against the published design, block by block: planned, mined, remaining, mined beyond design and scheduled to the survey date. Never edited after it is made.",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production User",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1
+  }
+ ]
+}

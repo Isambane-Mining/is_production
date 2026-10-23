@@ -1,0 +1,65 @@
+{
+ "actions": [],
+ "creation": "2026-10-20 19:06:53.651882",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "dependency",
+  "kind",
+  "requirement",
+  "satisfied",
+  "detail"
+ ],
+ "fields": [
+  {
+   "fieldname": "dependency",
+   "fieldtype": "Data",
+   "label": "Dependency",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "kind",
+   "fieldtype": "Select",
+   "label": "Kind",
+   "options": "Python Module\nQGIS Plugin\nQGIS Version",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "requirement",
+   "fieldtype": "Data",
+   "label": "Requirement",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "satisfied",
+   "fieldtype": "Check",
+   "label": "Satisfied",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "detail",
+   "fieldtype": "Data",
+   "label": "Detail",
+   "in_list_view": 1,
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "links": [],
+ "modified": "2026-10-20 19:06:53.651882",
+ "modified_by": "Administrator",
+ "module": "Geo Planning",
+ "name": "GIS Plugin Dependency",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "istable": 1,
+ "editable_grid": 0
+}

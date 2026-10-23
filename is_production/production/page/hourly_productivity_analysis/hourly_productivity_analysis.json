@@ -1,0 +1,13 @@
+{
+ "doctype": "Page",
+ "module": "Production",
+ "name": "hourly-productivity-analysis",
+ "page_name": "hourly-productivity-analysis",
+ "title": "Hourly Productivity Analysis",
+ "standard": "Yes",
+ "system_page": 0,
+ "roles": [{"role": "System Manager"}, {"role": "Production Manager"}, {"role": "Production User"}],
+ "content": null,
+ "script": null,
+ "style": null
+}

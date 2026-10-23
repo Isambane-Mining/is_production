@@ -1,0 +1,249 @@
+{
+ "actions": [],
+ "autoname": "autoincrement",
+ "creation": "2026-10-20 11:49:07.043827",
+ "description": "One feature of a GIS Dataset. The geometry is kept as GeoJSON (full precision, including Z) and in a native MariaDB GEOMETRY column with a spatial index, which QGIS Server reads.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "dataset",
+  "feature_label",
+  "crs",
+  "column_break_ftre",
+  "geometry_type",
+  "srid",
+  "has_z",
+  "revision",
+  "source_fid",
+  "section_validation",
+  "validation_status",
+  "column_break_vstat",
+  "validation_message",
+  "section_geometry",
+  "geometry",
+  "section_bbox",
+  "bbox_min_x",
+  "bbox_min_y",
+  "min_z",
+  "column_break_bbox",
+  "bbox_max_x",
+  "bbox_max_y",
+  "max_z",
+  "section_attributes",
+  "attributes"
+ ],
+ "fields": [
+  {
+   "fieldname": "dataset",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Dataset",
+   "options": "GIS Dataset",
+   "reqd": 1,
+   "search_index": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "feature_label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Label"
+  },
+  {
+   "fetch_from": "dataset.crs",
+   "fieldname": "crs",
+   "fieldtype": "Data",
+   "label": "Coordinate Reference System",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_ftre",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "geometry_type",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Geometry Type",
+   "read_only": 1
+  },
+  {
+   "fieldname": "srid",
+   "fieldtype": "Int",
+   "label": "SRID",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fetch_from": "dataset.has_z",
+   "fieldname": "has_z",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Has Z",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Goes up by one each time the geometry, attributes or label change.",
+   "fieldname": "revision",
+   "fieldtype": "Int",
+   "label": "Revision",
+   "read_only": 1
+  },
+  {
+   "description": "The feature id in the file this feature was imported from.",
+   "fieldname": "source_fid",
+   "fieldtype": "Data",
+   "label": "Source Feature ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_validation",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "validation_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Validation Status",
+   "options": "\nValid\nInvalid",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_vstat",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "validation_message",
+   "fieldname": "validation_message",
+   "fieldtype": "Small Text",
+   "label": "Validation Message",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_geometry",
+   "fieldtype": "Section Break",
+   "label": "Geometry"
+  },
+  {
+   "description": "GeoJSON geometry object in the dataset's CRS, e.g. {\"type\": \"Point\", \"coordinates\": [-12345.6, 2876543.2]}.",
+   "fieldname": "geometry",
+   "fieldtype": "JSON",
+   "label": "Geometry (GeoJSON)"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_bbox",
+   "fieldtype": "Section Break",
+   "label": "Bounding Box"
+  },
+  {
+   "fieldname": "bbox_min_x",
+   "fieldtype": "Float",
+   "label": "Min X",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bbox_min_y",
+   "fieldtype": "Float",
+   "label": "Min Y",
+   "read_only": 1
+  },
+  {
+   "fieldname": "min_z",
+   "fieldtype": "Float",
+   "label": "Min Z",
+   "read_only": 1,
+   "description": "Lowest elevation of the feature (datasets with Z only).",
+   "depends_on": "has_z"
+  },
+  {
+   "fieldname": "column_break_bbox",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "bbox_max_x",
+   "fieldtype": "Float",
+   "label": "Max X",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bbox_max_y",
+   "fieldtype": "Float",
+   "label": "Max Y",
+   "read_only": 1
+  },
+  {
+   "fieldname": "max_z",
+   "fieldtype": "Float",
+   "label": "Max Z",
+   "read_only": 1,
+   "description": "Highest elevation of the feature (datasets with Z only).",
+   "depends_on": "has_z"
+  },
+  {
+   "fieldname": "section_attributes",
+   "fieldtype": "Section Break",
+   "label": "Attributes"
+  },
+  {
+   "description": "JSON object of attribute values, checked against the dataset's attribute schema.",
+   "fieldname": "attributes",
+   "fieldtype": "JSON",
+   "label": "Attributes"
+  }
+ ],
+ "grid_page_length": 50,
+ "links": [],
+ "modified": "2026-10-20 17:47:27.639899",
+ "modified_by": "Administrator",
+ "module": "Geo Planning",
+ "name": "GIS Feature",
+ "naming_rule": "Autoincrement",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "share": 1,
+   "write": 1,
+   "role": "System Manager"
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "import": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "share": 1,
+   "write": 1,
+   "role": "Production Manager"
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "write": 1,
+   "role": "Production User"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "feature_label",
+ "track_changes": 1
+}

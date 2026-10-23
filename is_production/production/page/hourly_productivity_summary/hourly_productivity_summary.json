@@ -1,0 +1,13 @@
+{
+ "doctype": "Page",
+ "module": "Production",
+ "name": "hourly-productivity-summary",
+ "page_name": "hourly-productivity-summary",
+ "standard": "Yes",
+ "system_page": 0,
+ "title": "Hourly Productivity Summary",
+ "roles": [{"role": "System Manager"}, {"role": "Production Manager"}, {"role": "Production User"}],
+ "content": null,
+ "script": null,
+ "style": null
+}

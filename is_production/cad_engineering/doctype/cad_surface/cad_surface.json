@@ -1,0 +1,236 @@
+{
+ "actions": [],
+ "creation": "2026-10-22 09:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "fields": [
+  {
+   "fieldname": "surface_name",
+   "fieldtype": "Data",
+   "label": "Surface Name",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "cad_model",
+   "fieldtype": "Link",
+   "label": "CAD Model",
+   "options": "CAD Model",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "geo_project",
+   "fieldtype": "Link",
+   "label": "Geo Project",
+   "options": "Geo Project",
+   "read_only": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "surface_type",
+   "fieldtype": "Select",
+   "label": "Surface Type",
+   "options": "Survey Surface\nTerrain Surface\nGeological Surface\nCoal Seam\nPit Surface\nDesign Surface\nAs-Built Surface",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "cad_entity",
+   "fieldtype": "Link",
+   "label": "CAD Entity",
+   "options": "CAD Entity",
+   "read_only": 1
+  },
+  {
+   "fieldname": "validation_status",
+   "fieldtype": "Select",
+   "label": "Validation Status",
+   "options": "Not Checked\nValid\nWarning\nInvalid",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "current_revision",
+   "fieldtype": "Link",
+   "label": "Current Revision",
+   "options": "CAD Design Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_source",
+   "fieldtype": "Section Break",
+   "label": "Source"
+  },
+  {
+   "fieldname": "source_dataset",
+   "fieldtype": "Small Text",
+   "label": "Source Dataset",
+   "read_only": 1,
+   "description": "Where the surface came from (file, entities, GIS dataset, operation)."
+  },
+  {
+   "fieldname": "triangulation_type",
+   "fieldtype": "Select",
+   "label": "Triangulation Type",
+   "options": "Delaunay\nConstrained Delaunay\nImported TIN\nImported Mesh\nDerived",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_source",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "geometry_file_reference",
+   "fieldtype": "Data",
+   "label": "Geometry File Reference",
+   "read_only": 1,
+   "description": "SHA-256 of the authoritative TIN file."
+  },
+  {
+   "fieldname": "build_parameters",
+   "fieldtype": "JSON",
+   "label": "Build Parameters",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_stats",
+   "fieldtype": "Section Break",
+   "label": "Statistics"
+  },
+  {
+   "fieldname": "vertex_count",
+   "fieldtype": "Int",
+   "label": "Vertex Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "triangle_count",
+   "fieldtype": "Int",
+   "label": "Triangle Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "surface_area",
+   "fieldtype": "Float",
+   "label": "Surface Area (3D)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_stats",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "plan_area",
+   "fieldtype": "Float",
+   "label": "Plan Area",
+   "read_only": 1
+  },
+  {
+   "fieldname": "min_elevation",
+   "fieldtype": "Float",
+   "label": "Minimum Elevation",
+   "read_only": 1
+  },
+  {
+   "fieldname": "max_elevation",
+   "fieldtype": "Float",
+   "label": "Maximum Elevation",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_validation",
+   "fieldtype": "Section Break",
+   "label": "Validation",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "validation_report",
+   "fieldtype": "JSON",
+   "label": "Validation Report",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "links": [],
+ "modified_by": "Administrator",
+ "module": "CAD Engineering",
+ "name": "CAD Surface",
+ "owner": "Administrator",
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production User",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1
+  }
+ ],
+ "autoname": "hash",
+ "title_field": "surface_name",
+ "show_title_field_in_link": 1,
+ "search_fields": "surface_name,cad_model,surface_type",
+ "description": "A triangulated surface (TIN) of a CAD Model: its identity, statistics and validation. The triangles are in a content-addressed TIN file; this record is kept in step with the model's Surface entity.",
+ "field_order": [
+  "surface_name",
+  "cad_model",
+  "geo_project",
+  "surface_type",
+  "column_break_main",
+  "cad_entity",
+  "validation_status",
+  "current_revision",
+  "section_source",
+  "source_dataset",
+  "triangulation_type",
+  "column_break_source",
+  "geometry_file_reference",
+  "build_parameters",
+  "section_stats",
+  "vertex_count",
+  "triangle_count",
+  "surface_area",
+  "column_break_stats",
+  "plan_area",
+  "min_elevation",
+  "max_elevation",
+  "section_validation",
+  "validation_report"
+ ],
+ "modified": "2026-10-22 09:00:00.000000"
+}

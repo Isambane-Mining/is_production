@@ -131,6 +131,12 @@ frappe.query_reports["HOD Presentation"] = {
                 "Unable to initialise HOD Presentation.",
                 error
             );
+        injectHodPresentationStyles();
+        bindHodDashboardTabs(report);
+        ensureHodInteractiveReport();
+
+        report.page.add_inner_button(__("Download Presentation (LAB V2)"), () => {
+            downloadHodPresentation(report);
         });
     },
 
@@ -206,3 +212,2941 @@ frappe.query_reports["HOD Presentation"] = {
         return value;
     }
 };
+
+function ensureHodInteractiveReport() {
+    frappe.call({
+        method:
+            "is_production.production.report." +
+            "hod_presentation.hod_presentation." +
+            "ensure_interactive_report",
+        freeze: false
+    }).then(response => {
+        if (!response.message) {
+            return;
+        }
+
+        frappe.show_alert({
+            message: __(
+                "HOD Presentation switched to live report mode."
+            ),
+            indicator: "green"
+        });
+
+        window.setTimeout(() => {
+            window.location.reload();
+        }, 500);
+    }).catch(error => {
+        console.warn(
+            "Could not verify HOD report mode.",
+            error
+        );
+    });
+}
+
+
+function bindHodDashboardTabs(report) {
+    if (!report?.page?.main) {
+        return;
+    }
+
+    report.page.main
+        .off(
+            "click.hodDashboardTabs",
+            ".daily-dashboard-tab-button"
+        )
+        .on(
+            "click.hodDashboardTabs",
+            ".daily-dashboard-tab-button",
+            function () {
+                const button = $(this);
+                const dashboard = button.closest(
+                    ".hod-browser-au-dashboard-copy"
+                );
+                const selectedTab =
+                    button.attr("data-tab");
+
+                dashboard
+                    .find(".daily-dashboard-tab-button")
+                    .removeClass("btn-primary")
+                    .addClass("btn-default");
+
+                button
+                    .removeClass("btn-default")
+                    .addClass("btn-primary");
+
+                dashboard
+                    .find(".daily-dashboard-tab-panel")
+                    .hide();
+
+                dashboard
+                    .find(
+                        `.daily-dashboard-tab-panel[data-panel="${selectedTab}"]`
+                    )
+                    .show();
+            }
+        );
+}
+
+
+function normaliseHodSites(value) {
+    if (Array.isArray(value)) {
+        return value
+            .map(item => {
+                if (typeof item === "object" && item !== null) {
+                    return item.value || item.name || "";
+                }
+
+                return String(item || "");
+            })
+            .map(item => item.trim())
+            .filter(Boolean);
+    }
+
+    if (!value) {
+        return [];
+    }
+
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+
+        if (!trimmed) {
+            return [];
+        }
+
+        if (trimmed.startsWith("[")) {
+            try {
+                const parsed = JSON.parse(trimmed);
+
+                if (Array.isArray(parsed)) {
+                    return parsed
+                        .map(item => {
+                            if (typeof item === "object" && item !== null) {
+                                return item.value || item.name || "";
+                            }
+
+                            return String(item || "");
+                        })
+                        .map(item => item.trim())
+                        .filter(Boolean);
+                }
+            } catch (error) {
+                console.warn("Could not parse selected HOD sites.", error);
+            }
+        }
+
+        return trimmed
+            .split(",")
+            .map(item => item.trim())
+            .filter(Boolean);
+    }
+
+    return [String(value).trim()].filter(Boolean);
+}
+
+
+
+const HOD_SITE_COMPLEXES = [
+    {
+        name: "Middelburg Complex",
+        sites: [
+            "Klipfontein",
+            "Gwab",
+            "Kriel Rehabilitation",
+            "Bankfontein"
+        ]
+    },
+    {
+        name: "Ermelo Complex",
+        sites: [
+            "Uitgevallen",
+            "Koppie"
+        ]
+    }
+];
+
+
+function hodGetComplexName(site) {
+    const siteName = String(site || "").trim();
+
+    const complex = HOD_SITE_COMPLEXES.find(item =>
+        item.sites.includes(siteName)
+    );
+
+    return complex ? complex.name : "Other Sites";
+}
+
+
+function hodJoinNames(values) {
+    const names = (values || [])
+        .map(value => String(value || "").trim())
+        .filter(Boolean);
+
+    if (!names.length) {
+        return "";
+    }
+
+    if (names.length === 1) {
+        return names[0];
+    }
+
+    if (names.length === 2) {
+        return names.join(" and ");
+    }
+
+    return (
+        names.slice(0, -1).join(", ") +
+        " and " +
+        names[names.length - 1]
+    );
+}
+
+
+function hodFormatMonthYear(value) {
+    const rawValue = String(value || "").trim();
+
+    if (!rawValue) {
+        return "";
+    }
+
+    const parts = rawValue.split("-");
+
+    if (parts.length !== 3) {
+        return rawValue;
+    }
+
+    const year = Number(parts[0]);
+    const month = Number(parts[1]);
+
+    if (
+        !Number.isInteger(year) ||
+        !Number.isInteger(month) ||
+        month < 1 ||
+        month > 12
+    ) {
+        return rawValue;
+    }
+
+    return new Intl.DateTimeFormat(
+        "en-ZA",
+        {
+            month: "long",
+            year: "numeric"
+        }
+    ).format(
+        new Date(year, month - 1, 1)
+    );
+}
+
+
+function hodOrderRowsByComplex(rows) {
+    const order = [];
+
+    HOD_SITE_COMPLEXES.forEach(complex => {
+        complex.sites.forEach(site => {
+            const row = rows.find(
+                candidate => candidate.site === site
+            );
+
+            if (row) {
+                order.push(row);
+            }
+        });
+    });
+
+    rows.forEach(row => {
+        if (!order.includes(row)) {
+            order.push(row);
+        }
+    });
+
+    return order;
+}
+
+
+function hodRenderProductionComplexGroups(rows) {
+    const groups = [];
+
+    HOD_SITE_COMPLEXES.forEach(complex => {
+        const complexRows = rows.filter(row =>
+            complex.sites.includes(row.site)
+        );
+
+        if (!complexRows.length) {
+            return;
+        }
+
+        groups.push(`
+            <div class="hod-browser-complex-group">
+                <div class="hod-browser-complex-title">
+                    ${hodEscape(complex.name)}
+                </div>
+
+                <div class="hod-browser-site-grid">
+                    ${complexRows
+                        .map(row => hodRenderSiteCard(row))
+                        .join("")}
+                </div>
+            </div>
+        `);
+    });
+
+    const knownSites = HOD_SITE_COMPLEXES
+        .flatMap(complex => complex.sites);
+
+    const otherRows = rows.filter(
+        row => !knownSites.includes(row.site)
+    );
+
+    if (otherRows.length) {
+        groups.push(`
+            <div class="hod-browser-complex-group">
+                <div class="hod-browser-complex-title">
+                    Other Sites
+                </div>
+
+                <div class="hod-browser-site-grid">
+                    ${otherRows
+                        .map(row => hodRenderSiteCard(row))
+                        .join("")}
+                </div>
+            </div>
+        `);
+    }
+
+    return groups.join("");
+}
+
+
+function hodRenderAvailabilityComplexGroups(rows) {
+    const groups = [];
+
+    HOD_SITE_COMPLEXES.forEach(complex => {
+        const complexRows = rows.filter(row =>
+            complex.sites.includes(row.site)
+        );
+
+        if (!complexRows.length) {
+            return;
+        }
+
+        groups.push(`
+            <div class="hod-browser-complex-group">
+                <div class="hod-browser-complex-title">
+                    ${hodEscape(complex.name)}
+                </div>
+
+                <div class="hod-browser-au-site-stack">
+                    ${complexRows
+                        .map(row => {
+                            const index = rows.indexOf(row);
+
+                            return `
+                                <div
+                                    class="hod-browser-au-site"
+                                    data-site-index="${index}"
+                                    data-site-name="${hodEscape(row.site)}"
+                                    data-site-period="${hodEscape(row.period)}"
+                                >
+                                    <div class="hod-browser-au-loading">
+                                        Loading Availability &amp; Utilisation
+                                        for ${hodEscape(row.site)}...
+                                    </div>
+                                </div>
+                            `;
+                        })
+                        .join("")}
+                </div>
+            </div>
+        `);
+    });
+
+    return groups.join("");
+}
+
+
+
+function hodChunkProductionCards(cards, size = 4) {
+    const chunks = [];
+
+    for (
+        let index = 0;
+        index < cards.length;
+        index += size
+    ) {
+        chunks.push(
+            cards.slice(
+                index,
+                index + size
+            )
+        );
+    }
+
+    return chunks;
+}
+
+
+async function captureHodProductionSlides(
+    productionSection,
+    endDate
+) {
+    const slides = [];
+
+    if (!productionSection) {
+        return slides;
+    }
+
+    const complexGroups = Array.from(
+        productionSection.querySelectorAll(
+            ".hod-browser-complex-group"
+        )
+    );
+
+    const sectionBadge =
+        productionSection.querySelector(
+            ".hod-browser-section-badge"
+        );
+
+    const originalBadgeText =
+        sectionBadge?.textContent || "";
+
+    for (const activeGroup of complexGroups) {
+        const complexTitle = (
+            activeGroup.querySelector(
+                ".hod-browser-complex-title"
+            )?.textContent ||
+            "Production Summary"
+        ).trim();
+
+        const cards = Array.from(
+            activeGroup.querySelectorAll(
+                ".hod-browser-site-card"
+            )
+        );
+
+        const chunks =
+            hodChunkProductionCards(
+                cards,
+                4
+            );
+
+        for (
+            let chunkIndex = 0;
+            chunkIndex < chunks.length;
+            chunkIndex += 1
+        ) {
+            const visibleCards =
+                chunks[chunkIndex];
+
+            const originalGroupStyles =
+                complexGroups.map(group => ({
+                    group,
+                    display:
+                        group.style.display
+                }));
+
+            const originalCardStyles =
+                cards.map(card => ({
+                    card,
+                    display:
+                        card.style.display
+                }));
+
+            const grid =
+                activeGroup.querySelector(
+                    ".hod-browser-site-grid"
+                );
+
+            const originalGridColumns =
+                grid?.style.gridTemplateColumns ||
+                "";
+
+            const originalGridWidth =
+                grid?.style.width || "";
+
+            try {
+                complexGroups.forEach(group => {
+                    group.style.display =
+                        group === activeGroup
+                            ? ""
+                            : "none";
+                });
+
+                cards.forEach(card => {
+                    card.style.display =
+                        visibleCards.includes(card)
+                            ? ""
+                            : "none";
+                });
+
+                if (grid) {
+                    grid.style.gridTemplateColumns =
+                        "repeat(2, minmax(0, 1fr))";
+
+                    grid.style.width =
+                        "100%";
+                }
+
+                if (sectionBadge) {
+                    sectionBadge.textContent =
+                        `${visibleCards.length} ` +
+                        `Site${visibleCards.length === 1 ? "" : "s"}`;
+                }
+
+                await new Promise(resolve => {
+                    window.requestAnimationFrame(
+                        () => {
+                            window.requestAnimationFrame(
+                                resolve
+                            );
+                        }
+                    );
+                });
+
+                const siteNames =
+                    visibleCards
+                        .map(card => (
+                            card.querySelector(
+                                ".hod-browser-site-header"
+                            )?.textContent ||
+                            ""
+                        ).trim())
+                        .filter(Boolean);
+
+                const chunkLabel =
+                    chunks.length > 1
+                        ? ` (${chunkIndex + 1}/${chunks.length})`
+                        : "";
+
+                const performanceSubtitle =
+                    siteNames.length
+                        ? "Outlook and Operating Indicators for " +
+                          hodJoinNames(siteNames)
+                        : "Outlook and Operating Indicators";
+
+                slides.push({
+                    title:
+                        complexTitle +
+                        " - Production Performance" +
+                        chunkLabel,
+
+                    subtitle:
+                        performanceSubtitle,
+
+                    period_label:
+                        hodFormatMonthYear(endDate),
+
+                    image_data:
+                        await captureHodSection(
+                            productionSection,
+                            {
+                                quality: 0.92,
+                                pixelRatio: 0.9
+                            }
+                        )
+                });
+            } finally {
+                originalGroupStyles.forEach(
+                    ({ group, display }) => {
+                        group.style.display =
+                            display;
+                    }
+                );
+
+                originalCardStyles.forEach(
+                    ({ card, display }) => {
+                        card.style.display =
+                            display;
+                    }
+                );
+
+                if (grid) {
+                    grid.style.gridTemplateColumns =
+                        originalGridColumns;
+
+                    grid.style.width =
+                        originalGridWidth;
+                }
+
+                if (sectionBadge) {
+                    sectionBadge.textContent =
+                        originalBadgeText;
+                }
+            }
+        }
+    }
+
+    return slides;
+}
+
+
+
+async function downloadHodPresentation(report) {
+    const getFilterValue = fieldname => {
+        if (
+            report &&
+            typeof report.get_filter_value === "function"
+        ) {
+            return report.get_filter_value(fieldname);
+        }
+
+        return frappe.query_report.get_filter_value(
+            fieldname
+        );
+    };
+
+    const selectedSites = normaliseHodSites(
+        getFilterValue("site")
+    ).sort((left, right) => {
+        const orderedSites = HOD_SITE_COMPLEXES
+            .flatMap(complex => complex.sites);
+
+        const leftIndex = orderedSites.indexOf(left);
+        const rightIndex = orderedSites.indexOf(right);
+
+        if (leftIndex === -1 && rightIndex === -1) {
+            return left.localeCompare(right);
+        }
+
+        if (leftIndex === -1) return 1;
+        if (rightIndex === -1) return -1;
+
+        return leftIndex - rightIndex;
+    });
+
+    const endDate = getFilterValue("end_date");
+
+    if (
+        !endDate ||
+        !selectedSites.length
+    ) {
+        frappe.msgprint({
+            title: __("Missing Filters"),
+            indicator: "orange",
+            message: __(
+                "Select at least one site and an End Date."
+            )
+        });
+
+        return;
+    }
+
+    try {
+        frappe.dom.freeze(
+            __("Generating presentation...")
+        );
+
+        await frappe.require(
+            "/assets/is_production/js/html-to-image.js"
+        );
+
+        if (
+            !window.htmlToImage ||
+            typeof window.htmlToImage.toJpeg !== "function"
+        ) {
+            throw new Error(
+                __(
+                    "The presentation capture library did not load."
+                )
+            );
+        }
+
+        const $layout = report.page.main.find(
+            ".hod-presentation-layout"
+        );
+
+        if (!$layout.length) {
+            throw new Error(
+                __(
+                    "The presentation layout was not found."
+                )
+            );
+        }
+
+        const layout = $layout[0];
+
+        await waitForHodDashboards(
+            layout
+        );
+
+        const capturedSlides = [];
+
+        const productionSection =
+            layout.querySelector(
+                ".hod-browser-section:first-child"
+            );
+
+        if (productionSection) {
+            const productionSlides =
+                await captureHodProductionSlides(
+                    productionSection,
+                    endDate
+                );
+
+            capturedSlides.push(
+                ...productionSlides
+            );
+        }
+
+        const auSites = layout.querySelectorAll(
+            ".hod-browser-au-site"
+        );
+
+        for (
+            let index = 0;
+            index < auSites.length;
+            index += 1
+        ) {
+            const siteName =
+                auSites[index].dataset.siteName ||
+                selectedSites[index] ||
+                `Site ${index + 1}`;
+
+            const complexName =
+                hodGetComplexName(siteName);
+
+            const sitePeriod =
+                auSites[index].dataset.sitePeriod ||
+                "";
+
+            const auPanel =
+                auSites[index].querySelector(
+                    '.daily-dashboard-tab-panel[data-panel="au"]'
+                );
+
+            for (
+                const categorySection
+                of getHodAuCategorySections(auPanel)
+            ) {
+                capturedSlides.push({
+                    title:
+                        "Engineering Performance - " +
+                        siteName,
+
+                    heading_style:
+                        "engineering",
+
+                    no_machines: Boolean(
+                        categorySection.element.querySelector(
+                            ".isd-no-machine-data"
+                        )
+                    ),
+
+                    image_data:
+                        await captureHodCategorySection(
+                            categorySection.element,
+                            auPanel
+                        )
+                });
+            }
+
+            const hoursPanel =
+                auSites[index].querySelector(
+                    '.daily-dashboard-tab-panel[data-panel="hours"]'
+                );
+
+            if (hoursPanel) {
+                const chartsRoot =
+                    hoursPanel.firstElementChild ||
+                    hoursPanel;
+
+                const originalPanelStyle =
+                    hoursPanel.getAttribute("style");
+
+                const originalRootStyle =
+                    chartsRoot.getAttribute("style");
+
+                try {
+                    hoursPanel.style.display = "block";
+                    hoursPanel.style.visibility = "visible";
+                    hoursPanel.style.width = "100%";
+                    hoursPanel.style.maxWidth = "none";
+                    hoursPanel.style.overflow = "visible";
+
+                    chartsRoot.style.display = "block";
+                    chartsRoot.style.visibility = "visible";
+                    chartsRoot.style.width = "100%";
+                    chartsRoot.style.maxWidth = "none";
+                    chartsRoot.style.overflow = "visible";
+
+                    await new Promise(resolve => {
+                        window.requestAnimationFrame(() => {
+                            window.requestAnimationFrame(
+                                resolve
+                            );
+                        });
+                    });
+
+                    const hoursCategories =
+                        getHodHoursCategorySections(hoursPanel);
+
+                    if (!hoursCategories.length) {
+                        throw new Error(
+                            "No hours-based machine categories found."
+                        );
+                    }
+
+                    for (const section of hoursCategories) {
+                        capturedSlides.push({
+                            title:
+                                "Hours Based Performance - " +
+                                siteName +
+                                " - " +
+                                section.category,
+
+                            heading_style: "engineering",
+
+                            image_data:
+                                await captureHodHoursSlide(
+                                    section.element
+                                )
+                        });
+                    }
+                } finally {
+                    if (originalPanelStyle === null) {
+                        hoursPanel.removeAttribute(
+                            "style"
+                        );
+                    } else {
+                        hoursPanel.setAttribute(
+                            "style",
+                            originalPanelStyle
+                        );
+                    }
+
+                    if (originalRootStyle === null) {
+                        chartsRoot.removeAttribute(
+                            "style"
+                        );
+                    } else {
+                        chartsRoot.setAttribute(
+                            "style",
+                            originalRootStyle
+                        );
+                    }
+                }
+            }
+        }
+
+        if (!capturedSlides.length) {
+            throw new Error(
+                __(
+                    "No report sections were available to capture."
+                )
+            );
+        }
+
+        const response = await frappe.call({
+            method:
+                "is_production.production.report." +
+                "hod_presentation.hod_presentation." +
+                "download_captured_presentation",
+            args: {
+                captured_slides:
+                    JSON.stringify(capturedSlides),
+                site: selectedSites.join(" / "),
+                end_date: endDate,
+                period_label:
+                    `Reporting to ${endDate}`
+            },
+            freeze: false
+        });
+
+        const result = response.message || {};
+
+        downloadHodBase64File(
+            result.content,
+            result.filename
+        );
+    } catch (error) {
+        console.error(
+            "HOD presentation generation failed.",
+            error
+        );
+
+        frappe.msgprint({
+            title: __("Presentation Error"),
+            indicator: "red",
+            message:
+                error?.message ||
+                __(
+                    "The presentation could not be generated."
+                )
+        });
+    } finally {
+        frappe.dom.unfreeze();
+    }
+}
+
+
+async function waitForHodDashboards(
+    layout
+) {
+    const maximumChecks = 120;
+
+    for (
+        let check = 0;
+        check < maximumChecks;
+        check += 1
+    ) {
+        const loadingItems =
+            layout.querySelectorAll(
+                ".hod-browser-au-loading"
+            );
+
+        if (!loadingItems.length) {
+            return;
+        }
+
+        await new Promise(resolve => {
+            window.setTimeout(
+                resolve,
+                250
+            );
+        });
+    }
+
+    throw new Error(
+        __(
+            "Availability and Utilisation graphs are still loading. Please try again."
+        )
+    );
+}
+
+
+const HOD_PRESENTATION_HOURS_CATEGORIES = [
+    "ADT",
+    "Dozer",
+    "Excavator"
+];
+
+
+function getHodCategoryFromHeading(value) {
+    const headingText = String(
+        value || ""
+    ).trim().toLowerCase();
+
+    return HOD_PRESENTATION_HOURS_CATEGORIES
+        .find(category => {
+            const categoryText =
+                category.toLowerCase();
+
+            return (
+                headingText.startsWith(
+                    categoryText + " "
+                ) ||
+                headingText === categoryText
+            );
+        }) || "";
+}
+
+
+function getHodAuCategorySections(auPanel) {
+    if (!auPanel) {
+        return [];
+    }
+
+    return Array.from(
+        auPanel.querySelectorAll(
+            ".isd-chart-section"
+        )
+    )
+        .map(element => {
+            const title = (
+                element.querySelector(
+                    ".isd-chart-section-title"
+                )?.textContent || ""
+            ).trim();
+
+            const category =
+                getHodCategoryFromHeading(title);
+
+            return category
+                ? { category, title, element }
+                : null;
+        })
+        .filter(Boolean);
+}
+
+
+function getHodHoursCategorySections(hoursPanel) {
+    if (!hoursPanel) {
+        return [];
+    }
+
+    const prefix =
+        "Daily average hours per machine for ";
+
+    const categories =
+        HOD_PRESENTATION_HOURS_CATEGORIES;
+
+    const charts = Array.from(
+        hoursPanel.querySelectorAll(
+            'svg[aria-label]'
+        )
+    );
+
+    const sections = new Map();
+
+    for (const svg of charts) {
+        const label = String(
+            svg.getAttribute("aria-label") || ""
+        ).trim();
+
+        if (!label.startsWith(prefix)) {
+            continue;
+        }
+
+        const categoryName =
+            label.slice(prefix.length).trim();
+
+        const category = categories.find(
+            name =>
+                name.toLowerCase() ===
+                categoryName.toLowerCase()
+        );
+
+        if (!category) {
+            continue;
+        }
+
+        const chartCard =
+            svg.closest(".frappe-card");
+
+        const chartSection =
+            chartCard?.parentElement;
+
+        if (
+            !chartSection ||
+            !hoursPanel.contains(chartSection)
+        ) {
+            continue;
+        }
+
+        if (!sections.has(category)) {
+            sections.set(category, {
+                category,
+                element: chartSection
+            });
+        }
+    }
+
+    return categories
+        .map(category => sections.get(category))
+        .filter(Boolean);
+}
+
+
+async function captureHodHoursSlide(element) {
+    const svg = element.querySelector(
+        'svg[aria-label^="Daily average hours per machine for "]'
+    );
+
+    if (!svg) {
+        throw new Error(
+            "Hours-based chart SVG was not found."
+        );
+    }
+
+    const originalStyle = svg.getAttribute("style");
+    const originalWidth = svg.getAttribute("width");
+    const originalHeight = svg.getAttribute("height");
+
+    try {
+        svg.style.width = "100%";
+        svg.style.height = "auto";
+        svg.style.maxWidth = "none";
+        svg.style.display = "block";
+
+        await new Promise(resolve => {
+            requestAnimationFrame(() => {
+                requestAnimationFrame(resolve);
+            });
+        });
+
+        return await captureHodSection(element, {
+            quality: 0.95,
+            pixelRatio: 1.5
+        });
+    } finally {
+        if (originalStyle === null) {
+            svg.removeAttribute("style");
+        } else {
+            svg.setAttribute("style", originalStyle);
+        }
+
+        if (originalWidth === null) {
+            svg.removeAttribute("width");
+        } else {
+            svg.setAttribute("width", originalWidth);
+        }
+
+        if (originalHeight === null) {
+            svg.removeAttribute("height");
+        } else {
+            svg.setAttribute("height", originalHeight);
+        }
+    }
+}
+
+
+async function captureHodCategorySection(
+    element,
+    categoryPanel
+) {
+    const styledElements = [
+        categoryPanel,
+        element,
+        ...element.querySelectorAll(
+            ".frappe-card, .isd-chart, .isd-chart-stack, "
+            + ".isd-chart-grid, .isd-yaxis, .isd-bar, "
+            + ".isd-category-average-line, .isd-short-haul-segment"
+        )
+    ];
+
+    const originalStyles = styledElements.map(
+        node => ({
+            node,
+            style: node.getAttribute("style")
+        })
+    );
+
+    const svgWidths = Array.from(
+        element.querySelectorAll("svg")
+    ).map(svg => {
+        return Number(
+            svg.getAttribute("width") ||
+            svg.viewBox?.baseVal?.width ||
+            svg.scrollWidth ||
+            0
+        );
+    });
+
+    const fullWidth = Math.max(
+        1180,
+        element.scrollWidth,
+        ...svgWidths.map(width => width + 90)
+    );
+
+    categoryPanel.style.display = "block";
+    categoryPanel.style.width = `${fullWidth}px`;
+    categoryPanel.style.maxWidth = "none";
+    categoryPanel.style.overflow = "visible";
+
+    element.style.width = `${fullWidth}px`;
+    element.style.maxWidth = "none";
+    element.style.overflow = "visible";
+
+    element.querySelectorAll(
+        ".frappe-card, .isd-chart, .isd-chart-stack"
+    ).forEach(node => {
+        node.style.maxWidth = "none";
+        node.style.overflow = "visible";
+    });
+
+    // Presentation-only plotting height.
+    // Keep all chart percentages and averages aligned.
+    // Use a taller plot for wide machine fleets in PowerPoint.
+    const machineBarCount = element.querySelectorAll(
+        ".isd-chart-section:not(.isd-daily-summary-section) "
+        + ".isd-chart-grid > .isd-bar"
+    ).length;
+
+    const plotHeight = machineBarCount >= 36 ? 460 : 300;
+    const originalPlotScale = 220;
+    const plotScale = plotHeight / originalPlotScale;
+
+    element.querySelectorAll(
+        ".isd-chart-section:not(.isd-daily-summary-section)"
+    ).forEach(chartSection => {
+        chartSection.querySelectorAll(
+            ".isd-chart-grid"
+        ).forEach(grid => {
+            ["height", "min-height", "max-height", "line-height"]
+                .forEach(property => {
+                    grid.style.setProperty(
+                        property, `${plotHeight}px`, "important"
+                    );
+                });
+
+            grid.style.setProperty(
+                "background-size", `100% ${plotHeight / 10}px`, "important"
+            );
+        });
+
+        chartSection.querySelectorAll(
+            ".isd-yaxis"
+        ).forEach(axis => {
+            ["height", "min-height", "max-height"]
+                .forEach(property => {
+                    axis.style.setProperty(
+                        property, `${plotHeight}px`, "important"
+                    );
+                });
+        });
+
+        chartSection.querySelectorAll(
+            ".isd-chart-grid > .isd-bar"
+        ).forEach(bar => {
+            const originalHeight = parseFloat(bar.style.height);
+
+            if (Number.isFinite(originalHeight)) {
+                const scaledHeight = Math.min(
+                    plotHeight,
+                    Math.max(2, originalHeight * plotScale)
+                );
+
+                bar.style.setProperty(
+                    "height", `${scaledHeight}px`, "important"
+                );
+            }
+
+            bar.style.setProperty(
+                "max-height", `${plotHeight}px`, "important"
+            );
+
+            bar.querySelectorAll(".isd-short-haul-segment")
+                .forEach(segment => {
+                    const height = parseFloat(segment.style.height);
+                    if (Number.isFinite(height)) {
+                        segment.style.setProperty(
+                            "height",
+                            `${height * plotScale}px`,
+                            "important"
+                        );
+                    }
+                });
+        });
+
+        chartSection.querySelectorAll(
+            ".isd-category-average-line"
+        ).forEach(line => {
+            const bottom = parseFloat(line.style.bottom);
+            if (Number.isFinite(bottom)) {
+                line.style.setProperty(
+                    "bottom",
+                    `${bottom * plotScale}px`,
+                    "important"
+                );
+            }
+        });
+    });
+
+    await new Promise(resolve => {
+        window.requestAnimationFrame(() => {
+            window.requestAnimationFrame(resolve);
+        });
+    });
+
+    try {
+        return await captureHodSection(
+            element,
+            {
+                quality: 0.92,
+                pixelRatio: 1.15,
+                width: fullWidth
+            }
+        );
+    } finally {
+        originalStyles.forEach(
+            ({ node, style }) => {
+                if (style === null) {
+                    node.removeAttribute("style");
+                } else {
+                    node.setAttribute(
+                        "style",
+                        style
+                    );
+                }
+            }
+        );
+    }
+}
+
+
+async function captureHodSection(element, options = {}) {
+    if (!element) {
+        throw new Error(
+            __("The report section was not found.")
+        );
+    }
+
+    const captureWidth = Math.max(
+        Number(options.width || 0),
+        element.scrollWidth,
+        element.offsetWidth,
+        element.clientWidth,
+        1
+    );
+
+    const captureHeight = Math.max(
+        element.scrollHeight,
+        element.offsetHeight,
+        element.clientHeight,
+        1
+    );
+
+    const capturePromise =
+        window.htmlToImage.toJpeg(
+            element,
+            {
+                quality:
+                    options.quality || 0.82,
+                pixelRatio:
+                    options.pixelRatio || 0.75,
+                backgroundColor: "#f7f8fa",
+                cacheBust: true,
+                width: captureWidth,
+                height: captureHeight,
+
+                style: {
+                    overflow: "visible"
+                },
+
+                filter: node => {
+                    if (!node) {
+                        return true;
+                    }
+
+                    const tagName = (
+                        node.tagName || ""
+                    ).toLowerCase();
+
+                    if (
+                        tagName === "script" ||
+                        tagName === "iframe" ||
+                        tagName === "grammarly-extension"
+                    ) {
+                        return false;
+                    }
+
+                    if (
+                        node.hasAttribute &&
+                        (
+                            node.hasAttribute(
+                                "data-gramm"
+                            ) ||
+                            node.hasAttribute(
+                                "data-gramm_editor"
+                            ) ||
+                            node.hasAttribute(
+                                "data-grammarly-shadow-root"
+                            )
+                        )
+                    ) {
+                        return false;
+                    }
+
+                    const className =
+                        typeof node.className === "string"
+                            ? node.className
+                            : "";
+
+                    if (
+                        className.includes(
+                            "grammarly"
+                        ) ||
+                        className.includes(
+                            "gr_"
+                        )
+                    ) {
+                        return false;
+                    }
+
+                    return true;
+                }
+            }
+        );
+
+    const timeoutPromise =
+        new Promise(
+            (_, reject) => {
+                window.setTimeout(
+                    () => {
+                        reject(
+                            new Error(
+                                __(
+                                    "Capturing a presentation slide exceeded 45 seconds."
+                                )
+                            )
+                        );
+                    },
+                    45000
+                );
+            }
+        );
+
+    return Promise.race([
+        capturePromise,
+        timeoutPromise
+    ]);
+}
+
+
+function downloadHodBase64File(
+
+    base64Content,
+    filename
+) {
+    if (!base64Content) {
+        throw new Error(
+            __("No PowerPoint file was returned.")
+        );
+    }
+
+    const binary = window.atob(
+        base64Content
+    );
+
+    const bytes = new Uint8Array(
+        binary.length
+    );
+
+    for (
+        let index = 0;
+        index < binary.length;
+        index += 1
+    ) {
+        bytes[index] = binary.charCodeAt(
+            index
+        );
+    }
+
+    const blob = new Blob(
+        [bytes],
+        {
+            type:
+                "application/vnd.openxmlformats-" +
+                "officedocument.presentationml.presentation"
+        }
+    );
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download =
+        filename ||
+        "HOD_Presentation.pptx";
+
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    window.setTimeout(() => {
+        URL.revokeObjectURL(url);
+    }, 1000);
+}
+
+
+
+
+function renderHodPresentationLayout(report) {
+    if (
+        !report ||
+        !report.page ||
+        !report.page.main
+    ) {
+        return;
+    }
+
+    const rawRows =
+        report.raw_data &&
+        Array.isArray(report.raw_data.result)
+            ? report.raw_data.result
+            : [];
+
+    const rows = hodOrderRowsByComplex(
+        (
+            rawRows.length
+                ? rawRows
+                : Array.isArray(report.data)
+                    ? report.data
+                    : []
+        ).filter(row => row && row.site)
+    );
+
+    report.page.main
+        .find(".hod-presentation-layout")
+        .remove();
+
+    if (report.$summary) {
+        report.$summary.hide();
+    }
+
+    if (report.$report) {
+        report.$report.hide();
+    }
+
+    if (report.$report_message) {
+        report.$report_message.hide();
+    }
+
+    if (report.$chart) {
+        report.$chart.hide();
+    }
+
+    if (!rows.length) {
+        return;
+    }
+
+    const renderToken = [
+        "hod",
+        Date.now(),
+        Math.random()
+            .toString(36)
+            .slice(2)
+    ].join("-");
+
+    const availabilitySlots =
+        hodRenderAvailabilityComplexGroups(rows);
+
+    const layout = $(`
+        <div
+            class="hod-presentation-layout"
+            data-render-token="${renderToken}"
+        >
+            <section class="hod-browser-section">
+                <div class="hod-browser-section-header">
+                    <div>
+                        <div class="hod-browser-section-title">
+                            HOD Production Summary
+                        </div>
+
+                        <div class="hod-browser-section-subtitle">
+                            ${hodEscape(rows[0].period)}
+                        </div>
+                    </div>
+
+                    <div class="hod-browser-section-badge">
+                        ${rows.length}
+                        Site${rows.length === 1 ? "" : "s"}
+                    </div>
+                </div>
+
+                <div class="hod-browser-filter-ribbon">
+                    <div class="hod-browser-filter-item">
+                        <span>Summary Type</span>
+                        <strong>
+                            ${hodEscape(
+                                rows[0].summary_type
+                            )}
+                        </strong>
+                    </div>
+
+                    <div class="hod-browser-filter-item">
+                        <span>Machine Scope</span>
+                        <strong>
+                            ${hodEscape(
+                                rows[0].machine_scope
+                            )}
+                        </strong>
+                    </div>
+
+                    <div class="hod-browser-filter-item">
+                        <span>A &amp; U Target</span>
+                        <strong>
+                            ${hodEscape(
+                                rows[0].au_target_filter
+                            )}
+                        </strong>
+                    </div>
+                </div>
+
+                <div class="hod-browser-complex-list">
+                    ${hodRenderProductionComplexGroups(rows)}
+                </div>
+            </section>
+
+            <section
+                class="
+                    hod-browser-section
+                    hod-browser-au-section
+                "
+            >
+                <div class="hod-browser-section-header">
+                    <div>
+                        <div class="hod-browser-section-title">
+                            Availability &amp; Utilisation
+                        </div>
+
+                        <div class="hod-browser-section-subtitle">
+                            ${hodEscape(rows[0].period)}
+                        </div>
+                    </div>
+
+                    <div class="hod-browser-section-badge">
+                        ${rows.length}
+                        Site${rows.length === 1 ? "" : "s"}
+                    </div>
+                </div>
+
+                <div class="hod-browser-complex-list">
+                    ${availabilitySlots}
+                </div>
+            </section>
+        </div>
+    `);
+
+    if (
+        report.$summary &&
+        report.$summary.length
+    ) {
+        layout.insertAfter(
+            report.$summary
+        );
+    } else {
+        report.page.main.prepend(
+            layout
+        );
+    }
+
+    loadHodAvailabilityDashboards(
+        report,
+        rows,
+        renderToken
+    );
+}
+
+
+function filterHodDashboardCategories(
+    dashboard
+) {
+    if (!dashboard) {
+        return;
+    }
+
+    dashboard.querySelectorAll(
+        ".isd-metric"
+    ).forEach(element => {
+        const category =
+            getHodCategoryFromHeading(
+                element.querySelector(
+                    ".isd-metric-title"
+                )?.textContent
+            );
+
+        if (!category) {
+            element.remove();
+        }
+    });
+
+    dashboard.querySelectorAll(
+        ".isd-chart-section"
+    ).forEach(element => {
+        const category =
+            getHodCategoryFromHeading(
+                element.querySelector(
+                    ".isd-chart-section-title"
+                )?.textContent
+            );
+
+        if (!category) {
+            element.remove();
+        }
+    });
+
+    const hoursPanel =
+        dashboard.querySelector(
+            '.daily-dashboard-tab-panel[data-panel="hours"]'
+        );
+
+    if (hoursPanel) {
+        const chartsRoot =
+            hoursPanel.firstElementChild ||
+            hoursPanel;
+
+        Array.from(
+            chartsRoot.children || []
+        ).forEach(element => {
+            if (
+                !getHodCategoryFromHeading(
+                    element.firstElementChild
+                        ?.textContent
+                )
+            ) {
+                element.remove();
+            }
+        });
+    }
+}
+
+
+async function loadHodAvailabilityDashboards(
+    report,
+    rows,
+    renderToken
+) {
+    const getFilterValue = fieldname => {
+        if (
+            report &&
+            typeof report.get_filter_value === "function"
+        ) {
+            return report.get_filter_value(
+                fieldname
+            );
+        }
+
+        return frappe.query_report
+            .get_filter_value(
+                fieldname
+            );
+    };
+
+    const method =
+        "is_production.production.report." +
+        "hod_presentation.hod_presentation." +
+        "get_availability_dashboard_html";
+
+    const commonArgs = {
+        summary_type: getFilterValue(
+            "summary_type"
+        ),
+        machine_scope: getFilterValue(
+            "machine_scope"
+        ),
+        asset_ownership: getFilterValue(
+            "asset_ownership"
+        ),
+        au_target_filter: getFilterValue(
+            "au_target_filter"
+        )
+    };
+
+    const jobs = rows.map(
+        async (row, index) => {
+            const findTarget = () => {
+                const $layout =
+                    report.page.main.find(
+                        `.hod-presentation-layout[data-render-token="${renderToken}"]`
+                    );
+
+                return $layout.find(
+                    `.hod-browser-au-site[data-site-index="${index}"]`
+                );
+            };
+
+            try {
+                const response =
+                    await frappe.call({
+                        method,
+                        args: {
+                            ...commonArgs,
+                            site: row.site,
+                            start_date: row.start_date,
+                            end_date: row.end_date
+                        },
+                        freeze: false
+                    });
+
+                const payload =
+                    response.message || {};
+
+                const dashboardHtml =
+                    payload.html || "";
+
+                const $target =
+                    findTarget();
+
+                if (!$target.length) {
+                    return;
+                }
+
+                if (!dashboardHtml) {
+                    $target.html(`
+                        <div class="hod-browser-au-error">
+                            No Availability &amp; Utilisation
+                            dashboard was returned for
+                            ${hodEscape(row.site)}.
+                        </div>
+                    `);
+
+                    return;
+                }
+
+                const $dashboard = $(`
+                    <div class="hod-browser-au-dashboard-copy"></div>
+                `);
+
+                $dashboard.html(
+                    dashboardHtml
+                );
+
+                filterHodDashboardCategories(
+                    $dashboard[0]
+                );
+
+                $dashboard.prepend(`
+                    <div class="hod-browser-dashboard-site-name">
+                        ${hodEscape(row.site)}
+                        <div style="
+                            margin-top:4px;
+                            font-size:10px;
+                            font-weight:700;
+                            opacity:0.82;
+                            text-transform:none;
+                        ">
+                            ${hodEscape(row.period)}
+                        </div>
+                    </div>
+                `);
+
+                $target
+                    .empty()
+                    .append(
+                        $dashboard
+                    );
+            } catch (error) {
+                const $target =
+                    findTarget();
+
+                if (!$target.length) {
+                    return;
+                }
+
+                const errorMessage =
+                    error?.message ||
+                    __(
+                        "Unable to load Availability & Utilisation."
+                    );
+
+                $target.html(`
+                    <div class="hod-browser-au-error">
+                        <strong>
+                            ${hodEscape(row.site)}
+                        </strong>
+                        <br>
+                        ${hodEscape(errorMessage)}
+                    </div>
+                `);
+            }
+        }
+    );
+
+    await Promise.all(
+        jobs
+    );
+
+    window.setTimeout(() => {
+        window.dispatchEvent(
+            new Event("resize")
+        );
+    }, 100);
+}
+
+
+
+
+function hodRenderSiteCard(row) {
+    const forecastClass =
+        hodNumber(row.forecast_variance_bcm) >= 0
+            ? "positive"
+            : "negative";
+
+    const forecastTextClass =
+        hodNumber(row.forecast_variance_bcm) >= 0
+            ? "hod-browser-positive"
+            : "hod-browser-negative";
+
+    const wasteClass =
+        hodNumber(row.waste_variance_bcm) >= 0
+            ? "hod-browser-positive"
+            : "hod-browser-negative";
+
+    const coalClass =
+        hodNumber(row.coal_variance_tons) >= 0
+            ? "hod-browser-positive"
+            : "hod-browser-negative";
+
+    const averageBcmH = hodNumber(row.average_bcm_h);
+
+    const bcmHourClass =
+        averageBcmH >= 220
+            ? "hod-browser-positive"
+            : averageBcmH >= 200
+                ? "hod-browser-warning"
+                : "hod-browser-negative";
+
+    const forecastDeliveryClass =
+        hodNumber(row.forecast_delivery_percent) >= 100
+            ? "hod-browser-positive"
+            : "hod-browser-warning";
+
+    return `
+        <article class="hod-browser-site-card">
+            <div class="hod-browser-site-header">
+                ${hodEscape(row.site)}
+            </div>
+
+            <div class="hod-browser-site-period">
+                ${hodEscape(row.period)}
+            </div>
+
+            <div class="hod-browser-variance-box ${forecastClass}">
+                <div class="hod-browser-variance-label">
+                    Forecast Variance
+                </div>
+
+                <div class="hod-browser-variance-value ${forecastTextClass}">
+                    ${hodFormatSigned(
+                        row.forecast_variance_bcm,
+                        0
+                    )} BCM
+                </div>
+            </div>
+
+            <table class="hod-browser-metric-table">
+                <tbody>
+                    ${hodMetricRow(
+                        "Monthly target",
+                        "BCM",
+                        hodFormatNumber(
+                            row.monthly_target_bcm,
+                            0
+                        )
+                    )}
+
+                    ${hodMetricRow(
+                        "Forecast",
+                        "BCM",
+                        hodFormatNumber(
+                            row.forecast_bcm,
+                            0
+                        )
+                    )}
+
+                    ${hodMetricRow(
+                        "Waste variance",
+                        "BCM",
+                        hodFormatSigned(
+                            row.waste_variance_bcm,
+                            0
+                        ),
+                        wasteClass
+                    )}
+
+                    ${hodMetricRow(
+                        "Coal variance",
+                        "TONS",
+                        hodFormatSigned(
+                            row.coal_variance_tons,
+                            0
+                        ),
+                        coalClass
+                    )}
+
+                    ${hodMetricRow(
+                        "Actual BCMs",
+                        "BCM",
+                        hodFormatNumber(
+                            row.actual_bcm,
+                            0
+                        ),
+                        "hod-browser-primary"
+                    )}
+
+                    ${hodMetricRow(
+                        "Actual coal",
+                        "TONS",
+                        hodFormatNumber(
+                            row.actual_coal_tons,
+                            0
+                        )
+                    )}
+
+                    ${hodMetricRow(
+                        "Daily required",
+                        "BCM",
+                        hodFormatNumber(
+                            row.daily_required_bcm,
+                            1
+                        )
+                    )}
+
+                    ${hodMetricRow(
+                        "Daily achieved",
+                        "BCM",
+                        hodFormatNumber(
+                            row.daily_achieved_bcm,
+                            1
+                        )
+                    )}
+
+                    ${hodMetricRow(
+                        "Average BCM/H",
+                        "",
+                        hodFormatNumber(
+                            row.average_bcm_h,
+                            1
+                        ),
+                        bcmHourClass
+                    )}
+
+                    ${hodMetricRow(
+                        "Days worked / left",
+                        "",
+                        `${hodFormatNumber(
+                            row.days_worked,
+                            2
+                        )} / ${hodFormatNumber(
+                            row.days_left,
+                            2
+                        )}`
+                    )}
+
+                    ${hodMetricRow(
+                        "Strip ratio",
+                        "",
+                        hodFormatNumber(
+                            row.strip_ratio,
+                            1
+                        )
+                    )}
+                </tbody>
+            </table>
+
+            <div class="hod-browser-forecast-footer">
+                Forecast delivery
+                <strong class="${forecastDeliveryClass}">
+                    ${hodFormatNumber(
+                        row.forecast_delivery_percent,
+                        1
+                    )}%
+                </strong>
+            </div>
+        </article>
+    `;
+}
+
+
+function hodMetricRow(
+    label,
+    unit,
+    value,
+    className = ""
+) {
+    return `
+        <tr>
+            <td class="hod-browser-metric-label">
+                ${hodEscape(label)}
+            </td>
+
+            <td class="hod-browser-metric-unit ${className}">
+                ${hodEscape(unit)}
+            </td>
+
+            <td class="hod-browser-metric-value ${className}">
+                ${hodEscape(value)}
+            </td>
+        </tr>
+    `;
+}
+
+
+function hodKpiCard(
+    label,
+    value,
+    note,
+    className = ""
+) {
+    return `
+        <div class="hod-browser-kpi-card ${className}">
+            <div class="hod-browser-kpi-label">
+                ${hodEscape(label)}
+            </div>
+
+            <div class="hod-browser-kpi-value">
+                ${hodEscape(value)}
+            </div>
+
+            <div class="hod-browser-kpi-note">
+                ${hodEscape(note)}
+            </div>
+        </div>
+    `;
+}
+
+
+function hodNumber(value) {
+    const numericValue = Number(
+        String(value ?? 0)
+            .replace(/,/g, "")
+            .replace(/%/g, "")
+            .trim()
+    );
+
+    return Number.isFinite(numericValue)
+        ? numericValue
+        : 0;
+}
+
+
+function hodFormatNumber(
+    value,
+    decimals = 0
+) {
+    return new Intl.NumberFormat(
+        "en-US",
+        {
+            minimumFractionDigits: decimals,
+            maximumFractionDigits: decimals
+        }
+    ).format(
+        hodNumber(value)
+    );
+}
+
+
+function hodFormatSigned(
+    value,
+    decimals = 0
+) {
+    const numericValue = hodNumber(value);
+
+    const sign =
+        numericValue >= 0
+            ? "+"
+            : "-";
+
+    return `${sign}${hodFormatNumber(
+        Math.abs(numericValue),
+        decimals
+    )}`;
+}
+
+
+function hodEscape(value) {
+    return frappe.utils.escape_html(
+        String(value ?? "")
+    );
+}
+
+
+function injectHodPresentationStyles() {
+    if (document.getElementById("hod-presentation-report-style")) return;
+
+    const style = document.createElement("style");
+    style.id = "hod-presentation-report-style";
+    style.textContent = `
+        .hod-positive {
+            color: #18a957;
+            font-weight: 800;
+        }
+
+        .hod-negative {
+            color: #e03124;
+            font-weight: 800;
+        }
+
+        .hod-kpi-primary {
+            color: #0f1f53;
+            font-weight: 900;
+        }
+
+        .hod-kpi-good,
+        .hod-kpi-warning,
+        .hod-kpi-bad,
+        .hod-au-good,
+        .hod-au-bad {
+            display: inline-block;
+            min-width: 62px;
+            padding: 3px 8px;
+            border-radius: 999px;
+            font-weight: 900;
+            text-align: center;
+        }
+
+        .hod-kpi-good,
+        .hod-au-good {
+            color: #166534;
+            background: #dcfce7;
+            border: 1px solid #86efac;
+        }
+
+        .hod-kpi-warning {
+            color: #92400e;
+            background: #fef3c7;
+            border: 1px solid #fcd34d;
+        }
+
+        .hod-kpi-bad,
+        .hod-au-bad {
+            color: #b91c1c;
+            background: #fee2e2;
+            border: 1px solid #fca5a5;
+        }
+
+        .hod-warning {
+            color: #b45309;
+            font-weight: 800;
+        }
+
+        .hod-muted {
+            color: #64748b;
+            font-weight: 700;
+        }
+
+        .hod-presentation-layout {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            margin: 12px 0 28px;
+        }
+
+        .hod-browser-section {
+            background: #f7f8fa;
+            border: 1px solid #cfd6de;
+            border-radius: 10px;
+            padding: 12px;
+            box-shadow: 0 2px 8px rgba(15, 31, 83, 0.06);
+        }
+
+        .hod-browser-section-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            background: #0f1f53;
+            color: #ffffff;
+            border-radius: 7px;
+            padding: 10px 14px;
+            margin-bottom: 12px;
+        }
+
+        .hod-browser-section-title {
+            font-size: 17px;
+            line-height: 1.2;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+
+        .hod-browser-section-subtitle {
+            margin-top: 3px;
+            font-size: 11px;
+            color: #d9e2ec;
+            font-weight: 600;
+        }
+
+        .hod-browser-section-badge {
+            background: #ffffff;
+            color: #0f1f53;
+            border-radius: 999px;
+            padding: 5px 12px;
+            font-size: 11px;
+            font-weight: 900;
+            white-space: nowrap;
+        }
+
+        .hod-browser-production-card {
+            background: #ffffff;
+            border: 1px solid #d7dde5;
+            border-radius: 8px;
+            padding: 12px;
+        }
+
+        .hod-browser-variance-box {
+            border-radius: 7px;
+            padding: 14px;
+            margin-bottom: 12px;
+            text-align: center;
+            background: #f5eaea;
+        }
+
+        .hod-browser-variance-box.positive {
+            background: #dfeee5;
+        }
+
+        .hod-browser-variance-box.negative {
+            background: #f5eaea;
+        }
+
+        .hod-browser-variance-label {
+            color: #62708a;
+            font-size: 11px;
+            line-height: 1.2;
+            font-weight: 900;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+
+        .hod-browser-variance-value {
+            font-size: 26px;
+            line-height: 1.1;
+            font-weight: 900;
+        }
+
+        .hod-browser-metric-table {
+            width: 100%;
+            border-collapse: collapse;
+            overflow: hidden;
+            border-radius: 7px;
+        }
+
+        .hod-browser-metric-table tr:nth-child(even) {
+            background: #f0f2f5;
+        }
+
+        .hod-browser-metric-table td {
+            border: 1px solid #d7dde5;
+            padding: 7px 10px;
+            font-size: 12px;
+            line-height: 1.2;
+        }
+
+        .hod-browser-metric-label {
+            width: 55%;
+            color: #5e6c84;
+            font-weight: 600;
+        }
+
+        .hod-browser-metric-unit {
+            width: 15%;
+            color: #304055;
+            text-align: right;
+            font-weight: 800;
+        }
+
+        .hod-browser-metric-value {
+            width: 30%;
+            color: #304055;
+            text-align: right;
+            font-weight: 900;
+        }
+
+        .hod-browser-kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(160px, 1fr));
+            gap: 12px;
+        }
+
+        .hod-browser-au-grid {
+            grid-template-columns: repeat(3, minmax(180px, 1fr));
+        }
+
+        .hod-browser-kpi-card {
+            background: #ffffff;
+            border: 1px solid #d7dde5;
+            border-top: 4px solid #0f1f53;
+            border-radius: 8px;
+            padding: 14px;
+            min-height: 125px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            text-align: center;
+        }
+
+        .hod-browser-kpi-card.hod-browser-positive {
+            border-top-color: #18a957;
+        }
+
+        .hod-browser-kpi-card.hod-browser-negative {
+            border-top-color: #e03124;
+        }
+
+        .hod-browser-kpi-card.hod-browser-warning {
+            border-top-color: #d97706;
+        }
+
+        .hod-browser-kpi-card.hod-browser-primary {
+            border-top-color: #0f1f53;
+        }
+
+        .hod-browser-kpi-label {
+            color: #62708a;
+            font-size: 10px;
+            font-weight: 900;
+            text-transform: uppercase;
+            margin-bottom: 7px;
+        }
+
+        .hod-browser-kpi-value {
+            color: #0f1f53;
+            font-size: 27px;
+            line-height: 1.05;
+            font-weight: 900;
+        }
+
+        .hod-browser-kpi-card.hod-browser-positive
+        .hod-browser-kpi-value {
+            color: #18a957;
+        }
+
+        .hod-browser-kpi-card.hod-browser-negative
+        .hod-browser-kpi-value {
+            color: #e03124;
+        }
+
+        .hod-browser-kpi-card.hod-browser-warning
+        .hod-browser-kpi-value {
+            color: #d97706;
+        }
+
+        .hod-browser-kpi-note {
+            color: #64748b;
+            font-size: 10px;
+            line-height: 1.25;
+            margin-top: 8px;
+        }
+
+        .hod-browser-filter-ribbon {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(180px, 1fr));
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+
+        .hod-browser-filter-item {
+            background: #ffffff;
+            border: 1px solid #d7dde5;
+            border-radius: 7px;
+            padding: 9px 11px;
+        }
+
+        .hod-browser-filter-item span {
+            display: block;
+            color: #64748b;
+            font-size: 9px;
+            font-weight: 900;
+            text-transform: uppercase;
+            margin-bottom: 3px;
+        }
+
+        .hod-browser-filter-item strong {
+            display: block;
+            color: #102a43;
+            font-size: 12px;
+            line-height: 1.25;
+        }
+
+        .hod-browser-chart-title {
+            color: #102a43;
+            font-size: 13px;
+            font-weight: 900;
+            text-transform: uppercase;
+            margin: 16px 2px 8px;
+        }
+
+        .hod-browser-chart-slot {
+            width: 100%;
+        }
+
+        .hod-browser-chart {
+            display: block !important;
+            width: 100%;
+            margin: 0 !important;
+            padding: 12px;
+            background: #ffffff;
+            border: 1px solid #d7dde5;
+            border-radius: 8px;
+        }
+
+        .hod-browser-chart .chart-container {
+            margin: 0 !important;
+        }
+
+        .hod-browser-empty {
+            background: #ffffff;
+            border: 1px dashed #cfd6de;
+            border-radius: 8px;
+            padding: 22px;
+            color: #64748b;
+            text-align: center;
+            font-size: 12px;
+        }
+
+        .hod-browser-positive {
+            color: #18a957 !important;
+        }
+
+        .hod-browser-negative {
+            color: #e03124 !important;
+        }
+
+        .hod-browser-primary {
+            color: #0f1f53 !important;
+        }
+
+        .hod-browser-warning {
+            color: #d97706 !important;
+        }
+
+        .hod-browser-muted {
+            color: #64748b !important;
+        }
+
+        .hod-browser-complex-list {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+        }
+
+        .hod-browser-complex-group {
+            min-width: 0;
+        }
+
+        .hod-browser-complex-title {
+            background: #111827;
+            color: #ffffff;
+            border-left: 5px solid #e03124;
+            padding: 9px 12px;
+            margin: 2px 0 10px;
+            border-radius: 5px;
+            font-size: 15px;
+            line-height: 1.2;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+        }
+
+        .hod-browser-site-grid {
+            display: grid;
+            grid-template-columns: repeat(
+                auto-fit,
+                minmax(430px, 1fr)
+            );
+            gap: 12px;
+            align-items: start;
+        }
+
+        .hod-browser-site-card {
+            min-width: 0;
+            background: #f7f8fa;
+            border: 1px solid #cfd6de;
+            border-radius: 9px;
+            padding: 10px;
+        }
+
+        .hod-browser-site-header {
+            background: #0f1f53;
+            color: #ffffff;
+            text-align: center;
+            text-transform: uppercase;
+            font-size: 17px;
+            line-height: 1.1;
+            font-weight: 900;
+            letter-spacing: 0.3px;
+            border-radius: 6px;
+            padding: 9px 12px;
+            margin-bottom: 10px;
+        }
+
+        .hod-browser-site-period {
+            margin: -2px 0 9px;
+            color: #64748b;
+            font-size: 10px;
+            font-weight: 800;
+            text-align: center;
+        }
+
+        .hod-browser-site-footer {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 9px;
+        }
+
+        .hod-browser-site-footer span {
+            background: #ffffff;
+            border: 1px solid #d7dde5;
+            border-radius: 999px;
+            color: #62708a;
+            padding: 4px 8px;
+            font-size: 9px;
+            font-weight: 800;
+        }
+
+
+        .hod-browser-forecast-footer {
+            color: #62708a;
+            padding: 8px 4px 1px;
+            font-size: 11px;
+            line-height: 1.2;
+            font-weight: 600;
+        }
+
+        .hod-browser-forecast-footer strong {
+            margin-left: 3px;
+            font-weight: 900;
+        }
+
+        .hod-browser-au-section {
+            padding: 12px;
+        }
+
+        .hod-browser-au-site-stack {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+
+        .hod-browser-au-site {
+            width: 100%;
+            min-width: 0;
+            background: #ffffff;
+            border: 1px solid #d7dde5;
+            border-radius: 9px;
+            overflow: hidden;
+        }
+
+        .hod-browser-au-loading,
+        .hod-browser-au-error {
+            min-height: 110px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 22px;
+            text-align: center;
+            color: #64748b;
+            background: #ffffff;
+            font-size: 12px;
+            font-weight: 800;
+        }
+
+        .hod-browser-au-error {
+            color: #b91c1c;
+            background: #fff7f7;
+        }
+
+        .hod-browser-dashboard-site-name {
+            padding: 12px 16px;
+            background: #0f1f53;
+            color: #ffffff;
+            border-bottom: 4px solid #e03124;
+            font-size: 18px;
+            font-weight: 900;
+            letter-spacing: 0.4px;
+            text-align: center;
+            text-transform: uppercase;
+        }
+
+        .hod-browser-au-dashboard-copy {
+            width: 100%;
+            max-width: 100%;
+            overflow-x: auto;
+            background: #ffffff;
+        }
+
+        .hod-browser-au-dashboard-copy
+        .eng-dashboard--daily-availability,
+        .hod-browser-au-dashboard-copy
+        .eng-dashboard,
+        .hod-browser-au-dashboard-copy
+        .isd-hourly-dashboard {
+            width: 100% !important;
+            min-width: 1180px;
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+
+        .hod-browser-au-dashboard-copy
+        .isd-note {
+            display: none !important;
+        }
+
+        .hod-browser-au-dashboard-copy
+        .isd-site {
+            margin: 0 !important;
+            border: 0 !important;
+            border-radius: 0 !important;
+            box-shadow: none !important;
+        }
+
+        .hod-browser-au-dashboard-copy
+        .isd-site-title {
+            border-radius: 0 !important;
+        }
+
+        .hod-browser-au-dashboard-copy
+        .isd-chart-stack {
+            width: 100% !important;
+        }
+
+        .hod-browser-au-dashboard-copy
+        .isd-contentrow {
+            width: 100% !important;
+        }
+
+        .hod-browser-au-dashboard-copy
+        .isd-metrics {
+            display: flex !important;
+            flex-wrap: nowrap !important;
+            justify-content: stretch !important;
+            align-items: stretch !important;
+            gap: 8px !important;
+            width: 100% !important;
+        }
+
+        .hod-browser-au-dashboard-copy
+        .isd-metric {
+            flex: 1 1 0 !important;
+            width: auto !important;
+            min-width: 105px !important;
+            max-width: none !important;
+        }
+
+        .hod-browser-au-dashboard-copy
+        .isd-chart-stack {
+            width: 100% !important;
+        }
+
+        .hod-browser-au-dashboard-copy
+        .isd-chart-section {
+            width: 100% !important;
+            margin-bottom: 0 !important;
+        }
+
+        @media (max-width: 1100px) {
+            .hod-browser-site-grid,
+            .hod-browser-kpi-grid,
+            .hod-browser-au-grid {
+                grid-template-columns: repeat(2, minmax(160px, 1fr));
+            }
+        }
+
+        @media (max-width: 768px) {
+            .hod-browser-section-header {
+                align-items: flex-start;
+                flex-direction: column;
+            }
+
+            .hod-browser-site-grid,
+            .hod-browser-kpi-grid,
+            .hod-browser-au-grid,
+            .hod-browser-filter-ribbon {
+                grid-template-columns: 1fr;
+            }
+
+            .hod-browser-section-badge {
+                align-self: flex-start;
+            }
+
+            .hod-browser-metric-label {
+                width: 48%;
+            }
+
+            .hod-browser-metric-unit {
+                width: 18%;
+            }
+
+            .hod-browser-metric-value {
+                width: 34%;
+            }
+        }
+
+        .hod-downtime-summary {
+            margin: 16px;
+            padding: 16px;
+            background: linear-gradient(135deg, #f8fafc 0%, #eef2f7 100%);
+            border: 1px solid #cbd5e1;
+            border-radius: 14px;
+            box-shadow: 0 6px 18px rgba(15, 31, 83, 0.10);
+            overflow: hidden;
+        }
+
+        .hod-downtime-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 14px 18px;
+            margin: -16px -16px 16px;
+            background: linear-gradient(135deg, #0f1f53 0%, #1d3b82 100%);
+            color: #ffffff;
+            border-bottom: 4px solid #e03124;
+        }
+
+        .hod-downtime-title {
+            font-size: 18px;
+            line-height: 1.2;
+            font-weight: 900;
+            letter-spacing: 0.4px;
+            text-transform: uppercase;
+        }
+
+        .hod-downtime-period {
+            margin-top: 5px;
+            color: #dbeafe;
+            font-size: 11px;
+            font-weight: 700;
+        }
+
+        .hod-downtime-kpis {
+            display: grid;
+            grid-template-columns: repeat(6, minmax(130px, 1fr));
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+
+        .hod-downtime-kpi {
+            position: relative;
+            min-height: 92px;
+            padding: 13px 10px;
+            background: #ffffff;
+            border: 1px solid #d7dee8;
+            border-radius: 12px;
+            box-shadow: 0 3px 10px rgba(15, 31, 83, 0.07);
+            text-align: center;
+            overflow: hidden;
+        }
+
+        .hod-downtime-kpi::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 5px;
+            background: #0f1f53;
+        }
+
+        .hod-downtime-kpi span {
+            display: block;
+            margin-top: 5px;
+            margin-bottom: 8px;
+            color: #64748b;
+            font-size: 9px;
+            line-height: 1.2;
+            font-weight: 900;
+            letter-spacing: 0.4px;
+            text-transform: uppercase;
+        }
+
+        .hod-downtime-kpi strong {
+            display: block;
+            color: #102a43;
+            font-size: 18px;
+            line-height: 1.15;
+            font-weight: 900;
+            overflow-wrap: anywhere;
+        }
+
+        .hod-downtime-open::before {
+            background: #e03124;
+        }
+
+        .hod-downtime-open strong {
+            color: #c81e1e;
+        }
+
+        .hod-downtime-closed::before {
+            background: #18a957;
+        }
+
+        .hod-downtime-closed strong {
+            color: #168447;
+        }
+
+        .hod-downtime-table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            background: #ffffff;
+            border: 1px solid #d7dee8;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 3px 10px rgba(15, 31, 83, 0.06);
+        }
+
+        .hod-downtime-table thead th {
+            padding: 11px 10px;
+            background: #0f1f53;
+            color: #ffffff;
+            border-right: 1px solid rgba(255, 255, 255, 0.18);
+            font-size: 10px;
+            font-weight: 900;
+            letter-spacing: 0.3px;
+            text-align: left;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+
+        .hod-downtime-table thead th:last-child {
+            border-right: none;
+        }
+
+        .hod-downtime-table tbody td {
+            padding: 11px 10px;
+            border-right: 1px solid #e2e8f0;
+            border-bottom: 1px solid #e2e8f0;
+            color: #334155;
+            font-size: 11px;
+            line-height: 1.35;
+            font-weight: 700;
+            vertical-align: middle;
+        }
+
+        .hod-downtime-table tbody td:last-child {
+            border-right: none;
+        }
+
+        .hod-downtime-table tbody tr:last-child td {
+            border-bottom: none;
+        }
+
+        .hod-downtime-table tbody tr:nth-child(even) {
+            background: #f8fafc;
+        }
+
+        .hod-downtime-table tbody tr:hover {
+            background: #eef4ff;
+        }
+
+        .hod-downtime-table tbody td:nth-child(2),
+        .hod-downtime-table tbody td:nth-child(3),
+        .hod-downtime-table tbody td:nth-child(4),
+        .hod-downtime-table tbody td:nth-child(5) {
+            text-align: center;
+            font-weight: 900;
+        }
+
+        .hod-downtime-table tbody td:nth-child(2) {
+            color: #b45309;
+        }
+
+        .hod-downtime-table tbody td:nth-child(4) {
+            color: #c81e1e;
+        }
+
+        .hod-downtime-table tbody td:nth-child(5) {
+            color: #168447;
+        }
+
+        .hod-downtime-empty {
+            padding: 24px !important;
+            text-align: center !important;
+            color: #64748b !important;
+            font-style: italic;
+        }
+
+        @media (max-width: 1200px) {
+            .hod-downtime-kpis {
+                grid-template-columns: repeat(3, minmax(150px, 1fr));
+            }
+        }
+
+        @media (max-width: 768px) {
+            .hod-downtime-summary {
+                margin: 8px;
+                padding: 10px;
+            }
+
+            .hod-downtime-header {
+                margin: -10px -10px 12px;
+                padding: 12px;
+            }
+
+            .hod-downtime-kpis {
+                grid-template-columns: repeat(2, minmax(130px, 1fr));
+            }
+
+            .hod-downtime-table {
+                display: block;
+                overflow-x: auto;
+                white-space: nowrap;
+            }
+        }
+
+    `;
+
+    document.head.appendChild(style);
+}
