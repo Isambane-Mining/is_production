@@ -9884,7 +9884,7 @@ const View = (() => {
   let terrain = null, geom = null, mat = null, perim = null;
   let surfNow = null, insNow = null;
   let vex = 3;
-  const show = { outlines: true, resOut: true, labels: true, paths: true, roads: true, dumps: true, contours: false, ovl: true, keep: true, limits: true, pits: true, drains: true, fills: true, water: true };
+  const show = { outlines: false, resOut: false, labels: false, paths: false, roads: false, dumps: false, contours: false, ovl: false, keep: false, limits: false, pits: false, drains: false, fills: false, water: true }; // (the layers start off: Layers menu)
   let satOn = false, satTex = null, tintTex = null, tintData = null, tintOn = false, matTex = null, matData = null;
   let needsRender = true, needsDrape = false, labelsDirty = true;
   const G = {};
@@ -16528,15 +16528,16 @@ const Measure = (() => {
    Kept in this browser (localStorage), for every project. ===== */
 const Layout = (() => {
   const KEY = 'rollover.layout';
-  const DEF = { side: 372, insp: 290, tl: 0, sp: 250, legend: true, secLegend: true, gantt: true, acc: true };
+  const DEF = { side: 372, insp: 290, tl: 0, sp: 250, legend: false, secLegend: false, gantt: false, acc: false }; // (the legends start off)
+  const V = 2, LEG = ['legend', 'secLegend', 'gantt', 'acc']; // (version 2: the legends were on by default before, so a choice kept from then is dropped once)
   // limits in pixels; tl 0 = the timeline takes the height it needs
   const LIM = { side: [240, 900], insp: [220, 700], tl: [96, 900], sp: [130, 900] };
   const S = Object.assign({}, DEF);
   const $ = id => document.getElementById(id);
   const narrow = () => window.matchMedia('(max-width: 820px)').matches;
 
-  function load() { try { const o = JSON.parse(localStorage.getItem(KEY) || '{}'); for (const k of Object.keys(DEF)) if (typeof o[k] === typeof DEF[k]) S[k] = o[k]; } catch (e) {} }
-  function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
+  function load() { try { const o = JSON.parse(localStorage.getItem(KEY) || '{}'); for (const k of Object.keys(DEF)) if (typeof o[k] === typeof DEF[k] && (o.v === V || !LEG.includes(k))) S[k] = o[k]; } catch (e) {} }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(Object.assign({ v: V }, S))); } catch (e) {} }
   // the largest a panel may be in the window as it is now, so that the 3D view keeps some room
   function maxOf(k) {
     const W = window.innerWidth, H = window.innerHeight;
@@ -18684,7 +18685,7 @@ const App = {
   P: null, surf: null, ws: null, res: null, pb: null, day: -1, stale: false,
   selBlock: -1, actId: null, roadId: null, dumpId: null,
   tab: 'project', colorBy: 'status', colorAttr: '',
-  show: { outlines: true, resOut: true, labels: true, paths: true, roads: true, dumps: true, contours: false, ovl: true, keep: true, limits: true, pits: true, drains: true, fills: true },
+  show: { outlines: false, resOut: false, labels: false, paths: false, roads: false, dumps: false, contours: false, ovl: false, keep: false, limits: false, pits: false, drains: false, fills: false }, // (every layer starts off; turned on in the Layers menu)
   drainId: null, rhId: null, fillId: null, raiseId: null,
   limitId: null, LIMIT_COLOR: '#b9a2ff', RESERVE_COLOR: '#e040fb', OUT_COLOR: '#e34948', pitId: null,
   sat: { on: false, canvas: null, sig: '', attribution: '' },
