@@ -521,6 +521,17 @@ A plugin goes through these steps:
 4. **Enable.**
    - A processing plugin is loaded by the processing worker only. Its algorithms appear in the Processing
      toolbox under the plugin's provider. A plugin that fails to load is marked *Error* with the message.
+   - **Desktop plugins that add a Processing provider.** Many QGIS plugins add their provider in `initGui()`,
+     next to their toolbar buttons and dialogs, instead of `initProcessing()`. The worker starts these
+     unchanged against a stand-in for QGIS Desktop's `iface` (`qgis_worker/iface_standin.py`):
+     - the main window, map canvas, message bar, menus and toolbars are real Qt objects, but never shown
+       (offscreen platform, no display);
+     - anything else the plugin asks `iface` for returns a null object that accepts every call and does nothing.
+
+     Only the plugin's Processing algorithms are used; its dialogs never open. Analysis therefore classes any
+     plugin with a `QgsProcessingProvider` as *Processing-compatible*. A plugin whose `initGui()` still fails
+     against the stand-in is marked *Error* with the traceback when it is enabled. A desktop plugin with no
+     Processing provider (all its work happens in dialogs) remains *Requires manual adaptation*.
    - A server plugin is copied into QGIS Server's plugin directory (`QGIS_PLUGINPATH`). Only the one site with
      *Manage QGIS Server Plugins* turned on can do this, because the folder is shared by every site on the host.
      QGIS Server loads plugins when it starts, so run `sudo systemctl restart qgis-server` and then *Mark QGIS
@@ -803,7 +814,10 @@ not deleted.
 | vtk (dependency of cadquery-ocp) | 9.6.2 | worker venv |
 | ezdxf (DXF import/export) | 1.4.5 | worker venv |
 | pyproj (reprojection during DXF import) | 3.8 (PROJ 9.8) | worker venv |
-| numpy / scipy (surfaces, TIN, Phase 3) | 2.5 / 1.18 | worker venv (optional) |
+| numpy / scipy (surfaces, Phase 3) | 2.5 / 1.18 | worker venv |
+| [PythonCDT](https://pypi.org/project/PythonCDT/) (constrained Delaunay triangulation, import name `pythoncdt`) | 2.0.2 | worker venv |
+| matplotlib (point location in small TINs) | 3.11 | worker venv |
+| laspy + lazrs (LAS / LAZ point clouds) | 2.7 / 0.8 | worker venv (optional) |
 | three.js | 0.184 (`package.json`) | browser bundle |
 
 `cadquery-ocp` has manylinux wheels for CPython 3.11–3.14 on x86-64 and aarch64; versions 7.9.x and 8.0.x both
@@ -834,7 +848,8 @@ sudo apt install python3 python3-venv          # Debian 13: Python 3.13
 sudo install -d -o root -g root -m 0755 /opt/cad-worker
 sudo python3 -m venv /opt/cad-worker/venv
 sudo /opt/cad-worker/venv/bin/pip install --upgrade pip
-sudo /opt/cad-worker/venv/bin/pip install "cadquery-ocp==7.9.3.1.1" "ezdxf==1.4.5" "pyproj>=3.7,<4" "numpy>=2.2,<3" "scipy>=1.15,<2"
+sudo /opt/cad-worker/venv/bin/pip install "cadquery-ocp==7.9.3.1.1" "ezdxf==1.4.5" "pyproj>=3.7,<4" "numpy>=2.2,<3" "scipy>=1.15,<2" \
+    "PythonCDT==2.0.2" "matplotlib>=3.9,<4" "laspy==2.7.0" "lazrs==0.8.2"
 
 # check: prints the OCCT self-test result (a boolean cut at survey coordinates)
 echo '{"command": "health"}' | /opt/cad-worker/venv/bin/python -I \
@@ -898,8 +913,16 @@ refer to B-Rep files by checksum, and revision records refer to their snapshot f
 | Native: entity JSON + OCCT B-Rep (`.brep`) + snapshot JSON | read/write | Phase 1 ✅ |
 | DXF R12–R2018 (ASCII and binary) | import/export (ezdxf) | Phase 2 ✅ |
 | GeoJSON (via GIS datasets) | import/export | Phase 5 (GIS ↔ CAD) |
-| CSV / XYZ, LandXML, STL, OBJ, STEP | import/export | Phase 3 |
-| LAS/LAZ (PDAL), IFC, DWG/DGN | conditional | later; only after interoperability testing |
+| LandXML 1.2 surfaces (TIN `Pnts`/`Faces`, N E Z order) | import/export | Phase 3 ✅ |
+| CSV / XYZ / TXT / PTS points (columns detected, or given as e.g. `id,y,x,z`) | import/export | Phase 3 ✅ |
+| STL (ASCII and binary), OBJ (triangles; polygons fanned) | import/export | Phase 3 ✅ |
+| LAS / LAZ point clouds (laspy + lazrs; ground class only, grid thinning) | import | Phase 3 ✅ |
+| STEP AP214 solids (OCCT) | import/export | Phase 3 ✅ |
+| DXF 3DFACE / MESH / polyface | import as surfaces or meshes; surfaces export as MESH (3DFACE for R12) | Phase 3 ✅ |
+| GeoJSON of the mining design (pit rings, roads, block outlines with their design data) | export | Phase 4 ✅ |
+| Mining blocks table (CSV: id, sequence, bench, material, volume, area, centroid, WKT outline) | export | Phase 4 ✅ |
+| Drill holes (CSV: pattern, hole id, row, collar and toe XYZ, length, inclination, dip, diameter, subdrill, burden, spacing) | export | Phase 4 ✅ |
+| IFC, DWG/DGN, E57 | conditional | later; only after interoperability testing |
 
 No export is described as lossless unless round-trip tests prove it for the entities concerned.
 
@@ -955,6 +978,188 @@ layers and blocks into new models; the annotation scale sets text and dimension 
 the plan view is turned 180° (CAD Model → Plan Orientation; *Auto from CRS* by default). Coordinates are never
 changed, and text is drawn upright in the turned view.
 
+#### Surfaces and volumes (Phase 3)
+
+A **surface** is a CAD Entity of type *Surface* whose `geometry_ref` is the SHA-256 of a TIN file in model storage
+(`ISPTIN01`: double-precision vertices, triangles, per-vertex breakline/boundary flags). The TIN is authoritative;
+the browser only ever draws display tiles made from it. A **CAD Surface** record mirrors each Surface entity
+(name, type, source, triangle/vertex counts, plan and surface areas, elevation range, checks) and is reconciled
+after every save, import and revision restore. Triangulated objects that are not 2.5D (overhangs, closed shells)
+are kept as *Mesh* entities (open/closed, open-edge and non-manifold counts, enclosed volume when closed).
+
+| Surface menu | What it does |
+|---|---|
+| Create Surface | constrained Delaunay TIN (PythonCDT) from the selected points, lines, polylines, arcs, splines and other surfaces, plus GIS datasets with elevations (reprojected into the model's CRS). Lines can be **breaklines**: triangle edges follow them, and crossing breaklines are split (at different elevations the crossing takes their average, reported). Optional outer boundary, holes, and a longest-edge limit that peels long triangles off the outline. |
+| Repair | removes degenerate and duplicate triangles, re-orients flipped ones, optionally removes spikes |
+| Clip | keeps the surface inside (or outside) a closed polyline; the cut runs exactly along the boundary |
+| Smooth | Laplacian smoothing; breakline and outline vertices do not move |
+| Surface Checks | degenerate, flipped and duplicate triangles, non-manifold edges, duplicate plan points, outline loops, possible spikes (vertices far from their neighbours' median; Zoom goes to each) |
+| Contours | marching triangles at an interval and base, major every *n*; polylines on CONTOUR-MINOR / CONTOUR-MAJOR at their true elevation |
+| Intersect Surfaces | lines where two surfaces meet (e.g. daylight lines), on layer INTERSECTION |
+| Long Section (Profile) | elevations of every chosen surface along a selected line/polyline, exact at each triangle edge crossed; gaps where a surface stops |
+| Cross-Sections | sections at an interval along the alignment, given widths left/right; browsed with a slider, drawn at true scale |
+| Slope and Elevation Analysis | area-weighted mean and maximum slope, mean aspect, plan area per slope class and per elevation band |
+| Cut and Fill Volume | between two surfaces or a surface and an elevation, optionally inside a boundary; recorded as **CAD Volume Calculation** |
+| Recorded Volumes | the model's volume records |
+
+Analyses run on **saved** surfaces (Save first); new geometry from them is one undoable edit. View → *Surfaces by
+Elevation / Slope / Layer Colour* and *Surface Triangles* change the display; the elevation under the cursor is shown
+under Coordinates.
+
+**Volumes are exact for the TINs given.** Both surfaces (and the boundary) are overlaid in one constrained Delaunay
+triangulation in which every edge of both surfaces is a constraint, so every composite triangle lies inside exactly
+one triangle of each surface and the elevation difference is linear over it. Cut and fill are integrated in closed
+form, splitting triangles exactly where the difference changes sign. Only the area covered by both surfaces is
+measured. Each result carries checks (net = direct integral of the difference; cut area + fill area = plan area; no
+negative parts) and is stored with its inputs by checksum, method text, units, revision and processing job, so the
+figure can be traced and repeated. Surfaces of more than 250 000 triangles are overlaid block by block, with the
+block rectangles as further constraints, which keeps memory bounded and gives the same sums. Cut = the base surface
+above the comparison; fill = below.
+
+*Validation.* The worker tests compare against closed-form answers (tilted planes, cones, pyramids). On the lab, a
+volume between a LandXML survey and a design made in the workstation (89 053.933 m³) was checked by midpoint
+integration of the two stored TINs on 800² and 3 200² grids (89 054.005 → 89 053.938, converging at the expected
+rate); a 4.2-million-triangle surface against an elevation agreed with the direct integral over its own triangles to
+1e-14; and a 25-block surface-to-surface volume matched the analytic value to 1e-9 m³.
+
+**Display tiles.** After a surface is stored the server writes a tile pyramid next to the mesh cache: about 60 000
+triangles per tile at full resolution, plus resampled 96×96 and 24×24 grids per tile. The workstation fetches only
+the tiles in view, at the level their size on screen needs (at most six requests at a time), and drops
+full-resolution tiles that leave the view. Tiles are content-addressed and cached by the browser. A surface without
+tiles gets them made automatically the first time it is opened.
+
+#### Solids (Phase 3)
+
+Solid → *Union*, *Subtract* (choose the solid to cut from), *Intersect* (two or more saved solids; originals can be
+kept), *Revolve* (a closed polyline about a selected line, any angle), *Loft* (closed polylines in order of
+elevation, ruled or smooth), *Sweep* (a closed polyline along a line or open polyline, round corners) — all made by
+OCCT in the worker and validated, with volume and area. *Section Lines through Selection* cuts selected solids
+(OCCT section) and surfaces (exact profile or contour) with a vertical plane along a selected line or a horizontal
+plane, and adds the lines on layer SECTION. View → *Section View* hides everything on one side of the same kind of
+plane (display only).
+
+#### Surface and solid exchange (Phase 3)
+
+File → *Import* takes every format in the table above with the same two steps as DXF: a validation report
+(surfaces with triangle counts, areas, elevation range and checks; meshes; points; STEP solids and their validity),
+then the options — file units, axis mapping, layer, surface type, points as a surface / point objects / both (up to
+200 000 point objects), longest triangle edge, CSV columns, LAS ground class and thinning, STL/OBJ as a mesh.
+These formats carry no CRS: coordinates are taken in the model's CRS. File → *Export* writes LandXML, STL, OBJ, CSV
+or XYZ of the surfaces (all, or the selected ones) and STEP of the solids, from the saved state or a frozen revision.
+Round trips (LandXML, OBJ, STL, CSV, DXF MESH, STEP) are covered by the tests.
+
+#### Object tool window, fills and extrude
+
+Drawing a closed shape (rectangle, polygon, circle, ellipse, closed polyline) opens its **tool window** at the top left
+of the view; so does double-clicking any object, or *Edit…* in Properties. It sets the layer, colour, **line weight**
+(per object, shown whether or not LWT is on; LWT shows the layers' weights) and line type, and for closed shapes the
+**shape**: *Outline* (lines only), *Filled* (the inside filled with its colour; exported to DXF as the outline plus a
+SOLID hatch) or *Solid*. *Solid* extrudes it, as in Fusion: a translucent preview with an orange arrow handle — drag it
+up or down (snaps to round steps; Shift finer), or type the distance — and the direction (one side / symmetric), a
+taper angle (+ narrows the far end; sharp corners stay sharp), the operation (New body, or Join / Cut / Intersect with
+a solid under the outline) and whether to keep the outline. *OK* builds the solid with Open CASCADE (bulged polylines
+and circles included). `EXT` or the toolbar's Extrude opens the same window for the selected outlines. Esc ends the
+running tool first, then closes the window.
+
+**Parametric solids (Phase 6).** A solid made by the window remembers how it was made (its outlines, distance,
+direction, taper, operation and, for Join / Cut / Intersect, the body it was combined with). Double-clicking it (or
+Solid → *Edit Extrusion*) reopens the window with those values; *OK* rebuilds it in place. Moving or reshaping an
+outline marks its solids out of date (shown in the window); Solid → *Rebuild Changed Extrusions* rebuilds them all.
+Solid → *Fillet*, *Chamfer* (all, vertical, top or bottom edges) and *Shell* (closed hollow, or open at the top) are
+finishing **features** kept in order on the solid: the window lists them, any one can be edited or removed, and a
+change to the extrusion or a step rebuilds the solid with every step (Open CASCADE; an impossible radius is
+refused with the reason). Pits, roads, block grids and drill patterns are parametric the same way: double-click one
+(or Mining → *Edit Design*) and its generator opens with the values it was made with; *Regenerate* replaces it from
+the source outline as it is now, as one undo step.
+
+#### Mine planning integration (Phase 5)
+
+An approved design becomes a traceable engineering reference in Geo Planning and scheduling.
+
+| Mining menu / File | What it does |
+|---|---|
+| Publish Approved Design to Geo Planning | only an **Approved** revision whose **design validation** did not fail. Its blocks are read from the revision's frozen snapshot (checksum verified) and become **Mining Blocks** of a Geo Pit Layout named after the model (`CAD <model>`, *Source CAD Model / Revision* instead of a pit-outline batch): code = CAD block id, cut = bench (1 = top), block number = CAD sequence, outline, area, design volume, material, bench elevations and the CAD model / revision / entity. A **material stack** (*CAD Materials*) gets one item per material with the density given when publishing, and each block a **Material Summary** (volume, tonnes = volume × density, Mineable or Waste) — so the Mining Block Selector, schedule selections and the scheduler use them as they use any other blocks. A **CAD Design Publication** records the revision, its snapshot checksum, the design standard version and validation, the layout, stack, counts and totals. Optionally the CAD mining sequence becomes a **Mining Schedule Selection** in that order. |
+| (publishing a later revision) | blocks still *Draft / Available / Planned* follow the new design; *Scheduled / Mining / Complete* blocks keep their planning record and are set to *Review* (with the reason) when the design changed them, as are blocks the new design dropped — nothing is deleted. The previous publication becomes *Superseded*. |
+| Schedule Selection from CAD Sequence | a new selection of the published blocks (all, or the selected ones) in CAD sequence |
+| Planning View | colours (and fills) the design's blocks by Mining Block status, schedule period of a Mining Schedule Scenario (its scheduled blocks or allocations), % mined at the last survey, or CAD sequence; view only |
+| Reconcile Survey against Design | a saved survey surface against the published design, per block and bench: **planned** (pre-mining surface to design), **mined to date** (pre-mining surface to survey), **remaining** (survey to design), **mined beyond the design** (design to survey) — exact, like the block volumes — and, with a schedule scenario, what it planned to the survey date (allocations in BCM, else its scheduled blocks pro rata by date). Checks: the recomputed planned volumes match the publication, and mined − beyond + remaining = planned for every block (it does not where the survey is above the pre-mining surface — dumped material — which is reported). Recorded as **CAD Survey Reconciliation** (per-block table); Mining Blocks get % mined and become *Mining* / *Complete*. |
+| File → Compare Revisions | added / removed / changed entities (and what changed) between two revisions or a revision and the working state, design totals before and after, select the added or changed ones, the older state drawn faded over the model |
+
+A Mining Block published from CAD has **Open in CAD Workstation** (opens the model at that block); a block set to
+*Review* shows why.
+
+The lab model **DEMO-MINE-DESIGN** is published (CAD-PUB in the demo Geo Project *Demo CAD Mine (synthetic)*) and
+reconciled against a simulated survey (*Survey 2026-11-30*: the pit mined to design down to 1 500 m).
+
+#### Viewing in 3D
+
+In 3D the view turns about the point under the cursor where the drag starts (marked while turning): **right-drag**,
+**Shift + middle-drag** or **Alt + left-drag**. The orbit button (toolbar and the panel at the bottom right of the
+viewport, or the `ORBIT` command) makes a plain left-drag orbit — for trackpads; Esc ends it. The arrow keys turn the
+view 15° and tilt it 10° (Shift: a third of that), as do the buttons beside *Top* and *Iso*. Middle-drag pans and
+the wheel zooms at the cursor, as in 2D. An orbit started in the plan view switches to 3D.
+
+#### Mining design (Phase 4)
+
+**CAD Design Standard** holds versioned design rules: bench height and reference elevation, bench face angle,
+berm width and minimum bench width, a wider geotechnical berm every *n* benches, maximum overall slope, minimum
+floor width, road width and minimum width, maximum gradient, minimum turning radius, vertical curve length and
+minimum K value, crossfall, superelevation,
+cut/fill batter angles, block size and mining direction, and length/angle tolerances. A version is a *Draft* until
+it is activated; an *Active* version is frozen (its rules cannot change) and activating a new version supersedes the
+old one (*New Version* copies it). A model uses one Active version (Mining → Design Standard, shown in the title
+bar). All tools below take their defaults from it and can be overridden per design; the validation always checks
+against the standard. Turn the tools on or off in CAD Settings → *Enable Mining Design Tools*.
+
+| Mining menu | What it does |
+|---|---|
+| Generate Pit Benches from Floor | from a closed floor outline outward and upward: toe and crest rings at every bench (each the floor offset by the whole distance to it, rounded or square corners), geotechnical berms, the floor on the standard's bench levels if wanted, up to a top elevation or the ground; the pit surface (rings as breaklines), the daylight line where it meets the ground, the post-mining surface (pit inside the daylight line, ground outside — an exact overlay) and the pit's void below the ground. A bench table (toe, crest, face width and angle, berm) is shown. |
+| — with an in-pit ramp (Phase 6) | *In-pit ramp* adds a ramp spiralling down the wall (clockwise or anticlockwise) at the design gradient from where the pit meets the ground in the entry direction (a bearing from the floor centre) to the floor. At each elevation its inner edge is on the wall line (floor edge, middle of every berm, top crest), so it is cut into the benches above that line and stands on rock left in place below it, with batters at the face angle; the ramp is merged exactly into the post-mining surface (or into the pit surface without a ground). The report gives its length, steepest grade, the extra cut and the rock left in place (both measured on the stored surface); its centreline is also checked as a haul road (gradient, curve radius, width) |
+| Pit Stage / Pushback | the same from a previous stage's floor pushed back by a distance, as a new stage on its own layers |
+| Pit Stages (automatic) (Phase 6) | *n* nested pits from one floor outline in one run: floor elevations evenly from the first stage's down to the final floor, and an optional floor offset (negative shrinks) growing to 0 at the final stage; every stage a full pit (benches, ramp, post-mining surface). The report gives each stage's volume, its **incremental volume** (the previous stage's post-mining surface down to this one's), whether it contains the previous stage (the volume above it otherwise) and the narrowest **pushback** between consecutive daylight lines against a minimum width. *Edit Design* regenerates the whole run |
+| Haul Road from Centreline | circular curves of the turning radius fitted at every bend (smaller where the legs are too short, reported); vertical alignment kept, draped on a surface, at a constant grade, straight between two elevations, or through vertical intersection points (PVIs, `chainage:elevation`), with a **parabolic vertical curve** at every grade change (Phase 6; keep: at the centreline's vertices; shortened where the tangents are too short, reported; K = curve length / grade change, listed per curve); curve radius 0 keeps the polyline's own bends; crossfall, and superelevation towards the inside of curves (smaller on wider curves, with run-off); edges; cut and fill batters to the ground; the road surface; its cut and fill, recorded as a CAD Volume Calculation; a long section of the centreline |
+| Mining Blocks | a grid along the mining direction (azimuth from north, westing/southing models included) inside a closed limit, one block per bench, each holding the in-situ material between an upper (ground) and a lower (pit) surface within its bench; numbered from the top bench down along the mining direction |
+| Subdivide Blocks | splits blocks *n × m* along/across their mining direction; the parts' volumes are recalculated and they take their place in the sequence |
+| Set Block Material | a Material Type (Geo Planning) or any name, for the selection or for benches between two elevations; blocks are coloured by material |
+| Sequence Blocks | renumbers blocks for a mining direction |
+| Block Report | blocks, volumes per bench and per material, the block list, CSV download |
+| Validate Design against Standard | checks the saved design and records a **CAD Design Validation** |
+
+Design entities keep their meaning in *CAD Entity → Metadata* (`pit_design`, `haul_road`, `mining_block`), shown in
+the Properties panel and read back by the validation and the exports.
+
+**Validation** (on saved geometry; every result has a value, the limit, the place to zoom to and the entities):
+pits — every ring a simple closed outline, rings nested, bench heights, steepest bench face, narrowest berm
+(warning below the design width, failure below the minimum), steepest overall slope (floor to top crest), floor
+width; haul roads (and in-pit ramp centrelines) — steepest gradient, tightest curve, smallest vertical-curve K against
+the standard's *Minimum K Value*, road width; blocks — simple closed outlines, no overlaps
+within a bench, benches on the standard's levels, material set, blocks with material. The record keeps the standard
+version and a copy of its rules; the model points to its latest validation, and submitting a revision records the
+validation, standard and version in the revision's validation results, so an approved design shows which standard
+it was checked against.
+
+**Volumes are exact** as in Phase 3. Block volumes overlay both surfaces and every block outline in one constrained
+triangulation, cut triangles exactly where the surfaces cross, and integrate each bench slab in closed form
+(∫clip(z, bottom, top)); the blocks therefore add up to the pit volume. The tests check a benched rectangular pit
+against the frustum formula, the post-mining surface, blocks against the pit and subdivided blocks against their
+parent, and road fill against its closed form. Measured widths and angles of rounded corners include the chord error
+of the drawn arcs (16 segments per quarter circle: a few centimetres on an 8 m berm).
+
+**Drill patterns (layout geometry only, spec §12.4 — no explosive loading).** Mining → *Drill Pattern* fills a
+selected blast boundary (less a stand-off) with rows of holes along a row direction, *burden* apart (measured to the
+right of the rows) and *spacing* apart in a row, square or staggered. Collars sit on a surface or at an elevation; each
+toe is the subdrill below the bench floor (an elevation, or a surface followed by iteration) along the hole's
+inclination (degrees from vertical) towards its dip direction. Every hole is a Line (collar → toe) with a collar Point,
+carrying its pattern data (`drill_hole` metadata). The report gives holes, rows, drilled length, hole lengths and
+B × S × H rock per hole; the validation checks that holes go down, the inclination limit, collars inside the blast
+boundary, the closest collar spacing (burden or spacing less a tolerance) and burden/spacing/diameter against the
+standard (version 2 of a standard can add these rules — *Drill and Blast* section). File → Export → *Drill holes
+(CSV)* writes the hole table for the rigs.
+
+The lab has **DEMO-MINE-DESIGN** (survey, a floor outline and a road centreline, then a pit, 175 blocks, materials,
+a haul road and a passing validation made in the workstation against **ISP-OP-STD-V1**, a demonstration standard) and
+**DEMO-3D-PIT** (Phase 3 surfaces and solids).
+
 ### 14. Performance configuration
 
 Entities are loaded in pages of 5 000; the viewport draws them in a few large buffers per colour and line style
@@ -965,13 +1170,22 @@ Measured on the lab with a 24 MB DXF of 51 500 entities (1 500 contours with 360
 labels, 8 000 lines, 2 000 block references): inspection 17 s, import 44 s, OCCT validation of all 51 500 entities
 116 s (background jobs); opening in the browser about 20 s; about 400 MB of browser memory. Raise *Maximum
 Concurrent Jobs* only if the host has spare cores: each OCCT worker is single-threaded and starts in about 1 s.
-View-driven loading for still larger models and surfaces arrive with Phase 3.
+Surfaces are loaded by view (display tiles, see Phase 3 above).
+
+Measured on the lab with a LAZ cloud of 2.1 million points (a 2.9 × 2.9 km terrain, 4.2 million triangles):
+inspection 4 s, import with triangulation, checks and display tiles 52 s; opening the model shows the whole surface
+(81 tiles at the coarsest level, 92 000 triangles drawn) in 2 s; zooming to a 200 m window loads its
+full-resolution tiles in 0.4 s; about 30 MB of browser JavaScript memory. Cut/fill against an elevation over the
+whole surface: 72 s; a surface-to-surface volume of two such surfaces inside a boundary: about 2 minutes; profile 4 s;
+191 cross-sections 17 s — all within the default 4 GB worker memory limit. (Frame times were measured with software
+rendering only and are not representative of a GPU.)
 
 ### 15. Dependency health checks
 
 **CAD Settings → Check Dependencies** (and daily) reports: worker Python, OCP/OCCT version, an OCCT boolean
 self-test at survey coordinates (volume must match to 1e-6), job-folder access, model and mesh storage
-writability and free space, optional libraries (ezdxf, NumPy, SciPy — warnings only) and whether the browser
+writability and free space, optional libraries (ezdxf, NumPy, SciPy, PythonCDT, matplotlib, laspy, lazrs — warnings
+only) and whether the browser
 bundle is built. Missing optional features are warnings; anything needed for Phase 1 is an error.
 
 ### 16. Troubleshooting
@@ -990,13 +1204,28 @@ bundle is built. Missing optional features are warnings; anything needed for Pha
 ### 17. Licensing and attribution
 
 See *Acknowledgements and Licensing* below: Open CASCADE Technology (LGPL-2.1 with the OCCT exception),
-cadquery-ocp (Apache-2.0), VTK (BSD-3-Clause), ezdxf (MIT), NumPy/SciPy (BSD-3-Clause), three.js (MIT), Vue (MIT),
-Lucide (ISC), pyproj (MIT), Droid Sans (Apache-2.0). OCCT and the other worker libraries are installed on the host
+cadquery-ocp (Apache-2.0), VTK (BSD-3-Clause), ezdxf (MIT), NumPy/SciPy (BSD-3-Clause), PythonCDT (MPL-2.0),
+matplotlib (PSF-based), laspy (BSD-2-Clause), lazrs (MIT), three.js (MIT), Vue (MIT), Lucide (ISC), pyproj (MIT),
+Droid Sans (Apache-2.0). OCCT and the other worker libraries are installed on the host
 from PyPI and are not part of this repository.
 
 **Tests.** `bench --site <site> run-tests --skip-before-tests --module is_production.cad_engineering.doctype.cad_model.test_cad_model`
 (models, edits, revisions, permissions, OCCT measures) and `…cad_import_export.test_cad_import_export` (geometry,
-blocks, offsets, DXF import report/commit, units/axes, exact DXF round trip); browser geometry:
+blocks, offsets, DXF import report/commit, units/axes, exact DXF round trip), `…cad_surface.test_cad_surface`
+(surface build, tiles and their permissions, CAD Surface records, exact recorded volumes, contours/profiles/sections/
+intersections/analysis, repair/clip/smooth, LandXML/CSV/OBJ/STL/DXF surface exchange, Booleans/revolve/loft/sweep/
+sections, STEP round trip), `…cad_design_standard.test_cad_design_standard` (standard versions, pit benches and void
+against the frustum formula, daylight and post-mining surface, blocks and subdivision against the pit volume, haul
+road fill and volume record, design validation and its record on the revision, GeoJSON and block CSV exports, drill
+pattern layout against closed-form hole counts and lengths, its validation and the hole CSV),
+`…cad_design_publication.test_cad_design_publication` (publishing an approved design with exact volumes and tonnes,
+the sequence selection, republishing a changed design with updated / kept / flagged blocks, revision comparison,
+survey reconciliation against an analytic survey with the schedule to date, the planning overlay), the DXF tests also cover
+per-object line weights and filled shapes; the
+mining worker: `/opt/cad-worker/venv/bin/python -I is_production/cad_engineering/tests/test_mining_worker.py
+is_production/cad_engineering/cad_worker <empty folder>`; the surface worker against closed-form answers:
+`/opt/cad-worker/venv/bin/python -I is_production/cad_engineering/tests/test_surface_worker.py
+is_production/cad_engineering/cad_worker/surface_worker.py <empty folder>`; browser geometry:
 `node is_production/cad_engineering/tests/js/run.js`. The DXF fixture is made by `tests/make_sample_dxf.py`.
 
 ### 18. Development phases
@@ -1005,10 +1234,10 @@ blocks, offsets, DXF import report/commit, units/axes, exact DXF round trip); br
 |---|---|---|
 | 1 — Foundation | module, CAD Settings + health check, CAD Model / Layer / Entity / Design Revision / Processing Job, isolated OCCT worker, storage adapter, revisions with frozen snapshots, `/portal_cad` (menus, panels, 2D/3D viewport, local origin, point/line/polyline/rectangle/circle/arc/text, move/copy/erase, box/cylinder/extrude via OCCT, object/grid snap, ortho, absolute/relative/polar input, undo/redo, save/reopen), permissions, tests | ✅ |
 | 2 — 2D CAD | full draw/modify set, all snaps, polar tracking, window/crossing selection, dimensions, hatches, blocks, external references, drawing templates, annotation scale, plan orientation, DXF import (validation report) and export, CAD Import Export, CAD Block | ✅ |
-| 3 — 3D and surfaces | CAD Surface, TIN with breaklines, contours, sections/profiles, volumes, booleans, STL/OBJ/STEP/LandXML, view-driven loading | next |
-| 4 — Mining design | CAD Design Standard (versioned), pit/bench/berm, haul roads, mining blocks, drill layout (geometry only) | |
-| 5 — Integration | Geo Project / Mining Block / schedule links, design vs survey, revision comparison | |
-| 6 — Advanced | parametric and advanced modelling, optimisation, point clouds, more formats | |
+| 3 — 3D and surfaces | CAD Surface, CAD Volume Calculation, TIN with breaklines/boundary/holes (from entities, GIS datasets, surfaces), repair/clip/smooth, checks, contours, intersections, profiles, cross-sections, slope/elevation analysis, exact cut/fill volumes, Booleans/revolve/loft/sweep, section lines and section view, LandXML/CSV/XYZ/STL/OBJ/LAS/LAZ/STEP exchange, view-driven surface tiles | ✅ |
+| 4 — Mining design | CAD Design Standard (versioned, frozen when Active), CAD Design Validation, pit bench generation (floor → crest, berms, geotechnical berms, stages/pushbacks, daylight, post-mining surface), haul roads (fitted curves, vertical alignment, superelevation, batters, cut/fill), mining blocks (bench slabs, exact volumes, subdivision, materials, sequencing, report), design validation recorded on revisions, drill-pattern layout (geometry only) with hole table, GeoJSON / block / hole CSV exports, 3D orbit navigation, object tool window (line weight, outline / filled / solid) with a draggable Fusion-style extrude | ✅ |
+| 5 — Integration | CAD Design Publication (approved revision → Geo Pit Layout, Mining Blocks, material stack and summaries), CAD sequence → Mining Schedule Selection, republishing with review flags, planning view (status / schedule period / % mined), CAD Survey Reconciliation (planned vs actual, beyond design, schedule to date), revision comparison with overlay, Mining Block ↔ CAD links | ✅ |
+| 6 — Advanced | ✅ parametric extrusions and regenerable pit / road / block / drill designs; fillet, chamfer, shell and tapered extrusions as an editable feature history; in-pit ramps, automatic pit stages with incremental volumes and pushback checks, road vertical curves — *next:* geological modelling from drillholes, pit-shell optimisation, point-cloud editing, more formats (IFC, E57) | in progress |
 
 **Permissions.** There are no CAD-specific roles. *Production Manager* administers settings, creates and edits
 models and **approves or rejects revisions**; *Production User* creates and edits models and submits revisions
@@ -1065,6 +1294,9 @@ CASCADE SAS, the CadQuery project or three.js.
 | [ezdxf](https://github.com/mozman/ezdxf) | DXF import/export in the CAD worker (host venv) | MIT |
 | [NumPy](https://numpy.org/) / [SciPy](https://scipy.org/) | Numerical and surface work in the CAD worker (host venv) | BSD-3-Clause |
 | [pyproj](https://pyproj4.github.io/pyproj/) | Reprojection during DXF import (host venv) | MIT |
+| [PythonCDT](https://github.com/artem-ogre/PythonCDT) / [CDT](https://github.com/artem-ogre/CDT) | Constrained Delaunay triangulation of surfaces and volume overlays (host venv) | MPL-2.0 |
+| [matplotlib](https://matplotlib.org/) | Point location in TINs (host venv) | PSF-based (matplotlib licence) |
+| [laspy](https://github.com/laspy/laspy) / [lazrs](https://github.com/laz-rs/laz-rs-python) | LAS / LAZ import (host venv) | BSD-2-Clause / MIT |
 | Droid Sans (The Android Open Source Project) | CAD Workstation text, unmodified, in `public/cad_fonts/` with its NOTICE | Apache-2.0 |
 | Python packages in `pyproject.toml` (shapely, geopandas, pyproj, rasterio, ...) | Geo Planning | See each package |
 

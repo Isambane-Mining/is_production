@@ -19,7 +19,11 @@ SETTINGS = "CAD Settings"
 OPTIONAL_LIBRARIES = {
 	"ezdxf": _("DXF import/export (Phase 2)"),
 	"numpy": _("surface and volume calculations"),
-	"scipy": _("triangulation (TIN) and surface tools (Phase 3)"),
+	"scipy": _("surface tools (Phase 3)"),
+	"pythoncdt": _("surface triangulation with breaklines and exact volumes (Phase 3)"),
+	"matplotlib": _("point location on surfaces (Phase 3)"),
+	"laspy": _("LAS point cloud import (Phase 3)"),
+	"lazrs": _("LAZ (compressed LAS) import (Phase 3)"),
 }
 
 

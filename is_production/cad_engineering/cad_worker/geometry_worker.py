@@ -14,6 +14,9 @@ Commands
 ``validate``  check entities (curves, points, text, solids from their B-Rep files) and measure them.
 ``tessellate`` display meshes for existing B-Rep files.
 ``offset``    planar offset of polylines (lines and arcs) with OCCT's BRepOffsetAPI_MakeOffset.
+``section``   curves where a plane cuts solids.
+``step_read`` / ``step_write``  STEP (ISO 10303) exchange of exact solids.
+``build`` also makes Booleans (union / subtract / intersect of stored solids), revolve, loft and sweep.
 
 Geometry is in model coordinates (double precision). Display meshes are float32 relative to their own
 rounded centre (stored in the mesh header as float64) so large survey coordinates stay exact on screen;
@@ -229,6 +232,35 @@ def positive(spec, key):
 	return value
 
 
+def tapered_prism(o, face, wire, vector, inset):
+	"""A prism whose far end is the profile offset inwards by `inset` (outwards when negative): a ruled loft between
+	the profile and the offset profile moved along the vector (sharp corners stay sharp)."""
+	from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform
+	from OCP.BRepOffsetAPI import BRepOffsetAPI_MakeOffset, BRepOffsetAPI_ThruSections
+	from OCP.GeomAbs import GeomAbs_Intersection
+	from OCP.gp import gp_Trsf, gp_Vec
+
+	maker = BRepOffsetAPI_MakeOffset(face, GeomAbs_Intersection)
+	maker.Perform(-inset)
+	if not maker.IsDone():
+		raise ValueError("The taper is too steep for this profile (the far end vanishes).")
+	explorer = o["TopExp_Explorer"](maker.Shape(), o["TopAbs_WIRE"])
+	if not explorer.More():
+		raise ValueError("The taper is too steep for this profile (the far end vanishes).")
+	top = o["TopoDS"].Wire_s(explorer.Current())
+	move = gp_Trsf()
+	move.SetTranslation(gp_Vec(*vector))
+	top = o["TopoDS"].Wire_s(BRepBuilderAPI_Transform(top, move, True).Shape())
+	loft = BRepOffsetAPI_ThruSections(True, True)
+	loft.AddWire(wire)
+	loft.AddWire(top)
+	loft.CheckCompatibility(True)
+	loft.Build()
+	if not loft.IsDone():
+		raise ValueError("Open CASCADE could not taper this profile.")
+	return loft.Shape()
+
+
 def make_solid(o, spec):
 	op = spec.get("op")
 	prim = o["BRepPrimAPI"]
@@ -249,24 +281,24 @@ def make_solid(o, spec):
 	if op == "sphere":
 		return prim.BRepPrimAPI_MakeSphere(point(o, spec["center"]), positive(spec, "radius")).Shape()
 	if op == "extrude":
+		# a closed profile (straight and arc segments; a circle is two half-circle arcs) pushed along a vector,
+		# optionally tapered: +taper° leans the sides inwards (narrower at the far end), -taper° outwards
 		profile = spec.get("profile") or []
-		if len(profile) < 3:
-			raise ValueError("An extrusion profile needs at least three points.")
+		if len(profile) < 2:
+			raise ValueError("An extrusion profile needs at least two points (with arcs) or three.")
 		if len(profile) > MAX_POLYLINE_POINTS:
 			raise ValueError("The extrusion profile has too many points.")
-		polygon = o["BRepBuilderAPI"].BRepBuilderAPI_MakePolygon()
-		for p in profile:
-			polygon.Add(point(o, p))
-		polygon.Close()
-		if not polygon.IsDone():
-			raise ValueError("The profile is not a valid closed polyline.")
-		face = o["BRepBuilderAPI"].BRepBuilderAPI_MakeFace(polygon.Wire(), True)
-		if not face.IsDone():
-			raise ValueError("The profile is not planar or crosses itself.")
+		face, wire = closed_face(o, profile, spec.get("bulges"))
 		vx, vy, vz = (float(v) for v in spec["vector"])
-		if math.sqrt(vx * vx + vy * vy + vz * vz) < 1e-9:
-			raise ValueError("The extrusion vector has zero length.")
-		return prim.BRepPrimAPI_MakePrism(face.Face(), o["gp_Vec"](vx, vy, vz)).Shape()
+		length = math.sqrt(vx * vx + vy * vy + vz * vz)
+		if length < 1e-9:
+			raise ValueError("The extrusion distance is zero.")
+		taper = float(spec.get("taper") or 0)
+		if abs(taper) < 1e-9:
+			return prim.BRepPrimAPI_MakePrism(face, o["gp_Vec"](vx, vy, vz)).Shape()
+		if not abs(taper) < 89:
+			raise ValueError("The taper angle must be between -89° and 89°.")
+		return tapered_prism(o, face, wire, (vx, vy, vz), length * math.tan(math.radians(taper)))
 	raise ValueError(f"Unknown solid operation {op!r}.")
 
 
@@ -290,6 +322,188 @@ def transformed(o, workspace, spec):
 	return BRepBuilderAPI_Transform(shape, trsf, True).Shape()
 
 
+def closed_face(o, profile, bulges=None):
+	"""A planar face bounded by a closed polyline (straight or bulged segments)."""
+	wire = polyline_wire(o, profile, bulges, True)
+	face = o["BRepBuilderAPI"].BRepBuilderAPI_MakeFace(wire, True)
+	if not face.IsDone():
+		raise ValueError("The profile is not a planar closed curve.")
+	return face.Face(), wire
+
+
+def chosen_edges(o, shape, which):
+	"""Edges of a solid: all, vertical (straight and along Z), top (at the highest Z) or bottom (at the lowest)."""
+	from OCP.BRep import BRep_Tool
+	from OCP.TopExp import TopExp
+	from OCP.TopTools import TopTools_IndexedMapOfShape
+
+	edges = TopTools_IndexedMapOfShape()
+	TopExp.MapShapes_s(shape, o["TopAbs_EDGE"], edges)
+	box = bbox(o, shape)
+	zmin, zmax = box[2], box[5]
+	tol = max(1e-6, 1e-7 * max(box[3] - box[0], box[4] - box[1], zmax - zmin))
+	out = []
+	for i in range(1, edges.Extent() + 1):
+		edge = o["TopoDS"].Edge_s(edges.FindKey(i))
+		curve = o["BRepAdaptor_Curve"](edge)
+		a, b = curve.Value(curve.FirstParameter()), curve.Value(curve.LastParameter())
+		m = curve.Value((curve.FirstParameter() + curve.LastParameter()) / 2)
+		zs = (a.Z(), b.Z(), m.Z())
+		if which == "vertical":
+			length = a.Distance(b)
+			ok = length > tol and abs(a.X() - b.X()) < tol and abs(a.Y() - b.Y()) < tol and abs(m.X() - a.X()) < tol and abs(m.Y() - a.Y()) < tol
+		elif which == "top":
+			ok = all(abs(z - zmax) < tol for z in zs)
+		elif which == "bottom":
+			ok = all(abs(z - zmin) < tol for z in zs)
+		else:
+			ok = True
+		if ok and not BRep_Tool.Degenerated_s(edge):
+			out.append(edge)
+	if not out:
+		raise ValueError(f"The solid has no {which} edges.")
+	return out
+
+
+def dressed(o, shape, spec):
+	"""Fillet or chamfer chosen edges of a solid, or hollow it into a shell (optionally open at the top)."""
+	op = spec["op"]
+	if op in ("fillet", "chamfer"):
+		size = float(spec.get("radius") or spec.get("distance") or 0)
+		if not size > 0:
+			raise ValueError("The fillet radius / chamfer distance must be greater than zero.")
+		from OCP.BRepFilletAPI import BRepFilletAPI_MakeChamfer, BRepFilletAPI_MakeFillet
+
+		maker = BRepFilletAPI_MakeFillet(shape) if op == "fillet" else BRepFilletAPI_MakeChamfer(shape)
+		for edge in chosen_edges(o, shape, spec.get("edges") or "all"):
+			maker.Add(size, edge)
+		maker.Build()
+		if not maker.IsDone():
+			raise ValueError(f"Open CASCADE could not {op} these edges with {size:g} (too large for the solid?).")
+		return maker.Shape()
+	# shell
+	from OCP.BRepOffsetAPI import BRepOffsetAPI_MakeThickSolid
+	from OCP.TopTools import TopTools_ListOfShape
+
+	thickness = float(spec.get("thickness") or 0)
+	if not thickness > 0:
+		raise ValueError("The wall thickness must be greater than zero.")
+	if spec.get("open") != "top":
+		# closed: the solid less its inward offset (a hollow with walls `thickness` thick all round)
+		from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
+		from OCP.BRepOffsetAPI import BRepOffsetAPI_MakeOffsetShape
+
+		inner = BRepOffsetAPI_MakeOffsetShape()
+		inner.PerformByJoin(shape, -thickness, 1e-6)
+		if not inner.IsDone():
+			raise ValueError("Open CASCADE could not offset the solid inwards by that wall thickness.")
+		cut = BRepAlgoAPI_Cut(shape, inner.Shape())
+		if not cut.IsDone():
+			raise ValueError("Open CASCADE could not hollow the solid.")
+		return cut.Shape()
+	remove = TopTools_ListOfShape()
+	if spec.get("open") == "top":
+		box = bbox(o, shape)
+		tol = max(1e-6, 1e-7 * (box[5] - box[2] + 1))
+		explorer = o["TopExp_Explorer"](shape, o["TopAbs_FACE"])
+		while explorer.More():
+			face = o["TopoDS"].Face_s(explorer.Current())
+			fb = bbox(o, face)
+			if abs(fb[2] - box[5]) < tol and abs(fb[5] - box[5]) < tol:
+				remove.Append(face)
+			explorer.Next()
+		if remove.Extent() == 0:
+			raise ValueError("The solid has no flat top face to open.")
+	maker = BRepOffsetAPI_MakeThickSolid()
+	maker.MakeThickSolidByJoin(shape, remove, -thickness, 1e-6)
+	maker.Build()
+	if not maker.IsDone():
+		raise ValueError("Open CASCADE could not shell the solid with that wall thickness.")
+	return maker.Shape()
+
+
+def make_shape(o, workspace, spec):
+	"""Primitives, moves of stored solids, Booleans, revolve, loft and sweep (Phase 3)."""
+	op = spec.get("op")
+	if op == "transform":
+		return transformed(o, workspace, spec)
+	if op in ("fillet", "chamfer", "shell"):
+		return dressed(o, read_brep(o, workspace, spec["brep"]), spec)
+	if op == "boolean":
+		from OCP.BRepAlgoAPI import BRepAlgoAPI_Common, BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse
+
+		shapes = [read_brep(o, workspace, p) for p in spec.get("breps") or []]
+		if len(shapes) < 2:
+			raise ValueError("A Boolean needs at least two solids.")
+		kind = spec.get("kind")
+		Algo = {"union": BRepAlgoAPI_Fuse, "subtract": BRepAlgoAPI_Cut, "intersect": BRepAlgoAPI_Common}.get(kind)
+		if not Algo:
+			raise ValueError(f"Unknown Boolean {kind!r}.")
+		result = shapes[0]
+		for other in shapes[1:]:
+			algo = Algo(result, other)
+			if not algo.IsDone():
+				raise ValueError(f"Open CASCADE could not {kind} these solids.")
+			result = algo.Shape()
+		if not o["TopExp_Explorer"](result, o["TopAbs_SOLID"]).More():
+			raise ValueError("The result is empty (the solids do not overlap).")
+		return unify(result)
+	if op == "revolve":
+		from OCP.BRepPrimAPI import BRepPrimAPI_MakeRevol
+		from OCP.gp import gp_Ax1
+
+		face, _wire = closed_face(o, spec["profile"], spec.get("bulges"))
+		angle = math.radians(float(spec.get("angle") or 360))
+		if not 0 < abs(angle) <= 2 * math.pi + 1e-12:
+			raise ValueError("The revolve angle must be between 0 and 360 degrees.")
+		axis = gp_Ax1(point(o, spec["axis_point"]), direction(o, spec["axis_direction"]))
+		maker = BRepPrimAPI_MakeRevol(face, axis, angle, True)
+		if not maker.IsDone():
+			raise ValueError("Open CASCADE could not revolve the profile (does the axis cut through it?).")
+		return maker.Shape()
+	if op == "loft":
+		from OCP.BRepOffsetAPI import BRepOffsetAPI_ThruSections
+
+		profiles = spec.get("profiles") or []
+		if len(profiles) < 2:
+			raise ValueError("A loft needs at least two closed profiles.")
+		maker = BRepOffsetAPI_ThruSections(True, bool(spec.get("ruled")))
+		for prof in profiles:
+			maker.AddWire(polyline_wire(o, prof["points"], prof.get("bulges"), True))
+		maker.CheckCompatibility(True)
+		maker.Build()
+		if not maker.IsDone():
+			raise ValueError("Open CASCADE could not loft through these profiles.")
+		return maker.Shape()
+	if op == "sweep":
+		from OCP.BRepBuilderAPI import BRepBuilderAPI_TransitionMode
+		from OCP.BRepOffsetAPI import BRepOffsetAPI_MakePipeShell
+
+		_face, profile = closed_face(o, spec["profile"], spec.get("profile_bulges"))
+		path = polyline_wire(o, spec["path"], spec.get("path_bulges"), False)
+		maker = BRepOffsetAPI_MakePipeShell(path)
+		maker.SetTransitionMode(BRepBuilderAPI_TransitionMode.BRepBuilderAPI_RoundCorner)
+		maker.Add(profile, False, False)
+		maker.Build()
+		if not maker.IsDone():
+			raise ValueError("Open CASCADE could not sweep the profile along the path.")
+		maker.MakeSolid()
+		return maker.Shape()
+	return make_solid(o, spec)
+
+
+def unify(shape):
+	"""Merge coplanar faces left by Booleans (cleaner B-Rep, same geometry)."""
+	from OCP.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
+
+	try:
+		u = ShapeUpgrade_UnifySameDomain(shape, True, True, False)
+		u.Build()
+		return u.Shape()
+	except Exception:
+		return shape
+
+
 def build(request):
 	o = occ()
 	workspace = request["workspace"]
@@ -300,7 +514,7 @@ def build(request):
 	for n, item in enumerate(items):
 		key = str(item.get("key") or n)
 		try:
-			shape = transformed(o, workspace, item) if item.get("op") == "transform" else make_solid(o, item)
+			shape = make_shape(o, workspace, item)
 			valid = check(o, shape)
 			box = bbox(o, shape)
 			entry = {"key": key, "valid": valid, "bbox": box, **measures(o, shape)}
@@ -700,7 +914,7 @@ def health(request):
 		report["self_test"] = {"ok": check(o, cut) and abs(volume - expected) < 1e-6, "volume": volume, "expected": expected}
 	except Exception as e:
 		report["self_test"] = {"ok": False, "message": str(e)}
-	report["libraries"] = {name: package_version(name) for name in ("ezdxf", "numpy", "scipy", "vtk")}
+	report["libraries"] = {name: package_version(name) for name in ("ezdxf", "numpy", "scipy", "vtk", "pythoncdt", "matplotlib", "laspy", "lazrs")}
 	workspace = request.get("workspace")
 	if workspace:
 		try:
@@ -714,7 +928,102 @@ def health(request):
 	return report
 
 
-COMMANDS = {"health": health, "build": build, "validate": validate, "tessellate": tessellate_files, "offset": offset}
+def section(request):
+	"""Curves where a plane cuts stored solids: [{key, polylines: [[x, y, z], …]}] (edges sampled finely)."""
+	from OCP.BRepAlgoAPI import BRepAlgoAPI_Section
+	from OCP.gp import gp_Pln
+
+	o = occ()
+	workspace = request["workspace"]
+	plane = gp_Pln(point(o, request["origin"]), direction(o, request["normal"]))
+	out = []
+	for item in request.get("items") or []:
+		shape = read_brep(o, workspace, item["brep"])
+		algo = BRepAlgoAPI_Section(shape, plane, True)
+		lines = []
+		explorer = o["TopExp_Explorer"](algo.Shape(), o["TopAbs_EDGE"])
+		while explorer.More():
+			edge = o["TopoDS"].Edge_s(explorer.Current())
+			curve = o["BRepAdaptor_Curve"](edge)
+			sampler = o["GCPnts_QuasiUniformDeflection"](curve, max(deflection_for(bbox(o, shape)) / 4, 1e-4))
+			if sampler.IsDone() and sampler.NbPoints() > 1:
+				lines.append([[sampler.Value(i).X(), sampler.Value(i).Y(), sampler.Value(i).Z()] for i in range(1, sampler.NbPoints() + 1)])
+			explorer.Next()
+		out.append({"key": item["key"], "polylines": lines})
+	return {"items": out}
+
+
+def step_read(request):
+	"""Solids of a STEP file, each as a B-Rep + display mesh (like build)."""
+	from OCP.IFSelect import IFSelect_RetDone
+	from OCP.STEPControl import STEPControl_Reader
+
+	o = occ()
+	workspace = request["workspace"]
+	reader = STEPControl_Reader()
+	if reader.ReadFile(inside(workspace, request["input"])) != IFSelect_RetDone:
+		raise ValueError("The STEP file could not be read.")
+	reader.TransferRoots()
+	shape = reader.OneShape()
+	scale = float(request.get("unit_scale") or 1.0)
+	if scale != 1.0:
+		from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform
+		from OCP.gp import gp_Trsf
+
+		t = gp_Trsf()
+		t.SetScale(o["gp_Pnt"](0, 0, 0), scale)
+		shape = BRepBuilderAPI_Transform(shape, t, True).Shape()
+	results = []
+	explorer = o["TopExp_Explorer"](shape, o["TopAbs_SOLID"])
+	n = 0
+	while explorer.More():
+		solid = explorer.Current()
+		valid = check(o, solid)
+		box = bbox(o, solid)
+		entry = {"key": str(n), "valid": valid, "bbox": box, **measures(o, solid)}
+		path, digest = write_brep(o, solid, workspace, f"step_{n}")
+		mesh_path = inside(workspace, os.path.join(workspace, "outputs", f"step_{n}.cadmesh"))
+		entry.update({"brep": path, "checksum": digest, "mesh": mesh_path, "mesh_info": tessellate(o, solid, mesh_origin(box), mesh_path, deflection_for(box))})
+		results.append(entry)
+		n += 1
+		explorer.Next()
+		emit(progress=min(99, n))
+	if not results:
+		raise ValueError("The STEP file has no solids.")
+	return {"items": results}
+
+
+def step_write(request):
+	from OCP.BRep import BRep_Builder
+	from OCP.IFSelect import IFSelect_RetDone
+	from OCP.STEPControl import STEPControl_AsIs, STEPControl_Writer
+	from OCP.TopoDS import TopoDS_Compound
+
+	o = occ()
+	workspace = request["workspace"]
+	builder = BRep_Builder()
+	compound = TopoDS_Compound()
+	builder.MakeCompound(compound)
+	for path in request["breps"]:
+		builder.Add(compound, read_brep(o, workspace, path))
+	writer = STEPControl_Writer()
+	writer.Transfer(compound, STEPControl_AsIs)
+	out = inside(workspace, request["out"])
+	if writer.Write(out) != IFSelect_RetDone:
+		raise ValueError("The STEP file could not be written.")
+	return {"out": out, "solids": len(request["breps"])}
+
+
+COMMANDS = {
+	"health": health,
+	"build": build,
+	"validate": validate,
+	"tessellate": tessellate_files,
+	"offset": offset,
+	"section": section,
+	"step_read": step_read,
+	"step_write": step_write,
+}
 
 
 def main():

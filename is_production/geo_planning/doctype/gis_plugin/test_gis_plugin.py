@@ -61,6 +61,40 @@ DESKTOP_PLUGIN = {
 	),
 	"isp_test_desktop/metadata.txt": "[general]\nname=ISP Test Desktop\nqgisMinimumVersion=3.0\ndescription=d\nversion=0.1\nauthor=a\nemail=e@example.com\nabout=a\nrepository=https://example.com\n",
 }
+# a desktop plugin as many are written: no initProcessing(), the provider added in initGui() beside its
+# toolbar button, menu entry and dialog; started with the iface stand-in
+INITGUI_PLUGIN = {
+	"isp_test_initgui/__init__.py": "def classFactory(iface):\n    from .main import Main\n    return Main(iface)\n",
+	"isp_test_initgui/main.py": (
+		"from qgis.core import QgsApplication, QgsProcessingAlgorithm, QgsProcessingProvider, QgsProcessingParameterFeatureSource, QgsProcessingOutputNumber\n"
+		"from qgis.PyQt.QtWidgets import QAction, QDialog\n\n"
+		"class Count(QgsProcessingAlgorithm):\n"
+		"    def name(self):\n        return 'count'\n"
+		"    def displayName(self):\n        return 'Count (initGui test)'\n"
+		"    def createInstance(self):\n        return Count()\n"
+		"    def initAlgorithm(self, config=None):\n"
+		"        self.addParameter(QgsProcessingParameterFeatureSource('INPUT', 'Input'))\n        self.addOutput(QgsProcessingOutputNumber('COUNT', 'Count'))\n"
+		"    def processAlgorithm(self, parameters, context, feedback):\n"
+		"        return {'COUNT': self.parameterAsSource(parameters, 'INPUT', context).featureCount()}\n\n"
+		"class Provider(QgsProcessingProvider):\n"
+		"    def id(self):\n        return 'isptestgui'\n"
+		"    def name(self):\n        return 'ISP Test GUI'\n"
+		"    def loadAlgorithms(self):\n        self.addAlgorithm(Count())\n\n"
+		"class Main:\n"
+		"    def __init__(self, iface):\n        self.iface = iface\n"
+		"    def initGui(self):\n"
+		"        self.dialog = QDialog(self.iface.mainWindow())\n"
+		"        self.action = QAction('Count', self.iface.mainWindow())\n"
+		"        self.iface.addToolBarIcon(self.action)\n"
+		"        self.iface.addPluginToVectorMenu('&ISP', self.action)\n"
+		"        self.iface.layerTreeView().currentLayerChanged.connect(print)\n"
+		"        self.iface.messageBar().pushMessage('ISP', 'started')\n"
+		"        self.provider = Provider()\n"
+		"        QgsApplication.processingRegistry().addProvider(self.provider)\n"
+		"    def unload(self):\n        QgsApplication.processingRegistry().removeProvider(self.provider)\n"
+	),
+	"isp_test_initgui/metadata.txt": "[general]\nname=ISP Test InitGui\nqgisMinimumVersion=3.0\ndescription=g\nversion=0.3\nauthor=a\nemail=e@example.com\nabout=a\nrepository=https://example.com\n",
+}
 SERVER_PLUGIN = {
 	"isp_test_server/__init__.py": "def serverClassFactory(serverIface):\n    from .filter import Plugin\n    return Plugin(serverIface)\n",
 	"isp_test_server/filter.py": "class Plugin:\n    def __init__(self, serverIface):\n        self.serverIface = serverIface\n",
@@ -153,6 +187,21 @@ class IntegrationTestGISPlugin(IntegrationTestCase):
 		plugins.uninstall_plugin(name)
 		self.assertNotIn("isptest:countfeatures", proc.registry()["by_id"])
 		self.assertFalse(os.path.exists(os.path.join(plugins.processing_dir(), "isp_test_tools")))
+
+	def test_initgui_provider_runs_through_the_iface_stand_in(self):
+		name = register("isp initgui", INITGUI_PLUGIN)
+		self.assertEqual(plugins.analyse_plugin(name), "Processing-compatible")
+		plugin = frappe.get_doc(plugins.PLUGIN, name)
+		self.assertEqual(plugin.category, "QGIS Processing Plugin")
+		self.assertIn("iface stand-in", plugin.compatibility_report)
+
+		plugins.install_plugin(name)
+		self.assertEqual(plugins.set_plugin_enabled(name, 1), "Enabled", frappe.db.get_value(plugins.PLUGIN, name, "last_error"))
+		self.assertEqual(frappe.db.get_value(plugins.PLUGIN, name, "processing_providers"), "isptestgui")
+		job = proc.run_algorithm("isptestgui:count", {"INPUT": {"dataset": DATASET}})
+		job = proc.get_processing_job(job["name"])
+		self.assertEqual(job["status"], "Completed", job["log"])
+		self.assertEqual(job["results"]["COUNT"], 4)
 
 	def test_desktop_plugin_is_classified_and_not_installed(self):
 		name = register("isp desktop", DESKTOP_PLUGIN)

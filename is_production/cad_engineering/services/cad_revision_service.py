@@ -23,7 +23,7 @@ FROZEN = {"In Review", "Approved", "Rejected", "Superseded"}
 SNAPSHOT_FORMAT = "isp-cad-snapshot"
 SNAPSHOT_VERSION = 2  # 2: blocks and external references (version 1 snapshots have neither)
 LAYER_FIELDS = ("layer_name", "layer_code", "is_group", "color", "line_type", "line_weight", "visible", "locked", "printable", "display_order", "description")
-ENTITY_FIELDS = ("entity_id", "entity_type", "color", "line_type", "source_id", "geometry", "geometry_ref", "geometry_format", "metadata")
+ENTITY_FIELDS = ("entity_id", "entity_type", "color", "line_type", "line_weight", "source_id", "geometry", "geometry_ref", "geometry_format", "metadata")
 MODEL_FIELDS = ("model_name", "model_type", "crs", "source_crs", "vertical_datum", "linear_units", "angular_units", "local_origin_x", "local_origin_y", "local_origin_z", "plan_orientation", "annotation_scale")
 
 
@@ -188,7 +188,7 @@ def submit_for_review(model, description=None):
 			"snapshot_on": now_datetime(),
 			"entity_count": entities,
 			"layer_count": layers,
-			"validation_results": json.dumps({"invalid_entities": invalid}),
+			"validation_results": json.dumps({"invalid_entities": invalid, **design_validation_of(model, name)}),
 			"submitted_by": frappe.session.user,
 			"submitted_on": now_datetime(),
 		}
@@ -196,6 +196,21 @@ def submit_for_review(model, description=None):
 	revision.save(ignore_permissions=True)
 	frappe.db.set_value(MODEL, model, {"working_revision": None, "approval_status": "In Review"}, update_modified=False)
 	return revision
+
+
+def design_validation_of(model, revision):
+	"""The mining design validation of this revision (latest), so the submitted design records the standard version."""
+	row = frappe.get_all(
+		"CAD Design Validation",
+		filters={"cad_model": model, "revision": revision},
+		fields=["name", "design_standard", "standard_version", "status", "checked_on"],
+		order_by="creation desc",
+		limit=1,
+	)
+	if not row:
+		return {}
+	r = row[0]
+	return {"design_validation": r.name, "design_standard": r.design_standard, "design_standard_version": r.standard_version, "design_validation_status": r.status, "design_validated_on": str(r.checked_on)}
 
 
 def check_approver(revision):

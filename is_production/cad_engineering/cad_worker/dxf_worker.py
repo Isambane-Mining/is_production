@@ -65,13 +65,12 @@ LINETYPES_OUT = {"Continuous": "CONTINUOUS", "Dashed": "DASHED", "Dotted": "DOT"
 LINEWEIGHTS = [0, 5, 9, 13, 15, 18, 20, 25, 30, 35, 40, 50, 53, 60, 70, 80, 90, 100, 106, 120, 140, 158, 200, 211]
 PATTERNS_IN = {"ANSI31": "ANSI31", "ANSI37": "ANSI37", "LINE": "LINES", "NET": "GRID", "DOTS": "DOTS"}
 PATTERNS_OUT = {"ANSI31": "ANSI31", "ANSI37": "ANSI37", "LINES": "LINE", "GRID": "NET", "DOTS": "DOTS"}
+FACE_TYPES = {"3DFACE", "MESH"}  # collected per layer into surfaces (TINs) or meshes
 UNSUPPORTED = {
-	"3DSOLID": "ACIS solids cannot be read (Phase 3: meshes and solids)",
+	"3DSOLID": "ACIS solids cannot be read (export them as STEP instead)",
 	"BODY": "ACIS bodies cannot be read",
 	"REGION": "ACIS regions cannot be read",
 	"SURFACE": "ACIS surfaces cannot be read",
-	"MESH": "meshes arrive with Phase 3",
-	"3DFACE": "3D faces arrive with Phase 3 (surfaces)",
 	"IMAGE": "raster images are not imported",
 	"WIPEOUT": "wipeouts are not imported",
 	"OLE2FRAME": "embedded OLE objects are never imported",
@@ -233,6 +232,7 @@ class Reader:
 		self.report = report
 		self.blocks_used = set()
 		self.block_defs = {}
+		self.faces = {}  # layer -> [(p0, p1, p2)]
 
 	def warn(self, message):
 		warnings = self.report["warnings"]
@@ -269,6 +269,7 @@ class Reader:
 			"layer": e.dxf.get("layer", "0"),
 			"color": self.color(e),
 			"line_type": self.linetype(e.dxf.get("linetype")),
+			"line_weight": e.dxf.get("lineweight", -1) / 100 if e.dxf.get("lineweight", -1) > 0 else 0,  # -1/-2/-3: by layer/block/default
 			"source_id": e.dxf.get("handle"),
 		}
 
@@ -300,7 +301,7 @@ class Reader:
 				if e.is_3d_polyline:
 					points = [m.point(v.dxf.location) for v in e.vertices]
 					return self.polyline_points(points, bool(e.is_closed), meta)
-				return self.unsupported(t, "polyface and polygon meshes arrive with Phase 3")
+				return self.collect_faces(e, m)
 			if t in ("XLINE", "RAY"):
 				return [("Construction Line", {"point": m.point(e.dxf.start), "direction": unit(m.vector(e.dxf.unit_vector)), "ray": t == "RAY"}, meta)]
 			if t == "TEXT":
@@ -320,6 +321,8 @@ class Reader:
 				if len(loop) < 3:
 					return self.invalid(e, "degenerate 2D solid")
 				return [("Hatch", {"loops": [{"points": loop}], "pattern": "SOLID", "scale": 1.0, "angle": 0.0}, {**meta, "converted_from": t})]
+			if t in FACE_TYPES:
+				return self.collect_faces(e, m)
 			if t in UNSUPPORTED:
 				return self.unsupported(t, UNSUPPORTED[t])
 			if depth < MAX_EXPLODE_DEPTH and hasattr(e, "virtual_entities"):
@@ -346,6 +349,25 @@ class Reader:
 			else:
 				out.append((entity_type, g, meta))
 		return out
+
+	def collect_faces(self, e, m):
+		"""3DFACE / POLYFACE / polygon mesh / MESH: triangles gathered per layer (made into surfaces at the end)."""
+		from ezdxf.render import MeshBuilder
+
+		t = e.dxftype()
+		if t == "3DFACE":
+			v = [m.point(e.dxf.get(f"vtx{i}")) for i in range(4)]
+			polys = [v[:3]] if math.dist(v[2], v[3]) < 1e-12 else [v[:3], [v[0], v[2], v[3]]]
+		else:
+			mesh = MeshBuilder.from_polyface(e) if t == "POLYLINE" else MeshBuilder.from_mesh(e)
+			verts = [m.point(p) for p in mesh.vertices]
+			polys = [[verts[i] for i in face] for face in mesh.faces if len(face) >= 3]
+		bucket = self.faces.setdefault(e.dxf.get("layer", "0"), [])
+		for poly in polys:
+			for k in range(1, len(poly) - 1):  # fan
+				bucket.append((poly[0], poly[k], poly[k + 1]))
+		self.count("faces", t)
+		return []
 
 	def unsupported(self, t, why):
 		self.count("unsupported", t)
@@ -717,6 +739,9 @@ def read(request):
 		"unsupported": {},
 		"exploded": {},
 		"densified": {},
+		"faces": {},
+		"surfaces": [],
+		"meshes": [],
 		"invalid": [],
 		"invalid_count": 0,
 		"duplicates": 0,
@@ -796,7 +821,7 @@ def read(request):
 				continue
 			style = block_reader.style(e)
 			for entity_type, g, meta in block_reader.convert(e, in_block=True):
-				contents.append({"entity_type": entity_type, "geometry": g, "layer": style["layer"], "color": style["color"], "line_type": style["line_type"], "metadata": meta})
+				contents.append({"entity_type": entity_type, "geometry": g, "layer": style["layer"], "color": style["color"], "line_type": style["line_type"], "line_weight": style.get("line_weight"), "metadata": meta})
 		for nested in block_reader.blocks_used:
 			if nested not in done:
 				pending.append(nested)
@@ -828,13 +853,56 @@ def read(request):
 	if math.isfinite(box[0]):
 		report["extents"] = box
 		report["elevation_range"] = [box[2], box[5]]
-	report["entity_count"] = sum(report["converted"].values())
+	write_face_sets(reader.faces, workspace, report)
+	report["entity_count"] = sum(report["converted"].values()) + len(report["surfaces"]) + len(report["meshes"])
 	emit(progress=100)
 	result = {"report": report}
 	if request.get("blocks_out"):
 		with open(inside(workspace, request["blocks_out"]), "w") as f:
 			json.dump(blocks, f)
 	return result
+
+
+def surface_tools():
+	"""surface_worker.py's TIN helpers (this script's own folder: -I leaves it off sys.path)."""
+	here = os.path.dirname(os.path.abspath(__file__))
+	if here not in sys.path:
+		sys.path.insert(0, here)
+	import surface_worker
+
+	return surface_worker
+
+
+def write_face_sets(faces, workspace, report):
+	"""Each layer's faces: a Surface when they form a 2.5D TIN (no overlaps in plan), else a Mesh."""
+	if not faces:
+		return
+	import numpy as np
+
+	sw = surface_tools()
+	out_dir = inside(workspace, os.path.join(workspace, "outputs"))
+	os.makedirs(out_dir, exist_ok=True)
+	for n, (layer, tris) in enumerate(sorted(faces.items())):
+		xyz, tri = sw.dedupe_triangles(np.asarray(tris, float))
+		tin = sw.compact(sw.Tin(xyz, tri))
+		p = tin.xyz[tin.tri]
+		plan = (p[:, 1, 0] - p[:, 0, 0]) * (p[:, 2, 1] - p[:, 0, 1]) - (p[:, 2, 0] - p[:, 0, 0]) * (p[:, 1, 1] - p[:, 0, 1])
+		oriented, _flipped = sw.orient_ccw(tin.xyz, tin.tri)
+		directed = np.r_[oriented[:, [0, 1]], oriented[:, [1, 2]], oriented[:, [2, 0]]]
+		_u, counts = np.unique(directed, axis=0, return_counts=True)
+		two_and_half = bool((np.abs(plan) > 1e-12).all() and (counts == 1).all())
+		file = os.path.join(out_dir, f"faces_{n}.tin")
+		if two_and_half:
+			tin.tri = oriented
+			tin.write(file)
+			stats = tin.stats()
+			stats["validation"] = sw.validate_tin(tin)
+			report["surfaces"].append({"name": layer, "layer": layer, "tin": file, "stats": stats})
+		else:
+			tin.write(file)
+			stats = tin.stats()
+			stats.update(sw.mesh_checks(tin))
+			report["meshes"].append({"name": layer, "layer": layer, "tin": file, "stats": stats})
 
 
 # ---------------------------------------------------------------------------
@@ -865,7 +933,33 @@ class Writer:
 		a = {"layer": row.get("layer") or "0"}
 		if row.get("line_type"):
 			a["linetype"] = LINETYPES_OUT.get(row["line_type"], "CONTINUOUS")
+		if row.get("line_weight"):
+			a["lineweight"] = closest_lineweight(row["line_weight"])
 		return a
+
+	def fill(self, layout, row, a):
+		"""A filled closed shape: the outline plus a SOLID hatch over it (DXF has no filled curve)."""
+		t, g, m = row["entity_type"], row["geometry"], self.map
+		hatch = layout.add_hatch(dxfattribs={k: v for k, v in a.items() if k != "linetype"})
+		hatch.set_solid_fill()
+		if t == "Polyline":
+			points = [m.point(p) for p in g["points"]]
+			bulges = g.get("bulges") or [0.0] * len(points)
+			sign = -1 if m.mirrored else 1
+			hatch.paths.add_polyline_path([(p[0], p[1], sign * (bulges[i] if i < len(bulges) else 0.0)) for i, p in enumerate(points)], is_closed=True)
+			hatch.dxf.elevation = (0, 0, points[0][2])
+		elif t == "Circle":
+			c = m.point(g["center"])
+			r = g["radius"] * m.scale
+			hatch.paths.add_polyline_path([(c[0] + r, c[1], 1.0), (c[0] - r, c[1], 1.0)], is_closed=True)
+			hatch.dxf.elevation = (0, 0, c[2])
+		elif t == "Ellipse":
+			c, major = m.point(g["center"]), m.vector(g["major_axis"])
+			path = hatch.paths.add_edge_path()
+			path.add_ellipse(c[:2], major[:2], g["ratio"], 0, 360)
+			hatch.dxf.elevation = (0, 0, c[2])
+		self.style(hatch, row)
+		return hatch
 
 	def style(self, entity, row):
 		color = rgb(row.get("color"))
@@ -991,6 +1085,8 @@ class Writer:
 			created.append(layout.add_blockref(g["block"], m.point(g["insert"]), dxfattribs={**a, "xscale": sx * m.scale, "yscale": sy * m.scale, "zscale": sz * m.scale, "rotation": math.degrees(rotation)}))
 		elif t == "Solid":
 			created.append(self.mesh(layout, row, a))
+		elif t in ("Surface", "Mesh") and row.get("tin"):
+			created.extend(self.tin_mesh(layout, row, a))
 		else:
 			count[t] -= 1
 			self.report["skipped"][t] = self.report["skipped"].get(t, 0) + 1
@@ -998,6 +1094,9 @@ class Writer:
 		for e in created:
 			if e is not None:
 				self.style(e, row)
+		if t in ("Polyline", "Circle", "Ellipse") and g.get("fill"):
+			self.fill(layout, row, a)
+			count["Fill"] = count.get("Fill", 0) + 1
 
 	def dimension(self, layout, g, a):
 		m = self.map
@@ -1022,6 +1121,19 @@ class Writer:
 			dim = layout.add_angular_dim_3p(base=location, center=m.point(g["center"])[:2], p1=p1, p2=p2, text=text, override=override, dxfattribs=a)
 		dim.render()
 		return dim.dimension
+
+	def tin_mesh(self, layout, row, a):
+		"""A surface (TIN) as one MESH entity (R2000+), or as 3DFACEs for R12."""
+		tin = surface_tools().Tin.read(inside(self.workspace, row["tin"]))
+		points = [self.map.point(p) for p in tin.xyz.tolist()]
+		faces = tin.tri.tolist()
+		if self.doc.dxfversion == "AC1009":
+			return [layout.add_3dface([points[i] for i in (f[0], f[1], f[2], f[2])], dxfattribs=a) for f in faces]
+		mesh = layout.add_mesh(dxfattribs=a)
+		with mesh.edit_data() as edit:
+			edit.vertices = points
+			edit.faces = [f[::-1] if self.map.mirrored else f for f in faces]
+		return [mesh]
 
 	def mesh(self, layout, row, a):
 		path = row.get("mesh")

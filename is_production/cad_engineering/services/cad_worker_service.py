@@ -24,7 +24,9 @@ from frappe.utils import cint
 WORKER_DIR = Path(__file__).resolve().parent.parent / "cad_worker"
 WORKER = "geometry_worker.py"  # Open CASCADE
 DXF_WORKER = "dxf_worker.py"  # ezdxf + pyproj
-SCRIPTS = {WORKER, DXF_WORKER}
+SURFACE_WORKER = "surface_worker.py"  # NumPy + CDT: TINs and surface analysis
+MINING_WORKER = "mining_worker.py"  # haul roads and mining-block volumes (uses surface_worker.py)
+SCRIPTS = {WORKER, DXF_WORKER, SURFACE_WORKER, MINING_WORKER}
 HEALTH_TIMEOUT = 120
 
 

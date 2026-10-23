@@ -61,6 +61,8 @@ class CADModel(Document):
 			frappe.db.delete("CAD Entity", {"cad_model": self.name})
 			frappe.db.delete("CAD Layer", {"cad_model": self.name})
 			frappe.db.delete("CAD Block", {"cad_model": self.name})
+			frappe.db.delete("CAD Surface", {"cad_model": self.name})
+			frappe.db.delete("CAD Volume Calculation", {"cad_model": self.name})
 			frappe.db.delete("CAD Import Export", {"cad_model": self.name})
 			frappe.db.delete("CAD Design Revision", {"cad_model": self.name})
 			frappe.db.delete("CAD Processing Job", {"cad_model": self.name})

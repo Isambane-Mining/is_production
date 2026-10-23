@@ -18,7 +18,7 @@ from is_production.cad_engineering.services import (
 	cad_workstation_service,
 )
 
-IGNORE_TEST_RECORD_DEPENDENCIES = ["User", "Employee", "Company", "Branch", "Location", "Geo Project", "CAD Design Revision", "CAD Model", "CAD Processing Job"]
+IGNORE_TEST_RECORD_DEPENDENCIES = ["User", "Employee", "Company", "Branch", "Location", "Geo Project", "CAD Design Revision", "CAD Model", "CAD Processing Job", "CAD Design Standard", "CAD Design Validation", "Material Type"]
 PREFIX = "TST-CAD-"
 # Lo29-style survey coordinates: large numbers that float32 would round to ~0.25 m
 X0, Y0, Z0 = 2500000.0, -2900000.0, 1500.0
@@ -28,7 +28,7 @@ def cleanup():
 	"""Jobs commit (the worker runs in the background), so test models are removed explicitly — by model
 	name pattern, so rows left behind by an interrupted run are removed too."""
 	models = frappe.get_all("CAD Model", filters={"name": ["like", f"{PREFIX}%"]}, pluck="name")
-	for doctype in ("CAD Entity", "CAD Layer", "CAD Block", "CAD Import Export", "CAD Design Revision", "CAD Processing Job"):
+	for doctype in ("CAD Entity", "CAD Layer", "CAD Block", "CAD Import Export", "CAD Design Revision", "CAD Processing Job", "CAD Surface", "CAD Volume Calculation", "CAD Design Validation"):
 		frappe.db.delete(doctype, {"cad_model": ["like", f"{PREFIX}%"]})
 	frappe.db.delete("CAD Model", {"name": ["like", f"{PREFIX}%"]})
 	store = cad_storage_service.provider()

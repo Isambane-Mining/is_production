@@ -45,7 +45,8 @@ class GeoPitLayout(Document):
         if not self.geo_project:
             frappe.throw("Geo Project is required.")
 
-        if not self.pit_outline_batch:
+        if not self.pit_outline_batch and not self.get("source_cad_model"):
+            # a layout published from an approved CAD design has its blocks from the design, not a pit outline
             frappe.throw("Pit Outline Batch is required.")
 
         if float(self.block_size_x or 0) <= 0:

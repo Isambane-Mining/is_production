@@ -79,3 +79,19 @@ export async function wait_for_job(name, on_progress) {
 		await new Promise((resolve) => setTimeout(resolve, 1000));
 	}
 }
+
+// Surface display tiles (see cad_worker/surface_worker.py tiles): the index (JSON) and one tile (binary mesh).
+export async function get_surface_index(model, geometry_ref) {
+	const query = new URLSearchParams({ model, geometry_ref });
+	const response = await fetch(`/api/method/${BASE}get_surface_index?${query}`, { credentials: "same-origin" });
+	if (response.status === 404) return null;
+	if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+	return response.json();
+}
+
+export async function get_surface_tile(model, geometry_ref, file) {
+	const query = new URLSearchParams({ model, geometry_ref, file });
+	const response = await fetch(`/api/method/${BASE}get_surface_tile?${query}`, { credentials: "same-origin" });
+	if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+	return parse_mesh(await response.arrayBuffer());
+}
