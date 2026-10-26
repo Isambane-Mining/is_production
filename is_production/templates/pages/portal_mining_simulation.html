@@ -6747,9 +6747,50 @@ const Sim = (() => {
   }
 
   // ---------------- playback ----------------
+  /* The ROM stockpiles as piles on their pads (the ROM tips with an outline), for the playback: the coal on the stockpile
+     each day (res.romStock: the extra coal or, without a coal target, all the coal; else the plant feed balance of the
+     ROM tip, Inventory.romStock) ÷ its bulk density (t/m³, 0.9 unless set) is the volume of the pile. The pile fills the
+     pad like a dump: up to the crest (the pad's edge + its maximum height, or its crest level) and no steeper than its
+     face angle from the edge; a smaller pile is a cone from the tipping point (the tip's entry, else the middle of the pad),
+     its sides at the face angle, as high as holds its volume, within the faces of the full pad. The
+     stockpile of the schedule is shared between the pads by what each can hold. at(day) → [{cells, h, d}] or null. */
+  function romPiles(ws, res) {
+    const P = ws.project, list = (P.dumps || []).filter(d => d.kind === 'rom' && d.pts && d.pts.length >= 3);
+    if (!res || !list.length) return null;
+    const series = res.romStock && res.romStock.daily ? res.romStock.daily : null;
+    const inv = !series && typeof Inventory !== 'undefined' ? Inventory.romStock(P, res).filter(r => r.tracked) : [];
+    if (!series && !inv.length) return null;
+    const piles = list.map(d => {
+      const cells = Model.cellsInPolygon(ws, d.pts), tanA = Math.tan((U.clamp(d.faceAngle || 30, 5, 89) * Math.PI) / 180), edge = Geo.densify(d.pts, ws.cell, true);
+      let es = 0; for (const p of edge) es += Model.sampleGrid(ws, ws.topo, p[0], p[1]);
+      const crest = d.crestElev != null && d.crestElev !== '' && isFinite(d.crestElev) ? +d.crestElev : es / edge.length + (+d.maxHeight || 20);
+      const full = new Float32Array(cells.length), rt = new Float32Array(cells.length), tip = d.entry && Geo.pip(d.entry[0], d.entry[1], d.pts) ? d.entry : Geo.centroid(d.pts); let cap = 0, hi = 0, top = 0;
+      cells.forEach((c, i) => { const [x, y] = Model.cellXY(ws, c), e = Geo.distToPolygonEdge(x, y, d.pts); full[i] = Math.max(0, Math.min(crest, Model.sampleGrid(ws, ws.topo, e.x, e.y) + e.d * tanA) - ws.topo[c]); cap += full[i] * ws.A; hi = Math.max(hi, full[i]); rt[i] = Math.hypot(x - tip[0], y - tip[1]) * tanA; top = Math.max(top, full[i] + rt[i]); });
+      return { d, cells, full, rt, top, cap, hi, bd: +d.bulkDensity > 0 ? +d.bulkDensity : 0.9, own: inv.find(r => r.id === d.id) || null, h: new Float32Array(cells.length) };
+    }).filter(q => q.cells.length && q.cap > 0);
+    if (!piles.length) return null;
+    const capAll = piles.reduce((a, q) => a + q.cap, 0), coalL = P.layers.findIndex(L => L.type === 'coal');
+    const at = day => piles.map(q => {
+      const t = day < 0 ? (q.own ? q.own.open : 0) : series ? (series[Math.min(day, series.length - 1)] * q.cap) / capAll : q.own ? q.own.stock[Math.min(day, q.own.stock.length - 1)] : 0;
+      const V = Math.max(0, t) / q.bd;
+      // the height of the cone at the tipping point that holds the volume (all of the pad at most)
+      if (V >= q.cap) q.h.set(q.full);
+      else if (!(V > 0)) q.h.fill(0);
+      else {
+        const hOf = (z, i) => Math.max(0, Math.min(q.full[i], z - q.rt[i]));
+        let lo = 0, up = q.top;
+        for (let k = 0; k < 40; k++) { const z = (lo + up) / 2; let v = 0; for (let i = 0; i < q.full.length; i++) v += hOf(z, i); if (v * ws.A < V) lo = z; else up = z; }
+        for (let i = 0; i < q.full.length; i++) q.h[i] = hOf(up, i);
+      }
+      return { d: q.d, cells: q.cells, h: q.h, tons: t, vol: V, cap: q.cap, over: V > q.cap };
+    });
+    return { piles, at, mat: coalL >= 0 ? coalL + 1 : 255 };
+  }
   function playback(ws, res) {
     // mat: what lies on top of the spoil in each cell (the layer placed there last + 1; 255 mixed spoil; 0 none)
     const pb = { insitu: Float32Array.from(ws.topo), fill: new Float32Array(ws.n), mat: new Uint8Array(ws.n), day: -1 };
+    const ROM = romPiles(ws, res); // (the ROM stockpiles: laid over the surface of the day, in the colour of the coal)
+    pb.rom = ROM;
     pb.reset = () => { pb.insitu.set(ws.topo); pb.fill.fill(0); pb.mat.fill(0); pb.day = -1; };
     pb.seek = target => {
       if (!res) return;
@@ -6759,11 +6800,12 @@ const Sim = (() => {
         for (let k = res.dayStart[d], e = res.dayStart[d + 1]; k < e; k++) { const c = res.dCell[k]; pb.insitu[c] = res.dIns[k]; pb.fill[c] = res.dFill[k]; if (res.dMat) pb.mat[c] = res.dMat[k]; }
       }
       pb.day = target;
+      if (ROM) { pb.romNow = ROM.at(target); for (const q of pb.romNow) q.cells.forEach((c, i) => { pb.fill[c] = q.h[i]; pb.mat[c] = q.h[i] > 0.01 ? ROM.mat : 0; }); }
     };
     return pb;
   }
 
-  return { run, playback, validate, prepRoads, route, dumpCapacity, isWorking, buildGraph };
+  return { run, playback, romPiles, validate, prepRoads, route, dumpCapacity, isWorking, buildGraph };
 })();
 
 /* ===== Monthly figures of a schedule: tonnes and bcm mined, ADC tonnes and other block attributes, typed-in targets ===== */
@@ -14245,9 +14287,15 @@ const Tabs = (() => {
       const fi = num(d.plantFeed, v => { d.plantFeed = v > 0 ? v : null; App.changed('meta'); App.inv = null; UI.renderTab(); UI.renderInspector(); }, { min: 0, step: 100, allowEmpty: true, placeholder: 'not tracked' }); fi.setAttribute('aria-label', 'Plant feed');
       const oi = num(d.openingStock, v => { d.openingStock = v > 0 ? v : null; App.changed('meta'); App.inv = null; UI.renderTab(); UI.renderInspector(); }, { min: 0, step: 1000, allowEmpty: true, placeholder: '0' }); oi.setAttribute('aria-label', 'Opening stock');
       ed.push(h('div', { class: 'grid2' }, fld('Plant feed (t a working day)', fi), fld('Opening stock (t)', oi)));
+      // the pile in the 3D view: the coal on the stockpile ÷ its bulk density, on the pad drawn for the tip
+      const bdi = num(+d.bulkDensity > 0 ? +d.bulkDensity : null, v => { d.bulkDensity = v > 0 ? v : null; App.changed('meta'); if (App.res) { App.pb = Sim.playback(App.ws, App.res); App.seek && App.seek(App.day); } UI.renderTab(); }, { min: 0.3, max: 2, step: 0.05, allowEmpty: true, placeholder: '0.9' }); bdi.setAttribute('aria-label', 'Bulk density of the stockpile');
+      { const pbR = App.pb && App.pb.rom, now = App.pb && App.pb.romNow ? App.pb.romNow.find(q => q.d.id === d.id) : null, pile = pbR ? pbR.piles.find(q => q.d.id === d.id) : null;
+        ed.push(h('div', { class: 'grid2' }, fld('Bulk density of the stockpile (t/m³)', bdi), h('div', { class: 'dt', style: { whiteSpace: 'normal', alignSelf: 'end' } }, d.pts && d.pts.length >= 3 ? (pile ? `The pad holds ${U.fmtBig(pile.cap, 'm³')} (${U.fmtBig(pile.cap * pile.bd, 't')}).` : 'Run the simulation to see the pile.') : 'Draw the pad of the stockpile to see it in the 3D view.')));
+        if (now) ed.push(h('div', { class: 'kv' }, h('span', { class: 'k' }, `Pile on ${App.day >= 0 ? U.fmtDay(P.startDate, App.day) : 'the start'}`), h('span', { class: 'v' }, `${U.fmtBig(now.tons, 't')} · ${U.fmtBig(now.vol, 'm³')}${now.over ? ' — more than the pad holds' : ''}`)));
+        if (pile && App.res && App.res.romStock && App.res.romStock.daily) { const top = Math.max(...App.res.romStock.daily) * pile.cap / pbR.piles.reduce((a, q) => a + q.cap, 0) / pile.bd; if (top > pile.cap) ed.push(msg('warn', `At its largest the stockpile needs ${U.fmtBig(top, 'm³')}, more than the ${U.fmtBig(pile.cap, 'm³')} the pad holds: the 3D view shows it full. Enlarge the pad or raise its maximum height.`)); } }
       const rr = App.res && !App.stale ? App.invNow() : null, r = rr ? rr.C.rom.find(x => x.id === d.id) : null;
       if (r && r.tracked) { const end = r.stock[r.stock.length - 1], peak = Math.max(...r.stock); ed.push(h('div', { class: 'kv' }, h('span', { class: 'k' }, `Stock on ${App.day >= 0 ? U.fmtDay(P.startDate, App.day) : 'the start'}`), h('span', { class: 'v' }, U.fmtBig(App.day >= 0 ? r.stock[App.day] : r.open, 't')), h('span', { class: 'k' }, 'Highest stock'), h('span', { class: 'v' }, U.fmtBig(peak, 't')), h('span', { class: 'k' }, 'Closing stock at the end'), h('span', { class: 'v' }, U.fmtBig(end, 't')))); }
-      ed.push(hint(+d.plantFeed > 0 ? 'Coal tipped here goes onto the ROM stockpile; the plant takes the feed rate off it on every working day while there is coal. The stock is part of the coal inventory (inspector, Results and reports).' : 'Coal sent here is counted as delivered; the tip itself does not grow. Type a plant feed rate to keep a ROM stockpile: coal tipped here minus what the plant takes, in the coal inventory.'));
+      ed.push(hint((+d.plantFeed > 0 ? 'Coal tipped here goes onto the ROM stockpile; the plant takes the feed rate off it on every working day while there is coal. The stock is part of the coal inventory (inspector, Results and reports).' : 'Coal sent here is counted as delivered. Type a plant feed rate to keep a ROM stockpile: coal tipped here minus what the plant takes, in the coal inventory.') + ' In the 3D view the ROM stockpile is a pile on the pad drawn for this tip, growing and shrinking with the coal on it (the stockpile of the extra coal or of a schedule without a coal target, else this plant feed): its tons ÷ the bulk density, a cone from the tipping point with its sides at the face angle, up to the maximum height.'));
     }
     ed.push(h('div', { class: 'grid2' }, fld('Colour', (() => { const c = h('input', { type: 'color', value: d.color || '#c9a86a' }); c.addEventListener('change', () => { d.color = c.value; App.changed('dumps'); UI.renderTab(); }); return c; })()),
       h('div', { class: 'fld' }, h('span', null, 'Tipping start point'), h('div', { class: 'num', style: { fontSize: '12px', paddingTop: '5px' } }, d.entry ? `${U.fmtNum(d.entry[0], 0)}, ${U.fmtNum(d.entry[1], 0)}` : 'Nearest point to a road'))));
