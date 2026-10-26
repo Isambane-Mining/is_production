@@ -2,7 +2,7 @@
 import frappe
 
 from is_production.production.report.hod_presentation import hod_presentation as report
-from is_production.production.report.hod_presentation.availability_grids import build_grid_data, render_grids
+from is_production.production.report.hod_presentation.hod_presentation import build_grid_data, render_grids
 from .dashboard_data import build_dashboard
 
 

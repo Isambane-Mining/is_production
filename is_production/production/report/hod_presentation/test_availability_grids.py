@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 from copy import deepcopy
 
-from . import availability_grids as grids
+from . import hod_presentation as grids
 
 
 class GridParser(HTMLParser):

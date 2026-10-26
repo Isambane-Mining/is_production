@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import frappe
 
-from . import availability_grids as grids
+from . import hod_presentation as grids
 from .test_availability_grids import GridParser
 
 

@@ -1,5 +1,5 @@
 """Rank existing Engine period results; never recompute percentages from daily rows."""
-from is_production.production.report.hod_presentation.availability_grids import (
+from is_production.production.report.hod_presentation.hod_presentation import (
     CATEGORY_LABELS, percentage_value,
 )
 
