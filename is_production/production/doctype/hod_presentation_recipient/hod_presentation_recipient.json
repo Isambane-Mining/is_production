@@ -1,0 +1,23 @@
+{
+ "doctype": "DocType",
+ "name": "HOD Presentation Recipient",
+ "module": "Production",
+ "custom": 0,
+ "istable": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "email"
+ ],
+ "fields": [
+  {
+   "fieldname": "email",
+   "label": "Email",
+   "fieldtype": "Data",
+   "options": "Email",
+   "reqd": 1,
+   "in_list_view": 1
+  }
+ ],
+ "permissions": [],
+ "track_changes": 0
+}

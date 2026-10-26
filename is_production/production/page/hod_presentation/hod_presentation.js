@@ -98,7 +98,7 @@ const HOD_PRESENTATION_FILTERS = [
                 "All Assets"
             ],
             reqd: 1,
-            default: "Isambane & Excavo Assets"
+            default: "All Assets"
         },
         {
             fieldname: "au_target_filter",

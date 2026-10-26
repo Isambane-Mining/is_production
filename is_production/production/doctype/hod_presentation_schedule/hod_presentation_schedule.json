@@ -1,0 +1,188 @@
+{
+ "doctype": "DocType",
+ "name": "HOD Presentation Schedule",
+ "module": "Production",
+ "custom": 0,
+ "istable": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "schedule_name",
+  "enabled",
+  "delivery_site",
+  "run_as",
+  "frequency",
+  "weekday",
+  "send_time",
+  "sites",
+  "recipients",
+  "filters_section",
+  "period_rule",
+  "summary_type",
+  "machine_scope",
+  "asset_ownership",
+  "au_target_filter",
+  "last_section",
+  "last_run",
+  "last_status",
+  "last_presentation",
+  "last_error"
+ ],
+ "fields": [
+  {
+   "fieldname": "schedule_name",
+   "label": "Schedule Name",
+   "fieldtype": "Data",
+   "reqd": 1,
+   "unique": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "enabled",
+   "label": "Enabled",
+   "fieldtype": "Check",
+   "default": "0",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "delivery_site",
+   "label": "Delivery Frappe Site",
+   "fieldtype": "Data",
+   "reqd": 1,
+   "description": "Exact Frappe site name, for example isambane.co.za. Copied schedules cannot send from another site."
+  },
+  {
+   "fieldname": "run_as",
+   "label": "Run As",
+   "fieldtype": "Link",
+   "options": "User",
+   "reqd": 1,
+   "description": "Enabled System User with existing HOD report permissions."
+  },
+  {
+   "fieldname": "frequency",
+   "label": "Frequency",
+   "fieldtype": "Select",
+   "options": "Daily\nWeekly",
+   "default": "Daily",
+   "reqd": 1
+  },
+  {
+   "fieldname": "weekday",
+   "label": "Weekday",
+   "fieldtype": "Select",
+   "options": "Monday\nTuesday\nWednesday\nThursday\nFriday\nSaturday\nSunday",
+   "default": "Monday",
+   "depends_on": "eval:doc.frequency == \"Weekly\""
+  },
+  {
+   "fieldname": "send_time",
+   "label": "Send Time (South African time)",
+   "fieldtype": "Time",
+   "default": "06:00:00",
+   "reqd": 1
+  },
+  {
+   "fieldname": "sites",
+   "label": "Sites",
+   "fieldtype": "Table",
+   "options": "HOD Presentation Schedule Site",
+   "reqd": 1
+  },
+  {
+   "fieldname": "recipients",
+   "label": "Recipients",
+   "fieldtype": "Table",
+   "options": "HOD Presentation Recipient",
+   "reqd": 1
+  },
+  {
+   "fieldname": "filters_section",
+   "label": "Report Defaults",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "period_rule",
+   "label": "Period Rule",
+   "fieldtype": "Data",
+   "default": "Planning period start through previous Sunday",
+   "read_only": 1
+  },
+  {
+   "fieldname": "summary_type",
+   "label": "Summary Type",
+   "fieldtype": "Select",
+   "options": "Daily Summary\nAverage Per Machine\nWeekly Summary\nMonthly Summary",
+   "default": "Average Per Machine",
+   "reqd": 1
+  },
+  {
+   "fieldname": "machine_scope",
+   "label": "Machine Scope",
+   "fieldtype": "Select",
+   "options": "Production Machines\nSwing/Spare Machines\nInclude Swing/Spare",
+   "default": "Include Swing/Spare",
+   "reqd": 1
+  },
+  {
+   "fieldname": "asset_ownership",
+   "label": "Asset Ownership",
+   "fieldtype": "Select",
+   "options": "Isambane & Excavo Assets\nSuppliers Assets\nAll Assets",
+   "default": "All Assets",
+   "reqd": 1
+  },
+  {
+   "fieldname": "au_target_filter",
+   "label": "A & U Target",
+   "fieldtype": "Select",
+   "options": "100% A & U\n85% A & U",
+   "default": "85% A & U",
+   "reqd": 1
+  },
+  {
+   "fieldname": "last_section",
+   "label": "Last Run",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "last_run",
+   "label": "Last Run",
+   "fieldtype": "Datetime",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_status",
+   "label": "Last Status",
+   "fieldtype": "Data",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_presentation",
+   "label": "Last Presentation",
+   "fieldtype": "Link",
+   "options": "File",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_error",
+   "label": "Last Error",
+   "fieldtype": "Long Text",
+   "read_only": 1
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 0,
+   "print": 1,
+   "export": 1,
+   "share": 0
+  }
+ ],
+ "track_changes": 1,
+ "autoname": "field:schedule_name"
+}

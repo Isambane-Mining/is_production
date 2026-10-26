@@ -245,3 +245,10 @@ _add_mpp_doc_event(
 )
 
 # END DEFINE MONTHLY PRODUCTION AUTO SYNC
+
+
+# HOD configurable PowerPoint delivery: one dispatcher; times/sites/recipients live in DocTypes.
+_hod_dispatch_method = "is_production.production.controllers.hod_presentation_scheduler.dispatch_due"
+_hod_minute_jobs = scheduler_events.setdefault("cron", {}).setdefault("* * * * *", [])
+if _hod_dispatch_method not in _hod_minute_jobs:
+    _hod_minute_jobs.append(_hod_dispatch_method)
