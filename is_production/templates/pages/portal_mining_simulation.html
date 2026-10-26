@@ -9424,7 +9424,7 @@ const Fin = (() => {
     const mk = () => new Float64Array(N), at = m => np + m; // (the model's months: np before mining, nM of mining, then closure)
     const X = {}; for (const k of ['rom', 'insitu', 'topsoil', 'waste', 'dozed', 'drillM', 'blastB', 'blastW', 'blastC', 'explKg', 'presplitM2', 'reh', 'rehabHa', 'water', 'feed', 'product', 'discard', 'expT', 'domT', 'cv',
       'revExp', 'revDom', 'rev', 'mkt', 'logi', 'logiExp', 'cTopsoil', 'cWaste', 'cDoze', 'cCoal', 'cDrill', 'cDrillW', 'cDrillC', 'cExpl', 'cPresplit', 'cRehandle', 'cRehab', 'cWater', 'mining', 'cCrush', 'cWash', 'cDiscard', 'process', 'over', 'opex',
-      'ebitda', 'royalty', 'tax', 'capex', 'capInit', 'capSust', 'capClose', 'wc', 'dwc', 'fcf', 'cum', 'disc', 'pv', 'days']) X[k] = mk();
+      'ebitda', 'royalty', 'tax', 'capex', 'capInit', 'capSust', 'capClose', 'wc', 'dwc', 'fcf', 'cum', 'disc', 'pv', 'days', 'depr', 'pbt', 'np', 'npCum']) X[k] = mk();
     X.cv.fill(NaN);
     // the physical figures of each month of mining
     const doz = new Float64Array(nM); for (const A of res.acts) if (A.dozBcm) for (let d = 0; d < A.dozBcm.length; d++) doz[mo.mOf[d]] += A.dozBcm[d];
@@ -9515,6 +9515,24 @@ const Fin = (() => {
       const tax = inc * o.tax / 100; Y.tax = tax; Y.taxable = inc;
       X.tax[Y.t1] = tax;
     }
+    /* The profit or loss: EBITDA less the royalty, the depreciation and the tax. The capital is depreciated by units of
+       production: each month the capital spent so far and not yet written off × the coal mined in the month ÷ the coal
+       still to be mined (what is left when mining ends, in its last month); closure less salvage is charged in its month.
+       Over the life of mine the net profit adds up to the free cash flow (the working capital is released at the end). */
+    {
+      let pool = 0, left = 0, cum = 0, lastMine = -1;
+      for (let t = 0; t < N; t++) { left += X.rom[t]; if (X.rom[t] > 0) lastMine = t; }
+      for (let t = 0; t < N; t++) {
+        pool += X.capInit[t] + X.capSust[t];
+        let d = left > 0 && X.rom[t] > 0 ? (pool * X.rom[t]) / left : 0;
+        left -= X.rom[t];
+        if (t >= lastMine && pool - d > 1e-6) d = pool; // (the rest when mining ends, or capital spent after it)
+        pool -= d;
+        X.depr[t] = d + X.capClose[t];
+        X.pbt[t] = X.ebitda[t] - X.royalty[t] - X.depr[t];
+        X.np[t] = X.pbt[t] - X.tax[t]; cum += X.np[t]; X.npCum[t] = cum;
+      }
+    }
     // free cash flow, discounted to the first month of the model (mid-month)
     const rm = Math.pow(1 + o.disc / 100, 1 / 12) - 1;
     let cum = 0, minCum = 0, pay = -1, npv = 0;
@@ -9528,11 +9546,12 @@ const Fin = (() => {
     const sum = k => X[k].reduce((a, b) => a + b, 0), prod = sum('product');
     const kpi = { npv, irr, payback: pay >= 0 ? (pay - np + 1) : null, paybackT: pay, peak: -minCum, rev: sum('rev'), opex: sum('opex'), ebitda: sum('ebitda'), royalty: sum('royalty'), tax: sum('tax'), capex: sum('capex'), fcf: sum('fcf'), rom: sum('rom'), product: prod, yield: sum('rom') > 0 ? prod / sum('rom') : NaN,
       cashCost: prod > 0 ? (sum('opex') - sum('mkt')) / prod : NaN,
+      depr: sum('depr'), pbt: sum('pbt'), np: sum('np'),
       margin: prod > 0 ? sum('ebitda') / prod : NaN, price: prod > 0 ? sum('rev') / prod : NaN, cost: sum('rom') > 0 ? (sum('mining') + sum('process') + sum('over')) / sum('rom') : NaN };
     // the cost of a ton exported, free on board: mining, processing and overheads a ton sold, and its rail and port
     kpi.fobCost = sum('expT') > 0 ? (sum('mining') + sum('process') + sum('over')) / prod + sum('logiExp') / sum('expT') : NaN;
     // the years
-    const annual = years.map(Y => { const row = { y: Y.y, months: Y.t1 - Y.t0 + 1, royRate: Y.royRate, taxable: Y.taxable }; for (const k of Object.keys(X)) { if (k === 'cum' || k === 'disc' || k === 'wc') { row[k] = X[k][Y.t1]; continue; } if (k === 'cv') { let a = 0, w = 0; for (let t = Y.t0; t <= Y.t1; t++) if (X.cv[t] === X.cv[t]) { a += X.cv[t] * X.product[t]; w += X.product[t]; } row.cv = w > 0 ? a / w : NaN; continue; } let s = 0; for (let t = Y.t0; t <= Y.t1; t++) s += X[k][t]; row[k] = s; } return row; });
+    const annual = years.map(Y => { const row = { y: Y.y, months: Y.t1 - Y.t0 + 1, royRate: Y.royRate, taxable: Y.taxable }; for (const k of Object.keys(X)) { if (k === 'cum' || k === 'disc' || k === 'wc' || k === 'npCum') { row[k] = X[k][Y.t1]; continue; } if (k === 'cv') { let a = 0, w = 0; for (let t = Y.t0; t <= Y.t1; t++) if (X.cv[t] === X.cv[t]) { a += X.cv[t] * X.product[t]; w += X.product[t]; } row.cv = w > 0 ? a / w : NaN; continue; } let s = 0; for (let t = Y.t0; t <= Y.t1; t++) s += X[k][t]; row[k] = s; } return row; });
     const label = t => U.MONTHS[(k0 + t) % 12] + '/' + Math.floor((k0 + t) / 12);
     return { o, N, np, nM, k0, X, annual, kpi, label, blast: B, hydro: !!HR, prodFrom: o.wash ? (PR ? 'wash' : 'fixed') : 'rom' };
   }
@@ -15316,7 +15335,7 @@ const Tabs = (() => {
         body.append(sec('Financial model', h('span', { class: 'chip' }, `${F.annual.length} years`),
           h('div', { class: 'kpis' }, kp(`NPV at ${U.fmtNum(o.disc, 1)}%`, money(K.npv), K.npv >= 0 ? 'pos' : 'neg'), kp('IRR', K.irr === K.irr ? `${U.fmtNum(K.irr * 100, 1)}%` : '–'),
             kp('Payback', K.payback != null ? `${K.payback} months into mining (${F.label(K.paybackT)})` : 'not paid back'), kp('Peak funding', money(K.peak)),
-            kp('Revenue', money(K.rev)), kp('EBITDA', money(K.ebitda)), kp('Royalty and tax', money(K.royalty + K.tax)), kp('Free cash flow', money(K.fcf)),
+            kp('Revenue', money(K.rev)), kp('EBITDA', money(K.ebitda)), kp('Royalty and tax', money(K.royalty + K.tax)), kp('Net profit / (loss)', money(K.np), K.np >= 0 ? 'pos' : 'neg'), kp('Free cash flow', money(K.fcf)),
             kp(o.wash ? 'Coal mined → product' : 'Coal sold (as mined)', o.wash ? `${U.fmtBig(K.rom, 't')} → ${U.fmtBig(K.product, 't')} (${U.fmtNum(K.yield * 100, 1)}%)` : U.fmtBig(K.product, 't')),
             kp('Revenue a ton sold', perT(K.price)), kp('Cash cost a ton sold', perT(K.cashCost)), kp('FOB cost a ton exported', perT(K.fobCost))),
           ch,
@@ -15361,7 +15380,9 @@ const Tabs = (() => {
     return h('div', { class: 'tbl-wrap', style: { overflowX: 'auto' } }, h('table', { class: 'tbl fin-tbl', 'aria-label': 'Financial model by year' },
       h('thead', null, h('tr', null, h('th', null, `${F.o.currency} million`), ...A.map(Y => h('th', { class: 'r' }, String(Y.y))), h('th', { class: 'r' }, 'Total'))),
       h('tbody', null, t('rom', 'Coal mined (Mt)'), t('product', 'Coal sold (Mt)'), r('rev', 'Revenue'), r('logi', 'Logistics', true), r('mining', 'Mining', true), r('process', 'Processing', true), r('over', 'Overheads', true), r('mkt', 'Marketing', true),
-        r('ebitda', 'EBITDA'), r('royalty', 'Royalty', true), r('tax', 'Tax', true), r('capex', 'Capital', true), r('dwc', 'Working capital', true), r('fcf', 'Free cash flow'))));
+        r('ebitda', 'EBITDA'), r('royalty', 'Royalty', true), r('tax', 'Tax', true), r('capex', 'Capital', true), r('dwc', 'Working capital', true), r('fcf', 'Free cash flow'),
+        h('tr', null, h('td', { colspan: A.length + 2, style: { fontWeight: 600, paddingTop: '8px' } }, 'Profit and loss')),
+        r('depr', 'Depreciation', true), r('pbt', 'Profit / (loss) before tax'), r('np', 'Net profit / (loss)'))));
   }
 
   // =============== RECON ===============
@@ -17763,9 +17784,14 @@ const Report = (() => {
     row('Taxable income (of the year)', cur, null, { f: t => (last[t] ? F.annual[yOf[t]].taxable : null) }); row('Company tax', cur, 'tax', { sign: -1 });
     row('Initial capital', cur, 'capInit', { sign: -1 }); row('Sustaining capital', cur, 'capSust', { sign: -1 }); row('Closure less salvage', cur, 'capClose', { sign: -1 }); row('Working capital', cur, 'dwc', { sign: -1 });
     row('Free cash flow', cur, 'fcf'); row('Cumulative free cash flow', cur, 'cum', { total: null }); row('Present value', cur, 'pv');
+    // the profit and loss: depreciation by units of production (the capital spent so far × the coal mined ÷ the coal still to mine)
+    gap(); title(`PROFIT AND LOSS (${cur})`);
+    row('Revenue', cur, 'rev'); row('Operating costs (mining, processing, overheads, logistics, marketing)', cur, 'opex', { sign: -1 }); row('EBITDA', cur, 'ebitda');
+    row('Mineral royalty', cur, 'royalty', { sign: -1 }); row('Depreciation (units of production) and closure', cur, 'depr', { sign: -1 });
+    row('Profit / (loss) before tax', cur, 'pbt'); row('Company tax', cur, 'tax', { sign: -1 }); row('Net profit / (loss) after tax', cur, 'np'); row('Cumulative net profit / (loss)', cur, 'npCum', { total: null });
     gap(); title('MEASURES');
     aoa.push([`NPV at ${o.disc}% a year (real), to ${F.label(0)}`, cur, m0(K.npv)], ['IRR', '% a year', K.irr === K.irr ? r2(K.irr * 100) : null], ['Payback', 'months of mining', K.payback], ['Peak funding', cur, m0(K.peak)],
-      ['Revenue a ton sold', `${cur}/t`, r2(K.price)], ['Cash cost a ton sold (before the royalty)', `${cur}/t`, r2(K.cashCost)], ['FOB cost a ton exported', `${cur}/t`, r2(K.fobCost)], ['Mining, processing and overheads a ton mined', `${cur}/t`, r2(K.cost)], ['EBITDA a ton sold', `${cur}/t`, r2(K.margin)]);
+      ['Net profit / (loss) after tax, life of mine', cur, m0(K.np)], ['Revenue a ton sold', `${cur}/t`, r2(K.price)], ['Cash cost a ton sold (before the royalty)', `${cur}/t`, r2(K.cashCost)], ['FOB cost a ton exported', `${cur}/t`, r2(K.fobCost)], ['Mining, processing and overheads a ton mined', `${cur}/t`, r2(K.cost)], ['EBITDA a ton sold', `${cur}/t`, r2(K.margin)]);
     gap(); title('INPUTS (Finance tab)'); aoa.push(['Currency', cur]);
     for (const G of Fin.GROUPS) for (const q of G.fields) { if (q.when && !q.when(o)) continue; const v = o[q.k]; aoa.push([`${G.title}: ${q.label}`, Fin.unitOf(q, cur) || (q.kind === 'chk' ? '' : ''), q.kind === 'chk' ? (v ? 'yes' : 'no') : q.kind === 'sel' ? (q.opts.find(x => x[0] === v) || [, v])[1] : v]); }
     aoa.push(['Product from', '', F.prodFrom === 'wash' ? 'the washability data (Geological Data tab)' : F.prodFrom === 'fixed' ? 'a fixed yield' : 'not washed: sold as mined']);
