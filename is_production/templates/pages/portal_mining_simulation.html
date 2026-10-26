@@ -5073,6 +5073,7 @@ const Sim = (() => {
     const TL = { coal: tgLimit && +TG.coal > 0 ? +TG.coal : 0, waste: tgLimit && +TG.waste > 0 ? +TG.waste : 0, wT: TG.wasteUnit === 't', work: TG.basis === 'working', per: Monthly.daysPerMonth(P), team: TM.cap, ar: TG.coalBasis === 'ar' || !!PRD, prod: PRD };
     TL.any = TL.coal > 0 || TL.waste > 0;
     events.push({ day: 0, type: 'info', msg: `Teams: ${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)} team${TM.count === 1 ? '' : 's'} × ${U.fmtNum(TM.perTeam, 0)} m³ loose = ${U.fmtNum(TM.cap, 0)} m³ loose in an average month for the mining, the ramps and the rehandling.${TL.any ? ` The monthly targets limit it: ${[TL.coal > 0 ? `coal ${U.fmtNum(TL.coal, 0)} t${TL.prod ? ' of washed product' : TL.ar ? ' as received' : ''}` : null, TL.waste > 0 ? `waste ${U.fmtNum(TL.waste, 0)} ${TL.wT ? 't' : 'bcm'}` : null].filter(Boolean).join(' and ')} in an average month, following the ${TL.work ? 'working' : 'calendar'} days of each month.` : ''}` });
+    { const sn = Monthly.startMonths(P); if (sn && TL.waste > 0) events.push({ day: 0, type: 'info', msg: `Start-up waste: the waste target is ${U.fmtNum(+TG.wasteStart, 0)} ${TL.wT ? 't' : 'bcm'} in an average month over the first ${sn} month${sn === 1 ? '' : 's'} of the schedule, then the steady ${U.fmtNum(TL.waste, 0)} ${TL.wT ? 't' : 'bcm'}.` }); }
     { const rn = Monthly.rampMonths(P); if (rn && TL.coal > 0) events.push({ day: 0, type: 'info', msg: `Coal ramp-up: over the first ${rn} month${rn === 1 ? '' : 's'} the coal target steps up (${Array.from({ length: rn }, (_, k) => Math.round(((k + 1) / (rn + 1)) * 100) + '%').join(', ')} of ${U.fmtNum(TL.coal, 0)} t), and is met in full from month ${rn + 1}, so the waste can get ahead and build up exposed coal first.` }); }
     const tg = { key: -1, bud: [Infinity, Infinity, Infinity], used: [0, 0, 0], wdLeft: 0, left: [Infinity, Infinity, Infinity], resv: [0, 0, 0] };
     for (const X of acts) {
@@ -5245,7 +5246,9 @@ const Sim = (() => {
         tg.key = key; tg.used = [0, 0, 0]; tg.wdLeft = 0;
         let base = 0, baseC = 0, i = 0;
         for (let d = new Date(date.getTime()); d.getUTCMonth() === date.getUTCMonth(); d = new Date(d.getTime() + U.DAY_MS), i++) { const wk = isWorking(cal, d); if (wk) tg.wdLeft++; if (!TL.work || wk) { base++; baseC += Monthly.rampFactor(P, day + i); } }
-        tg.bud = [TL.coal > 0 ? (TL.coal * baseC) / TL.per : Infinity, TL.waste > 0 ? (TL.waste * base) / TL.per : Infinity, (TL.team * base) / TL.per];
+        // (the waste target: the start-up waste over the first months of the schedule, then the steady target)
+        const wM = TL.waste > 0 ? Monthly.wasteTarget(P, key - (start.getUTCFullYear() * 12 + start.getUTCMonth())) : 0;
+        tg.bud = [TL.coal > 0 ? (TL.coal * baseC) / TL.per : Infinity, wM > 0 ? (wM * base) / TL.per : Infinity, (TL.team * base) / TL.per];
         if (MW) MW.bud = (MW.min * base) / TL.per; // (the month's minimum waste)
         if (SW) SW.bud = (SW.rate * base) / TL.per; // (the month's steady waste, bcm)
       }
@@ -6878,6 +6881,10 @@ const Monthly = (() => {
      the coal target steps up, 1/(n+1), 2/(n+1) … n/(n+1) of it, and is met in full from then on, so the waste can get
      ahead and build up exposed coal first. rampFactor(P, d): the share of the coal target on day d of the schedule. */
   function rampMonths(P) { const v = +((P.targets || {}).rampMonths); return isFinite(v) && v > 0 ? Math.min(60, Math.round(v)) : 0; }
+  /* The waste target of month m of the schedule (0: the month it starts), for an average month: the start-up waste
+     (P.targets.wasteStart) over the first P.targets.wasteStartMonths months, then the steady waste target (P.targets.waste) */
+  function startMonths(P) { const T = P.targets || {}, v = +T.wasteStartMonths; return +T.waste > 0 && +T.wasteStart > 0 && isFinite(v) && v > 0 ? Math.min(600, Math.round(v)) : 0; }
+  function wasteTarget(P, m) { const T = P.targets || {}; return m < startMonths(P) ? +T.wasteStart : +T.waste > 0 ? +T.waste : 0; }
   function rampFactor(P, d) { const n = rampMonths(P); if (!n) return 1; const k = Math.floor(Math.max(0, d) / AVG_MONTH); return k < n ? (k + 1) / (n + 1) : 1; }
 
   // ---------- the monthly figures ----------
@@ -6956,7 +6963,7 @@ const Monthly = (() => {
     const coalTg = !(+T.coal > 0) ? null : !rampN ? spread(T.coal) : (() => { const a = mk(); for (let d = 0; d < nD; d++) if (basis !== 'working' || res.working[d]) a[mOf[d]] += (+T.coal * rampFactor(P, d)) / per; return a; })();
     // the washed product (washability, Geological Data tab): as received coal × yield, block by block
     const prod = typeof Wash !== 'undefined' ? Wash.schedule(P, res, mOf, nM) : null;
-    const target = { limit, rampMonths: rampN, coalAvg: +T.coal > 0 ? +T.coal : null, wasteAvg: +T.waste > 0 ? +T.waste : null, coal: coalTg, waste: spread(T.waste), wasteUnit, basis, per, coalBasis: T.coalBasis === 'ar' ? 'ar' : T.coalBasis === 'product' && prod ? 'product' : 'insitu' };
+    const target = { limit, rampMonths: rampN, coalAvg: +T.coal > 0 ? +T.coal : null, wasteAvg: +T.waste > 0 ? +T.waste : null, coal: coalTg, waste: +T.waste > 0 ? (() => { const a = mk(); for (let m = 0; m < nM; m++) a[m] = (wasteTarget(P, m) * base[m]) / per; return a; })() : null, wasteStart: startMonths(P) ? { months: startMonths(P), avg: +T.wasteStart } : null, wasteUnit, basis, per, coalBasis: T.coalBasis === 'ar' ? 'ar' : T.coalBasis === 'product' && prod ? 'product' : 'insitu' };
 
     const nDays = sum(days), months = nDays / AVG_MONTH; // length of the schedule in average months
     // topsoil put back on the backfill, and rehandling, in loose m³ a month
@@ -7075,7 +7082,7 @@ const Monthly = (() => {
       rehandled: (res.rehandles || []).map(J => ({ name: J.name, moved: sumR(J.daily) })).filter(q => q.moved > 0),
       blocksDone: Array.from(res.blockDoneDay).filter(inR).length, backfilled: res.backfillDay ? Array.from(res.backfillDay).filter(inR).length : 0 };
   }
-  return { rampMonths, rampFactor, period, build, attrPlan, numericColumns, autoMode, autoLayer, layerLabel, daysPerMonth, workDaysPerMonth, running, wasteGroup, adcLabel, AVG_MONTH };
+  return { rampMonths, rampFactor, startMonths, wasteTarget, period, build, attrPlan, numericColumns, autoMode, autoLayer, layerLabel, daysPerMonth, workDaysPerMonth, running, wasteGroup, adcLabel, AVG_MONTH };
 })();
 
 /* ===== Cross-sections as DXF: the geology, the ground on a date and the placed spoil along a section line ===== */
@@ -15231,6 +15238,10 @@ const Tabs = (() => {
       const save = () => { App.changed('sim'); UI.renderTab(); };
       const ci = num(+T.coal > 0 ? T.coal : null, v => { T.coal = v > 0 ? v : null; save(); }, { min: 0, step: 1000, allowEmpty: true, placeholder: 'none' });
       const WFo = Model.wasteFollows(P);
+      // the start-up waste: a waste target for the first months of the schedule, the waste target above after them
+      const wsi = num(+T.wasteStart > 0 ? +T.wasteStart : null, v => { if (v > 0) T.wasteStart = v; else delete T.wasteStart; save(); }, { min: 0, step: 1000, allowEmpty: true, placeholder: 'none' });
+      const wsm = num(+T.wasteStartMonths > 0 ? +T.wasteStartMonths : null, v => { if (v > 0) T.wasteStartMonths = Math.min(600, Math.round(v)); else delete T.wasteStartMonths; save(); }, { min: 0, max: 600, step: 1, allowEmpty: true, placeholder: '0' });
+      wsi.setAttribute('aria-label', 'Start-up waste per month'); wsm.setAttribute('aria-label', 'Start-up months');
       const wi = num(+T.waste > 0 ? T.waste : null, v => { T.waste = v > 0 ? v : null; save(); }, { min: 0, step: 1000, allowEmpty: true, placeholder: +T.coal > 0 && limit ? 'follows the coal' : 'none' });
       // the minimum waste a month (in the unit of the waste target)
       const mi = num(+T.wasteMin > 0 ? +T.wasteMin : null, v => { if (v > 0) T.wasteMin = v; else delete T.wasteMin; save(); }, { min: 0, step: 1000, allowEmpty: true, placeholder: 'none' });
@@ -15263,7 +15274,9 @@ const Tabs = (() => {
       const eg = (v, u) => (basis === 'working' ? `${U.fmtNum(v / per, 0)} ${u} per working day` : `${U.fmtNum((v * 31) / per, 0)} ${u} in a 31-day month, ${U.fmtNum((v * 30) / per, 0)} ${u} in a 30-day month and ${U.fmtNum((v * 28) / per, 0)} ${u} in February`);
       body.append(sec('Monthly targets', any ? h('span', { class: 'chip' }, limit ? 'drive the schedule' : 'compare only') : null,
         h('div', { class: 'grid2' }, fld('Coal target (t per month)', ci), fld('Coal target in', cs)),
-        h('div', { class: 'grid2' }, fld('Waste target (per month)', wi), fld('Waste target in', us)),
+        h('div', { class: 'grid2' }, fld(Monthly.startMonths(P) ? 'Waste target, steady state (per month)' : 'Waste target (per month)', wi), fld('Waste target in', us)),
+        +T.waste > 0 ? h('div', { class: 'grid2' }, fld(`Start-up waste (${wu} per month)`, wsi), fld('For the first (months)', wsm)) : null,
+        +T.waste > 0 && (+T.wasteStart > 0 || +T.wasteStartMonths > 0) ? h('div', { class: 'dt', style: { whiteSpace: 'normal', fontSize: 'var(--fs-xs)', color: 'var(--muted)' } }, Monthly.startMonths(P) ? `The waste target is ${U.fmtNum(+T.wasteStart, 0)} ${wu} a month over the first ${Monthly.startMonths(P)} month${Monthly.startMonths(P) === 1 ? '' : 's'} of the schedule (from ${U.fmtMonth(U.parseISO(P.startDate) || new Date())}), then ${U.fmtNum(+T.waste, 0)} ${wu} a month.${+T.wasteStart < +T.waste ? ' (The start-up figure is below the steady state.)' : ''}` : 'Type both the start-up waste and its months.') : null,
         limit ? h('div', { class: 'grid2' }, fld(`Minimum waste (${wu} per month)`, mi), h('div', { class: 'dt', style: { whiteSpace: 'normal', alignSelf: 'end' } }, +T.wasteMin > 0 ? `At least ${eg(+T.wasteMin, wu)}.` : 'The schedule moves at least this much waste every month.')) : null,
         limit && +T.wasteMin > 0 && +T.waste > 0 && +T.wasteMin > +T.waste ? msg('warn', `The minimum waste (${U.fmtNum(+T.wasteMin, 0)} ${wu}) is more than the waste target (${U.fmtNum(+T.waste, 0)} ${wu}), which is the most a month may move: the target wins.`) : null,
         h('div', { class: 'grid2' }, fld('Each month follows its', bs), fld('Use the targets to', ms)),
