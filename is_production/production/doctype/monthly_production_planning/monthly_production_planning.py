@@ -800,13 +800,13 @@ class MonthlyProductionPlanning(Document):
                 sv = survey_map.get(last_ref, {'ts': 0, 'dz': 0})
                 survey_var = (sv['dz'] - base_row.tot_cumulative_dozing_bcms) + (sv['ts'] - base_row.cum_ts_bcms)
 
-        today = datetime.date.today()
-        yesterday = today - datetime.timedelta(days=1)
+        # Count only completed production dates using the site's date.
+        today = getdate()
 
         done_days = 0
         done_hours = 0
         for r in self.month_prod_days:
-            if r.shift_start_date and r.shift_start_date <= yesterday:
+            if r.shift_start_date and getdate(r.shift_start_date) < today:
                 hrs = (
                     (r.shift_day_hours or 0) +
                     (r.shift_night_hours or 0) +
@@ -833,7 +833,10 @@ class MonthlyProductionPlanning(Document):
 
         mtd_day = actual / equivalent_done_days if equivalent_done_days else 0
         mtd_hour = actual / done_hours if done_hours else 0
-        forecast = mtd_hour * (self.total_month_prod_hours or 0)
+        remaining_hours = max(
+            (self.total_month_prod_hours or 0) - done_hours, 0
+        )
+        forecast = actual + (mtd_hour * remaining_hours)
 
         self.month_act_ts_bcm_tallies = total_ts
         self.month_act_dozing_bcm_tallies = total_dz
@@ -854,7 +857,7 @@ class MonthlyProductionPlanning(Document):
         self.prod_days_completed = equivalent_done_days
         self.month_prod_hours_completed = done_hours
         self.month_remaining_production_days = (max((self.total_month_prod_hours or 0) - done_hours, 0) / full_day_hours) if full_day_hours else 0
-        self.month_remaining_prod_hours = (self.total_month_prod_hours or 0) - done_hours
+        self.month_remaining_prod_hours = remaining_hours
         self.mtd_bcm_day = mtd_day
         self.mtd_bcm_hour = mtd_hour
         self.month_forecated_bcm = forecast

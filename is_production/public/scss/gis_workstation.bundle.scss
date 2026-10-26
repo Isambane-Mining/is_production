@@ -407,3 +407,4 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--gis-bg
 .gis-map.tool-identify { cursor: help; }
 .gis-map.tool-select, .gis-map.tool-edit { cursor: crosshair; }
 .gis-form label.gis-check, .gis-param label.gis-check { flex-direction: row; align-items: center; gap: 6px; color: var(--gis-ink); }
+.gis-qgis-icon { display: block; flex: 0 0 auto; object-fit: contain; }

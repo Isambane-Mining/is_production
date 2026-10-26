@@ -184,7 +184,8 @@
 				</p>
 				<p>{{ __("This workstation is an independent application laid out like QGIS Desktop. It is not an official QGIS product and is not endorsed by or affiliated with the QGIS project.") }}</p>
 				<p>{{ __("This app (Isambane Production) is free software under the GNU General Public License, version 3 or later.") }}</p>
-				<p class="muted">OpenLayers (BSD-2-Clause) · proj4js (MIT) · Lucide icons (ISC) · GDAL/OGR, PROJ (MIT) · {{ __("Map data and imagery: see the attribution on the map") }}</p>
+				<p class="small">{{ __("Toolbar and menu icons: GIS icons by Robert Szczepanek and Anita Graser, from the QGIS project, under CC-BY-SA 3.0 (see /assets/is_production/qgis_icons/).") }}</p>
+				<p class="muted">OpenLayers (BSD-2-Clause) · proj4js (MIT) · Lucide interface icons (ISC) · GDAL/OGR, PROJ (MIT) · {{ __("Map data and imagery: see the attribution on the map") }}</p>
 				<div class="gis-modal-actions"><button @click="dialog = null">{{ __("Close") }}</button></div>
 			</div>
 		</div>
@@ -411,7 +412,7 @@ const toolbar_groups = computed(() => {
 				: []),
 			...(e && s.has_z ? [{ id: "z", kind: "input", type: "number", label: "Z", title: __("Elevation for new vertices that cannot be interpolated"), value: edit.default_z, change: set_default_z }] : []),
 			{ id: "validate", icon: "check", title: __("Validate edited geometries"), disabled: !e || !edit.counts.total || edit.saving, action: edit_validate },
-			{ id: "discard", icon: "close", title: __("Discard unsaved edits"), disabled: !e || !edit.counts.total, action: edit_discard },
+			{ id: "discard", icon: "discard", title: __("Discard unsaved edits"), disabled: !e || !edit.counts.total, action: edit_discard },
 		] },
 		{ id: "processing", title: __("Processing and Plugins"), items: [
 			{ id: "toolbox", icon: "processing", title: __("Processing Toolbox"), shortcut: "Ctrl+Alt+T", active: panels.toolbox, action: () => toggle_panel("toolbox") },

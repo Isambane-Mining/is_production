@@ -21,6 +21,7 @@ BLACK = "050505"
 WHITE = "FFFFFF"
 MUTED = "AAB4C3"
 RED = "E03124"
+HEADING_YELLOW = "FFF200"
 
 LOGO_PATH = (
     Path(__file__).resolve().parents[3]
@@ -126,6 +127,8 @@ def build_hod_presentation(
                 == "engineering"
             )
 
+            no_machines = captured.get("no_machines") is True
+
             hours_heading = (
                 "Hours Based Performance"
                 in slide_title
@@ -163,33 +166,86 @@ def build_hod_presentation(
                 )
             )
 
+            # Maintain clearance below the enlarged header logo
+            # without changing the captured chart or its values.
+            safe_image_top = max(
+                image_top,
+                0.92 if engineering_heading else (
+                    0.86 if hours_heading else image_top
+                ),
+            )
+
             _add_image_fitted(
                 slide,
-                image_bytes,
-                top_inches=image_top,
+                (
+                    _trim_engineering_image(image_bytes)
+                    if engineering_heading
+                    else image_bytes
+                ),
+                top_inches=safe_image_top,
                 height_inches=(
                     SLIDE_HEIGHT
-                    - image_top
-                    - image_bottom_margin
+                    - safe_image_top
+                    - (0.42 if hours_heading else image_bottom_margin)
                 ),
                 top_align=(
                     engineering_heading
                     or hours_heading
                 ),
                 side_margin_inches=(
-                    0.08
+                    0.22
                     if hours_heading
                     else (
-                        0.22
-                        if engineering_heading or detailed_heading
-                        else 0.0
+                        0.10
+                        if engineering_heading
+                        else (
+                            0.22
+                            if detailed_heading
+                            else 0.0
+                        )
                     )
                 ),
-                stretch_to_fill=(
-                    detailed_heading
-                    or hours_heading
-                ),
+                stretch_to_fill=False,
             )
+
+            # Hours Based only: standardise the presentation image area.
+            # Keep the whole captured image visible with no cropping.
+            # This intentionally expands short chart images vertically.
+            if hours_heading:
+                for picture in slide.shapes:
+                    if (
+                        picture.shape_type == 13
+                        and picture.width > Inches(5)
+                    ):
+                        picture.left = Inches(0.22)
+                        picture.top = Inches(0.92)
+                        picture.width = Inches(12.89)
+                        picture.height = Inches(5.95)
+
+            # Engineering only: extend the picture downwards.
+            # Preserve its width and horizontal position.
+            # Leave clearance above the black footer.
+            if engineering_heading and not hours_heading and not no_machines:
+                for picture in slide.shapes:
+                    if (
+                        picture.shape_type == 13
+                        and picture.width > Inches(5)
+                    ):
+                        picture.left = Inches(0.22)
+                        picture.top = Inches(0.92)
+                        picture.width = Inches(12.90)
+                        picture.height = Inches(5.95)
+
+            if engineering_heading and not hours_heading and no_machines:
+                for picture in slide.shapes:
+                    if (
+                        picture.shape_type == 13
+                        and picture.width > Inches(5)
+                    ):
+                        picture.left = Inches(0.22)
+                        picture.top = Inches(0.92)
+                        picture.width = Inches(12.90)
+
 
         if not prs.slides:
             _add_error_slide(
@@ -198,9 +254,80 @@ def build_hod_presentation(
                 "Refresh the report and try the download again.",
             )
 
+
+    # Final layout adjustments for exported slides.
+    for slide_number, export_slide in enumerate(prs.slides, start=1):
+
+        slide_text = " ".join(
+            shape.text
+            for shape in export_slide.shapes
+            if shape.has_text_frame
+        )
+
+        # White slide number in the bottom-right black border.
+        _add_text(
+            export_slide,
+            str(slide_number),
+            12.48,
+            7.30,
+            0.45,
+            0.16,
+            10,
+            WHITE,
+            align=PP_ALIGN.RIGHT,
+        )
+
+    # Move decorative borders into the slide layout.
+    # Layout shapes cannot be selected in normal PowerPoint editing.
+    from copy import deepcopy
+
+    border_positions = {
+        (0, 0, Inches(SLIDE_WIDTH), Inches(0.80)),
+        (0, Inches(7.30), Inches(SLIDE_WIDTH), Inches(0.20)),
+        (0, Inches(0.80), Inches(0.20),
+         Inches(SLIDE_HEIGHT - 0.80)),
+    }
+
+    def is_fixed_border(shape):
+        return (
+            shape.left,
+            shape.top,
+            shape.width,
+            shape.height,
+        ) in border_positions
+
+    first_slide_borders = [
+        shape for shape in prs.slides[0].shapes
+        if is_fixed_border(shape)
+    ]
+
+    if first_slide_borders:
+        if len(first_slide_borders) != 3:
+            raise ValueError(
+                "Expected exactly three black border shapes."
+            )
+
+        layout = prs.slide_layouts[6]
+
+        for shape in first_slide_borders:
+            copied = deepcopy(shape._element)
+
+            # Assign a unique ID within the slide layout.
+            copied.xpath(".//p:cNvPr")[0].set(
+                "id", str(layout.shapes._next_shape_id)
+            )
+
+            layout.shapes._spTree.append(copied)
+
+        # Remove original movable borders from individual slides.
+        for export_slide in prs.slides:
+            for shape in list(export_slide.shapes):
+                if is_fixed_border(shape):
+                    shape._element.getparent().remove(
+                        shape._element
+                    )
+
     prs.save(output)
-
-
 def _decode_image_data(value) -> bytes | None:
     if not value:
         return None
@@ -220,12 +347,139 @@ def _decode_image_data(value) -> bytes | None:
         text = text.split(marker, 1)[1]
 
     try:
-        return base64.b64decode(text, validate=True)
+        decoded = base64.b64decode(text, validate=True)
     except (ValueError, binascii.Error):
-        try:
-            return base64.b64decode(text)
-        except (ValueError, binascii.Error):
-            return None
+        return None
+
+    from PIL import Image, UnidentifiedImageError
+
+    try:
+        with Image.open(BytesIO(decoded)) as image:
+            width, height = image.size
+
+            if (
+                width <= 0
+                or height <= 0
+                or width > 12000
+                or height > 12000
+                or width * height > 16000000
+            ):
+                raise ValueError(
+                    "Presentation image dimensions exceed safety limits."
+                )
+
+            if image.format not in ("JPEG", "PNG"):
+                raise ValueError(
+                    "Unsupported presentation image format."
+                )
+
+            image.verify()
+
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError):
+        raise ValueError("Invalid presentation image.") from None
+
+    return decoded
+
+
+
+def _trim_engineering_image(image_bytes: bytes) -> bytes:
+    """Trim empty engineering-chart margins so the graph fills the slide better."""
+    from PIL import Image
+
+    try:
+        image = Image.open(BytesIO(image_bytes)).convert("RGB")
+        width, height = image.size
+
+        if width < 100 or height < 100:
+            return image_bytes
+
+        pixels = image.load()
+
+        # Use the top-right corner as the background reference because the
+        # captured engineering report usually has a light plain background there.
+        bg_r, bg_g, bg_b = pixels[max(0, width - 5), 5]
+
+        def is_background(rgb):
+            r, g, b = rgb
+            return (
+                abs(r - bg_r) <= 12
+                and abs(g - bg_g) <= 12
+                and abs(b - bg_b) <= 12
+            )
+
+        top = 0
+        bottom = height - 1
+        left = 0
+        right = width - 1
+
+        # Find top boundary.
+        for y in range(height):
+            non_bg = 0
+            for x in range(width):
+                if not is_background(pixels[x, y]):
+                    non_bg += 1
+            if non_bg > max(12, width * 0.01):
+                top = y
+                break
+
+        # Find bottom boundary.
+        for y in range(height - 1, -1, -1):
+            non_bg = 0
+            for x in range(width):
+                if not is_background(pixels[x, y]):
+                    non_bg += 1
+            if non_bg > max(12, width * 0.01):
+                bottom = y
+                break
+
+        # Find left boundary.
+        for x in range(width):
+            non_bg = 0
+            for y in range(height):
+                if not is_background(pixels[x, y]):
+                    non_bg += 1
+            if non_bg > max(8, height * 0.01):
+                left = x
+                break
+
+        # Find right boundary.
+        for x in range(width - 1, -1, -1):
+            non_bg = 0
+            for y in range(height):
+                if not is_background(pixels[x, y]):
+                    non_bg += 1
+            if non_bg > max(8, height * 0.01):
+                right = x
+                break
+
+        # Add safe padding so labels stay visible.
+        pad_x = max(16, int(width * 0.025))
+        pad_top = max(14, int(height * 0.02))
+        pad_bottom = max(20, int(height * 0.03))
+
+        left = max(0, left - pad_x)
+        right = min(width, right + pad_x)
+        top = max(0, top - pad_top)
+        bottom = min(height, bottom + pad_bottom)
+
+        cropped_width = right - left
+        cropped_height = bottom - top
+
+        # Reject obviously bad crops.
+        if cropped_width < width * 0.55:
+            return image_bytes
+
+        if cropped_height < height * 0.22:
+            return image_bytes
+
+        cropped = image.crop((left, top, right, bottom))
+
+        output = BytesIO()
+        cropped.save(output, format="PNG")
+        return output.getvalue()
+
+    except (OSError, ValueError, IndexError):
+        return image_bytes
 
 
 def _add_image_fitted(
@@ -302,9 +556,10 @@ def _add_isambane_logo(slide) -> None:
 
     slide.shapes.add_picture(
         str(LOGO_PATH),
-        Inches(0.12),
-        Inches(0.03),
-        width=Inches(1.20),
+        Inches(0.13),
+        Inches(0.06),
+        width=Inches(2.40),
+        height=Inches(0.75),
     )
 
 
@@ -316,107 +571,66 @@ def _add_slide_heading(
     period_label: str = "",
     heading_style: str = "",
 ) -> None:
-    detailed_heading = bool(
-        subtitle
-        or period_label
+    detailed_heading = bool(subtitle or period_label)
+
+    # Black header matching the reference PowerPoint.
+    banner = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE,
+        0,
+        0,
+        Inches(SLIDE_WIDTH),
+        Inches(0.80),
     )
+    banner.fill.solid()
+    banner.fill.fore_color.rgb = _rgb(BLACK)
+    banner.line.fill.background()
 
-    _add_isambane_logo(slide)
+    # The slide itself is white; no moveable white panel.
+    # Keep a black bottom strip for slide numbers.
 
-    if heading_style == "engineering":
-        _add_text(
-            slide,
-            title,
-            0.35,
-            0.05,
-            12.63,
-            0.48,
-            17,
-            "FFF200",
-            bold=True,
-            align=PP_ALIGN.CENTER,
-        )
+    footer = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE,
+        0,
+        Inches(7.30),
+        Inches(SLIDE_WIDTH),
+        Inches(0.20),
+    )
+    footer.fill.solid()
+    footer.fill.fore_color.rgb = _rgb(BLACK)
+    footer.line.fill.background()
 
-        panel = slide.shapes.add_shape(
-            MSO_SHAPE.RECTANGLE,
-            Inches(0.20),
-            Inches(0.66),
-            Inches(SLIDE_WIDTH - 0.40),
-            Inches(SLIDE_HEIGHT - 0.76),
-        )
-        panel.fill.solid()
-        panel.fill.fore_color.rgb = _rgb(WHITE)
-        panel.line.fill.background()
+    # Black left border only; right side remains white.
+    left_border = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE,
+        0,
+        Inches(0.80),
+        Inches(0.20),
+        Inches(SLIDE_HEIGHT - 0.80),
+    )
+    left_border.fill.solid()
+    left_border.fill.fore_color.rgb = _rgb(BLACK)
+    left_border.line.fill.background()
 
-        return
-
-    if not detailed_heading:
-        banner = slide.shapes.add_shape(
-            MSO_SHAPE.RECTANGLE,
-            0,
-            0,
-            Inches(SLIDE_WIDTH),
-            Inches(0.68),
-        )
-        banner.fill.solid()
-        banner.fill.fore_color.rgb = _rgb("0F1F53")
-        banner.line.fill.background()
-
-        accent = slide.shapes.add_shape(
-            MSO_SHAPE.RECTANGLE,
-            0,
-            Inches(0.64),
-            Inches(SLIDE_WIDTH),
-            Inches(0.04),
-        )
-        accent.fill.solid()
-        accent.fill.fore_color.rgb = _rgb(RED)
-        accent.line.fill.background()
-
-        _add_text(
-            slide,
-            title,
-            0.35,
-            0.08,
-            12.63,
-            0.48,
-            20,
-            WHITE,
-            bold=True,
-            align=PP_ALIGN.CENTER,
-        )
-        return
-
+    # White title in black header.
     _add_text(
         slide,
         title,
-        0.35,
-        0.04,
-        12.63,
+        2.70,
+        0.10,
+        10.20,
         0.48,
-        17,
-        "FFF200",
+        17 if detailed_heading or heading_style == "engineering" else 20,
+        HEADING_YELLOW,
         bold=True,
         align=PP_ALIGN.CENTER,
     )
-
-    panel = slide.shapes.add_shape(
-        MSO_SHAPE.RECTANGLE,
-        Inches(0.20),
-        Inches(0.66),
-        Inches(SLIDE_WIDTH - 0.40),
-        Inches(SLIDE_HEIGHT - 0.76),
-    )
-    panel.fill.solid()
-    panel.fill.fore_color.rgb = _rgb(WHITE)
-    panel.line.fill.background()
 
     if subtitle:
         _add_text(
             slide,
             subtitle,
             0.55,
-            0.78,
+            0.82,
             12.23,
             0.42,
             16,
@@ -439,12 +653,15 @@ def _add_slide_heading(
             font_name="Arial",
         )
 
+    # Add last so the logo is never hidden behind the header.
+    _add_isambane_logo(slide)
+
 
 def _blank_slide(prs: Presentation):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     fill = slide.background.fill
     fill.solid()
-    fill.fore_color.rgb = _rgb(BLACK)
+    fill.fore_color.rgb = _rgb(WHITE)
     return slide
 
 

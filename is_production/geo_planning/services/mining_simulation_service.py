@@ -3,8 +3,8 @@
 The simulator (portal page /portal_mining_simulation) works on one JSON project object. Each part of it
 is kept in its own fields here: the header settings on the parent, and surfaces, layers,
 blocks, activities, fleet, roads, dumps, overlays, depth limits and pits in child tables.
-The terrain grid (and an optional satellite image) are binary and stay private File
-attachments.
+The terrain grid (and an optional satellite image, and the survey DTMs of the Recon tab) are binary and
+stay private File attachments.
 
 The mapping is lossless: per document and per row, `json_meta` records which mapped keys the
 source object had, which of them were null (numeric fields cannot hold null), and any keys
@@ -587,19 +587,53 @@ def _clean_id(value):
 	return value if re.fullmatch(r"[A-Za-z0-9_\-]{3,100}", value) else None
 
 
-# ---------------------------------------------------------------- blobs (grid, satellite image)
+# ---------------------------------------------------------------- blobs (grid, satellite image, survey DTMs)
+# The survey DTMs of the Recon tab ('dtm_…', one per survey): private attachments known by their file name,
+# as their number varies and the doctype has no field for each.
+DTM_KEY = re.compile(r"dtm_[A-Za-z0-9_]{1,80}")
+
+
 def _blob_field(key):
-	if key not in BLOB_FIELDS:
-		frappe.throw(_("Unknown project data: {0}").format(key))
-	return BLOB_FIELDS[key]
+	"""The field holding a blob's file, or None for a survey DTM."""
+	if key in BLOB_FIELDS:
+		return BLOB_FIELDS[key]
+	if isinstance(key, str) and DTM_KEY.fullmatch(key):
+		return None
+	frappe.throw(_("Unknown project data: {0}").format(key))
+
+
+def _blob_file_name(doc, key):
+	return f"{doc.name}-{key}.gz"
+
+
+def _blob_files(doc, key):
+	field = _blob_field(key)
+	filters = {"attached_to_doctype": DOCTYPE, "attached_to_name": doc.name}
+	filters.update({"attached_to_field": field} if field else {"file_name": _blob_file_name(doc, key)})
+	return frappe.get_all("File", filters=filters, pluck="name")
+
+
+def _dtm_keys(doc):
+	"""The survey DTMs stored for a project."""
+	names = frappe.get_all(
+		"File",
+		filters={"attached_to_doctype": DOCTYPE, "attached_to_name": doc.name, "file_name": ["like", f"{doc.name}-dtm\\_%.gz"]},
+		pluck="file_name",
+	)
+	keys = (n[len(doc.name) + 1 : -3] for n in names)
+	return sorted(k for k in keys if DTM_KEY.fullmatch(k))
 
 
 def _read_blob(doc, key):
 	"""The stored bytes (gzip, as the simulator writes them)."""
-	url = doc.get(_blob_field(key))
-	if not url:
-		return None
-	name = frappe.db.get_value("File", {"file_url": url, "attached_to_doctype": DOCTYPE, "attached_to_name": doc.name})
+	field = _blob_field(key)
+	if field:
+		url = doc.get(field)
+		if not url:
+			return None
+		name = frappe.db.get_value("File", {"file_url": url, "attached_to_doctype": DOCTYPE, "attached_to_name": doc.name})
+	else:
+		name = next(iter(_blob_files(doc, key)), None)
 	if not name:
 		return None
 	with open(frappe.get_doc("File", name).get_full_path(), "rb") as f:
@@ -609,17 +643,16 @@ def _read_blob(doc, key):
 def _write_blob(doc, key, data):
 	"""Replace a blob attachment with `data` (gzip bytes) or remove it (None). Saves no document."""
 	field = _blob_field(key)
-	for name in frappe.get_all(
-		"File", filters={"attached_to_doctype": DOCTYPE, "attached_to_name": doc.name, "attached_to_field": field}, pluck="name"
-	):
+	for name in _blob_files(doc, key):
 		frappe.delete_doc("File", name, ignore_permissions=True)
 	if data is None:
-		doc.set(field, None)
+		if field:
+			doc.set(field, None)
 		return
 	f = frappe.get_doc(
 		{
 			"doctype": "File",
-			"file_name": f"{doc.name}-{key}.gz",
+			"file_name": _blob_file_name(doc, key),
 			"is_private": 1,
 			"content": data,
 			"attached_to_doctype": DOCTYPE,
@@ -629,7 +662,8 @@ def _write_blob(doc, key, data):
 	)
 	f.flags.ignore_permissions = True
 	f.save()
-	doc.set(field, f.file_url)
+	if field:
+		doc.set(field, f.file_url)
 
 
 # ---------------------------------------------------------------- bundles (.isamiq.json / older .rollover.json files)
@@ -659,6 +693,9 @@ def save_from_project(project, blobs=None, name=None, insert=False):
 		doc.insert()
 	if blobs is not None:
 		for key in BLOB_FIELDS:
+			_write_blob(doc, key, blobs.get(key))
+		# the survey DTMs: those of the file, and none left over from before
+		for key in sorted(set(_dtm_keys(doc)) | {k for k in blobs if k not in BLOB_FIELDS}):
 			_write_blob(doc, key, blobs.get(key))
 	if not insert or blobs is not None:
 		doc.save()
@@ -725,7 +762,7 @@ def import_simulation_file(file_url, mode="new", target=None):
 def bundle_for(doc):
 	project = build_project(doc)
 	blobs = {}
-	for key in BLOB_FIELDS:
+	for key in list(BLOB_FIELDS) + _dtm_keys(doc):
 		data = _read_blob(doc, key)
 		if data:
 			blobs[key] = base64.b64encode(data).decode()
@@ -820,7 +857,8 @@ def put_blob(name, key, data):
 	doc = frappe.get_doc(DOCTYPE, name)
 	doc.check_permission("write")
 	_write_blob(doc, key, base64.b64decode(data))
-	doc.save()
+	if _blob_field(key):  # (a survey DTM has no field to set)
+		doc.save()
 
 
 @frappe.whitelist(methods=["POST"])
@@ -830,7 +868,8 @@ def delete_blob(name, key):
 	doc = frappe.get_doc(DOCTYPE, name)
 	doc.check_permission("write")
 	_write_blob(doc, key, None)
-	doc.save()
+	if _blob_field(key):
+		doc.save()
 
 
 def asset_version():
