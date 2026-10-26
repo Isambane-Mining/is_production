@@ -466,7 +466,10 @@ def get_report_payload(
         monthly_plan.prod_month_end_date
     )
 
-    start_date = plan_start
+    start_date = getdate(filters.start_date) if filters.get("start_date") else plan_start
+    if start_date < plan_start or start_date > end_date:
+        frappe.throw(_("Start Date must be between {0} and {1} for {2}.").format(
+            formatdate(plan_start), formatdate(end_date), frappe.bold(site)))
 
     if end_date < plan_start or end_date > plan_end:
         frappe.throw(
@@ -2537,90 +2540,24 @@ def get_availability_dashboard_html(
 
     module = _load_daily_availability_module()
 
-    dashboard_filters = frappe._dict(
-        {
-            "start_date": str(start_date),
-            "end_date": str(end_date),
-            "from_date": str(start_date),
-            "to_date": str(end_date),
-            "location": site,
-            "site": site,
-            "summary_type": summary_type,
-            "machine_scope": machine_scope,
-            "au_target_filter": au_target_filter,
-            "asset_ownership": asset_ownership,
-            "chart_categories": [
-                "ADT",
-                "Dozer",
-                "Excavator",
-            ],
-            "hours_display": "Hours Average per Category",
-        }
-    )
-    dashboard_filters["machine_scope"] = _dashboard_machine_scope(machine_scope)
+    from .availability_grids import build_grid_data, render_grids
 
-    try:
-        result = module.execute(
-            dashboard_filters
-        )
-
-    except Exception:
-        frappe.log_error(
-            frappe.get_traceback(),
-            "HOD Presentation Availability Dashboard HTML",
-        )
-
-        frappe.throw(
-            _(
-                "The Availability and Utilisation dashboard "
-                "could not be generated for {0}."
-            ).format(
-                frappe.bold(site)
-            )
-        )
-
-    dashboard_html = ""
-
-    if isinstance(
-        result,
-        (list, tuple),
-    ):
-        if len(result) >= 3:
-            dashboard_html = result[2] or ""
-
-    elif isinstance(result, dict):
-        dashboard_html = (
-            result.get("html")
-            or result.get("message")
-            or ""
-        )
-
-    if not dashboard_html:
-        frappe.throw(
-            _(
-                "No Availability and Utilisation dashboard "
-                "HTML was returned for {0}."
-            ).format(
-                frappe.bold(site)
-            )
-        )
-
-    downtime_summary = get_hod_downtime_summary(
+    # Match the Engineering dashboard's exclusion of future dates.
+    end_date = min(end_date, getdate(now_datetime()))
+    # The builder returns one FleetSummary mapping, not the former (machines,
+    # dates) pair. Keep its averages and period metadata intact for rendering.
+    fleet_summary = build_grid_data(
+        module,
+        site=site,
         start_date=start_date,
         end_date=end_date,
-        site=site,
+        machine_scope=_dashboard_machine_scope(machine_scope),
+        au_target_filter=au_target_filter,
+        asset_ownership=asset_ownership,
     )
-
-    downtime_html = build_hod_downtime_html(
-        downtime_summary,
-        site,
-        start_date,
-        end_date,
-    )
-
     return {
         "site": site,
-        "html": dashboard_html + downtime_html,
+        "html": render_grids(fleet_summary),
     }
 
 

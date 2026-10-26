@@ -333,10 +333,9 @@
    "is_query_report": 0,
    "label": "HOD Presentation",
    "link_count": 0,
-   "link_to": "HOD Presentation",
-   "link_type": "Report",
+   "link_to": "hod-presentation",
+   "link_type": "Page",
    "onboard": 0,
-   "report_ref_doctype": "Monthly Production Planning",
    "type": "Link"
   },
   {

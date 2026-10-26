@@ -1,0 +1,23 @@
+{
+ "doctype": "Page",
+ "name": "hod-presentation",
+ "page_name": "hod-presentation",
+ "title": "HOD Presentation",
+ "module": "Production",
+ "standard": "Yes",
+ "system_page": 0,
+ "roles": [
+  {
+   "role": "Engineering Manager"
+  },
+  {
+   "role": "Engineering User"
+  },
+  {
+   "role": "Production Manager"
+  },
+  {
+   "role": "Production User"
+  }
+ ]
+}

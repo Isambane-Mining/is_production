@@ -30,6 +30,7 @@ after_install = [
     "is_production.geo_planning.services.gis_storage_service.ensure_geometry_schema",
 ]
 after_migrate = [
+    "is_production.setup.hod_presentation.sync_navigation",
     "is_production.setup.asset_categories.ensure_asset_categories",
     # GIS Feature's native GEOMETRY column + SPATIAL index are not Frappe fields.
     "is_production.geo_planning.services.gis_storage_service.ensure_geometry_schema",

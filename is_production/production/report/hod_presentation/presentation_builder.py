@@ -110,6 +110,12 @@ def build_hod_presentation(
                 or ""
             )
 
+            # Dashboard captures already include the complete branded heading.
+            if heading_style == "dashboard":
+                _add_image_fitted(slide, image_bytes, top_inches=0,
+                                  height_inches=SLIDE_HEIGHT, side_margin_inches=0)
+                continue
+
             detailed_heading = bool(
                 slide_subtitle
                 or slide_period
