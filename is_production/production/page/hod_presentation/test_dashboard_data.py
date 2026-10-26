@@ -2,7 +2,7 @@ import unittest
 from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import Mock
-from . import dashboard_data
+from . import hod_presentation as dashboard_data
 
 
 class TestDashboardData(unittest.TestCase):
