@@ -9436,7 +9436,7 @@ const Fin = (() => {
     /* The coal sold, with coal mined over the target onto the ROM stockpile (res.romStock): what is mined, less what goes
        onto it, plus what it makes up (its tons are the target's: × as received ÷ in situ of the month for a target in
        situ); what is left on it at the end is sold in the last month. The mining costs stay on the coal mined. */
-    const RS = res.romStock, sold = RS && !(RS.mode === 'all' && !(RS.feed > 0)) ? (() => {
+    const RS = res.romStock, sold = RS ? (() => {
       // (no coal target: the coal the plant takes or that is sold off the stockpile, in its ADC tons)
       if (RS.mode === 'all') {
         const a = new Float64Array(nM), g = 1;
@@ -15703,7 +15703,7 @@ const Tabs = (() => {
         kp(all ? 'Coal mined onto it' : 'Coal mined over the target', U.fmtBig(RS.added, 't')), kp(all ? (RS.by === 'sale' ? 'Sold off it' : 'Taken by the plant') : 'Made up months below the target', all && !(RS.feed > 0) ? 'nothing set' : U.fmtBig(RS.reclaimed, 't')),
         kp('The most it held', peak.v > 0 ? `${U.fmtBig(peak.v, 't')} · ${peak.label}` : '–'), kp('Left at the end of mining', U.fmtBig(RS.end, 't')),
         all ? kp(RS.by === 'sale' ? 'Sales' : 'Plant feed', RS.feed > 0 ? `${U.fmtBig(RS.feed, 't')} a ${RS.by === 'sale' ? 'day' : 'working day'}${RS.from > 0 ? ` from ${U.fmtDay(iso, RS.from)}` : ''}` : 'none (Production tab)') : kp('Months it made up', String(RS.months.filter(q => q.reclaimed > 1).length))), ch,
-        all ? hint(`No monthly coal target is set, so all the coal mined goes onto the ROM stockpile, as ${RS.unit === 't ADC' ? 'air dry contaminated (ADC) tons: the losses, contamination and moisture of the Reserve tab' : 'tons as received (set the contamination and moisture in the Reserve tab for ADC tons)'}${RS.open > 0 ? `, from an opening stock of ${U.fmtBig(RS.open, 't')}` : ''}. ${RS.feed > 0 ? `${RS.by === 'sale' ? `${U.fmtBig(RS.feed, 't')} of ADC coal is sold off it every day` : `The plant takes ${U.fmtBig(RS.feed, 't')} off it every working day`} while there is coal${RS.from > 0 ? `, from ${U.fmtDay(iso, RS.from)}${RS.after ? ` (${U.fmtNum(RS.after, RS.after % 1 ? 1 : 0)} months after the first coal; until then the stockpile only grows)` : ''}` : ''} (${RS.own ? 'Production tab' : 'the plant feed of the ROM stockpile, Dumps tab'}); the financial model sells ${RS.by === 'sale' ? 'those ADC tons, unwashed' : 'the ADC tons the plant takes'}, and what is left when mining ends then.` : 'Nothing takes coal off it (no plant feed or sales set in the Production tab or the Dumps tab), so it only grows; the financial model sells the coal as it is mined. Set a plant feed or sales to draw it down.'} Type a monthly coal target in the Production tab to mine to a target instead.`) : hint(`The coal mined beyond the coal target to free waste standing idle under a coal seam goes onto the ROM stockpile (added); a month whose coal from the pit is below the target is made up from it (reclaimed); closing: what it holds at the end of the month, ${RS.unit}${RS.max ? `, at most ${U.fmtNum(RS.max, 0)} t` : ''}. What is left when mining ends is sold then. The financial model sells the target and the stockpile.`)));
+        all ? hint(`No monthly coal target is set, so all the coal mined goes onto the ROM stockpile, as ${RS.unit === 't ADC' ? 'air dry contaminated (ADC) tons: the losses, contamination and moisture of the Reserve tab' : 'tons as received (set the contamination and moisture in the Reserve tab for ADC tons)'}${RS.open > 0 ? `, from an opening stock of ${U.fmtBig(RS.open, 't')}` : ''}. ${RS.feed > 0 ? `${RS.by === 'sale' ? `${U.fmtBig(RS.feed, 't')} of ADC coal is sold off it every day` : `The plant takes ${U.fmtBig(RS.feed, 't')} off it every working day`} while there is coal${RS.from > 0 ? `, from ${U.fmtDay(iso, RS.from)}${RS.after ? ` (${U.fmtNum(RS.after, RS.after % 1 ? 1 : 0)} months after the first coal; until then the stockpile only grows)` : ''}` : ''} (${RS.own ? 'Production tab' : 'the plant feed of the ROM stockpile, Dumps tab'}); the financial model sells ${RS.by === 'sale' ? 'those ADC tons, unwashed' : 'the ADC tons the plant takes'}, and what is left when mining ends then.` : 'Nothing takes coal off it (no plant feed or sales set in the Production tab or the Dumps tab), so it only grows; the financial model sells it all when mining ends. Set a plant feed or sales to draw it down.'} Type a monthly coal target in the Production tab to mine to a target instead.`) : hint(`The coal mined beyond the coal target to free waste standing idle under a coal seam goes onto the ROM stockpile (added); a month whose coal from the pit is below the target is made up from it (reclaimed); closing: what it holds at the end of the month, ${RS.unit}${RS.max ? `, at most ${U.fmtNum(RS.max, 0)} t` : ''}. What is left when mining ends is sold then. The financial model sells the target and the stockpile.`)));
       requestAnimationFrame(() => Charts.lines(ch, labels, [{ name: 'ROM stockpile, closing (t)', color: '#c9a86a', v: closing, unit: 't' }, { name: all ? 'Added: coal mined (t)' : 'Added: coal over the target (t)', color: '#3c7fb0', v: added, unit: 't' }].concat(!all || RS.feed > 0 ? [{ name: all ? (RS.by === 'sale' ? 'Sold (t)' : 'Taken by the plant (t)') : 'Reclaimed to the target (t)', color: '#d64550', v: rec, unit: 't' }] : []), 'thousand t'));
     }
     // the rehandling jobs (the final landform of the run is in the Rehab tab)
@@ -18630,6 +18630,44 @@ const LoM = (() => {
       for (let m = 0; m < nM; m++) set(C0 + m, r, close[m], `MAX(0,${mc(m)}${ro}+${mc(m)}${re}-${mc(m)}${rm})`, '#,##0');
       r++;
       named.close = rc; }
+    /* The ROM stockpile, in ADC tons (as received without ADC settings): all the coal mined goes onto it (added: the
+       seams' ADC tons), the coal sold comes off it. Without a coal target: what the plant takes or is sold (Production
+       tab), from the opening stock of the ROM tips, and what is left when mining ends in the last month; with a coal
+       target and extra coal: the coal mined less what went over the target plus what the stockpile made up (its target
+       tons × the month's ADC ÷ target tons); otherwise the coal is sold as it is mined. The whole mine only. */
+    if (!pitOnly) {
+      const RS = D.res.romStock, adc = D.QB.on, aRows = cRows.map(x => (adc ? x.aRow : x.arRow)).filter(Boolean), added = valsOf(aRows), sold = new Float64Array(nM), k0 = D.M.k0;
+      let open0 = 0;
+      if (RS && RS.mode === 'all') {
+        open0 = RS.open || 0;
+        for (const q of RS.months) { const m = q.key - k0; if (m >= 0 && m < nM) sold[m] += q.reclaimed; }
+        if (nM) sold[nM - 1] += RS.end;
+      } else if (RS) {
+        const tu = valsOf([RS.basis === 'insitu' ? named.coal : named.ar]), avg = M.sum(tu) > 0 ? M.sum(added) / M.sum(tu) : 1, f = m => (tu[m] > 0 ? added[m] / tu[m] : avg);
+        for (let m = 0; m < nM; m++) sold[m] = added[m];
+        for (const q of RS.months) { const m = q.key - k0; if (m >= 0 && m < nM) sold[m] -= (q.added - q.reclaimed) * f(m); }
+        if (nM) sold[nM - 1] += RS.end * f(nM - 1);
+        for (let m = 0; m < nM; m++) sold[m] = Math.max(0, sold[m]);
+      } else for (let m = 0; m < nM; m++) sold[m] = added[m];
+      const u = adc ? 'ADC t' : 'AR t', wd = adc ? 'ADC' : 'as received', ro = r + 1, ra = r + 2, rs = r + 3, rc = r + 4;
+      let st = open0;
+      set(0, r, u); set(1, r, `Opening ROM Stockpile (${wd} t)`);
+      for (let m = 0; m < nM; m++) { set(C0 + m, r, st, m ? `${mc(m - 1)}${rc}` : null, '#,##0'); st = st + added[m] - sold[m]; }
+      r++;
+      set(0, r, u); set(1, r, `Coal Added for the Month (${wd} t)`);
+      for (let m = 0; m < nM; m++) set(C0 + m, r, added[m], aRows.length ? aRows.map(x => `${mc(m)}${x}`).join('+') : null, '#,##0');
+      set(TC, r, M.sum(added), `SUM(${mc(0)}${ra}:${mc(nM - 1)}${ra})`, '#,##0');
+      r++;
+      set(0, r, u); set(1, r, `Coal Sold for the Month (${wd} t)`);
+      for (let m = 0; m < nM; m++) set(C0 + m, r, sold[m], null, '#,##0');
+      set(TC, r, M.sum(sold), `SUM(${mc(0)}${rs}:${mc(nM - 1)}${rs})`, '#,##0');
+      r++;
+      st = open0;
+      set(0, r, u); set(1, r, `Closing ROM Stockpile (${wd} t)`);
+      for (let m = 0; m < nM; m++) { st = st + added[m] - sold[m]; set(C0 + m, r, Math.abs(st) < 0.5 ? 0 : st, `${mc(m)}${ro}+${mc(m)}${ra}-${mc(m)}${rs}`, '#,##0'); }
+      r++;
+      named.romOpen = ro; named.romAdd = ra; named.romSold = rs; named.romClose = rc;
+    }
     // volume moved and the teams it takes
     named.bcm = sumRow('Total Volume (bcm, waste + coal)', 'bcm', byM(rows, q => q.bcm), m => `SUMIFS(${rg(SD, 'X', NS)},${rg(SD, 'B', NS)},${mc(m)}$${MR}${pitCrit(SD, NS)})`);
     named.looseMine = sumRow('Mining (m³ loose)', 'm³ loose', byM(rows, q => q.loose), m => `SUMIFS(${rg(SD, 'W', NS)},${rg(SD, 'B', NS)},${mc(m)}$${MR}${pitCrit(SD, NS)})`);
