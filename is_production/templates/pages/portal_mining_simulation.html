@@ -6668,6 +6668,25 @@ const Sim = (() => {
     }
     // the months below the minimum waste
     const mName = k => `${U.MONTHS[k % 12]}/${Math.floor(k / 12)}`;
+    /* No monthly coal target: all the coal mined goes onto the ROM stockpile, as ADC tons (the Reserve tab's losses,
+       contamination and moisture; as received without them), from the opening stock of the ROM tips; the plant feed of
+       the ROM tips (t a working day, Dumps) takes it off every working day while there is coal; without a plant feed it
+       only grows. */
+    let allRom = null;
+    if (!(+TG.coal > 0) && typeof Tons !== 'undefined' && acts.some(X => X.g === 0)) {
+      const QB = Tons.basis(P), roms = (P.dumps || []).filter(d => d.kind === 'rom'), mKey = d => { const t = U.addDays(start, d); return t.getUTCFullYear() * 12 + t.getUTCMonth(); };
+      const feed = roms.reduce((a, d) => a + (+d.plantFeed > 0 ? +d.plantFeed : 0), 0), open = roms.reduce((a, d) => a + (+d.openingStock > 0 ? +d.openingStock : 0), 0);
+      const add = new Float64Array(nDays); for (const r of records) { const X = acts[r.a]; if (X.g === 0 && r.t > 0) add[r.d] += r.t * (QB.on ? QB.factor(r.b, X.l) : X.arF); }
+      const daily = new Float32Array(nDays), byM = new Map(); let st = open, tA = 0, tR = 0, peak = open, peakD = 0;
+      for (let d = 0; d < nDays; d++) {
+        st += add[d]; let f = 0;
+        if (feed > 0 && working[d]) { f = Math.min(feed, st); st -= f; }
+        daily[d] = st; tA += add[d]; tR += f; if (st > peak) { peak = st; peakD = d; }
+        const k = mKey(d), q = byM.get(k) || { key: k, added: 0, reclaimed: 0, closing: 0 }; q.added += add[d]; q.reclaimed += f; q.closing = st; byM.set(k, q);
+      }
+      allRom = { mode: 'all', basis: QB.on ? 'adc' : 'ar', unit: QB.on ? 't ADC' : 't as received', daily, months: [...byM.values()].map(q => Object.assign(q, { label: `${U.MONTHS[q.key % 12]}/${Math.floor(q.key / 12)}` })), added: tA, reclaimed: tR, end: st, max: null, feed, open, peak, peakDay: peakD };
+      events.push({ day: nDays - 1, type: 'info', msg: `No monthly coal target: all the coal mined, ${U.fmtNum(tA, 0)} ${allRom.unit}, went onto the ROM stockpile${open > 0 ? ` (opening stock ${U.fmtNum(open, 0)} t)` : ''}; ${feed > 0 ? `the plant took ${U.fmtNum(feed, 0)} t a working day off it, ${U.fmtNum(tR, 0)} t in all, and ${U.fmtNum(st, 0)} t is left on it when mining ends` : 'no plant feed is set on the ROM stockpile (Dumps tab), so it only grows'}. The most it held: ${U.fmtNum(peak, 0)} t.` });
+    }
     // the ROM stockpile: the last month, and what it did
     if (XC) {
       if (tg.key >= 0) xcMonth();
@@ -6683,7 +6702,7 @@ const Sim = (() => {
       steadyWaste: SW ? { rate: SW.rate, auto: SW.auto, days: SW.days, over: SW.over } : null,
       rain: RN.on ? { pct: RN.pct.slice(), per100: RN.per100 } : null,
       minWaste: MW ? { min: MW.min, unit: TL.wT ? 't' : 'bcm', short: MW.short.map(q => ({ label: mName(q.key), used: q.used, bud: q.bud })) } : null,
-      romStock: XC ? { basis: TL.prod ? 'product' : TL.ar ? 'ar' : 'insitu', unit: TL.prod ? 't of product' : TL.ar ? 't as received' : 't in situ', daily: XC.daily.slice(0, nDays), months: XC.months.map(q => ({ key: q.key, label: mName(q.key), added: q.added, reclaimed: q.reclaimed, closing: q.closing })), added: XC.added, reclaimed: XC.rec, end: XC.stock, max: XC.max < Infinity ? XC.max : null } : null,
+      romStock: XC ? { basis: TL.prod ? 'product' : TL.ar ? 'ar' : 'insitu', unit: TL.prod ? 't of product' : TL.ar ? 't as received' : 't in situ', daily: XC.daily.slice(0, nDays), months: XC.months.map(q => ({ key: q.key, label: mName(q.key), added: q.added, reclaimed: q.reclaimed, closing: q.closing })), added: XC.added, reclaimed: XC.rec, end: XC.stock, max: XC.max < Infinity ? XC.max : null } : allRom,
       dCell: dCell.done(), dIns: dIns.done(), dFill: dFill.done(), dMat: dMat.done(),
       bl, vol0, blockDoneDay, backfillDay, working: working.slice(0, nDays),
       acts: acts.map(X => ({ id: X.a.id, name: X.a.name, color: X.a.color, pit: X.pit, host: X.host.id, fleetOf: X.host !== X.a ? X.host.name : null, layer: X.l, layerName: X.L.name, type: X.L.type, method: X.a.method, bcm: X.bcm, t: X.t, pathLen: X.path.length, done: X.done,
@@ -9412,7 +9431,14 @@ const Fin = (() => {
     /* The coal sold, with coal mined over the target onto the ROM stockpile (res.romStock): what is mined, less what goes
        onto it, plus what it makes up (its tons are the target's: × as received ÷ in situ of the month for a target in
        situ); what is left on it at the end is sold in the last month. The mining costs stay on the coal mined. */
-    const RS = res.romStock, sold = RS ? (() => {
+    const RS = res.romStock, sold = RS && !(RS.mode === 'all' && !(RS.feed > 0)) ? (() => {
+      // (no coal target, with a plant feed: the plant's coal, its ADC tons × as received ÷ ADC of the schedule)
+      if (RS.mode === 'all') {
+        const a = new Float64Array(nM), g = RS.added > 0 ? mo.sum(mo.coalAR) / RS.added : 1;
+        for (const q of RS.months) { const m = q.key - mo.k0; if (m >= 0 && m < nM) a[m] += q.reclaimed * g; }
+        if (nM) a[nM - 1] += RS.end * g;
+        return a;
+      }
       const a = Float64Array.from(mo.coalAR), tAR = mo.sum(mo.coalAR), tIS = mo.sum(mo.coalT), avg = tIS > 0 ? tAR / tIS : 1;
       const f = m => (RS.basis !== 'insitu' ? 1 : mo.coalT[m] > 0 ? mo.coalAR[m] / mo.coalT[m] : avg);
       for (const q of RS.months) { const m = q.key - mo.k0; if (m >= 0 && m < nM) a[m] -= (q.added - q.reclaimed) * f(m); }
@@ -15166,6 +15192,7 @@ const Tabs = (() => {
         +T.coal > 0 ? h('div', { class: 'dt', style: { whiteSpace: 'normal', fontSize: 'var(--fs-xs)', color: 'var(--muted)' } }, `Coal: ${eg(+T.coal, 't')}${cb === 'ar' ? ' as received' : cb === 'product' ? ' of washed product (as received × the yield of each block, from the washability in the Geological Data tab)' : ''}.`) : null,
         +T.waste > 0 ? h('div', { class: 'dt', style: { whiteSpace: 'normal', fontSize: 'var(--fs-xs)', color: 'var(--muted)' } }, `Waste: ${eg(+T.waste, wu)}.`) : null,
         +T.coal > 0 ? h('div', { class: 'grid2' }, fld('Coal ramp-up (months)', ri), h('span')) : null,
+        !(+T.coal > 0) ? msg('info', 'No coal target: all the coal mined (ADC tons) goes onto the ROM stockpile. The plant feed of the ROM stockpile (Dumps tab) takes it off every working day; without one it only grows. The Results tab charts it.') : null,
         +T.coal > 0 && limit ? chk('Extra coal: when the waste would stand idle under a coal seam, mine that seam beyond the coal target onto the ROM stockpile', T.coalExtra === true, v => { if (v) T.coalExtra = true; else delete T.coalExtra; save(); }) : null,
         +T.coal > 0 && limit && T.coalExtra ? h('div', { class: 'grid2' }, fld(`ROM stockpile at most (${cb === 'ar' ? 't as received' : cb === 'product' ? 't of product' : 't in situ'})`, xmi), h('div', { class: 'dt', style: { whiteSpace: 'normal', alignSelf: 'end' } }, 'Empty: no limit.')) : null,
         +T.coal > 0 && limit && T.coalExtra ? h('div', { class: 'dt', style: { whiteSpace: 'normal', fontSize: 'var(--fs-xs)', color: 'var(--muted)' } }, 'After each day’s mining, a waste activity that stands idle only because a coal seam above it is not mined yet lets that seam be mined beyond the coal target, with the teams that are free. The coal over the target goes onto the ROM stockpile; a month whose coal from the pit is below the target is made up from it, and what is left at the end is sold then. The financial model sells the target and the stockpile; the mining costs stay on the coal mined. The Results tab charts the stockpile.') : null,
@@ -15657,14 +15684,14 @@ const Tabs = (() => {
       const closing = new Float64Array(nM), added = new Float64Array(nM), rec = new Float64Array(nM), labels = [], by = new Map(RS.months.map(q => [q.key, q]));
       let last = 0;
       for (let m = 0; m < nM; m++) { const k = k0 + m, q = by.get(k); labels.push(`${U.MONTHS[k % 12]}/${Math.floor(k / 12)}`); if (q) { added[m] = q.added / 1000; rec[m] = q.reclaimed / 1000; last = q.closing; } closing[m] = last / 1000; }
-      const peak = RS.months.reduce((a, q) => (q.closing + q.reclaimed > a.v ? { v: q.closing + q.reclaimed, label: q.label } : a), { v: 0, label: '' });
+      const all = RS.mode === 'all', peak = all ? { v: RS.peak, label: U.fmtDay(iso, RS.peakDay) } : RS.months.reduce((a, q) => (q.closing + q.reclaimed > a.v ? { v: q.closing + q.reclaimed, label: q.label } : a), { v: 0, label: '' });
       const ch = h('div', { class: 'chart-box' });
       body.append(sec('ROM stockpile', h('span', { class: 'chip' }, RS.unit), h('div', { class: 'kpis' },
-        kp('Coal mined over the target', U.fmtBig(RS.added, 't')), kp('Made up months below the target', U.fmtBig(RS.reclaimed, 't')),
+        kp(all ? 'Coal mined onto it' : 'Coal mined over the target', U.fmtBig(RS.added, 't')), kp(all ? 'Taken by the plant' : 'Made up months below the target', all && !(RS.feed > 0) ? 'no plant feed set' : U.fmtBig(RS.reclaimed, 't')),
         kp('The most it held', peak.v > 0 ? `${U.fmtBig(peak.v, 't')} · ${peak.label}` : '–'), kp('Left at the end of mining', U.fmtBig(RS.end, 't')),
-        kp('Months it made up', String(RS.months.filter(q => q.reclaimed > 1).length))), ch,
-        hint(`The coal mined beyond the coal target to free waste standing idle under a coal seam goes onto the ROM stockpile (added); a month whose coal from the pit is below the target is made up from it (reclaimed); closing: what it holds at the end of the month, ${RS.unit}${RS.max ? `, at most ${U.fmtNum(RS.max, 0)} t` : ''}. What is left when mining ends is sold then. The financial model sells the target and the stockpile.`)));
-      requestAnimationFrame(() => Charts.lines(ch, labels, [{ name: 'ROM stockpile, closing (t)', color: '#c9a86a', v: closing, unit: 't' }, { name: 'Added: coal over the target (t)', color: '#3c7fb0', v: added, unit: 't' }, { name: 'Reclaimed to the target (t)', color: '#d64550', v: rec, unit: 't' }], 'thousand t'));
+        all ? kp('Plant feed', RS.feed > 0 ? `${U.fmtBig(RS.feed, 't')} a working day` : 'none (Dumps tab)') : kp('Months it made up', String(RS.months.filter(q => q.reclaimed > 1).length))), ch,
+        all ? hint(`No monthly coal target is set, so all the coal mined goes onto the ROM stockpile, as ${RS.unit === 't ADC' ? 'air dry contaminated (ADC) tons: the losses, contamination and moisture of the Reserve tab' : 'tons as received (set the contamination and moisture in the Reserve tab for ADC tons)'}${RS.open > 0 ? `, from an opening stock of ${U.fmtBig(RS.open, 't')}` : ''}. ${RS.feed > 0 ? `The plant takes ${U.fmtBig(RS.feed, 't')} off it every working day while there is coal (the plant feed of the ROM stockpile, Dumps tab); the financial model sells what the plant takes, and what is left when mining ends then.` : 'No plant feed is set on the ROM stockpile (Dumps tab), so nothing takes coal off it and it only grows; the financial model sells the coal as it is mined. Set a plant feed to draw it down.'} Type a monthly coal target in the Production tab to mine to a target instead.`) : hint(`The coal mined beyond the coal target to free waste standing idle under a coal seam goes onto the ROM stockpile (added); a month whose coal from the pit is below the target is made up from it (reclaimed); closing: what it holds at the end of the month, ${RS.unit}${RS.max ? `, at most ${U.fmtNum(RS.max, 0)} t` : ''}. What is left when mining ends is sold then. The financial model sells the target and the stockpile.`)));
+      requestAnimationFrame(() => Charts.lines(ch, labels, [{ name: 'ROM stockpile, closing (t)', color: '#c9a86a', v: closing, unit: 't' }, { name: all ? 'Added: coal mined (t)' : 'Added: coal over the target (t)', color: '#3c7fb0', v: added, unit: 't' }].concat(!all || RS.feed > 0 ? [{ name: all ? 'Taken by the plant (t)' : 'Reclaimed to the target (t)', color: '#d64550', v: rec, unit: 't' }] : []), 'thousand t'));
     }
     // the rehandling jobs (the final landform of the run is in the Rehab tab)
     if (res.rehandles && res.rehandles.length) {
