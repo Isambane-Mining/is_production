@@ -2997,6 +2997,15 @@ const Model = (() => {
   /* Waste that follows the coal: with a coal target and no waste target (scheduled to, not only compared) the waste is
      moved only as the coal target needs it, keeping `months` of coal exposed ahead (P.targets.exposedMonths, 1 unless set). */
   function wasteFollows(P) { const T = P.targets || {}; const m = T.exposedMonths == null || T.exposedMonths === '' || !isFinite(+T.exposedMonths) ? 1 : U.clamp(+T.exposedMonths, 0, 24); return { on: T.mode !== 'compare' && +T.coal > 0 && !(+T.waste > 0), months: m }; }
+  /* Rain derating of the waste (P.rainDerate = {on, per100, pct: [12]}): in each calendar month the teams move (1 − derate)
+     of the waste they would in the dry; the derate is the month's average rainfall (mm, the Hydrogeological tab's:
+     Highveld averages unless set there) × per100 % for each 100 mm (10 unless set), unless the month is set itself. */
+  function rainDerate(P) {
+    const R = P.rainDerate || {}, rain = typeof Hydro !== 'undefined' ? Hydro.settings(P).rain : [125, 95, 80, 45, 18, 7, 7, 8, 25, 70, 110, 110];
+    const per100 = R.per100 == null || R.per100 === '' || !isFinite(+R.per100) ? 10 : U.clamp(+R.per100, 0, 100), set = Array.isArray(R.pct) ? R.pct : [];
+    const own = i => set[i] != null && set[i] !== '' && isFinite(+set[i]);
+    return { on: R.on === true, per100, rain, pct: rain.map((mm, i) => U.clamp(own(i) ? +set[i] : (mm * per100) / 100, 0, 90)), own: rain.map((mm, i) => own(i)) };
+  }
   function bench(P) { const B = P.bench || {}; const lead = B.lead == null || B.lead === '' || !isFinite(+B.lead) ? 3 : Math.max(0, Math.round(+B.lead)); return { on: B.on !== false, lead }; }
   function pitStart(P, pitId) { const z = pitId ? (P.pits || []).find(q => q.id === pitId) : null; return z && z.startDate && U.parseISO(z.startDate) ? z.startDate : ''; }
   const actFleet = (P, a) => { const id = fleetHost(P, a).id; return P.fleet.filter(e => e.activityId === id); };
@@ -3156,7 +3165,7 @@ const Model = (() => {
   function arFactor(P, L) { const q = losses(P, L); return Math.max(0, (1 - q.geo / 100) * (1 - q.mining / 100) * (1 + q.contam / 100)); }
   function newEquipment(kind, extra) { return Object.assign({ id: U.uid('eq'), kind, activityId: '' }, U.deepClone(FLEET_DEFAULTS[kind]), extra || {}); }
 
-  return { LAYER_TYPES, ACT_COLORS, DUMP_COLORS, newProject, autoLayers, seamToken, proposeGrid, rasterExtent, rasterRes, resample, fillHoles, conformSurfaces, buildWorkspace, applyCutoff, cutTarget, cutTargets, cellXY, cellAt, sampleGrid, cellsInPolygon, rasterizeBlocks, layerIndex, blockVolumes, layerThickness, blockDensity, kindStart, kindOf, rampToeSurf, rampSlopes, RAMP_BATTER, RAMP_FILL, surfaceLabel, rampEnd, actDests, syncActColors, blockLimits, blockDepth, zoneBlocks, stripSource, pathStrips, idStrip, blockPits, pitIndex, pitName, boxCuts, boxDef, boxMonths, boxName, boxTitle, BOX_MONTHS, pitBaseName, fleetHost, actFleet, syncPits, dropActivity, setTopsoilAsWaste, PIT_COLORS, REST, defaultActivities, newEquipment, FLEET_DEFAULTS, niceCell, teams, losses, arFactor, TEAM_LCM, pitStart, bench, wasteFollows, reserveInside, hasReserve, reserveRings, inReserve };
+  return { LAYER_TYPES, ACT_COLORS, DUMP_COLORS, newProject, autoLayers, seamToken, proposeGrid, rasterExtent, rasterRes, resample, fillHoles, conformSurfaces, buildWorkspace, applyCutoff, cutTarget, cutTargets, cellXY, cellAt, sampleGrid, cellsInPolygon, rasterizeBlocks, layerIndex, blockVolumes, layerThickness, blockDensity, kindStart, kindOf, rampToeSurf, rampSlopes, RAMP_BATTER, RAMP_FILL, surfaceLabel, rampEnd, actDests, syncActColors, blockLimits, blockDepth, zoneBlocks, stripSource, pathStrips, idStrip, blockPits, pitIndex, pitName, boxCuts, boxDef, boxMonths, boxName, boxTitle, BOX_MONTHS, pitBaseName, fleetHost, actFleet, syncPits, dropActivity, setTopsoilAsWaste, PIT_COLORS, REST, defaultActivities, newEquipment, FLEET_DEFAULTS, niceCell, teams, losses, arFactor, TEAM_LCM, pitStart, bench, wasteFollows, rainDerate, reserveInside, hasReserve, reserveRings, inReserve };
 })();
 
 /* ===== KML overlays and keep-out zones (DOM-free) =====
@@ -5109,6 +5118,11 @@ const Sim = (() => {
       return { rate: set || (months > 0 ? wb / months : 0), auto: !set, bud: 0, days: 0, over: 0 };
     })() : null;
     if (SW) events.push({ day: 0, type: 'info', msg: `Steady waste: the waste moves at ${U.fmtNum(SW.rate, 0)} bcm in an average month${SW.auto ? ' (the waste of the schedule ÷ the months its coal takes at the coal target)' : ''}; only when the coal exposed drops below the exposed coal to keep ahead does it move faster, until that is back.` });
+    /* Rain (Model.rainDerate): in a wet month every bcm of waste takes the teams 1 ÷ (1 − the month's derate) times as
+       long, and a waste activity held to a daily allowance (following the coal, steady, minimum) moves (1 − derate) of
+       it: the rain stops the waste fleet for that part of the day (the coal, the ramps and the rehandling are not derated) */
+    const RN = Model.rainDerate(P); let RD = 0;
+    if (RN.on) events.push({ day: 0, type: 'info', msg: `Rain: the waste is derated in the wet months, by the average rainfall (${U.fmtNum(RN.per100, 1)}% for each 100 mm a month, unless set): ${U.MONTHS.map((mn, i) => (RN.pct[i] >= 0.05 ? `${mn} ${U.fmtNum(RN.pct[i], 1)}%` : null)).filter(Boolean).join(', ') || 'none'}.` });
     /* Minimum waste (P.targets.wasteMin, scheduled to: an average month, in the waste target's unit): each month the
        schedule moves at least that much waste (the waste activities, the ramps and the highwall batters), its days ÷ the
        days of an average month; each working day the waste activities get at least the rest of it ÷ the working days
@@ -5213,6 +5227,7 @@ const Sim = (() => {
       for (const X of acts) { if (X.g === 1 && acts.some(C => C.g === 0 && C.pit === X.pit && !C.done && !C.halted && C.path.length)) X.wCap = Math.min(X.wNeed, X.wRate || 0); X.wRate = 0; }
     }
     function targetDay(date, w) {
+      if (RN.on) RD = RN.pct[date.getUTCMonth()] / 100; // (the rain derate of the month)
       // waste that follows the coal, during a coal ramp-up: the coal the ramp-up holds back is kept exposed as well
       if (WF && WF.ramp && (!TL.work || w)) WF.held += (TL.coal * (1 - Monthly.rampFactor(P, day))) / TL.per;
       targetMonth(date);
@@ -6390,11 +6405,12 @@ const Sim = (() => {
           if (X.done || X.halted || day < X.startDay) continue;
           if (round === 2 ? !(X.xNeed > 1e-3 && tg.left[2] > 1e-3) : round && !(X.capNow && tg.left[2] > 1e-3 && tg.left[X.g] > 1e-3)) continue;
           // this activity's part of today's budgets, plus what the activities before it did not use
-          if (!round) { if (tg.left[X.g] !== Infinity) tg.resv[X.g] -= X.alloc; tg.resv[2] -= X.allocT; X.wLeft = X.wCap; }
+          // (rain: a waste activity held to an allowance loses the derate of it too: the rain stops it for that part of the day)
+          if (!round) { if (tg.left[X.g] !== Infinity) tg.resv[X.g] -= X.alloc; tg.resv[2] -= X.allocT; X.wLeft = X.g === 1 && RD > 0 && X.wCap !== Infinity ? X.wCap * (1 - RD) : X.wCap; }
           if (X.wLeft <= 1e-3) { if (!round && pick(X) >= 0) { X.why = 0; X.wfNow = true; } continue; } // the coal needs no more of its waste today
           let roomG = round === 2 ? X.xNeed : tg.left[X.g] === Infinity ? Infinity : Math.max(0, tg.left[X.g] - tg.resv[X.g]), roomT = Math.max(0, tg.left[2] - tg.resv[2]), guard = 0;
           X.capNow = false;
-          const sw = X.sw;
+          const sw = X.sw, swT = X.g === 1 && RD > 0 ? sw / (1 - RD) : sw; // swT: the teams' loose m³ a bcm (rain: the waste takes them longer; the dumps still take sw)
           while (guard++ < 400) {
             const b = pick(X);
             if (b < 0) break;
@@ -6403,7 +6419,7 @@ const Sim = (() => {
             if (remain[b][X.l] <= 1e-3 && vol0[b][X.l] <= 1e-3) { completeLayer(b, X.l); continue; }
             const ug = unitOf(X, b), lim = X.maxRate > 0 ? X.maxRate - X.bcm[day] : Infinity; // lim: the optional cap on its daily rate
             if (lim <= 1e-3) { X.why = 0; break; }
-            const bG = roomG / ug, bT = roomT / sw, maxBcm = Math.min(bG, bT, lim, X.wLeft);
+            const bG = roomG / ug, bT = roomT / swT, maxBcm = Math.min(bG, bT, lim, X.wLeft);
             if (X.wLeft <= 1e-3) { X.why = 0; X.wfNow = true; break; }
             if (Math.min(bG, bT) <= 1e-3) { X.why = 0; X.capNow = true; X.capBy = bG < bT ? 0 : 1; break; }
             let got = 0, placed = true, lost = 0;
@@ -6450,7 +6466,7 @@ const Sim = (() => {
               if (got > 0) { placed = place(X, b, dest, got * sw, got); if (!placed) lost = got; }
             }
             if (got > 0) {
-              const dens = Model.blockDensity(P, b, X.l), u = got * ug, ut = got * sw;
+              const dens = Model.blockDensity(P, b, X.l), u = got * ug, ut = got * swT;
               roomG -= u; roomT -= ut;
               if (round === 2) { X.xNeed -= u; XC.day += u; } // (coal over the target: onto the ROM stockpile, not counted against it)
               else { if (tg.left[X.g] !== Infinity) tg.left[X.g] -= u; tg.used[X.g] += u; }
@@ -6665,6 +6681,7 @@ const Sim = (() => {
     return {
       startISO: P.startDate, nDays, dayStart: dayStart.slice(0, nDays + 1), wasteFollows: WF ? { months: WF.months, coal: TL.coal, ar: TL.ar, rampHeld: WF.held } : null,
       steadyWaste: SW ? { rate: SW.rate, auto: SW.auto, days: SW.days, over: SW.over } : null,
+      rain: RN.on ? { pct: RN.pct.slice(), per100: RN.per100 } : null,
       minWaste: MW ? { min: MW.min, unit: TL.wT ? 't' : 'bcm', short: MW.short.map(q => ({ label: mName(q.key), used: q.used, bud: q.bud })) } : null,
       romStock: XC ? { basis: TL.prod ? 'product' : TL.ar ? 'ar' : 'insitu', unit: TL.prod ? 't of product' : TL.ar ? 't as received' : 't in situ', daily: XC.daily.slice(0, nDays), months: XC.months.map(q => ({ key: q.key, label: mName(q.key), added: q.added, reclaimed: q.reclaimed, closing: q.closing })), added: XC.added, reclaimed: XC.rec, end: XC.stock, max: XC.max < Infinity ? XC.max : null } : null,
       dCell: dCell.done(), dIns: dIns.done(), dFill: dFill.done(), dMat: dMat.done(),
@@ -15094,6 +15111,22 @@ const Tabs = (() => {
         TM.count > 0 && coalLoose + wasteLoose > 0 && need > TM.count + 1e-6 ? msg('warn', `The targets need ${U.fmtNum(need, 1)} teams but there are ${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)}: the months stay below the targets.`) : null,
         hint(`The teams do all the mining: topsoil, waste and coal, the ramps and the rehandling, counted in loose m³ (bcm × the swell of the layer). Each month gets the teams × the loose m³ of a team × its ${T.basis === 'working' ? 'working days ÷ ' + U.fmtNum(per, 1) : 'days ÷ 30.44'}. Every working day the coal gets the teams it needs for its target first; the rest of the teams are shared between the other activities by the volume of their paths, so the layers keep pace with each other. Without a coal target the coal shares in the same way. With a coal target and no waste target the waste gets only the teams it needs to uncover the coal (Monthly targets below), and the rest stay idle. A priority pit (Sequence tab, Pits) gets the teams first.`)));
     }
+    // ---- rain: the waste derated in the wet months
+    {
+      const RN = Model.rainDerate(P), R0 = P.rainDerate || {}, setR = patch => { P.rainDerate = Object.assign({}, P.rainDerate || {}, patch); App.changed('sim'); UI.renderTab(); };
+      const pi = num(RN.per100, v => setR({ per100: v == null ? null : U.clamp(v, 0, 100) }), { min: 0, max: 100, step: 1 }); pi.setAttribute('aria-label', 'Waste lost for each 100 mm of rain'); pi.disabled = !edit();
+      const months = h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: '4px 6px' } }, U.MONTHS.map((mn, i) => {
+        const e = num(RN.own[i] ? RN.pct[i] : null, v => { const a = Array.isArray(R0.pct) ? R0.pct.slice() : new Array(12).fill(null); while (a.length < 12) a.push(null); a[i] = v == null ? null : U.clamp(v, 0, 90); setR({ pct: a }); }, { min: 0, max: 90, step: 0.5, allowEmpty: true, placeholder: U.fmtNum((RN.rain[i] * RN.per100) / 100, 1) });
+        e.setAttribute('aria-label', `Waste derate in ${mn} (%)`); e.disabled = !edit();
+        return fld(`${mn} · ${U.fmtNum(RN.rain[i], 0)} mm`, e);
+      }));
+      body.append(sec('Rain', RN.on ? h('span', { class: 'chip' }, `waste −${U.fmtNum(Math.max(...RN.pct), 1)}% at most`) : null,
+        chk('Derate the waste in the wet months (the summer rains)', RN.on, v => setR({ on: v })),
+        RN.on ? h('div', { class: 'grid2' }, fld('Waste lost for each 100 mm of rain in a month (%)', pi), h('div', { class: 'dt', style: { whiteSpace: 'normal', alignSelf: 'end' } }, 'The average rainfall of each month is the Hydrogeological tab’s.')) : null,
+        RN.on ? h('div', { class: 'dt', style: { margin: '6px 0 2px' } }, 'Waste derate of each month (%): empty takes its rainfall × the rate above') : null,
+        RN.on ? months : null,
+        hint(RN.on ? `In a month derated by d%, the rain stops the waste fleet for d% of its time: every bcm of waste takes the teams 1 ÷ (1 − d) times as long, and the waste moves (1 − d) of what it would in the dry; the coal, the ramps and the rehandling are not derated, and the coal keeps the first call on the teams. Highveld summer rains: ${U.MONTHS.map((mn, i) => (RN.pct[i] >= 1 ? `${mn} ${U.fmtNum(RN.pct[i], 1)}%` : null)).filter(Boolean).join(', ')}. Run the simulation again to apply it.` : 'Tick to slow the waste in the rainy months: its loading and hauling lose time to the rain, wet roads and pit floors. The derate follows the average rainfall of each month.')));
+    }
     // ---- monthly targets (they drive the schedule)
     {
       const limit = T.mode !== 'compare', basis = T.basis === 'working' ? 'working' : 'calendar', wu = T.wasteUnit === 't' ? 't' : 'bcm', hasProd = !!Wash.product(P), cb = T.coalBasis === 'ar' ? 'ar' : T.coalBasis === 'product' && hasProd ? 'product' : 'insitu';
@@ -15525,6 +15558,7 @@ const Tabs = (() => {
         h('div', { class: 'kpis' }, tiles),
         held.length ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, 'Held to the target: ' + held.map(A => `${A.name} on ${U.fmtNum(A.tgtDays, 0)} working days`).join(', ') + '.') : null,
         busy.length ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, 'Waited for the teams: ' + busy.map(A => `${A.name} on ${U.fmtNum(A.teamDays, 0)} working days`).join(', ') + '.') : null,
+        res.rain ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `The waste was derated for the rain: ${U.MONTHS.map((mn, i) => (res.rain.pct[i] >= 0.05 ? `${mn} ${U.fmtNum(res.rain.pct[i], 1)}%` : null)).filter(Boolean).join(', ')} (Production tab).`) : null,
         res.minWaste ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `Minimum waste ${U.fmtNum(res.minWaste.min, 0)} ${res.minWaste.unit} in an average month: ` + (res.minWaste.short.length ? `not met in ${res.minWaste.short.length} month${res.minWaste.short.length === 1 ? '' : 's'} (${res.minWaste.short.slice(0, 6).map(q => `${q.label}: ${U.fmtNum(q.used, 0)} of ${U.fmtNum(q.bud, 0)}`).join(', ')}${res.minWaste.short.length > 6 ? ', …' : ''}); the teams, a dependency, a void or a dump held the waste back.` : 'met in every month while there was waste to move.')) : null,
         res.steadyWaste ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `The waste was smoothed to ${U.fmtNum(res.steadyWaste.rate, 0)} bcm in an average month${res.steadyWaste.auto ? ' (the average of the schedule)' : ''}; the exposed coal ran short, so the waste moved faster, on ${U.fmtNum(res.steadyWaste.over, 0)} of ${U.fmtNum(res.steadyWaste.days, 0)} working days${res.steadyWaste.over > res.steadyWaste.days / 4 ? ' (a dependency in whole strips, or little exposed coal kept ahead, keeps the waste from getting ahead: see the Production tab)' : ''}.`) : null,
         res.wasteFollows ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `The waste followed the coal, keeping ${U.fmtNum(res.wasteFollows.months, res.wasteFollows.months % 1 ? 1 : 0)} month${res.wasteFollows.months === 1 ? '' : 's'} of coal exposed ahead.` + (res.acts.some(A => A.wfDays > 0) ? ' Held to what the coal needed: ' + res.acts.filter(A => A.wfDays > 0).map(A => `${A.name} on ${U.fmtNum(A.wfDays, 0)} working days`).join(', ') + '.' : '')) : null,
