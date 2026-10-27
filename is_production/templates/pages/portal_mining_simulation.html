@@ -2997,6 +2997,15 @@ const Model = (() => {
   /* Waste that follows the coal: with a coal target and no waste target (scheduled to, not only compared) the waste is
      moved only as the coal target needs it, keeping `months` of coal exposed ahead (P.targets.exposedMonths, 1 unless set). */
   function wasteFollows(P) { const T = P.targets || {}; const m = T.exposedMonths == null || T.exposedMonths === '' || !isFinite(+T.exposedMonths) ? 1 : U.clamp(+T.exposedMonths, 0, 24); return { on: T.mode !== 'compare' && +T.coal > 0 && !(+T.waste > 0), months: m }; }
+  /* Rain derating of the waste (P.rainDerate = {on, per100, pct: [12]}): in each calendar month the teams move (1 − derate)
+     of the waste they would in the dry; the derate is the month's average rainfall (mm, the Hydrogeological tab's:
+     Highveld averages unless set there) × per100 % for each 100 mm (10 unless set), unless the month is set itself. */
+  function rainDerate(P) {
+    const R = P.rainDerate || {}, rain = typeof Hydro !== 'undefined' ? Hydro.settings(P).rain : [125, 95, 80, 45, 18, 7, 7, 8, 25, 70, 110, 110];
+    const per100 = R.per100 == null || R.per100 === '' || !isFinite(+R.per100) ? 10 : U.clamp(+R.per100, 0, 100), set = Array.isArray(R.pct) ? R.pct : [];
+    const own = i => set[i] != null && set[i] !== '' && isFinite(+set[i]);
+    return { on: R.on === true, per100, rain, pct: rain.map((mm, i) => U.clamp(own(i) ? +set[i] : (mm * per100) / 100, 0, 90)), own: rain.map((mm, i) => own(i)) };
+  }
   function bench(P) { const B = P.bench || {}; const lead = B.lead == null || B.lead === '' || !isFinite(+B.lead) ? 3 : Math.max(0, Math.round(+B.lead)); return { on: B.on !== false, lead }; }
   function pitStart(P, pitId) { const z = pitId ? (P.pits || []).find(q => q.id === pitId) : null; return z && z.startDate && U.parseISO(z.startDate) ? z.startDate : ''; }
   const actFleet = (P, a) => { const id = fleetHost(P, a).id; return P.fleet.filter(e => e.activityId === id); };
@@ -3156,7 +3165,7 @@ const Model = (() => {
   function arFactor(P, L) { const q = losses(P, L); return Math.max(0, (1 - q.geo / 100) * (1 - q.mining / 100) * (1 + q.contam / 100)); }
   function newEquipment(kind, extra) { return Object.assign({ id: U.uid('eq'), kind, activityId: '' }, U.deepClone(FLEET_DEFAULTS[kind]), extra || {}); }
 
-  return { LAYER_TYPES, ACT_COLORS, DUMP_COLORS, newProject, autoLayers, seamToken, proposeGrid, rasterExtent, rasterRes, resample, fillHoles, conformSurfaces, buildWorkspace, applyCutoff, cutTarget, cutTargets, cellXY, cellAt, sampleGrid, cellsInPolygon, rasterizeBlocks, layerIndex, blockVolumes, layerThickness, blockDensity, kindStart, kindOf, rampToeSurf, rampSlopes, RAMP_BATTER, RAMP_FILL, surfaceLabel, rampEnd, actDests, syncActColors, blockLimits, blockDepth, zoneBlocks, stripSource, pathStrips, idStrip, blockPits, pitIndex, pitName, boxCuts, boxDef, boxMonths, boxName, boxTitle, BOX_MONTHS, pitBaseName, fleetHost, actFleet, syncPits, dropActivity, setTopsoilAsWaste, PIT_COLORS, REST, defaultActivities, newEquipment, FLEET_DEFAULTS, niceCell, teams, losses, arFactor, TEAM_LCM, pitStart, bench, wasteFollows, reserveInside, hasReserve, reserveRings, inReserve };
+  return { LAYER_TYPES, ACT_COLORS, DUMP_COLORS, newProject, autoLayers, seamToken, proposeGrid, rasterExtent, rasterRes, resample, fillHoles, conformSurfaces, buildWorkspace, applyCutoff, cutTarget, cutTargets, cellXY, cellAt, sampleGrid, cellsInPolygon, rasterizeBlocks, layerIndex, blockVolumes, layerThickness, blockDensity, kindStart, kindOf, rampToeSurf, rampSlopes, RAMP_BATTER, RAMP_FILL, surfaceLabel, rampEnd, actDests, syncActColors, blockLimits, blockDepth, zoneBlocks, stripSource, pathStrips, idStrip, blockPits, pitIndex, pitName, boxCuts, boxDef, boxMonths, boxName, boxTitle, BOX_MONTHS, pitBaseName, fleetHost, actFleet, syncPits, dropActivity, setTopsoilAsWaste, PIT_COLORS, REST, defaultActivities, newEquipment, FLEET_DEFAULTS, niceCell, teams, losses, arFactor, TEAM_LCM, pitStart, bench, wasteFollows, rainDerate, reserveInside, hasReserve, reserveRings, inReserve };
 })();
 
 /* ===== KML overlays and keep-out zones (DOM-free) =====
@@ -5064,6 +5073,10 @@ const Sim = (() => {
     const TL = { coal: tgLimit && +TG.coal > 0 ? +TG.coal : 0, waste: tgLimit && +TG.waste > 0 ? +TG.waste : 0, wT: TG.wasteUnit === 't', work: TG.basis === 'working', per: Monthly.daysPerMonth(P), team: TM.cap, ar: TG.coalBasis === 'ar' || !!PRD, prod: PRD };
     TL.any = TL.coal > 0 || TL.waste > 0;
     events.push({ day: 0, type: 'info', msg: `Teams: ${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)} team${TM.count === 1 ? '' : 's'} × ${U.fmtNum(TM.perTeam, 0)} m³ loose = ${U.fmtNum(TM.cap, 0)} m³ loose in an average month for the mining, the ramps and the rehandling.${TL.any ? ` The monthly targets limit it: ${[TL.coal > 0 ? `coal ${U.fmtNum(TL.coal, 0)} t${TL.prod ? ' of washed product' : TL.ar ? ' as received' : ''}` : null, TL.waste > 0 ? `waste ${U.fmtNum(TL.waste, 0)} ${TL.wT ? 't' : 'bcm'}` : null].filter(Boolean).join(' and ')} in an average month, following the ${TL.work ? 'working' : 'calendar'} days of each month.` : ''}` });
+    // the first day of mining (the earliest any activity may start: its own date or its pit's) and its month: the start-up waste counts from it
+    const mineStart0 = acts.filter(X => X.path.length).reduce((a, X) => Math.min(a, X.startDay), Infinity), mineDay0 = isFinite(mineStart0) ? mineStart0 : 0;
+    const suKey0 = (t => t.getUTCFullYear() * 12 + t.getUTCMonth())(U.addDays(start, mineDay0));
+    { const sn = Monthly.startMonths(P); if (sn && TL.waste > 0) events.push({ day: 0, type: 'info', msg: `Start-up waste: the waste target is ${U.fmtNum(+TG.wasteStart, 0)} ${TL.wT ? 't' : 'bcm'} in an average month over the first ${sn} month${sn === 1 ? '' : 's'} of mining (from ${U.fmtMonth(U.addDays(start, mineDay0))}), then the steady ${U.fmtNum(TL.waste, 0)} ${TL.wT ? 't' : 'bcm'}${!(TL.coal > 0) ? '; with no coal target the waste gets the teams first in those months, the coal what is left' : ''}.` }); }
     { const rn = Monthly.rampMonths(P); if (rn && TL.coal > 0) events.push({ day: 0, type: 'info', msg: `Coal ramp-up: over the first ${rn} month${rn === 1 ? '' : 's'} the coal target steps up (${Array.from({ length: rn }, (_, k) => Math.round(((k + 1) / (rn + 1)) * 100) + '%').join(', ')} of ${U.fmtNum(TL.coal, 0)} t), and is met in full from month ${rn + 1}, so the waste can get ahead and build up exposed coal first.` }); }
     const tg = { key: -1, bud: [Infinity, Infinity, Infinity], used: [0, 0, 0], wdLeft: 0, left: [Infinity, Infinity, Infinity], resv: [0, 0, 0] };
     for (const X of acts) {
@@ -5089,12 +5102,79 @@ const Sim = (() => {
     if (WF) {
       let wd = 0; for (let d = 0; d < 731; d++) if (isWorking(cal, U.addDays(start, d))) wd++;
       WF.hWD = Math.max(1, (wd / 731) * Monthly.AVG_MONTH); // working days in an average month
-      WF.look = 3; // months of coal ahead the queue is walked
+      WF.look = TG.smoothWaste ? 12 : 3; // months of coal ahead the queue is walked (a year with the waste smoothed, so it has waste to move ahead)
       WF.ramp = Monthly.rampMonths(P); WF.held = 0; // coal held back by the ramp-up (target units), kept exposed on top of the buffer
       WF.horizon = Math.round((WF.look + WF.months) * Monthly.AVG_MONTH); // calendar days
       WF.owner = new Int32Array(nB * nL).fill(-1); WF.stamp = new Int32Array(nB * nL).fill(-1); WF.due = new Float64Array(nB * nL);
       for (const X of acts) for (const b of X.path) if (WF.owner[b * nL + X.l] < 0) WF.owner[b * nL + X.l] = X.idx;
       events.push({ day: 0, type: 'info', msg: `Waste follows the coal: there is a coal target and no waste target, so each working day the waste activities move only the waste above the coal the target needs over the next month, keeping ${U.fmtNum(WF.months, WF.months % 1 ? 1 : 0)} month${WF.months === 1 ? '' : 's'} of coal (${U.fmtNum(WF.months * TL.coal, 0)} t${TL.prod ? ' of product' : TL.ar ? ' as received' : ''}) exposed ahead${WF.ramp ? `; during the ${WF.ramp}-month coal ramp-up the waste is stripped for the full target, so the coal the ramp-up holds back is exposed too and kept as inventory` : ''}. The teams the coal does not need stay idle.` });
+    }
+    /* Steady waste (P.targets.smoothWaste, with the waste following the coal): every month the waste moves at a steady
+       rate, P.targets.smoothRate bcm in an average month, or else the waste of the schedule ÷ the months its coal takes at
+       the coal target. Each working day the waste activities that can work share what is left of the month's steady waste
+       ÷ the working days left, by the volume of their paths; an activity the coal needs more of gets that (the waste that
+       follows the coal), so the coal is exposed as before. What the waste cannot move (held by a dependency, a void or
+       the teams) is not caught up in a later month. */
+    const SW = WF && TG.smoothWaste ? (() => {
+      let wb = 0, coal = 0;
+      for (const X of acts) for (const b of X.path) { if (!scheduled[b][X.l]) continue; const v = vol0[b][X.l]; if (X.g === 1) wb += v; else coal += v * unitOf(X, b); }
+      const set = +TG.smoothRate > 0 ? +TG.smoothRate : null, months = coal / TL.coal;
+      return { rate: set || (months > 0 ? wb / months : 0), auto: !set, bud: 0, days: 0, over: 0 };
+    })() : null;
+    if (SW) events.push({ day: 0, type: 'info', msg: `Steady waste: the waste moves at ${U.fmtNum(SW.rate, 0)} bcm in an average month${SW.auto ? ' (the waste of the schedule ÷ the months its coal takes at the coal target)' : ''}; only when the coal exposed drops below the exposed coal to keep ahead does it move faster, until that is back.` });
+    /* Rain (Model.rainDerate): in a wet month every bcm of waste takes the teams 1 ÷ (1 − the month's derate) times as
+       long, and a waste activity held to a daily allowance (following the coal, steady, minimum) moves (1 − derate) of
+       it: the rain stops the waste fleet for that part of the day (the coal, the ramps and the rehandling are not derated) */
+    const RN = Model.rainDerate(P); let RD = 0;
+    if (RN.on) events.push({ day: 0, type: 'info', msg: `Rain: the waste is derated in the wet months, by the average rainfall (${U.fmtNum(RN.per100, 1)}% for each 100 mm a month, unless set): ${U.MONTHS.map((mn, i) => (RN.pct[i] >= 0.05 ? `${mn} ${U.fmtNum(RN.pct[i], 1)}%` : null)).filter(Boolean).join(', ') || 'none'}.` });
+    /* Minimum waste (P.targets.wasteMin, scheduled to: an average month, in the waste target's unit): each month the
+       schedule moves at least that much waste (the waste activities, the ramps and the highwall batters), its days ÷ the
+       days of an average month; each working day the waste activities get at least the rest of it ÷ the working days
+       left. A month that stays below it (the teams, a dependency, a void or a dump held the waste back) is reported,
+       unless the waste of the schedule was all moved. */
+    const MW = tgLimit && +TG.wasteMin > 0 ? { min: +TG.wasteMin, bud: 0, short: [] } : null;
+    if (MW) events.push({ day: 0, type: 'info', msg: `Minimum waste: at least ${U.fmtNum(MW.min, 0)} ${TL.wT ? 't' : 'bcm'} of waste in an average month (the waste activities, the ramps and the highwall batters), following the ${TL.work ? 'working' : 'calendar'} days of each month.` });
+    /* Extra coal to free the waste (P.targets.coalExtra, with a coal target scheduled to): after the day's mining, a
+       waste activity that stands idle only because a coal seam above it in its block is not mined yet, while the teams
+       have room left, lets the coal activity of that seam mine beyond the coal target, as much as the waiting blocks
+       hold. The coal over the target goes onto the ROM stockpile (P.targets.romMax: the most it may hold, in the target's
+       tons); a month whose coal from the pit stays below the target is made up from the stockpile. What is left on it at
+       the end of mining is sold then. */
+    const XC = tgLimit && TL.coal > 0 && TG.coalExtra ? { max: +TG.romMax > 0 ? +TG.romMax : Infinity, stock: 0, day: 0, mAdd: 0, added: 0, rec: 0, months: [], daily: mk(), list: [] } : null;
+    if (XC) events.push({ day: 0, type: 'info', msg: `Extra coal: when the waste would stand idle under a coal seam that is not mined yet, the teams that are free mine that seam beyond the coal target; the coal over the target goes onto the ROM stockpile${XC.max < Infinity ? ` (at most ${U.fmtNum(XC.max, 0)} t)` : ''}, which makes up any month below the target.` });
+    // the coal activities that may mine over the target today, with how much (target units): the coal over the waiting waste
+    function xcPlan() {
+      XC.list = [];
+      if (XC.stock >= XC.max - 1e-6 || !(tg.left[2] > 1e-3)) return XC.list;
+      const need = new Map();
+      for (const X of acts) {
+        if (X.g !== 1 || X.done || X.halted || day < X.startDay || X.bcm[day] > 0 || X.why !== 1 || !(X.whyB >= 0)) continue;
+        const l = X.whyL, b = X.whyB; if (!(l >= 0) || P.layers[l].type !== 'coal' || layerDone[b][l] || !(remain[b][l] > 1e-3)) continue;
+        const Y = acts.find(Z => Z.g === 0 && Z.l === l && Z.pit === X.pit && !Z.done && !Z.halted && day >= Z.startDay && Z.path.includes(b)); if (!Y) continue;
+        need.set(Y, (need.get(Y) || 0) + remain[b][l] * unitOf(Y, b));
+      }
+      let room = XC.max - XC.stock;
+      for (const [Y, v] of need) { if (!(room > 1e-6)) break; Y.xNeed = Math.min(v, room); room -= Y.xNeed; XC.list.push(Y); }
+      return XC.list;
+    }
+    // the month that ends: what went onto the stockpile, what it made up of a month below the target, what it holds
+    function xcMonth() {
+      const rec = Math.min(XC.stock, Math.max(0, tg.bud[0] - tg.used[0]));
+      XC.stock -= rec; XC.rec += rec;
+      XC.months.push({ key: tg.key, added: XC.mAdd, reclaimed: rec, closing: XC.stock }); XC.mAdd = 0;
+    }
+    /* More waste allowance (bcm) for the waste activities that can work today (ws, each with a waste allowance): first to
+       the waste the coal needs next (the queue of the waste that follows the coal: the earliest due, the upper layer
+       first), then by the volume of their paths */
+    function topUp(ws, extra) {
+      if (!(extra > 1e-6) || !ws.length) return;
+      if (WF) for (const key of WF.keys || []) {
+        const X = acts[WF.owner[key]]; if (!X || X.g !== 1 || !X.act || X.wCap === Infinity) continue;
+        X.tuGot = (X.tuDay === day ? X.tuGot : 0) + remain[(key / nL) | 0][key % nL]; X.tuDay = day;
+        if (X.tuGot > X.wCap) { const add = Math.min(X.tuGot - X.wCap, extra); X.wCap += add; extra -= add; if (extra <= 1e-6) return; }
+      }
+      let nom = 0; for (const X of ws) nom += X.nom;
+      if (nom > 0) for (const X of ws) X.wCap += (extra * X.nom) / nom;
     }
     const exposedFor = (b, l) => { for (let q = 0; q < l; q++) if (!layerDone[b][q] && (scheduled[b][q] ? remain[b][q] > 1e-3 : vol0[b][q] > 1e-3)) return false; return true; };
     function wasteNeed() {
@@ -5140,7 +5220,8 @@ const Sim = (() => {
         A += got;
       }
       // each waste activity: the rate that has all of its due waste out by its day, the overdue straight away
-      keys.sort((p, q) => WF.due[p] - WF.due[q]);
+      keys.sort((p, q) => WF.due[p] - WF.due[q] || (p % nL) - (q % nL)); // (the same day: the upper layer first)
+      WF.keys = keys;
       for (const key of keys) {
         const o = WF.owner[key]; if (o < 0) continue;
         const X = acts[o]; X.wNeed += remain[(key / nL) | 0][key % nL];
@@ -5150,6 +5231,7 @@ const Sim = (() => {
       for (const X of acts) { if (X.g === 1 && acts.some(C => C.g === 0 && C.pit === X.pit && !C.done && !C.halted && C.path.length)) X.wCap = Math.min(X.wNeed, X.wRate || 0); X.wRate = 0; }
     }
     function targetDay(date, w) {
+      if (RN.on) RD = RN.pct[date.getUTCMonth()] / 100; // (the rain derate of the month)
       // waste that follows the coal, during a coal ramp-up: the coal the ramp-up holds back is kept exposed as well
       if (WF && WF.ramp && (!TL.work || w)) WF.held += (TL.coal * (1 - Monthly.rampFactor(P, day))) / TL.per;
       targetMonth(date);
@@ -5160,11 +5242,19 @@ const Sim = (() => {
     function targetMonth(date) {
       const key = date.getUTCFullYear() * 12 + date.getUTCMonth();
       if (key !== tg.key) {
+        if (XC && tg.key >= 0) xcMonth(); // (the ROM stockpile: the month before)
+        // the month before: below the minimum waste while there was waste still to move
+        if (MW && tg.key >= 0 && tg.used[1] < 0.99 * MW.bud && acts.some(X => X.g === 1 && !X.done && !X.halted && X.path.length)) MW.short.push({ key: tg.key, used: tg.used[1], bud: MW.bud });
         // a new month: its budgets from the days it has (from the start date in the first month)
         tg.key = key; tg.used = [0, 0, 0]; tg.wdLeft = 0;
         let base = 0, baseC = 0, i = 0;
         for (let d = new Date(date.getTime()); d.getUTCMonth() === date.getUTCMonth(); d = new Date(d.getTime() + U.DAY_MS), i++) { const wk = isWorking(cal, d); if (wk) tg.wdLeft++; if (!TL.work || wk) { base++; baseC += Monthly.rampFactor(P, day + i); } }
-        tg.bud = [TL.coal > 0 ? (TL.coal * baseC) / TL.per : Infinity, TL.waste > 0 ? (TL.waste * base) / TL.per : Infinity, (TL.team * base) / TL.per];
+        // (the waste target: the start-up waste over the first months of mining, then the steady target)
+        const suM = key - suKey0, wM = TL.waste > 0 ? Monthly.wasteTarget(P, Math.max(0, suM)) : 0;
+        tg.su = TL.waste > 0 && suM < Monthly.startMonths(P); // (a start-up month, or before mining)
+        tg.bud = [TL.coal > 0 ? (TL.coal * baseC) / TL.per : Infinity, wM > 0 ? (wM * base) / TL.per : Infinity, (TL.team * base) / TL.per];
+        if (MW) MW.bud = (MW.min * base) / TL.per; // (the month's minimum waste)
+        if (SW) SW.bud = (SW.rate * base) / TL.per; // (the month's steady waste, bcm)
       }
     }
     function targetSplit() {
@@ -5179,6 +5269,28 @@ const Sim = (() => {
       for (const X of acts) { X.alloc = 0; X.allocT = 0; X.act = !X.done && !X.halted && day >= X.startDay && pick(X) >= 0 && X.pool.cnt++ === 0; if (X.act) on.push(X); }
       // waste that follows the coal: what each waste activity may move today
       if (WF) wasteNeed();
+      /* steady waste: the rest of the month's steady waste ÷ the working days left. While the coal exposed is at least the
+         exposed coal to keep ahead, the waste is held to it; when it runs short, the waste moves as the coal needs (and at
+         least at the steady rate) until it is back. */
+      if (SW) {
+        const today = Math.max(0, SW.bud - tg.used[1]) / Math.max(1, tg.wdLeft), ws = on.filter(X => X.g === 1 && X.wCap !== Infinity);
+        let inv = 0;
+        for (const C of acts) {
+          if (C.g !== 0 || C.done || C.halted || !C.path.length) continue;
+          for (let k = C.ptr, m = 0; k < C.path.length && m < 80; k++, m++) { const b = C.path[k]; if (!layerDone[b][C.l] && remain[b][C.l] > 1e-3 && exposedFor(b, C.l)) inv += remain[b][C.l] * unitOf(C, b); }
+        }
+        const short = inv < WF.months * TL.coal + WF.held;
+        SW.days++; if (short) SW.over++;
+        if (!short) for (const X of ws) X.wCap = 0;
+        let need = 0; for (const X of ws) need += X.wCap;
+        topUp(ws, today - need); // (the steady waste: to the waste the coal needs next)
+      }
+      // minimum waste: at least the rest of the month's minimum ÷ the working days left (in bcm: tons ÷ the density of the layers)
+      if (MW) {
+        const ws = on.filter(X => X.g === 1 && X.wCap !== Infinity), todayU = Math.max(0, MW.bud - tg.used[1]) / Math.max(1, tg.wdLeft);
+        let have = 0, dn = 0, dd = 0; for (const X of ws) { have += X.wCap; dd += X.nom; dn += X.nom * (+X.L.density || 2.2); }
+        topUp(ws, (TL.wT ? todayU / (dd > 0 ? dn / dd : 2.2) : todayU) - have);
+      }
       // the targets: shared between the coal (or waste) activities by the volume of their paths; with a priority pit
       // working, its activities get them all and the others what it leaves
       const anyP = [false, false]; for (const X of on) if (X.prio) anyP[X.g] = true;
@@ -5189,10 +5301,12 @@ const Sim = (() => {
       // the teams: the coal first, up to its target; then the waste that follows the coal, up to what the coal needs; the
       // rest by the volume of the paths (a priority pit before the others)
       let T = tg.left[2];
-      const first = on.filter(X => X.g === 0 && TL.coal > 0), rest = on.filter(X => !(X.g === 0 && TL.coal > 0));
+      // (in the start-up months without a coal target the waste gets the teams first, up to its start-up target: it is stripped ahead)
+      const wFirst = tg.su && !(TL.coal > 0), isFirst = X => (wFirst ? X.g === 1 && tg.left[1] !== Infinity : X.g === 0 && TL.coal > 0);
+      const first = on.filter(isFirst), rest = on.filter(X => !isFirst(X));
       if (first.length) {
         let need = 0;
-        for (const X of first) { X.allocT = (X.alloc / Math.max(0.01, (+X.L.density || 1.5) * (TL.ar ? X.arF : 1) * (TL.prod ? X.yAvg : 1))) * X.sw; need += X.allocT; }
+        for (const X of first) { X.allocT = (X.g === 0 ? X.alloc / Math.max(0.01, (+X.L.density || 1.5) * (TL.ar ? X.arF : 1) * (TL.prod ? X.yAvg : 1)) : TL.wT ? X.alloc / Math.max(0.01, +X.L.density || 2.2) : X.alloc) * X.sw; need += X.allocT; }
         const q = need > T ? T / need : 1;
         for (const X of first) { X.allocT *= q; T -= X.allocT; }
       }
@@ -5591,7 +5705,7 @@ const Sim = (() => {
           const b = bx.list[k];
           if (layerDone[b][X.l]) continue;
           if (ready(X, b)) { X.why = 0; return b; }
-          if (!first) { first = whyNot; X.whyL = whyL; }
+          if (!first) { first = whyNot; X.whyL = whyL; X.whyB = b; }
         }
       }
       for (let k = X.ptr, m = 0; k < X.path.length && m < X.look; k++) {
@@ -5599,7 +5713,7 @@ const Sim = (() => {
         if (layerDone[b][X.l]) continue;
         m++;
         if (ready(X, b)) { X.why = 0; return b; }
-        if (!first) { first = whyNot; X.whyL = whyL; }
+        if (!first) { first = whyNot; X.whyL = whyL; X.whyB = b; }
       }
       X.why = first;
       return -1;
@@ -6289,21 +6403,23 @@ const Sim = (() => {
         }
       }
       if (!rampsFree) for (const R of roads.follows) updateFollow(R);
-      if (TL.waste > 0) tg.used[1] += TL.wT ? rampTDaily[day] : rampDaily[day]; // ramp excavation is waste of this month too
-      if (TL.waste > 0) tg.used[1] += TL.wT ? batterTDaily[day] : batterDaily[day]; tg.used[2] += batterDaily[day] * 1.3; // and so are the highwall batters
+      if (TL.waste > 0 || MW) tg.used[1] += TL.wT ? rampTDaily[day] : rampDaily[day]; // ramp excavation is waste of this month too
+      if (TL.waste > 0 || MW) tg.used[1] += TL.wT ? batterTDaily[day] : batterDaily[day]; tg.used[2] += batterDaily[day] * 1.3; // and so are the highwall batters
       tg.used[2] += rampDaily[day] * 1.3; // and the teams do it
       targetDay(date, w);
       if (w) {
         // a second round: what some activities could not use goes to the ones the targets or the teams stopped
-        for (let round = 0; round < 2; round++) for (const X of acts) {
+        // (a third round with extra coal: the coal activities whose seam holds idle waste, over the target, onto the ROM stockpile)
+        for (let round = 0; round < (XC ? 3 : 2); round++) for (const X of (round === 2 ? xcPlan() : acts)) {
           if (X.done || X.halted || day < X.startDay) continue;
-          if (round && !(X.capNow && tg.left[2] > 1e-3 && tg.left[X.g] > 1e-3)) continue;
+          if (round === 2 ? !(X.xNeed > 1e-3 && tg.left[2] > 1e-3) : round && !(X.capNow && tg.left[2] > 1e-3 && tg.left[X.g] > 1e-3)) continue;
           // this activity's part of today's budgets, plus what the activities before it did not use
-          if (!round) { if (tg.left[X.g] !== Infinity) tg.resv[X.g] -= X.alloc; tg.resv[2] -= X.allocT; X.wLeft = X.wCap; }
+          // (rain: a waste activity held to an allowance loses the derate of it too: the rain stops it for that part of the day)
+          if (!round) { if (tg.left[X.g] !== Infinity) tg.resv[X.g] -= X.alloc; tg.resv[2] -= X.allocT; X.wLeft = X.g === 1 && RD > 0 && X.wCap !== Infinity ? X.wCap * (1 - RD) : X.wCap; }
           if (X.wLeft <= 1e-3) { if (!round && pick(X) >= 0) { X.why = 0; X.wfNow = true; } continue; } // the coal needs no more of its waste today
-          let roomG = tg.left[X.g] === Infinity ? Infinity : Math.max(0, tg.left[X.g] - tg.resv[X.g]), roomT = Math.max(0, tg.left[2] - tg.resv[2]), guard = 0;
+          let roomG = round === 2 ? X.xNeed : tg.left[X.g] === Infinity ? Infinity : Math.max(0, tg.left[X.g] - tg.resv[X.g]), roomT = Math.max(0, tg.left[2] - tg.resv[2]), guard = 0;
           X.capNow = false;
-          const sw = X.sw;
+          const sw = X.sw, swT = X.g === 1 && RD > 0 ? sw / (1 - RD) : sw; // swT: the teams' loose m³ a bcm (rain: the waste takes them longer; the dumps still take sw)
           while (guard++ < 400) {
             const b = pick(X);
             if (b < 0) break;
@@ -6312,7 +6428,7 @@ const Sim = (() => {
             if (remain[b][X.l] <= 1e-3 && vol0[b][X.l] <= 1e-3) { completeLayer(b, X.l); continue; }
             const ug = unitOf(X, b), lim = X.maxRate > 0 ? X.maxRate - X.bcm[day] : Infinity; // lim: the optional cap on its daily rate
             if (lim <= 1e-3) { X.why = 0; break; }
-            const bG = roomG / ug, bT = roomT / sw, maxBcm = Math.min(bG, bT, lim, X.wLeft);
+            const bG = roomG / ug, bT = roomT / swT, maxBcm = Math.min(bG, bT, lim, X.wLeft);
             if (X.wLeft <= 1e-3) { X.why = 0; X.wfNow = true; break; }
             if (Math.min(bG, bT) <= 1e-3) { X.why = 0; X.capNow = true; X.capBy = bG < bT ? 0 : 1; break; }
             let got = 0, placed = true, lost = 0;
@@ -6359,10 +6475,11 @@ const Sim = (() => {
               if (got > 0) { placed = place(X, b, dest, got * sw, got); if (!placed) lost = got; }
             }
             if (got > 0) {
-              const dens = Model.blockDensity(P, b, X.l), u = got * ug, ut = got * sw;
+              const dens = Model.blockDensity(P, b, X.l), u = got * ug, ut = got * swT;
               roomG -= u; roomT -= ut;
-              if (tg.left[X.g] !== Infinity) tg.left[X.g] -= u;
-              tg.used[X.g] += u; tg.left[2] -= ut; tg.used[2] += ut;
+              if (round === 2) { X.xNeed -= u; XC.day += u; } // (coal over the target: onto the ROM stockpile, not counted against it)
+              else { if (tg.left[X.g] !== Infinity) tg.left[X.g] -= u; tg.used[X.g] += u; }
+              tg.left[2] -= ut; tg.used[2] += ut;
               if (X.wLeft !== Infinity) X.wLeft -= got;
               X.bcm[day] += got; X.t[day] += got * dens;
               records.push({ d: day, a: X.idx, b, v: got, t: got * dens });
@@ -6376,7 +6493,9 @@ const Sim = (() => {
         }
         // working days on which the targets (capBy 0) or the teams (1) held an activity back
         for (const X of acts) { if (X.capNow) { if (X.capBy) X.teamDays++; else X.tgtDays++; X.capNow = false; } if (X.wfNow) { X.wfDays++; X.wfNow = false; } }
+        if (XC) { XC.stock += XC.day; XC.mAdd += XC.day; XC.added += XC.day; XC.day = 0; }
       }
+      if (XC) XC.daily[day] = XC.stock; // (the ROM stockpile at the end of the day)
       // box cuts: their months of priority count from the first day anything is mined in their part of the mine
       if (w) for (const B of boxes) if (B.start < 0 && B.part.some(X => X.bcm[day] > 0)) {
         if (B.first < 0) B.first = day;
@@ -6408,7 +6527,7 @@ const Sim = (() => {
         rampsLast = true;
         const r0 = rampDaily[day], t0 = rampTDaily[day];
         if (!rampsFree) for (const R of roads.follows) updateFollow(R);
-        if (TL.waste > 0) tg.used[1] += TL.wT ? rampTDaily[day] - t0 : rampDaily[day] - r0; tg.used[2] += (rampDaily[day] - r0) * 1.3;
+        if (TL.waste > 0 || MW) tg.used[1] += TL.wT ? rampTDaily[day] - t0 : rampDaily[day] - r0; tg.used[2] += (rampDaily[day] - r0) * 1.3;
       }
       // once all mining is finished, ramps that follow the mining are no longer needed: rehandling may fill them
       if (!rampsFree && jobs.length && acts.every(X => X.done || X.halted)) freeRamps();
@@ -6556,10 +6675,50 @@ const Sim = (() => {
         area: blocksH.reduce((s, q) => s + q.area, 0) + rampsH.reduce((s, q) => s + q.area, 0) + (otherH ? otherH.area : 0),
         affected: keep.blocks.map(b => ({ b, id: P.blocks[b].id, first: keep.first[b], near: keep.bNear[b], src: keep.bSrc[b] >= 0 ? (s => ({ name: s.name, folder: s.folder, dist: s.dist }))(keep.src[keep.bSrc[b]]) : null })) };
     }
+    // the months below the minimum waste
+    const mName = k => `${U.MONTHS[k % 12]}/${Math.floor(k / 12)}`;
+    /* No monthly coal target: all the coal mined goes onto the ROM stockpile, as ADC tons (the Reserve tab's losses,
+       contamination and moisture; as received without them), from the opening stock of the ROM tips. It comes off as set
+       in the Production tab (P.targets.romOff): a plant feed (t a working day) or ADC tons sold (t a day, every day), from
+       a number of months after the first coal; without a rate there, the plant feed of the ROM tips (Dumps) takes it off
+       every working day from the start. Without either it only grows. */
+    let allRom = null;
+    if (!(+TG.coal > 0) && typeof Tons !== 'undefined' && acts.some(X => X.g === 0)) {
+      const QB = Tons.basis(P), roms = (P.dumps || []).filter(d => d.kind === 'rom'), mKey = d => { const t = U.addDays(start, d); return t.getUTCFullYear() * 12 + t.getUTCMonth(); };
+      const RO = TG.romOff || {}, own = +RO.rate > 0, by = own && RO.by === 'sale' ? 'sale' : 'feed', after = own && +RO.after > 0 ? +RO.after : 0;
+      // the ramp-up: over its first months the rate steps up (month k of n: (k + 1) ÷ (n + 1) of it), as the coal target's does
+      const ramp = own && +RO.ramp > 0 ? Math.min(60, Math.round(+RO.ramp)) : 0;
+      const feed = own ? +RO.rate : roms.reduce((a, d) => a + (+d.plantFeed > 0 ? +d.plantFeed : 0), 0), open = roms.reduce((a, d) => a + (+d.openingStock > 0 ? +d.openingStock : 0), 0);
+      const add = new Float64Array(nDays); for (const r of records) { const X = acts[r.a]; if (X.g === 0 && r.t > 0) add[r.d] += r.t * (QB.on ? QB.factor(r.b, X.l) : X.arF); }
+      // the first day coal comes off: the months set after the first day coal is mined (the same day of the month)
+      let first = 0; while (first < nDays && !(add[first] > 0)) first++;
+      const fd = U.addDays(start, Math.min(first, nDays - 1)), from = after > 0 ? Math.round((Date.UTC(fd.getUTCFullYear(), fd.getUTCMonth() + Math.floor(after), fd.getUTCDate()) + (after % 1) * 30.4375 * U.DAY_MS - start.getTime()) / U.DAY_MS) : 0;
+      const daily = new Float32Array(nDays), byM = new Map(); let st = open, tA = 0, tR = 0, peak = open, peakD = 0;
+      for (let d = 0; d < nDays; d++) {
+        st += add[d]; let f = 0;
+        if (feed > 0 && d >= from && (by === 'sale' || working[d])) { const k = Math.floor((d - from) / 30.4375), rf = k < ramp ? (k + 1) / (ramp + 1) : 1; f = Math.min(feed * rf, st); st -= f; } // (a plant on working days; sales every day; × the ramp-up)
+        daily[d] = st; tA += add[d]; tR += f; if (st > peak) { peak = st; peakD = d; }
+        const k = mKey(d), q = byM.get(k) || { key: k, added: 0, reclaimed: 0, closing: 0 }; q.added += add[d]; q.reclaimed += f; q.closing = st; byM.set(k, q);
+      }
+      allRom = { mode: 'all', basis: QB.on ? 'adc' : 'ar', unit: QB.on ? 't ADC' : 't as received', daily, months: [...byM.values()].map(q => Object.assign(q, { label: `${U.MONTHS[q.key % 12]}/${Math.floor(q.key / 12)}` })), added: tA, reclaimed: tR, end: st, max: null, feed, open, peak, peakDay: peakD, by, from, after, own, ramp };
+      events.push({ day: nDays - 1, type: 'info', msg: `No monthly coal target: all the coal mined, ${U.fmtNum(tA, 0)} ${allRom.unit}, went onto the ROM stockpile${open > 0 ? ` (opening stock ${U.fmtNum(open, 0)} t)` : ''}; ${feed > 0 ? `${by === 'sale' ? `${U.fmtNum(feed, 0)} t a day was sold off it` : `the plant took ${U.fmtNum(feed, 0)} t a working day off it`}${from > 0 ? ` from ${U.fmtDay(P.startDate, from)}${after ? ` (${U.fmtNum(after, after % 1 ? 1 : 0)} months after the first coal)` : ''}` : ''}${ramp ? `, ramping up over ${ramp} month${ramp === 1 ? '' : 's'}` : ''}, ${U.fmtNum(tR, 0)} t in all, and ${U.fmtNum(st, 0)} t is left on it when mining ends` : 'nothing takes coal off it (no plant feed or sales set, Production tab), so it only grows'}. The most it held: ${U.fmtNum(peak, 0)} t.` });
+    }
+    // the ROM stockpile: the last month, and what it did
+    if (XC) {
+      if (tg.key >= 0) xcMonth();
+      const tu = TL.prod ? 't of product' : TL.ar ? 't as received' : 't in situ';
+      if (XC.added > 0) events.push({ day: nDays - 1, type: 'info', msg: `Extra coal: ${U.fmtNum(XC.added, 0)} ${tu} was mined over the coal target to free the waste and went onto the ROM stockpile; ${U.fmtNum(XC.rec, 0)} ${tu} of it made up months below the target, and ${U.fmtNum(XC.stock, 0)} ${tu} is left on it when mining ends (sold then). The most it held: ${U.fmtNum(Math.max(0, ...XC.months.map(q => q.closing + q.reclaimed)), 0)} ${tu}.` });
+      else events.push({ day: nDays - 1, type: 'info', msg: 'Extra coal: the waste never stood idle under a coal seam with teams to spare, so no coal was mined over the target.' });
+    }
+    if (MW && MW.short.length) events.push({ day: nDays - 1, type: 'warn', msg: `Minimum waste not met in ${MW.short.length} month${MW.short.length === 1 ? '' : 's'}: ${MW.short.slice(0, 8).map(q => `${mName(q.key)} (${U.fmtNum(q.used, 0)} of ${U.fmtNum(q.bud, 0)} ${TL.wT ? 't' : 'bcm'})`).join(', ')}${MW.short.length > 8 ? ', …' : ''}. The waste could not be moved faster: the teams, a dependency, a void or a dump held it back.` });
     events.sort((a, b) => (a.day || 0) - (b.day || 0));
 
     return {
       startISO: P.startDate, nDays, dayStart: dayStart.slice(0, nDays + 1), wasteFollows: WF ? { months: WF.months, coal: TL.coal, ar: TL.ar, rampHeld: WF.held } : null,
+      steadyWaste: SW ? { rate: SW.rate, auto: SW.auto, days: SW.days, over: SW.over } : null, mineStart: mineDay0,
+      rain: RN.on ? { pct: RN.pct.slice(), per100: RN.per100 } : null,
+      minWaste: MW ? { min: MW.min, unit: TL.wT ? 't' : 'bcm', short: MW.short.map(q => ({ label: mName(q.key), used: q.used, bud: q.bud })) } : null,
+      romStock: XC ? { basis: TL.prod ? 'product' : TL.ar ? 'ar' : 'insitu', unit: TL.prod ? 't of product' : TL.ar ? 't as received' : 't in situ', daily: XC.daily.slice(0, nDays), months: XC.months.map(q => ({ key: q.key, label: mName(q.key), added: q.added, reclaimed: q.reclaimed, closing: q.closing })), added: XC.added, reclaimed: XC.rec, end: XC.stock, max: XC.max < Infinity ? XC.max : null } : allRom,
       dCell: dCell.done(), dIns: dIns.done(), dFill: dFill.done(), dMat: dMat.done(),
       bl, vol0, blockDoneDay, backfillDay, working: working.slice(0, nDays),
       acts: acts.map(X => ({ id: X.a.id, name: X.a.name, color: X.a.color, pit: X.pit, host: X.host.id, fleetOf: X.host !== X.a ? X.host.name : null, layer: X.l, layerName: X.L.name, type: X.L.type, method: X.a.method, bcm: X.bcm, t: X.t, pathLen: X.path.length, done: X.done,
@@ -6599,9 +6758,50 @@ const Sim = (() => {
   }
 
   // ---------------- playback ----------------
+  /* The ROM stockpiles as piles on their pads (the ROM tips with an outline), for the playback: the coal on the stockpile
+     each day (res.romStock: the extra coal or, without a coal target, all the coal; else the plant feed balance of the
+     ROM tip, Inventory.romStock) ÷ its bulk density (t/m³, 0.9 unless set) is the volume of the pile. The pile fills the
+     pad like a dump: up to the crest (the pad's edge + its maximum height, or its crest level) and no steeper than its
+     face angle from the edge; a smaller pile is a cone from the tipping point (the tip's entry, else the middle of the pad),
+     its sides at the face angle, as high as holds its volume, within the faces of the full pad. The
+     stockpile of the schedule is shared between the pads by what each can hold. at(day) → [{cells, h, d}] or null. */
+  function romPiles(ws, res) {
+    const P = ws.project, list = (P.dumps || []).filter(d => d.kind === 'rom' && d.pts && d.pts.length >= 3);
+    if (!res || !list.length) return null;
+    const series = res.romStock && res.romStock.daily ? res.romStock.daily : null;
+    const inv = !series && typeof Inventory !== 'undefined' ? Inventory.romStock(P, res).filter(r => r.tracked) : [];
+    if (!series && !inv.length) return null;
+    const piles = list.map(d => {
+      const cells = Model.cellsInPolygon(ws, d.pts), tanA = Math.tan((U.clamp(d.faceAngle || 30, 5, 89) * Math.PI) / 180), edge = Geo.densify(d.pts, ws.cell, true);
+      let es = 0; for (const p of edge) es += Model.sampleGrid(ws, ws.topo, p[0], p[1]);
+      const crest = d.crestElev != null && d.crestElev !== '' && isFinite(d.crestElev) ? +d.crestElev : es / edge.length + (+d.maxHeight || 20);
+      const full = new Float32Array(cells.length), rt = new Float32Array(cells.length), tip = d.entry && Geo.pip(d.entry[0], d.entry[1], d.pts) ? d.entry : Geo.centroid(d.pts); let cap = 0, hi = 0, top = 0;
+      cells.forEach((c, i) => { const [x, y] = Model.cellXY(ws, c), e = Geo.distToPolygonEdge(x, y, d.pts); full[i] = Math.max(0, Math.min(crest, Model.sampleGrid(ws, ws.topo, e.x, e.y) + e.d * tanA) - ws.topo[c]); cap += full[i] * ws.A; hi = Math.max(hi, full[i]); rt[i] = Math.hypot(x - tip[0], y - tip[1]) * tanA; top = Math.max(top, full[i] + rt[i]); });
+      return { d, cells, full, rt, top, cap, hi, bd: +d.bulkDensity > 0 ? +d.bulkDensity : 0.9, own: inv.find(r => r.id === d.id) || null, h: new Float32Array(cells.length) };
+    }).filter(q => q.cells.length && q.cap > 0);
+    if (!piles.length) return null;
+    const capAll = piles.reduce((a, q) => a + q.cap, 0), coalL = P.layers.findIndex(L => L.type === 'coal');
+    const at = day => piles.map(q => {
+      const t = day < 0 ? (q.own ? q.own.open : 0) : series ? (series[Math.min(day, series.length - 1)] * q.cap) / capAll : q.own ? q.own.stock[Math.min(day, q.own.stock.length - 1)] : 0;
+      const V = Math.max(0, t) / q.bd;
+      // the height of the cone at the tipping point that holds the volume (all of the pad at most)
+      if (V >= q.cap) q.h.set(q.full);
+      else if (!(V > 0)) q.h.fill(0);
+      else {
+        const hOf = (z, i) => Math.max(0, Math.min(q.full[i], z - q.rt[i]));
+        let lo = 0, up = q.top;
+        for (let k = 0; k < 40; k++) { const z = (lo + up) / 2; let v = 0; for (let i = 0; i < q.full.length; i++) v += hOf(z, i); if (v * ws.A < V) lo = z; else up = z; }
+        for (let i = 0; i < q.full.length; i++) q.h[i] = hOf(up, i);
+      }
+      return { d: q.d, cells: q.cells, h: q.h, tons: t, vol: V, cap: q.cap, over: V > q.cap };
+    });
+    return { piles, at, mat: coalL >= 0 ? coalL + 1 : 255 };
+  }
   function playback(ws, res) {
     // mat: what lies on top of the spoil in each cell (the layer placed there last + 1; 255 mixed spoil; 0 none)
     const pb = { insitu: Float32Array.from(ws.topo), fill: new Float32Array(ws.n), mat: new Uint8Array(ws.n), day: -1 };
+    const ROM = romPiles(ws, res); // (the ROM stockpiles: laid over the surface of the day, in the colour of the coal)
+    pb.rom = ROM;
     pb.reset = () => { pb.insitu.set(ws.topo); pb.fill.fill(0); pb.mat.fill(0); pb.day = -1; };
     pb.seek = target => {
       if (!res) return;
@@ -6611,11 +6811,12 @@ const Sim = (() => {
         for (let k = res.dayStart[d], e = res.dayStart[d + 1]; k < e; k++) { const c = res.dCell[k]; pb.insitu[c] = res.dIns[k]; pb.fill[c] = res.dFill[k]; if (res.dMat) pb.mat[c] = res.dMat[k]; }
       }
       pb.day = target;
+      if (ROM) { pb.romNow = ROM.at(target); for (const q of pb.romNow) q.cells.forEach((c, i) => { pb.fill[c] = q.h[i]; pb.mat[c] = q.h[i] > 0.01 ? ROM.mat : 0; }); }
     };
     return pb;
   }
 
-  return { run, playback, validate, prepRoads, route, dumpCapacity, isWorking, buildGraph };
+  return { run, playback, romPiles, validate, prepRoads, route, dumpCapacity, isWorking, buildGraph };
 })();
 
 /* ===== Monthly figures of a schedule: tonnes and bcm mined, ADC tonnes and other block attributes, typed-in targets ===== */
@@ -6688,6 +6889,10 @@ const Monthly = (() => {
      the coal target steps up, 1/(n+1), 2/(n+1) … n/(n+1) of it, and is met in full from then on, so the waste can get
      ahead and build up exposed coal first. rampFactor(P, d): the share of the coal target on day d of the schedule. */
   function rampMonths(P) { const v = +((P.targets || {}).rampMonths); return isFinite(v) && v > 0 ? Math.min(60, Math.round(v)) : 0; }
+  /* The waste target of month m of the schedule (0: the month it starts), for an average month: the start-up waste
+     (P.targets.wasteStart) over the first P.targets.wasteStartMonths months, then the steady waste target (P.targets.waste) */
+  function startMonths(P) { const T = P.targets || {}, v = +T.wasteStartMonths; return +T.waste > 0 && +T.wasteStart > 0 && isFinite(v) && v > 0 ? Math.min(600, Math.round(v)) : 0; }
+  function wasteTarget(P, m) { const T = P.targets || {}; return m < startMonths(P) ? +T.wasteStart : +T.waste > 0 ? +T.waste : 0; }
   function rampFactor(P, d) { const n = rampMonths(P); if (!n) return 1; const k = Math.floor(Math.max(0, d) / AVG_MONTH); return k < n ? (k + 1) / (n + 1) : 1; }
 
   // ---------- the monthly figures ----------
@@ -6766,7 +6971,7 @@ const Monthly = (() => {
     const coalTg = !(+T.coal > 0) ? null : !rampN ? spread(T.coal) : (() => { const a = mk(); for (let d = 0; d < nD; d++) if (basis !== 'working' || res.working[d]) a[mOf[d]] += (+T.coal * rampFactor(P, d)) / per; return a; })();
     // the washed product (washability, Geological Data tab): as received coal × yield, block by block
     const prod = typeof Wash !== 'undefined' ? Wash.schedule(P, res, mOf, nM) : null;
-    const target = { limit, rampMonths: rampN, coalAvg: +T.coal > 0 ? +T.coal : null, wasteAvg: +T.waste > 0 ? +T.waste : null, coal: coalTg, waste: spread(T.waste), wasteUnit, basis, per, coalBasis: T.coalBasis === 'ar' ? 'ar' : T.coalBasis === 'product' && prod ? 'product' : 'insitu' };
+    const target = { limit, rampMonths: rampN, coalAvg: +T.coal > 0 ? +T.coal : null, wasteAvg: +T.waste > 0 ? +T.waste : null, coal: coalTg, waste: +T.waste > 0 ? (() => { const a = mk(), m0 = res.mineStart > 0 && res.mineStart < nD ? mOf[res.mineStart] : 0; for (let m = 0; m < nM; m++) a[m] = (wasteTarget(P, Math.max(0, m - m0)) * base[m]) / per; return a; })() : null, wasteStart: startMonths(P) ? { months: startMonths(P), avg: +T.wasteStart } : null, wasteUnit, basis, per, coalBasis: T.coalBasis === 'ar' ? 'ar' : T.coalBasis === 'product' && prod ? 'product' : 'insitu' };
 
     const nDays = sum(days), months = nDays / AVG_MONTH; // length of the schedule in average months
     // topsoil put back on the backfill, and rehandling, in loose m³ a month
@@ -6885,7 +7090,7 @@ const Monthly = (() => {
       rehandled: (res.rehandles || []).map(J => ({ name: J.name, moved: sumR(J.daily) })).filter(q => q.moved > 0),
       blocksDone: Array.from(res.blockDoneDay).filter(inR).length, backfilled: res.backfillDay ? Array.from(res.backfillDay).filter(inR).length : 0 };
   }
-  return { rampMonths, rampFactor, period, build, attrPlan, numericColumns, autoMode, autoLayer, layerLabel, daysPerMonth, workDaysPerMonth, running, wasteGroup, adcLabel, AVG_MONTH };
+  return { rampMonths, rampFactor, startMonths, wasteTarget, period, build, attrPlan, numericColumns, autoMode, autoLayer, layerLabel, daysPerMonth, workDaysPerMonth, running, wasteGroup, adcLabel, AVG_MONTH };
 })();
 
 /* ===== Cross-sections as DXF: the geology, the ground on a date and the placed spoil along a section line ===== */
@@ -7488,7 +7693,20 @@ const Inventory = (() => {
 /* ===== Block margin: what each block's coal earns less what it costs to mine it, per ton of coal, and the blocks ranked by it =====
    P.margin = {wasteCost (per bcm of waste), coalCost (per t of coal), price (per t; × CV when byCV), byCV (bool), plant (bool),
    plantCost (per t; × yield), basis: 'adc' (air-dry contaminated tons, the default) | 'ar' | 'insitu', currency, cv / ash / ts / yield: {layerId: column},
-   waste: {layerId: true} (seams counted as waste here), srMid (the middle of the strip ratio colour scale, bcm/t; empty: the average)}.
+   waste: {layerId: true} (seams counted as waste here), srMid (the middle of the strip ratio colour scale, bcm/t; empty: the average),
+   fromFin (bool; not set: on when the margin has no costs or price of its own), finOver (bool)}.
+   With fromFin the costs and price are the Finance tab's (its money, before escalation), so there is one set of numbers:
+     price      = the export and domestic prices by the export share (× CV ÷ the reference CV when they follow the CV),
+                  less marketing (% of revenue) and the rail, port and domestic transport a ton sold
+     waste      = each layer's bcm × its rate: topsoil stripping; else load and haul, plus drilling, explosives (powder factor
+                  × R/kg) and presplit (R/m² ÷ the strip width) where the Drill and Blast tab blasts the layer
+     coal       = its tons as received × (coal mining + crushing) + its bcm × (drilling + explosives) where it is blasted
+     processing = with washing: the plant feed × the washing cost + the discard × its disposal (yield: the seam's yield
+                  column, or the fixed yield); the coal sold is then the tons × the yield
+     rehab      = the block's area × the rehabilitation cost a hectare
+     overheads  = with finOver: the site and corporate overheads and the sustaining capital a month ÷ the coal target a
+                  month (on the target's tons), and the sustaining capital a ton as received
+   Waste dozed into the void, rehandling and pit water are left out (they follow the schedule, not the block).
    The volumes and tons of each block, layer by layer, come from the 3D model (the surfaces), as the schedule mines it: the
    seam cut-off, depth limits and keep-out zones taken off; tons = bcm × the density of the layer (its RD column where one
    is set). The block attribute file gives only the qualities: the CV, ash, total sulphur (TS) and yield of each seam. Waste
@@ -7504,9 +7722,48 @@ const Inventory = (() => {
    is left out of that blend. Blocks without coal have no margin.
    Rank 1 is the highest margin. Every block is ranked, inside the reserve boundary (P.reserve) or not; inside tells which. */
 const Margin = (() => {
-  const DEF = { wasteCost: null, coalCost: null, price: null, revBy: 'blend', seamPrice: {}, byCV: true, plant: false, plantCost: null, basis: 'adc', currency: 'R', cv: {}, ash: {}, ts: {}, yield: {}, waste: {}, srMid: null };
-  function settings(P) { const M = Object.assign({}, DEF, P.margin || {}); for (const k of ['cv', 'ash', 'ts', 'yield', 'waste', 'seamPrice']) M[k] = Object.assign({}, (P.margin || {})[k]); return M; }
+  const DEF = { wasteCost: null, coalCost: null, price: null, revBy: 'blend', seamPrice: {}, byCV: true, plant: false, plantCost: null, basis: 'adc', currency: 'R', cv: {}, ash: {}, ts: {}, yield: {}, waste: {}, srMid: null, fromFin: null, finOver: false };
   const num = v => (v === '' || v == null || !isFinite(+v) ? null : +v);
+  // the costs and price from the Finance tab: as ticked; not set, when the margin has no costs or price of its own
+  function fromFin(P) {
+    const m = P.margin || {};
+    if (m.fromFin != null) return !!m.fromFin;
+    return !['wasteCost', 'coalCost', 'price'].some(k => num(m[k]) != null) && !Object.values(m.seamPrice || {}).some(v => num(v) != null);
+  }
+  /* The Finance tab's price of a ton sold at the mine, before the CV: the export and domestic prices by the export share
+     (per t, or per t per MJ/kg when the prices follow the CV: ÷ the reference CV) */
+  // (the Finance tab's price as a + b × CV: Fin.priceParts)
+  function settings(P) {
+    const M = Object.assign({}, DEF, P.margin || {}); for (const k of ['cv', 'ash', 'ts', 'yield', 'waste', 'seamPrice']) M[k] = Object.assign({}, (P.margin || {})[k]);
+    M.fromFin = typeof Fin !== 'undefined' && fromFin(P); M.finOver = !!M.finOver;
+    // (on the Finance tab's numbers: its price and currency, one price for the blend, the plant when it washes the coal)
+    if (M.fromFin) { const o = Fin.settings(P), PP = Fin.priceParts(o); Object.assign(M, { price: PP.b > 0 ? PP.b : PP.a, priceT: PP.b > 0 ? PP.a : 0, byCV: PP.b > 0, revBy: 'blend', plant: o.wash, wasteCost: null, coalCost: null, plantCost: null, currency: o.currency }); }
+    return M;
+  }
+  /* The Finance tab's rates for the block margin (its money, before escalation): price, the deductions from revenue, the
+     cost of a bcm of each layer as waste and of each seam as coal, processing, rehabilitation and the overheads */
+  function finRates(P, ws, M) {
+    const o = Fin.settings(P), e = o.expShare / 100, B = typeof Blast !== 'undefined' ? Blast.settings(P) : null;
+    const PL = B && B.on && ws ? Blast.plan(P, ws) : null, blasted = l => !!(PL && PL[l] && PL[l].on);
+    const kg = (D, b, l) => D.pf * (D.pfUnit === 'kg/t' ? Model.blockDensity(P, b, l) : 1) * o.cExpl; // explosives a bcm
+    const T = P.targets || {}, tg = +T.coal > 0 ? +T.coal : 0, over = M.finOver && tg > 0;
+    const R = {
+      o, price: M.price, a: Fin.priceParts(o).a, b: Fin.priceParts(o).b, keep: 1 - o.mkt / 100, logi: e * (o.rail + o.port) + (1 - e) * o.domTrans,
+      // a bcm of a layer mined as waste: topsoil stripped; the rest loaded and hauled, and blasted where the Drill and Blast tab blasts it
+      wasteBcm: (b, l) => {
+        const L = P.layers[l]; if (L.type === 'topsoil') return o.cTopsoil;
+        if (!blasted(l)) return o.cWaste;
+        return L.type === 'coal' ? o.cWaste + o.cDrillC + kg(B.coal, b, l) : o.cWaste + o.cDrillW + kg(B.waste, b, l) + o.cPresplit / o.presplitW;
+      },
+      // a seam mined as coal: drilled and blasted a bcm; mined and crushed a ton as received
+      coalBcm: (b, l) => (blasted(l) ? o.cDrillC + kg(B.coal, b, l) : 0), coalT: o.cCoal + o.cCrush,
+      wash: o.wash, yieldCol: o.wash && o.yieldSrc === 'wash', yF: o.yieldFixed / 100, cWash: o.cWash, cDiscard: o.cDiscard, cRehab: o.cRehab,
+      // the overheads and sustaining capital: a month's ÷ the coal target a month, on the target's tons; and the sustaining capital a ton
+      over, overT: over ? (o.fixedM + o.corpM + o.sustY / 12) / tg : 0, overBasis: T.coalBasis === 'ar' ? 'ar' : T.coalBasis === 'product' ? 'product' : 'insitu', sustT: over ? o.sustT : 0,
+      overNoTarget: M.finOver && !(tg > 0), currency: o.currency
+    };
+    return R;
+  }
   const KIND = { cv: /(^|[^a-z])(cv|mj|kcal|cal|gcv|ncv)([^a-z]|$)|calorific/i, ash: /(^|[^a-z])ash/i, ts: /(^|[^a-z])(ts|tsul|stot)([^a-z]|$)|sulph|sulfur/i, yield: /yield|yld/i, vm: /(^|[^a-z])vm([^a-z]|$)|volatile/i, im: /(^|[^a-z])(im|moist|inh)([^a-z]|$)|moisture|inherent/i }; // (VM and IM: for the ADC qualities)
   // the qualities blended over the seams of a block, with their units and decimals (the CV also prices the coal)
   const QUAL = [{ k: 'cv', name: 'CV', unit: 'MJ/kg', d: 2 }, { k: 'ash', name: 'ASH', unit: '%', d: 1 }, { k: 'ts', name: 'TS', unit: '%', d: 2 }];
@@ -7521,13 +7778,13 @@ const Margin = (() => {
   }
   function colFor(P, M, L, kind) { const v = (M[kind] || {})[L.id]; return v === undefined ? guess(P, L, kind) : v || ''; }
   // ready: the inputs the margin needs are there
-  function ready(P) { const M = settings(P); return num(M.price) > 0 || (M.revBy === 'seam' && Object.values(M.seamPrice || {}).some(v => num(v) > 0)); }
+  function ready(P) { const M = settings(P); return num(M.price) > 0 || (!M.fromFin && M.revBy === 'seam' && Object.values(M.seamPrice || {}).some(v => num(v) > 0)); }
   // a seam counted as coal here: coal in the model, and not counted as waste in the Block Margin Rank tab
   const isCoal = (M, L) => L.type === 'coal' && !(M.waste && M.waste[L.id]);
   const isWasteSeam = (M, L) => L.type === 'coal' && !isCoal(M, L);
 
   function compute(P, ws) {
-    const M = settings(P), nB = P.blocks.length, nL = P.layers.length;
+    const M = settings(P), nB = P.blocks.length, nL = P.layers.length, FR = M.fromFin ? finRates(P, ws, M) : null;
     const price = num(M.price) || 0, wc = num(M.wasteCost) || 0, cc = num(M.coalCost) || 0, pc = M.plant ? num(M.plantCost) || 0 : 0;
     const keep = typeof Keep !== 'undefined' ? Keep.compute(ws) : null;
     const vol = Model.blockVolumes(ws, keep && keep.any ? keep.floor : null), lim = Model.blockLimits(P, ws, { noReserve: true }).lim;
@@ -7539,7 +7796,7 @@ const Margin = (() => {
     const tOf = (b, l) => vOf(b, l) * Model.blockDensity(P, b, l) * (!isCoal(M, P.layers[l]) ? 1 : M.basis === 'ar' ? Model.arFactor(P, P.layers[l]) : M.basis === 'insitu' ? 1 : QB.adc(b, l));
     // each seam: its CV, ASH, TS and yield columns, the values per block, and the seam's averages for blocks that lack them
     const seams = coalL.map(l => {
-      const L = P.layers[l], s = { l, id: L.id, name: L.name, cvCol: colFor(P, M, L, 'cv'), ashCol: colFor(P, M, L, 'ash'), tsCol: colFor(P, M, L, 'ts'), yCol: M.plant ? colFor(P, M, L, 'yield') : '' };
+      const L = P.layers[l], s = { l, id: L.id, name: L.name, cvCol: colFor(P, M, L, 'cv'), ashCol: colFor(P, M, L, 'ash'), tsCol: colFor(P, M, L, 'ts'), yCol: M.plant && (!FR || FR.yieldCol) ? colFor(P, M, L, 'yield') : '' };
       const read = col => P.blocks.map(b => { const v = col && b.attrs ? parseFloat(b.attrs[col]) : NaN; return isFinite(v) ? v : NaN; });
       s.cv = read(s.cvCol); s.ash = read(s.ashCol); s.ts = read(s.tsCol); s.y = read(s.yCol);
       s.yPct = s.y.some(v => v > 1.5); if (s.yPct) s.y = s.y.map(v => v / 100); // a yield in % (65) or as a fraction (0.65)
@@ -7549,20 +7806,27 @@ const Margin = (() => {
     });
     const rows = [];
     for (let b = 0; b < nB; b++) {
-      let waste = 0, coalT = 0, plant = 0, miss = 0, cvT = 0, cvW = 0, adcT = 0, revSeams = 0;
+      let waste = 0, coalT = 0, plant = 0, miss = 0, cvT = 0, cvW = 0, adcT = 0, revSeams = 0, costWF = 0, costCF = 0, overF = 0, soldT = 0;
       const qN = { ash: 0, ts: 0 }, qD = { ash: 0, ts: 0 };
       // the block layer by layer: bcm and tons; waste is every layer not counted as coal
-      const byLayer = P.layers.map((L, l) => { const v = vOf(b, l), coal = isCoal(M, L); if (!coal) waste += v; return { v, t: tOf(b, l), coal }; });
+      const byLayer = P.layers.map((L, l) => { const v = vOf(b, l), coal = isCoal(M, L); if (!coal) { waste += v; if (FR && v > 0) costWF += v * FR.wasteBcm(b, l); } return { v, t: tOf(b, l), coal }; });
       const bySeam = seams.map(s => {
         const t = byLayer[s.l].t; coalT += t;
         // the weight of its qualities (and, on the ADC basis, the tons it is sold on): its ADC tons, else its tons
         const w = QB.on && t > 0 ? vOf(b, s.l) * Model.blockDensity(P, b, s.l) * QB.factor(b, s.l) : t; adcT += w;
         // a block without the value takes the seam's average; a seam without the column at all counts 0 (no revenue, no plant cost)
-        let cv = s.cv[b], y = M.plant ? s.y[b] : 1;
+        let cv = s.cv[b], y = M.plant ? (FR && !s.yCol ? FR.yF : s.y[b]) : 1;
         if (!(cv === cv) && t > 0) { cv = s.cvAvg === s.cvAvg ? s.cvAvg : 0; if (s.cvCol && M.byCV) { s.cvMiss++; miss++; } }
-        if (M.plant && !(y === y) && t > 0) { y = s.yAvg === s.yAvg ? s.yAvg : 0; if (s.yCol) { s.yMiss++; miss++; } }
+        if (M.plant && !(y === y) && t > 0) { y = s.yAvg === s.yAvg ? s.yAvg : FR ? FR.yF : 0; if (s.yCol) { s.yMiss++; miss++; } }
         const cq = s.cvCol ? QB.q(s.l, 'cv', cv) : cv;
-        if (t > 0) { cvT += w * (cq === cq ? cq : 0); cvW += w; if (M.plant) plant += t * pc * y; }
+        if (t > 0) { cvT += w * (cq === cq ? cq : 0); cvW += w; if (M.plant && !FR) plant += t * pc * y; }
+        // on the Finance tab's costs: the seam's tons as received (and in situ, for the overheads on an in-situ target)
+        if (FR && t > 0) {
+          const tIS = vOf(b, s.l) * Model.blockDensity(P, b, s.l), tAR = tIS * Model.arFactor(P, P.layers[s.l]);
+          costCF += tAR * FR.coalT + vOf(b, s.l) * FR.coalBcm(b, s.l); soldT += w * y;
+          if (FR.wash) plant += tAR * (FR.cWash + (1 - y) * FR.cDiscard);
+          if (FR.over) overF += FR.overT * (FR.overBasis === 'insitu' ? tIS : FR.overBasis === 'product' ? tAR * y : tAR) + FR.sustT * tAR;
+        }
         // revenue seam by seam: its tons × its own price (the project's price unless set) × its own CV
         const sp = num((M.seamPrice || {})[s.id]), ps = sp != null ? sp : price, revS = t > 0 ? w * ps * (M.byCV ? (cq === cq ? cq : 0) : 1) : 0; revSeams += revS;
         // ASH and TS: a seam without the column is left out of the blend; a block without the value takes the seam's average
@@ -7580,10 +7844,11 @@ const Margin = (() => {
       /* revenue: on the blended CV of the block (coal t × price × blended CV), or seam by seam (Σ seam t × seam price ×
          seam CV). With one price for every seam the two are the same; seam by seam each seam can have a price of its own. */
       // (on the ADC basis the coal is sold as ADC tons at its ADC CV; the costs stay on the tons chosen)
-      const rev = M.revBy === 'seam' ? revSeams : (QB.on ? adcT : coalT) * price * (M.byCV ? (cvB === cvB ? cvB : 0) : 1);
-      const costW = waste * wc, costC = coalT * cc, cost = costW + costC + plant;
+      // (on the Finance tab's numbers: the coal sold, after the yield, at its price less marketing and transport)
+      const rev = FR ? soldT * ((FR.a + FR.b * (cvB === cvB ? cvB : 0)) * FR.keep - FR.logi) : M.revBy === 'seam' ? revSeams : (QB.on ? adcT : coalT) * price * (M.byCV ? (cvB === cvB ? cvB : 0) : 1);
+      const costW = FR ? costWF : waste * wc, costC = FR ? costCF : coalT * cc, over = FR ? overF : 0, rehab = FR && coalT > 0 ? (ws.blockArea[b] || 0) / 1e4 * FR.cRehab : 0, cost = costW + costC + plant + over + rehab;
       const m = coalT > 0 ? (rev - cost) / coalT : NaN;
-      rows.push({ b, id: P.blocks[b].id, waste, coalT, sr: coalT > 0 ? waste / coalT : NaN, cv: cvB, ash: ashB, ts: tsB, cvW, adcT, ashT: qD.ash, tsT: qD.ts, rev, costW, costC, plant, cost, margin: m, byLayer, bySeam, miss, rank: 0, inside: !!inside[b] });
+      rows.push({ b, id: P.blocks[b].id, waste, coalT, sr: coalT > 0 ? waste / coalT : NaN, cv: cvB, ash: ashB, ts: tsB, cvW, adcT, ashT: qD.ash, tsT: qD.ts, rev, costW, costC, plant, over, rehab, cost, margin: m, byLayer, bySeam, miss, rank: 0, inside: !!inside[b] });
     }
     // the depth of each block to the floor of the lowest seam mined in it (within its depth limit; the reserve boundary aside)
     const dep = Model.blockDepth(P, ws, { vol, lim });
@@ -7616,18 +7881,18 @@ const Margin = (() => {
     };
     const cv = qStat('cv', r => r.cvW), ash = qStat('ash', r => r.ashT), ts = qStat('ts', r => r.tsT);
     const layerTot = P.layers.map((L, l) => { const q = { l, coal: isCoal(M, L), v: 0, t: 0 }; for (const r of rows) { q.v += r.byLayer[l].v; q.t += r.byLayer[l].t; } return q; });
-    const bad = seams.some(s => (M.byCV && !s.cvCol) || (M.plant && !s.yCol)), coalLayers = coalL;
+    const bad = seams.some(s => (M.byCV && !s.cvCol) || (M.plant && !FR && !s.yCol)), coalLayers = coalL;
     /* The strip ratio of each block: its waste bcm ÷ its coal tons (the same tons as the margin), ranked from the lowest.
        Its colour scale runs from green (the lowest) through amber at the middle (srMid, or the average of all the ranked
        blocks: their waste ÷ their coal) to red (the highest). The break-even strip ratio: where the margin of a block with
        the average revenue (and plant cost) per ton would be nil. */
     const srR = rows.filter(r => r.coalT > 0).sort((p, q) => p.sr - q.sr || p.b - q.b);
     srR.forEach((r, i) => { r.srRank = i + 1; });
-    let sW = 0, sT = 0, sRev = 0, sPl = 0; for (const r of srR) { sW += r.waste; sT += r.coalT; sRev += r.rev; sPl += r.plant; }
+    let sW = 0, sT = 0, sRev = 0, sPl = 0, sCW = 0, sCC = 0; for (const r of srR) { sW += r.waste; sT += r.coalT; sRev += r.rev; sPl += r.plant; sCW += r.costW; sCC += r.costC + r.over + r.rehab; }
     const srAvg = sT > 0 ? sW / sT : NaN, srLo = srR.length ? srR[0].sr : NaN, srHi = srR.length ? srR[srR.length - 1].sr : NaN;
     const midSet = num(M.srMid) > 0, srMid = midSet ? +M.srMid : srAvg;
     let below = 0, above = 0, tBelow = 0, tAbove = 0; for (const r of srR) { if (r.sr <= srMid) { below++; tBelow += r.coalT; } else { above++; tAbove += r.coalT; } }
-    const breakEven = sRev > 0 && wc > 0 && sT > 0 ? (sRev / sT - cc - sPl / sT) / wc : NaN;
+    const wRate = sW > 0 ? sCW / sW : 0, breakEven = sRev > 0 && wRate > 0 && sT > 0 ? (sRev - sCC - sPl) / sT / wRate : NaN; // (the average waste cost a bcm)
     const sr = { n: srR.length, lo: srLo, hi: srHi, avg: srAvg, mid: srMid, midSet, below, above, tBelow, tAbove, lowest: srR[0] || null, highest: srR[srR.length - 1] || null, breakEven };
     // the block depths: shallowest and deepest, the average weighted by the plan area, and the blocks by their lowest seam
     const depth = { n: 0, lo: Infinity, hi: -Infinity, avg: NaN, max: -Infinity, bySeam: [] };
@@ -7635,7 +7900,7 @@ const Margin = (() => {
       for (const r of rows) { const q = r.dep; if (!q) continue; const a = ws.blockArea[r.b] || 1; depth.n++; sa += a; sd += q.depth * a; depth.lo = Math.min(depth.lo, q.depth); depth.hi = Math.max(depth.hi, q.depth); depth.max = Math.max(depth.max, q.max); bs.set(q.l, (bs.get(q.l) || 0) + 1); }
       if (depth.n) depth.avg = sd / sa; else { depth.lo = depth.hi = depth.max = NaN; }
       depth.bySeam = [...bs.entries()].sort((x, y) => x[0] - y[0]).map(([l, n]) => ({ l, name: P.layers[l].name, n })); }
-    return { M, qBasis: QB.label, seams, coalLayers, rows, ranked, srRanked: srR, ready: price > 0 || (M.revBy === 'seam' && seams.some(s => num((M.seamPrice || {})[s.id]) > 0)), bad, boundary, resv, layerTot, stats: { cv, ash, ts, n: ranked.length, none: nB - ranked.length, pos, neg, tPos, tNeg, tAll, avg: tAll > 0 ? sumM / tAll : NaN, lo: ranked.length ? lo : NaN, hi: ranked.length ? hi : NaN, best: ranked[0] || null, worst: ranked[ranked.length - 1] || null, sr, depth } };
+    return { M, fin: FR, qBasis: QB.label, seams, coalLayers, rows, ranked, srRanked: srR, ready: price > 0 || (M.revBy === 'seam' && seams.some(s => num((M.seamPrice || {})[s.id]) > 0)), bad, boundary, resv, layerTot, stats: { cv, ash, ts, n: ranked.length, none: nB - ranked.length, pos, neg, tPos, tNeg, tAll, avg: tAll > 0 ? sumM / tAll : NaN, lo: ranked.length ? lo : NaN, hi: ranked.length ? hi : NaN, best: ranked[0] || null, worst: ranked[ranked.length - 1] || null, sr, depth } };
   }
 
   /* "Robot" (traffic light) colours: green, amber in the middle, red. Each arm runs from amber at the middle of the scale
@@ -7667,7 +7932,31 @@ const Margin = (() => {
   const srGradient = S => divGradient(S.lo, srMidIn(S), S.hi, GREEN, RED);
   // the tons the margin counts the coal in: 'ADC', 'as received' or 'in situ'
   const tonsWord = M => (M.basis === 'ar' ? 'as received' : M.basis === 'insitu' ? 'in situ' : 'ADC');
-  return { DEF, QUAL, settings, guess, colFor, ready, isCoal, isWasteSeam, compute, tonsWord, colorOf, gradient, srColor, srGradient, divColor, divGradient, NEG, POS, RED, GREEN, AMBER };
+  // the terms of the margin formula, revenue first
+  function formula(M, FR) {
+    if (!FR) return [M.revBy === 'seam' ? `Σ seam t × seam price${M.byCV ? ' × seam CV' : ''}` : `coal t × price${M.byCV ? ' × blended CV' : ''}`, '− waste bcm × waste cost', '− coal t × coal mining cost'].concat(M.plant ? ['− coal t × plant cost × yield'] : []);
+    return [`coal t sold${FR.wash ? ' (× yield)' : ''} × (${FR.b > 0 ? (FR.a > 0 ? '(price a ton + price per MJ/kg × blended CV)' : 'price per MJ/kg × blended CV') : 'price'} × (1 − marketing) − transport)`, '− Σ waste layers bcm × the layer’s cost', '− coal t as received × (mining + crushing) − coal bcm × drilling and blasting']
+      .concat(FR.wash ? ['− plant feed × washing − discard × disposal'] : [], FR.cRehab > 0 ? ['− area × rehabilitation'] : [], FR.over ? ['− overheads and sustaining capital'] : []);
+  }
+  /* The Finance tab's numbers the margin uses: [label, value] rows (the tab's table and the Excel sheet) */
+  function finLines(P, R) {
+    const FR = R.fin, o = FR.o, cur = FR.currency, n = (v, d = 0) => U.fmtNum(v, d), M = R.M;
+    const lines = [
+      ['Coal price', (FR.b > 0 ? `${cur} ${n(FR.b, 2)}/t per MJ/kg × the blended CV` + (FR.a > 0 ? ` + ${cur} ${n(FR.a)}/t` : '') : `${cur} ${n(FR.a)}/t`) + ` (${[o.expShare > 0 ? `${n(o.expShare)}% exported at US$${n(o.expPrice)}/t${o.byCV ? ` at ${n(o.cvRef, 1)} MJ/kg` : ''}` : null,
+        o.expShare < 100 ? `${o.expShare > 0 ? 'the rest' : 'domestic, at the mine'}: ${Fin.domWords(o)}${o.domBasis !== 'mj' && o.byCV ? ` at ${n(o.cvRef, 1)} MJ/kg` : ''}` : null].filter(Boolean).join('; ')})`],
+      ['Less from revenue', `marketing ${n(o.mkt, 1)}%; transport ${cur} ${n(FR.logi, 1)}/t sold`],
+      ['Topsoil', `${cur} ${n(o.cTopsoil, 1)}/bcm`],
+      ['Waste, dug free', `${cur} ${n(o.cWaste, 1)}/bcm load and haul`],
+      ['Waste, blasted', `${cur} ${n(o.cWaste, 1)} + drilling ${n(o.cDrillW, 1)} + explosives ${n(o.cExpl, 1)}/kg + presplit ${n(o.cPresplit / o.presplitW, 2)}/bcm (${cur} ${n(o.cPresplit)}/m² ÷ ${n(o.presplitW)} m)`],
+      ['Coal', `${cur} ${n(o.cCoal, 1)} mining + ${n(o.cCrush, 1)} crushing a ton as received; drilling ${cur} ${n(o.cDrillC, 1)}/bcm where blasted`]
+    ];
+    if (FR.wash) lines.push(['Processing', `washing ${cur} ${n(o.cWash)}/t feed, discard ${cur} ${n(o.cDiscard)}/t; yield ${FR.yieldCol ? 'from the seams’ yield columns' : `${n(o.yieldFixed, 1)}%`}`]);
+    lines.push(['Rehabilitation', `${cur} ${n(o.cRehab)}/ha of the block`]);
+    lines.push(['Overheads and sustaining capital', FR.over ? `${cur} ${n(FR.overT, 2)}/t of the coal target (${n(o.fixedM + o.corpM)} + ${n(o.sustY / 12)} a month ÷ ${n(+P.targets.coal)} t ${FR.overBasis === 'insitu' ? 'in situ' : FR.overBasis === 'product' ? 'product' : 'as received'}) + ${cur} ${n(o.sustT, 1)}/t as received` : FR.overNoTarget ? 'not included: set a coal target (Schedule) to spread them' : 'not included']);
+    lines.push(['Left out', 'waste dozed into the void (counted as loaded and hauled), rehandling, pit water, escalation, royalty and tax']);
+    return lines;
+  }
+  return { DEF, QUAL, settings, fromFin, finRates, formula, finLines, guess, colFor, ready, isCoal, isWasteSeam, compute, tonsWord, colorOf, gradient, srColor, srGradient, divColor, divGradient, NEG, POS, RED, GREEN, AMBER };
 })();
 
 /* ===== Coal tons from gross in situ to air-dry contaminated (Reserve tab; DOM-free) =====
@@ -9080,25 +9369,28 @@ const Blast = (() => {
    All money is in the project's currency (the export price in US$, at the exchange rate). */
 const Fin = (() => {
   const f = (k, label, unit, def, o = {}) => Object.assign({ k, label, unit, def }, o);
-  /* The inputs, group by group: {k, label, unit, def, step, kind ('num' | 'sel' | 'chk'), opts, when (shown when)} */
+  /* The inputs, group by group: {k, label, unit, def, step, kind ('num' | 'sel' | 'chk'), opts, when (shown when), keep (a
+     cleared box takes the default; any other cleared box counts 0)} */
   const GROUPS = [
     { id: 'econ', title: 'Economics', fields: [
       f('disc', 'Discount rate (real)', '% a year', 10, { step: 0.5 }),
       f('escP', 'Price escalation', '% a year', 0, { step: 0.5 }),
       f('escC', 'Cost escalation', '% a year', 0, { step: 0.5 }),
-      f('fx', 'Exchange rate', 'R per US$', 18.5, { step: 0.1, cur: true }),
+      f('fx', 'Exchange rate', 'R per US$', 18.5, { step: 0.1, cur: true, keep: true }),
       f('tax', 'Company tax rate', '%', 27, { step: 0.5 }),
       f('royalty', 'Mineral royalty', '', 'sa', { kind: 'sel', opts: [['sa', 'SA formula for unrefined minerals (0.5% + EBIT ÷ (gross sales × 9), at most 7%)'], ['fixed', 'A fixed rate of gross sales'], ['none', 'None']] }),
       f('royaltyRate', 'Royalty rate', '% of gross sales', 3, { step: 0.1, when: o => o.royalty === 'fixed' })] },
     { id: 'sales', title: 'Coal sales', fields: [
       f('wash', 'Wash the coal (a coal washing plant)', '', false, { kind: 'chk' }),
       f('yieldSrc', 'Plant yield from', '', 'wash', { kind: 'sel', opts: [['wash', 'The washability data (Geological Data tab), block by block'], ['fixed', 'A fixed yield']], when: o => o.wash }),
-      f('yieldFixed', 'Plant yield', '%', 70, { step: 0.5, when: o => o.wash }),
+      f('yieldFixed', 'Plant yield', '%', 70, { step: 0.5, when: o => o.wash, keep: true }),
       f('expShare', 'Exported', '% of the coal sold', 60, { step: 5 }),
       f('expPrice', 'Export price', 'US$/t FOB', 95, { step: 1 }),
-      f('domPrice', 'Domestic price', 'R/t at the mine', 700, { step: 10, cur: true }),
+      f('domBasis', 'Domestic price as', '', 't', { kind: 'sel', opts: [['t', 'A price a ton (R/t)'], ['mj', 'A price a ton per MJ/kg (R/t per MJ/kg × the CV of the coal sold)']] }),
+      f('domPrice', 'Domestic price', 'R/t at the mine', 700, { step: 10, cur: true, when: o => o.domBasis !== 'mj' }),
+      f('domPriceMJ', 'Domestic price', 'R/t per MJ/kg, at the mine', 15, { step: 0.1, cur: true, when: o => o.domBasis === 'mj' }),
       f('byCV', 'Prices follow the CV of the coal (price × CV ÷ the reference CV)', '', false, { kind: 'chk' }),
-      f('cvRef', 'Reference CV', 'MJ/kg', 25.1, { step: 0.1, when: o => o.byCV }),
+      f('cvRef', 'Reference CV', 'MJ/kg', 25.1, { step: 0.1, when: o => o.byCV, keep: true }),
       f('mkt', 'Marketing and commission', '% of revenue', 1.5, { step: 0.1 })] },
     { id: 'logistics', title: 'Logistics', fields: [
       f('rail', 'Rail to the port', 'R/t exported', 320, { step: 5, cur: true }),
@@ -9113,7 +9405,7 @@ const Fin = (() => {
       f('cDrillC', 'Drilling, coal', 'R/bcm coal drilled and blasted', 4.5, { step: 0.1, cur: true }),
       f('cExpl', 'Explosives and accessories', 'R/kg', 19, { step: 0.5, cur: true }),
       f('cPresplit', 'Presplit', 'R/m² presplit', 0, { step: 1, cur: true }),
-      f('presplitW', 'Presplit strip width', 'm', 40, { step: 1 }),
+      f('presplitW', 'Presplit strip width', 'm', 40, { step: 1, keep: true }),
       f('cRehandle', 'Rehandling', 'R/m³ loose', 18, { step: 1, cur: true }),
       f('cRehab', 'Rehabilitation (topsoil back, seeding)', 'R/ha', 120000, { step: 5000, cur: true }),
       f('cWater', 'Pumping and treating pit water', 'R/m³', 3, { step: 0.5, cur: true })] },
@@ -9142,7 +9434,8 @@ const Fin = (() => {
       const v = F[q.k];
       if (q.kind === 'chk') o[q.k] = v == null ? (q.k === 'wash' ? !!(P && typeof Wash !== 'undefined' && Wash.product(P)) : q.def) : !!v;
       else if (q.kind === 'sel') o[q.k] = q.opts.some(x => x[0] === v) ? v : q.def;
-      else { const x = +v; o[q.k] = v != null && v !== '' && isFinite(x) ? x : q.def; }
+      // (a box never set takes the default; a box cleared counts 0, unless 0 makes no sense for it)
+      else { const x = +v; o[q.k] = v != null && v !== '' && isFinite(x) ? x : Object.prototype.hasOwnProperty.call(F, q.k) && !q.keep ? 0 : q.def; }
     }
     o.capexMonths = Math.max(0, Math.round(o.capexMonths)); o.expShare = U.clamp(o.expShare, 0, 100); o.yieldFixed = U.clamp(o.yieldFixed, 1, 100); o.presplitW = Math.max(1, o.presplitW);
     // (one drilling rate for waste and coal before: it stands for both until they are set)
@@ -9150,6 +9443,26 @@ const Fin = (() => {
     return o;
   }
   const unitOf = (q, cur) => (q.unit || '').replace(/^R(?=\/| |$)/, cur).replace(/^R a /, cur + ' a ').replace(/, after/, ', after');
+  /* What a ton sold earns at the mine, before escalation (at the reference CV when the prices follow it): the price by the
+     export share, less marketing and the transport; and a warning when it is nothing (no price, or the transport above it) */
+  function netPrice(o, cvAvg) {
+    const e = o.expShare / 100, PP = priceParts(o), perMJ = PP.b > 0, cv = cvAvg > 0 ? cvAvg : o.cvRef, trans = e * (o.rail + o.port) + (1 - e) * o.domTrans;
+    const price = PP.a + PP.b * cv, net = price * (1 - o.mkt / 100) - trans, cur = o.currency, m = v => `${cur} ${U.fmtNum(v, 0)}/t`, at = perMJ ? ` at ${U.fmtNum(cv, 1)} MJ/kg` : '';
+    const noCV = o.domBasis === 'mj' && (1 - e) > 0 && cvAvg !== undefined && !(cvAvg > 0);
+    const warn = !(PP.a > 0 || PP.b > 0) ? `There is no coal price: the ${e > 0 ? 'export and domestic prices are' : 'domestic price is'} 0, so the coal earns nothing${trans > 0 ? ` and every ton sold costs ${m(trans)} in transport` : ''}. Enter the price in Coal sales.`
+      : noCV ? 'The domestic price is per MJ/kg, but the coal has no CV: choose the CV column of each seam (Block Margin Rank tab), or price it a ton.'
+      : !(net > 0) ? `The transport (${m(trans)}) is more than the price (${m(price)}${at}), so every ton sold loses money. A domestic price is at the mine: for a price delivered to the customer, enter it and its transport.` : null;
+    return { price, trans, net, warn, perMJ, cv };
+  }
+  /* The price of a ton sold at the mine, before escalation and marketing, as a + b × CV (a: a ton; b: a ton per MJ/kg): the
+     export and domestic prices by the export share; a price a ton follows the CV (× CV ÷ the reference CV) when the prices
+     follow it; a domestic price per MJ/kg is × the CV */
+  function priceParts(o) {
+    const e = o.expShare / 100, ref = o.byCV && o.cvRef > 0, mj = o.domBasis === 'mj', exp = e * o.expPrice * o.fx, dom = (1 - e) * (mj ? o.domPriceMJ : o.domPrice);
+    return { a: (ref ? 0 : exp) + (mj || ref ? 0 : dom), b: (ref ? exp / o.cvRef : 0) + (mj ? dom : ref ? dom / o.cvRef : 0) };
+  }
+  // the domestic price in words: R 340/t, or R 18,03/t per MJ/kg
+  const domWords = o => (o.domBasis === 'mj' ? `${o.currency} ${U.fmtNum(o.domPriceMJ, 2)}/t per MJ/kg` : `${o.currency} ${U.fmtNum(o.domPrice, 0)}/t`);
 
   // the CV of the coal mined each month (MJ/kg; from the seams' CV columns of the block margin), weighted by its tons
   function cvMonthly(P, ws, res, mOf, nM) {
@@ -9168,33 +9481,57 @@ const Fin = (() => {
     const mk = () => new Float64Array(N), at = m => np + m; // (the model's months: np before mining, nM of mining, then closure)
     const X = {}; for (const k of ['rom', 'insitu', 'topsoil', 'waste', 'dozed', 'drillM', 'blastB', 'blastW', 'blastC', 'explKg', 'presplitM2', 'reh', 'rehabHa', 'water', 'feed', 'product', 'discard', 'expT', 'domT', 'cv',
       'revExp', 'revDom', 'rev', 'mkt', 'logi', 'logiExp', 'cTopsoil', 'cWaste', 'cDoze', 'cCoal', 'cDrill', 'cDrillW', 'cDrillC', 'cExpl', 'cPresplit', 'cRehandle', 'cRehab', 'cWater', 'mining', 'cCrush', 'cWash', 'cDiscard', 'process', 'over', 'opex',
-      'ebitda', 'royalty', 'tax', 'capex', 'capInit', 'capSust', 'capClose', 'wc', 'dwc', 'fcf', 'cum', 'disc', 'pv', 'days']) X[k] = mk();
+      'ebitda', 'royalty', 'tax', 'capex', 'capInit', 'capSust', 'capClose', 'wc', 'dwc', 'fcf', 'cum', 'disc', 'pv', 'days', 'depr', 'pbt', 'np', 'npCum']) X[k] = mk();
     X.cv.fill(NaN);
     // the physical figures of each month of mining
     const doz = new Float64Array(nM); for (const A of res.acts) if (A.dozBcm) for (let d = 0; d < A.dozBcm.length; d++) doz[mo.mOf[d]] += A.dozBcm[d];
     const top = new Float64Array(nM); for (const a of mo.acts) if (L[a.A.layer] && L[a.A.layer].type === 'topsoil') for (let m = 0; m < nM; m++) top[m] += a.bcm[m];
     const soilTh = typeof Water !== 'undefined' ? Math.max(0.1, +Water.settings(P).topsoil || 1) : 1;
     const PR = o.wash && o.yieldSrc === 'wash' ? mo.prod : null, yF = o.yieldFixed / 100;
-    const cvKey = PR ? PR.keys.find(k => /^(cv|calorific|gcv|ncv|cv[_ ]?(ad|ar|nar|gar))/i.test(k)) : null, cvRom = o.byCV ? cvMonthly(P, ws, res, mo.mOf, nM) : null;
+    const needCV = o.byCV || o.domBasis === 'mj'; // (the CV prices the coal: × CV ÷ the reference CV, or a domestic price per MJ/kg)
+    const cvKey = PR ? PR.keys.find(k => /^(cv|calorific|gcv|ncv|cv[_ ]?(ad|ar|nar|gar))/i.test(k)) : null, cvRom = needCV ? cvMonthly(P, ws, res, mo.mOf, nM) : null;
+    /* The coal sold, with coal mined over the target onto the ROM stockpile (res.romStock): what is mined, less what goes
+       onto it, plus what it makes up (its tons are the target's: × as received ÷ in situ of the month for a target in
+       situ); what is left on it at the end is sold in the last month. The mining costs stay on the coal mined. */
+    const RS = res.romStock, sold = RS ? (() => {
+      // (no coal target: the coal the plant takes or that is sold off the stockpile, in its ADC tons)
+      if (RS.mode === 'all') {
+        const a = new Float64Array(nM), g = 1;
+        for (const q of RS.months) { const m = q.key - mo.k0; if (m >= 0 && m < nM) a[m] += q.reclaimed * g; }
+        if (nM) a[nM - 1] += RS.end * g;
+        return a;
+      }
+      const a = Float64Array.from(mo.coalAR), tAR = mo.sum(mo.coalAR), tIS = mo.sum(mo.coalT), avg = tIS > 0 ? tAR / tIS : 1;
+      const f = m => (RS.basis !== 'insitu' ? 1 : mo.coalT[m] > 0 ? mo.coalAR[m] / mo.coalT[m] : avg);
+      for (const q of RS.months) { const m = q.key - mo.k0; if (m >= 0 && m < nM) a[m] -= (q.added - q.reclaimed) * f(m); }
+      if (nM) a[nM - 1] += RS.end * f(nM - 1);
+      for (let m = 0; m < nM; m++) a[m] = Math.max(0, a[m]);
+      return a;
+    })() : null;
     for (let m = 0; m < nM; m++) {
-      const t = at(m), rom = mo.coalAR[m];
+      const t = at(m), rom = mo.coalAR[m], sell = sold ? sold[m] : rom; // (mined; sold)
       X.days[t] = mo.days[m]; X.rom[t] = rom; X.insitu[t] = mo.coalT[m]; X.topsoil[t] = top[m]; X.dozed[t] = doz[m]; X.waste[t] = Math.max(0, mo.wasteB[m] - top[m] - doz[m]);
       X.drillM[t] = BM ? BM.waste.m[m] + BM.coal.m[m] : 0; X.blastW[t] = BM ? BM.waste.bcm[m] : 0; X.blastC[t] = BM ? BM.coal.bcm[m] : 0; X.blastB[t] = X.blastW[t] + X.blastC[t]; X.explKg[t] = BM ? BM.waste.kg[m] + BM.coal.kg[m] : 0;
       X.presplitM2[t] = BM ? BM.waste.bcm[m] / o.presplitW : 0; // a presplit face per strip, as high as the waste blasted: its bcm ÷ the strip width
       X.reh[t] = mo.looseReh[m]; X.rehabHa[t] = mo.soil ? mo.soil[m] / soilTh / 1e4 : 0; X.water[t] = HR && HR.M.nM === nM ? HR.M.pumped[m] : 0;
-      if (o.wash) {
-        if (PR) { const feedW = PR.feed[m]; X.feed[t] = rom; X.product[t] = PR.T[m] + Math.max(0, rom - feedW) * yF; }
-        else { X.feed[t] = rom; X.product[t] = rom * yF; }
+      if (o.wash && !(RS && RS.mode === 'all' && RS.by === 'sale')) { // (coal sold straight off the stockpile is not washed)
+        // (with the ROM stockpile the plant takes the coal sold; its yield is the month's as mined)
+        if (PR) { const feedW = PR.feed[m], pr = PR.T[m] + Math.max(0, rom - feedW) * yF; X.feed[t] = sell; X.product[t] = rom > 0 ? pr * (sell / rom) : sell * yF; }
+        else { X.feed[t] = sell; X.product[t] = sell * yF; }
         X.discard[t] = Math.max(0, X.feed[t] - X.product[t]);
-      } else X.product[t] = rom;
-      if (o.byCV) X.cv[t] = cvKey && PR.q[cvKey][m] === PR.q[cvKey][m] ? PR.q[cvKey][m] : cvRom ? cvRom[m] : NaN;
+      } else X.product[t] = sell;
+      if (needCV) X.cv[t] = cvKey && PR.q[cvKey][m] === PR.q[cvKey][m] ? PR.q[cvKey][m] : cvRom ? cvRom[m] : NaN;
     }
+    // (a month without a CV takes the average CV of the coal sold)
+    let cvN = 0, cvD = 0; for (let t = 0; t < N; t++) if (X.cv[t] === X.cv[t] && X.product[t] > 0) { cvN += X.cv[t] * X.product[t]; cvD += X.product[t]; }
+    const cvMean = cvD > 0 ? cvN / cvD : 0;
     // money, month by month
     const esc = (r, t) => Math.pow(1 + r / 100, (t - np) / 12), dpm = 30.4375;
     for (let t = 0; t < N; t++) {
       const eP = esc(o.escP, t), eC = esc(o.escC, t), cvf = o.byCV && X.cv[t] === X.cv[t] && o.cvRef > 0 ? X.cv[t] / o.cvRef : 1;
       X.expT[t] = X.product[t] * o.expShare / 100; X.domT[t] = X.product[t] - X.expT[t];
-      X.revExp[t] = X.expT[t] * o.expPrice * o.fx * cvf * eP; X.revDom[t] = X.domT[t] * o.domPrice * cvf * eP; X.rev[t] = X.revExp[t] + X.revDom[t];
+      X.revExp[t] = X.expT[t] * o.expPrice * o.fx * cvf * eP;
+      X.revDom[t] = o.domBasis === 'mj' ? X.domT[t] * o.domPriceMJ * (X.cv[t] === X.cv[t] ? X.cv[t] : cvMean) * eP : X.domT[t] * o.domPrice * cvf * eP; X.rev[t] = X.revExp[t] + X.revDom[t];
       X.mkt[t] = X.rev[t] * o.mkt / 100; X.logiExp[t] = X.expT[t] * (o.rail + o.port) * eC; X.logi[t] = X.logiExp[t] + X.domT[t] * o.domTrans * eC;
       const c = (k, q) => { X[k][t] = q * eC; return X[k][t]; };
       X.mining[t] = c('cTopsoil', X.topsoil[t] * o.cTopsoil) + c('cWaste', X.waste[t] * o.cWaste) + c('cDoze', X.dozed[t] * o.cDoze) + c('cCoal', X.rom[t] * o.cCoal) + (X.cDrill[t] = c('cDrillW', X.blastW[t] * o.cDrillW) + c('cDrillC', X.blastC[t] * o.cDrillC)) + c('cExpl', X.explKg[t] * o.cExpl) + c('cPresplit', X.presplitM2[t] * o.cPresplit) + c('cRehandle', X.reh[t] * o.cRehandle) + c('cRehab', X.rehabHa[t] * o.cRehab) + c('cWater', X.water[t] * o.cWater);
@@ -9235,6 +9572,24 @@ const Fin = (() => {
       const tax = inc * o.tax / 100; Y.tax = tax; Y.taxable = inc;
       X.tax[Y.t1] = tax;
     }
+    /* The profit or loss: EBITDA less the royalty, the depreciation and the tax. The capital is depreciated by units of
+       production: each month the capital spent so far and not yet written off × the coal mined in the month ÷ the coal
+       still to be mined (what is left when mining ends, in its last month); closure less salvage is charged in its month.
+       Over the life of mine the net profit adds up to the free cash flow (the working capital is released at the end). */
+    {
+      let pool = 0, left = 0, cum = 0, lastMine = -1;
+      for (let t = 0; t < N; t++) { left += X.rom[t]; if (X.rom[t] > 0) lastMine = t; }
+      for (let t = 0; t < N; t++) {
+        pool += X.capInit[t] + X.capSust[t];
+        let d = left > 0 && X.rom[t] > 0 ? (pool * X.rom[t]) / left : 0;
+        left -= X.rom[t];
+        if (t >= lastMine && pool - d > 1e-6) d = pool; // (the rest when mining ends, or capital spent after it)
+        pool -= d;
+        X.depr[t] = d + X.capClose[t];
+        X.pbt[t] = X.ebitda[t] - X.royalty[t] - X.depr[t];
+        X.np[t] = X.pbt[t] - X.tax[t]; cum += X.np[t]; X.npCum[t] = cum;
+      }
+    }
     // free cash flow, discounted to the first month of the model (mid-month)
     const rm = Math.pow(1 + o.disc / 100, 1 / 12) - 1;
     let cum = 0, minCum = 0, pay = -1, npv = 0;
@@ -9248,11 +9603,12 @@ const Fin = (() => {
     const sum = k => X[k].reduce((a, b) => a + b, 0), prod = sum('product');
     const kpi = { npv, irr, payback: pay >= 0 ? (pay - np + 1) : null, paybackT: pay, peak: -minCum, rev: sum('rev'), opex: sum('opex'), ebitda: sum('ebitda'), royalty: sum('royalty'), tax: sum('tax'), capex: sum('capex'), fcf: sum('fcf'), rom: sum('rom'), product: prod, yield: sum('rom') > 0 ? prod / sum('rom') : NaN,
       cashCost: prod > 0 ? (sum('opex') - sum('mkt')) / prod : NaN,
+      depr: sum('depr'), pbt: sum('pbt'), np: sum('np'),
       margin: prod > 0 ? sum('ebitda') / prod : NaN, price: prod > 0 ? sum('rev') / prod : NaN, cost: sum('rom') > 0 ? (sum('mining') + sum('process') + sum('over')) / sum('rom') : NaN };
     // the cost of a ton exported, free on board: mining, processing and overheads a ton sold, and its rail and port
     kpi.fobCost = sum('expT') > 0 ? (sum('mining') + sum('process') + sum('over')) / prod + sum('logiExp') / sum('expT') : NaN;
     // the years
-    const annual = years.map(Y => { const row = { y: Y.y, months: Y.t1 - Y.t0 + 1, royRate: Y.royRate, taxable: Y.taxable }; for (const k of Object.keys(X)) { if (k === 'cum' || k === 'disc' || k === 'wc') { row[k] = X[k][Y.t1]; continue; } if (k === 'cv') { let a = 0, w = 0; for (let t = Y.t0; t <= Y.t1; t++) if (X.cv[t] === X.cv[t]) { a += X.cv[t] * X.product[t]; w += X.product[t]; } row.cv = w > 0 ? a / w : NaN; continue; } let s = 0; for (let t = Y.t0; t <= Y.t1; t++) s += X[k][t]; row[k] = s; } return row; });
+    const annual = years.map(Y => { const row = { y: Y.y, months: Y.t1 - Y.t0 + 1, royRate: Y.royRate, taxable: Y.taxable }; for (const k of Object.keys(X)) { if (k === 'cum' || k === 'disc' || k === 'wc' || k === 'npCum') { row[k] = X[k][Y.t1]; continue; } if (k === 'cv') { let a = 0, w = 0; for (let t = Y.t0; t <= Y.t1; t++) if (X.cv[t] === X.cv[t]) { a += X.cv[t] * X.product[t]; w += X.product[t]; } row.cv = w > 0 ? a / w : NaN; continue; } let s = 0; for (let t = Y.t0; t <= Y.t1; t++) s += X[k][t]; row[k] = s; } return row; });
     const label = t => U.MONTHS[(k0 + t) % 12] + '/' + Math.floor((k0 + t) / 12);
     return { o, N, np, nM, k0, X, annual, kpi, label, blast: B, hydro: !!HR, prodFrom: o.wash ? (PR ? 'wash' : 'fixed') : 'rom' };
   }
@@ -9268,7 +9624,7 @@ const Fin = (() => {
     for (let k = 0; k < 200 && hi - lo > 1e-12; k++) { const mid = (lo + hi) / 2, fm = npv(mid); if (fm > 0) { lo = mid; flo = fm; } else hi = mid; }
     return Math.pow(1 + (lo + hi) / 2, 12) - 1;
   }
-  return { GROUPS, FIELDS, DEF, settings, unitOf, cvMonthly, run, irrOf };
+  return { GROUPS, FIELDS, DEF, settings, unitOf, netPrice, priceParts, domWords, cvMonthly, run, irrOf };
 })();
 
 /* ===== Survey reconciliation (Recon tab; DOM-free) =====
@@ -9728,7 +10084,7 @@ const View = (() => {
   let terrain = null, geom = null, mat = null, perim = null;
   let surfNow = null, insNow = null;
   let vex = 3;
-  const show = { outlines: true, resOut: true, labels: true, paths: true, roads: true, dumps: true, contours: false, ovl: true, keep: true, limits: true, pits: true, drains: true, fills: true, water: true };
+  const show = { outlines: false, resOut: false, labels: false, paths: false, roads: false, dumps: false, contours: false, ovl: false, keep: false, limits: false, pits: false, drains: false, fills: false, water: true }; // (the layers start off: Layers menu)
   let satOn = false, satTex = null, tintTex = null, tintData = null, tintOn = false, matTex = null, matData = null;
   let needsRender = true, needsDrape = false, labelsDirty = true;
   const G = {};
@@ -11352,7 +11708,11 @@ const UI = (() => {
   }
   function num(value, onChange, o = {}) {
     const i = h('input', { type: 'number', value: value == null || value === '' ? '' : value, step: o.step || 'any', min: o.min, max: o.max, placeholder: o.placeholder || '', class: 'num' });
-    i.addEventListener('change', () => { const v = i.value === '' ? (o.allowEmpty ? null : 0) : parseFloat(i.value); onChange(v); });
+    i.addEventListener('change', () => {
+      // (a number the browser cannot read, such as 340,5 where it wants 340.5, reads as empty: keep the value and say so)
+      if (i.validity && i.validity.badInput) { i.value = value == null || value === '' ? '' : value; toast('That is not a number the browser can read: use a point for decimals (340.5). The value was not changed.', 6000); return; }
+      const v = i.value === '' ? (o.allowEmpty ? null : 0) : parseFloat(i.value); onChange(v);
+    });
     return i;
   }
   function txt(value, onChange, o = {}) {
@@ -11671,7 +12031,7 @@ const UI = (() => {
         if (items.length) el.append(sec(`Coal on ${d >= 0 ? U.fmtDay(P.startDate, d) : 'the start date'}`, null, h('div', { class: 'kv' }, items)));
       } }
     // its strip ratio and block margin (Block Margin Rank tab)
-    { const R = App.margin(), r = R && R.rows[App.resOf(b)], cur = ((P.margin || {}).currency || 'R').trim() || 'R';
+    { const R = App.margin(), r = R && R.rows[App.resOf(b)], cur = ((R ? R.M.currency : (P.margin || {}).currency) || 'R').trim() || 'R';
       if (r) { const f = v => `${cur} ${U.fmtNum(v, 1)}/t`, S = R.stats.sr, cs = Margin.srColor(r.sr, S), chip = c => h('span', { class: 'mg-chip', style: { background: c ? `rgb(${c.join(',')})` : '#8a8f98' } });
         el.append(sec('Strip ratio', r.srRank ? h('span', { class: 'chip' }, `rank ${r.srRank} of ${S.n}`) : null, r.coalT > 0 ? h('div', { class: 'kv' },
           h('span', { class: 'k' }, 'Strip ratio'), h('span', { class: 'v' }, chip(cs), `${U.fmtNum(r.sr, 2)} bcm/t`),
@@ -11695,7 +12055,10 @@ const UI = (() => {
             h('span', { class: 'k' }, 'Revenue'), h('span', { class: 'v' }, f(r.rev / r.coalT)),
             h('span', { class: 'k' }, 'Waste mining'), h('span', { class: 'v' }, f(r.costW / r.coalT)),
             h('span', { class: 'k' }, 'Coal mining'), h('span', { class: 'v' }, f(r.costC / r.coalT)),
-            ...(R.M.plant ? [h('span', { class: 'k' }, 'Processing'), h('span', { class: 'v' }, f(r.plant / r.coalT))] : [])))); } } }
+            ...(R.M.plant ? [h('span', { class: 'k' }, 'Processing'), h('span', { class: 'v' }, f(r.plant / r.coalT))] : []),
+            ...(r.rehab ? [h('span', { class: 'k' }, 'Rehabilitation'), h('span', { class: 'v' }, f(r.rehab / r.coalT))] : []),
+            ...(r.over ? [h('span', { class: 'k' }, 'Overheads and sustaining'), h('span', { class: 'v' }, f(r.over / r.coalT))] : []),
+            ...(R.fin ? [h('span', { class: 'k' }, 'Costs and price'), h('span', { class: 'v dt' }, 'from the Finance tab')] : [])))); } } }
     const pkB = Model.blockPits(P, ws)[b];
     const seqs = P.activities.map(a => { const k = a.path.indexOf(blk.id); return k >= 0 ? [a.name, Model.pitIndex(P, a) === pkB ? `#${k + 1} of ${a.path.length}` : 'skipped: the block is in another pit'] : null; }).filter(Boolean);
     if (seqs.length) el.append(sec('Sequence position', null, h('div', { class: 'kv' }, seqs.map(([k, v]) => [h('span', { class: 'k' }, k), h('span', { class: 'v' }, v)]))));
@@ -13939,9 +14302,15 @@ const Tabs = (() => {
       const fi = num(d.plantFeed, v => { d.plantFeed = v > 0 ? v : null; App.changed('meta'); App.inv = null; UI.renderTab(); UI.renderInspector(); }, { min: 0, step: 100, allowEmpty: true, placeholder: 'not tracked' }); fi.setAttribute('aria-label', 'Plant feed');
       const oi = num(d.openingStock, v => { d.openingStock = v > 0 ? v : null; App.changed('meta'); App.inv = null; UI.renderTab(); UI.renderInspector(); }, { min: 0, step: 1000, allowEmpty: true, placeholder: '0' }); oi.setAttribute('aria-label', 'Opening stock');
       ed.push(h('div', { class: 'grid2' }, fld('Plant feed (t a working day)', fi), fld('Opening stock (t)', oi)));
+      // the pile in the 3D view: the coal on the stockpile ÷ its bulk density, on the pad drawn for the tip
+      const bdi = num(+d.bulkDensity > 0 ? +d.bulkDensity : null, v => { d.bulkDensity = v > 0 ? v : null; App.changed('meta'); if (App.res) { App.pb = Sim.playback(App.ws, App.res); App.seek && App.seek(App.day); } UI.renderTab(); }, { min: 0.3, max: 2, step: 0.05, allowEmpty: true, placeholder: '0.9' }); bdi.setAttribute('aria-label', 'Bulk density of the stockpile');
+      { const pbR = App.pb && App.pb.rom, now = App.pb && App.pb.romNow ? App.pb.romNow.find(q => q.d.id === d.id) : null, pile = pbR ? pbR.piles.find(q => q.d.id === d.id) : null;
+        ed.push(h('div', { class: 'grid2' }, fld('Bulk density of the stockpile (t/m³)', bdi), h('div', { class: 'dt', style: { whiteSpace: 'normal', alignSelf: 'end' } }, d.pts && d.pts.length >= 3 ? (pile ? `The pad holds ${U.fmtBig(pile.cap, 'm³')} (${U.fmtBig(pile.cap * pile.bd, 't')}).` : 'Run the simulation to see the pile.') : 'Draw the pad of the stockpile to see it in the 3D view.')));
+        if (now) ed.push(h('div', { class: 'kv' }, h('span', { class: 'k' }, `Pile on ${App.day >= 0 ? U.fmtDay(P.startDate, App.day) : 'the start'}`), h('span', { class: 'v' }, `${U.fmtBig(now.tons, 't')} · ${U.fmtBig(now.vol, 'm³')}${now.over ? ' — more than the pad holds' : ''}`)));
+        if (pile && App.res && App.res.romStock && App.res.romStock.daily) { const top = Math.max(...App.res.romStock.daily) * pile.cap / pbR.piles.reduce((a, q) => a + q.cap, 0) / pile.bd; if (top > pile.cap) ed.push(msg('warn', `At its largest the stockpile needs ${U.fmtBig(top, 'm³')}, more than the ${U.fmtBig(pile.cap, 'm³')} the pad holds: the 3D view shows it full. Enlarge the pad or raise its maximum height.`)); } }
       const rr = App.res && !App.stale ? App.invNow() : null, r = rr ? rr.C.rom.find(x => x.id === d.id) : null;
       if (r && r.tracked) { const end = r.stock[r.stock.length - 1], peak = Math.max(...r.stock); ed.push(h('div', { class: 'kv' }, h('span', { class: 'k' }, `Stock on ${App.day >= 0 ? U.fmtDay(P.startDate, App.day) : 'the start'}`), h('span', { class: 'v' }, U.fmtBig(App.day >= 0 ? r.stock[App.day] : r.open, 't')), h('span', { class: 'k' }, 'Highest stock'), h('span', { class: 'v' }, U.fmtBig(peak, 't')), h('span', { class: 'k' }, 'Closing stock at the end'), h('span', { class: 'v' }, U.fmtBig(end, 't')))); }
-      ed.push(hint(+d.plantFeed > 0 ? 'Coal tipped here goes onto the ROM stockpile; the plant takes the feed rate off it on every working day while there is coal. The stock is part of the coal inventory (inspector, Results and reports).' : 'Coal sent here is counted as delivered; the tip itself does not grow. Type a plant feed rate to keep a ROM stockpile: coal tipped here minus what the plant takes, in the coal inventory.'));
+      ed.push(hint((+d.plantFeed > 0 ? 'Coal tipped here goes onto the ROM stockpile; the plant takes the feed rate off it on every working day while there is coal. The stock is part of the coal inventory (inspector, Results and reports).' : 'Coal sent here is counted as delivered. Type a plant feed rate to keep a ROM stockpile: coal tipped here minus what the plant takes, in the coal inventory.') + ' In the 3D view the ROM stockpile is a pile on the pad drawn for this tip, growing and shrinking with the coal on it (the stockpile of the extra coal or of a schedule without a coal target, else this plant feed): its tons ÷ the bulk density, a cone from the tipping point with its sides at the face angle, up to the maximum height.'));
     }
     ed.push(h('div', { class: 'grid2' }, fld('Colour', (() => { const c = h('input', { type: 'color', value: d.color || '#c9a86a' }); c.addEventListener('change', () => { d.color = c.value; App.changed('dumps'); UI.renderTab(); }); return c; })()),
       h('div', { class: 'fld' }, h('span', null, 'Tipping start point'), h('div', { class: 'num', style: { fontSize: '12px', paddingTop: '5px' } }, d.entry ? `${U.fmtNum(d.entry[0], 0)}, ${U.fmtNum(d.entry[1], 0)}` : 'Nearest point to a road'))));
@@ -14443,14 +14812,27 @@ const Tabs = (() => {
       const wc = money('wasteCost', 'Waste mining cost per bcm'), cc = money('coalCost', 'Coal mining cost per ton'), pr = money('price', 'Coal price'), pc = money('plantCost', 'Plant cost per ton');
       const bs = sel([['adc', 'Air dry contaminated (ADC: losses, contamination, moisture)'], ['ar', 'As received (after the losses)'], ['insitu', 'In situ']], M.basis === 'ar' || M.basis === 'insitu' ? M.basis : 'adc', v => set('basis', v)); bs.setAttribute('aria-label', 'Coal tons for the margin');
       const cu = txt(cur, v => set('currency', v.trim() || 'R')); cu.setAttribute('aria-label', 'Currency');
-      const parts = [
+      // the costs and price: the Finance tab's (one set of numbers), or the margin's own
+      const parts = [chk('Take the costs and price from the Finance tab', M.fromFin, v => set('fromFin', v))];
+      if (M.fromFin) {
+        parts.push(chk('Include the overheads and sustaining capital (spread over the coal target)', M.finOver, v => set('finOver', v)), h('div', { class: 'grid2' }, fld('Coal tons', bs), h('span')));
+        if (R && R.fin) parts.push(h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' }, h('tbody', null, ...Margin.finLines(P, R).map(([k, v]) => h('tr', null, h('td', null, k), h('td', null, v)))))));
+        { const o = Fin.settings(P), NP = Fin.netPrice(o, R ? R.stats.cv.avg : undefined), m = v => `${o.currency} ${U.fmtNum(v, 0)}/t`;
+          if (NP.warn) parts.push(msg('error', NP.warn + ' Every block’s margin is negative until it is fixed (Finance tab).'));
+          else if (R && R.stats.n && !R.stats.pos) parts.push(msg('warn', `No block pays for itself: a ton earns ${m(NP.net)} at the mine${NP.trans > 0 ? ` (${m(NP.price)} less ${m(NP.trans)} transport)` : ''}${NP.perMJ ? ` at ${U.fmtNum(NP.cv, 1)} MJ/kg` : ''}, less than the cheapest block costs to mine. Check the price and the transport in the Finance tab.`)); }
+        if (R && R.fin && R.fin.overNoTarget) parts.push(msg('warn', 'The overheads are left out: set a monthly coal target in the Schedule tab to spread them over the tons.'));
+        parts.push(hint('Change these numbers in the Finance tab: the block margin, the reserve boundary and the financial model then work on the same costs and price. Untick to type the margin’s own costs and price.'));
+      } else {
+        // (what the Finance tab sells the coal at, so the two can be compared)
+        const o = Fin.settings(P), e = o.expShare / 100, tr = e * (o.rail + o.port) + (1 - e) * o.domTrans, fc = o.currency;
+        parts.push(msg('info', `The Finance tab sells the coal at ${o.expShare > 0 ? `${U.fmtNum(o.expShare, 0)}% exported at US$${U.fmtNum(o.expPrice, 0)}/t and the rest at ` : ''}${Fin.domWords(o)}${o.domBasis !== 'mj' && o.byCV ? ` at ${U.fmtNum(o.cvRef, 1)} MJ/kg` : ''}, less ${fc} ${U.fmtNum(tr, 0)}/t transport${o.mkt > 0 ? ` and ${U.fmtNum(o.mkt, 1)}% marketing` : ''}. The margin below uses its own price and costs, with no transport: tick the box above to use the Finance tab’s.`));
+        parts.push(
         h('div', { class: 'grid2' }, fld(`Waste mining cost (${cur}/bcm)`, wc), fld(`Coal mining cost (${cur}/t)`, cc)),
         chk('Price follows the coal quality: price × the CV of each seam, from the block attributes', M.byCV !== false, v => set('byCV', v)),
         fld('Revenue of a block', (() => { const e = sel([['blend', 'On its blended CV: coal t × price × blended CV'], ['seam', 'Seam by seam: each seam’s t × its own price × its CV']], M.revBy === 'seam' ? 'seam' : 'blend', v => set('revBy', v)); e.setAttribute('aria-label', 'Revenue of a block'); return e; })()),
         h('div', { class: 'grid2' }, fld(M.byCV !== false ? `Coal price (${cur}/t per MJ/kg)` : `Coal price (${cur}/t)`, pr), fld('Coal tons', bs)),
         chk('The coal is processed: plant cost × the yield of each seam, from the block attributes', M.plant === true, v => set('plant', v)),
-        M.plant === true ? h('div', { class: 'grid2' }, fld(`Plant cost (${cur}/t)`, pc), fld('Currency', cu)) : h('div', { class: 'grid2' }, fld('Currency', cu), h('span'))
-      ];
+        M.plant === true ? h('div', { class: 'grid2' }, fld(`Plant cost (${cur}/t)`, pc), fld('Currency', cu)) : h('div', { class: 'grid2' }, fld('Currency', cu), h('span'))); }
       // the attribute columns of each seam
       const cols = [['', '— none —']].concat((P.attrColumns || []).filter(c => c !== P.idColumn && P.blocks.some(b => b.attrs && isFinite(parseFloat(b.attrs[c])))).map(c => [c, c]));
       const coalL = P.layers.filter(L => L.type === 'coal');
@@ -14483,7 +14865,7 @@ const Tabs = (() => {
           parts.push(h('div', { class: 'dt', style: { margin: '8px 0 4px', fontWeight: 600 } }, 'Quality cut-offs'));
           parts.push(h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', null, 'Seam'), h('th', null, 'CV at least', h('br'), h('span', { class: 'dt' }, 'MJ/kg')), h('th', null, 'ASH at most', h('br'), h('span', { class: 'dt' }, '%')), h('th', null, 'TS at most', h('br'), h('span', { class: 'dt' }, '%')), h('th', null, 'Taken as waste'))), h('tbody', null, ...qrows))));
           parts.push(hint('A seam whose CV in a block is below its cut-off, or whose ASH or TS is above it, is taken as waste in that block: mined as waste with the waste layer next to it (as set for the thickness cut-off in the Geological Data tab), in the schedule, the Excel reports and the block margin. The values are read from the quality columns chosen above; a block without the value is kept as coal. Leave a box empty for no cut-off.')); }
-        if (R && R.bad) parts.push(msg('warn', `Choose the ${[M.byCV !== false ? 'CV' : null, M.plant === true ? 'yield' : null].filter(Boolean).join(' and ')} column of every seam: ${R.seams.filter(s => (M.byCV !== false && !s.cvCol) || (M.plant === true && !s.yCol)).map(s => s.name).join(', ')} ${R.seams.filter(s => (M.byCV !== false && !s.cvCol) || (M.plant === true && !s.yCol)).length === 1 ? 'has' : 'have'} none, so ${M.byCV !== false ? 'its coal earns nothing' : 'its plant cost is 0'}.`));
+        if (R && R.bad) { const yNeed = M.plant === true && !M.fromFin, no = R.seams.filter(s => (M.byCV !== false && !s.cvCol) || (yNeed && !s.yCol)); parts.push(msg('warn', `Choose the ${[M.byCV !== false ? 'CV' : null, yNeed ? 'yield' : null].filter(Boolean).join(' and ')} column of every seam: ${no.map(s => s.name).join(', ')} ${no.length === 1 ? 'has' : 'have'} none, so ${M.byCV !== false ? 'its coal earns nothing' : 'its plant cost is 0'}.`)); }
         if (R && !R.seams.length) parts.push(msg('warn', 'Every seam is counted as waste: no block has coal.'));
         // ASH and TS: a seam counted as coal without the column is left out of that blend
         if (R && R.seams.length) for (const [k, n] of [['ash', 'ASH'], ['ts', 'TS']]) {
@@ -14492,9 +14874,9 @@ const Tabs = (() => {
           else if (no.length) parts.push(msg('info', `${no.map(q => q.name).join(', ')} ${no.length === 1 ? 'has' : 'have'} no ${n} column: the blended ${n} is of the other seams only.`));
         }
       }
-      const f = [M.revBy === 'seam' ? `Σ seam t × seam price${M.byCV !== false ? ' × seam CV' : ''}` : `coal t × price${M.byCV !== false ? ' × blended CV' : ''}`, '− waste bcm × waste cost', '− coal t × coal mining cost'].concat(M.plant === true ? ['− coal t × plant cost × yield'] : []);
+      const f = Margin.formula(M, R && R.fin);
       parts.push(h('div', { class: 'msg info' }, h('span', { class: 'ic' }, 'Margin'), h('span', { style: { flex: 1 } }, `(${f.join(' ')}) ÷ coal t, per block, in ${cur}/t. A block that pays for itself is positive.`)));
-      parts.push(hint(M.revBy === 'seam' ? 'Seam by seam: the revenue of a block is the sum over its seams counted as coal of each seam’s tons × its own price (the coal price above where none is set)' + (M.byCV !== false ? ' × its own CV in the block' : '') + '. With the same price for every seam this is the same as on the blended CV; give a seam its own price (the Price box of each seam) to sell it on its own.' : 'On the blended CV: the coal of a block is sold as one product, at the coal price' + (M.byCV !== false ? ' × the blended CV of the block' : '') + '. Choose “seam by seam” to give each seam a price of its own.'));
+      if (!M.fromFin) parts.push(hint(M.revBy === 'seam' ? 'Seam by seam: the revenue of a block is the sum over its seams counted as coal of each seam’s tons × its own price (the coal price above where none is set)' + (M.byCV !== false ? ' × its own CV in the block' : '') + '. With the same price for every seam this is the same as on the blended CV; give a seam its own price (the Price box of each seam) to sell it on its own.' : 'On the blended CV: the coal of a block is sold as one product, at the coal price' + (M.byCV !== false ? ' × the blended CV of the block' : '') + '. Choose “seam by seam” to give each seam a price of its own.'));
       parts.push(h('div', { class: 'msg info' }, h('span', { class: 'ic' }, 'Blend'), h('span', { style: { flex: 1 } }, (R && R.qBasis === 'ADC' ? 'On the air-dry contaminated (ADC) basis: blended CV, ASH and TS of a block = Σ (seam ADC t × seam ADC quality) ÷ Σ seam ADC t, the ADC quality being the seam’s mixed with the contamination’s and the ADC tons those of the Reserve tab (losses, contamination, moisture); the coal is sold as ADC tons at its ADC CV. ' : 'Raw (no contamination or moisture is set in the Reserve tab): blended CV, ASH and TS of a block = Σ (seam coal t × seam quality) ÷ Σ seam coal t. ') + 'Over the seams in the block counted as coal (for ASH and TS, those with the column). The qualities come from the attribute file; the tons from the 3D model. Only the CV is in the price.')));
       parts.push(hint(`The costs of the formula less its revenue, turned round so that a positive margin is a block worth mining (green) and a negative one does not pay for itself (red). The volumes and tons of each block, layer by layer, come from the 3D model (the surfaces), as the schedule mines it: the seam cut-off, depth limits and keep-out zones taken off; tons are bcm × the density of the layer (its RD column where one is set)${M.basis === 'ar' ? ', and the coal as received after the losses above' : ''}. The block attribute file gives only the qualities: the CV, ASH, TS (and yield) of each seam. The blended CV, ASH and TS of a block are those of its seams counted as coal, weighted by their tons; a seam counted as waste adds to the waste volume and leaves the coal tons and the blended qualities (a layer typed as waste in the Geological Data tab, or coal below the seam cut-off, is waste here too). Untick the quality for one price per ton; untick processing when the coal is sold as mined. A block that lacks a CV, ASH, TS or yield takes the seam's average. Only the quality cut-offs and the reserve boundary below change the schedule.`));
       body.append(sec('Block margin', h('span', { class: 'chip' }, `${cur}/t`), ...parts));
@@ -14503,7 +14885,7 @@ const Tabs = (() => {
     if (!R) { body.append(sec(part === 'strip' ? 'Strip ratio' : part === 'rank' ? 'Margin rank' : 'Reserve boundary', null, msg('warn', 'Load the model first.'))); return; }
     if (part === 'reserve') { tonsSection(body, R); depthSection(body, R, kp); layerTable(body, R); }
     if (part === 'rank') {
-      if (!R.ready) body.append(sec('Margin rank', null, msg('warn', 'Type the coal price (and the costs) above to work out the margin of every block.')));
+      if (!R.ready) body.append(sec('Margin rank', null, msg('warn', R.fin ? 'Enter the coal price in the Finance tab (Coal sales) to work out the margin of every block.' : 'Type the coal price (and the costs) above to work out the margin of every block.')));
       else marginRank(body, R, cur, kp);
       reserveBoundary(body, R, cur, kp);
     }
@@ -14842,19 +15224,55 @@ const Tabs = (() => {
         TM.count > 0 && coalLoose + wasteLoose > 0 && need > TM.count + 1e-6 ? msg('warn', `The targets need ${U.fmtNum(need, 1)} teams but there are ${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)}: the months stay below the targets.`) : null,
         hint(`The teams do all the mining: topsoil, waste and coal, the ramps and the rehandling, counted in loose m³ (bcm × the swell of the layer). Each month gets the teams × the loose m³ of a team × its ${T.basis === 'working' ? 'working days ÷ ' + U.fmtNum(per, 1) : 'days ÷ 30.44'}. Every working day the coal gets the teams it needs for its target first; the rest of the teams are shared between the other activities by the volume of their paths, so the layers keep pace with each other. Without a coal target the coal shares in the same way. With a coal target and no waste target the waste gets only the teams it needs to uncover the coal (Monthly targets below), and the rest stay idle. A priority pit (Sequence tab, Pits) gets the teams first.`)));
     }
+    // ---- rain: the waste derated in the wet months
+    {
+      const RN = Model.rainDerate(P), R0 = P.rainDerate || {}, setR = patch => { P.rainDerate = Object.assign({}, P.rainDerate || {}, patch); App.changed('sim'); UI.renderTab(); };
+      const pi = num(RN.per100, v => setR({ per100: v == null ? null : U.clamp(v, 0, 100) }), { min: 0, max: 100, step: 1 }); pi.setAttribute('aria-label', 'Waste lost for each 100 mm of rain'); pi.disabled = !edit();
+      const months = h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: '4px 6px' } }, U.MONTHS.map((mn, i) => {
+        const e = num(RN.own[i] ? RN.pct[i] : null, v => { const a = Array.isArray(R0.pct) ? R0.pct.slice() : new Array(12).fill(null); while (a.length < 12) a.push(null); a[i] = v == null ? null : U.clamp(v, 0, 90); setR({ pct: a }); }, { min: 0, max: 90, step: 0.5, allowEmpty: true, placeholder: U.fmtNum((RN.rain[i] * RN.per100) / 100, 1) });
+        e.setAttribute('aria-label', `Waste derate in ${mn} (%)`); e.disabled = !edit();
+        return fld(`${mn} · ${U.fmtNum(RN.rain[i], 0)} mm`, e);
+      }));
+      body.append(sec('Rain', RN.on ? h('span', { class: 'chip' }, `waste −${U.fmtNum(Math.max(...RN.pct), 1)}% at most`) : null,
+        chk('Derate the waste in the wet months (the summer rains)', RN.on, v => setR({ on: v })),
+        RN.on ? h('div', { class: 'grid2' }, fld('Waste lost for each 100 mm of rain in a month (%)', pi), h('div', { class: 'dt', style: { whiteSpace: 'normal', alignSelf: 'end' } }, 'The average rainfall of each month is the Hydrogeological tab’s.')) : null,
+        RN.on ? h('div', { class: 'dt', style: { margin: '6px 0 2px' } }, 'Waste derate of each month (%): empty takes its rainfall × the rate above') : null,
+        RN.on ? months : null,
+        hint(RN.on ? `In a month derated by d%, the rain stops the waste fleet for d% of its time: every bcm of waste takes the teams 1 ÷ (1 − d) times as long, and the waste moves (1 − d) of what it would in the dry; the coal, the ramps and the rehandling are not derated, and the coal keeps the first call on the teams. Highveld summer rains: ${U.MONTHS.map((mn, i) => (RN.pct[i] >= 1 ? `${mn} ${U.fmtNum(RN.pct[i], 1)}%` : null)).filter(Boolean).join(', ')}. Run the simulation again to apply it.` : 'Tick to slow the waste in the rainy months: its loading and hauling lose time to the rain, wet roads and pit floors. The derate follows the average rainfall of each month.')));
+    }
     // ---- monthly targets (they drive the schedule)
     {
       const limit = T.mode !== 'compare', basis = T.basis === 'working' ? 'working' : 'calendar', wu = T.wasteUnit === 't' ? 't' : 'bcm', hasProd = !!Wash.product(P), cb = T.coalBasis === 'ar' ? 'ar' : T.coalBasis === 'product' && hasProd ? 'product' : 'insitu';
       const save = () => { App.changed('sim'); UI.renderTab(); };
       const ci = num(+T.coal > 0 ? T.coal : null, v => { T.coal = v > 0 ? v : null; save(); }, { min: 0, step: 1000, allowEmpty: true, placeholder: 'none' });
       const WFo = Model.wasteFollows(P);
+      // the start-up waste: a waste target for the first months of the schedule, the waste target above after them
+      const wsi = num(+T.wasteStart > 0 ? +T.wasteStart : null, v => { if (v > 0) T.wasteStart = v; else delete T.wasteStart; save(); }, { min: 0, step: 1000, allowEmpty: true, placeholder: 'none' });
+      const wsm = num(+T.wasteStartMonths > 0 ? +T.wasteStartMonths : null, v => { if (v > 0) T.wasteStartMonths = Math.min(600, Math.round(v)); else delete T.wasteStartMonths; save(); }, { min: 0, max: 600, step: 1, allowEmpty: true, placeholder: '0' });
+      wsi.setAttribute('aria-label', 'Start-up waste per month'); wsm.setAttribute('aria-label', 'Start-up months');
       const wi = num(+T.waste > 0 ? T.waste : null, v => { T.waste = v > 0 ? v : null; save(); }, { min: 0, step: 1000, allowEmpty: true, placeholder: +T.coal > 0 && limit ? 'follows the coal' : 'none' });
+      // the minimum waste a month (in the unit of the waste target)
+      const mi = num(+T.wasteMin > 0 ? +T.wasteMin : null, v => { if (v > 0) T.wasteMin = v; else delete T.wasteMin; save(); }, { min: 0, step: 1000, allowEmpty: true, placeholder: 'none' });
+      mi.setAttribute('aria-label', 'Minimum waste per month');
       // with the waste following the coal: how much exposed coal to keep ahead
       const xi = num(WFo.months, v => { T.exposedMonths = v == null ? 1 : U.clamp(v, 0, 24); save(); }, { min: 0, max: 24, step: 0.5 });
+      // steady waste: the rate a month (empty: the average of the schedule)
+      const lastSW = App.res && App.res.steadyWaste, si = num(+T.smoothRate > 0 ? +T.smoothRate : null, v => { if (v > 0) T.smoothRate = v; else delete T.smoothRate; save(); }, { min: 0, step: 5000, allowEmpty: true, placeholder: lastSW && lastSW.auto ? `average: ${U.fmtNum(lastSW.rate, 0)}` : 'the average' });
+      si.setAttribute('aria-label', 'Steady waste per month');
       xi.setAttribute('aria-label', 'Exposed coal kept ahead');
       // the coal ramp-up: the target steps up over the first months
       const rN = Monthly.rampMonths(P), ri = num(rN || null, v => { T.rampMonths = v > 0 ? Math.min(60, Math.round(v)) : 0; save(); }, { min: 0, max: 60, step: 1, allowEmpty: true, placeholder: 'none' });
       ri.setAttribute('aria-label', 'Coal ramp-up months');
+      // without a coal target: how the coal comes off the ROM stockpile (a plant feed or sales, from some months after the first coal)
+      const RO = T.romOff || {}, setRO = patch => { T.romOff = Object.assign({}, T.romOff || {}, patch); save(); };
+      const romFeed = (P.dumps || []).filter(d => d.kind === 'rom').reduce((a, d) => a + (+d.plantFeed > 0 ? +d.plantFeed : 0), 0);
+      const roBy = sel([['feed', 'A plant: feed rate (t a working day)'], ['sale', 'Sales: ADC tons sold (t a day)']], RO.by === 'sale' ? 'sale' : 'feed', v => setRO({ by: v })); roBy.setAttribute('aria-label', 'Coal off the stockpile by');
+      const roRate = num(+RO.rate > 0 ? +RO.rate : null, v => setRO({ rate: v > 0 ? v : null }), { min: 0, step: 100, allowEmpty: true, placeholder: romFeed > 0 ? `Dumps tab: ${U.fmtNum(romFeed, 0)}` : 'none' }); roRate.setAttribute('aria-label', 'Rate off the stockpile');
+      const roRamp = num(+RO.ramp > 0 ? +RO.ramp : null, v => setRO({ ramp: v > 0 ? Math.min(60, Math.round(v)) : null }), { min: 0, max: 60, step: 1, allowEmpty: true, placeholder: 'none' }); roRamp.setAttribute('aria-label', 'Ramp-up of the coal off the stockpile');
+      const roAfter = num(+RO.after > 0 ? +RO.after : null, v => setRO({ after: v > 0 ? Math.min(600, v) : null }), { min: 0, step: 1, allowEmpty: true, placeholder: '0' }); roAfter.setAttribute('aria-label', 'Months after the first coal');
+      // extra coal onto the ROM stockpile: the most it may hold
+      const xmi = num(+T.romMax > 0 ? +T.romMax : null, v => { if (v > 0) T.romMax = v; else delete T.romMax; save(); }, { min: 0, step: 10000, allowEmpty: true, placeholder: 'no limit' });
+      xmi.setAttribute('aria-label', 'ROM stockpile at most');
       const rampTxt = rN ? Array.from({ length: Math.min(rN, 6) }, (_, k) => `month ${k + 1}: ${Math.round(((k + 1) / (rN + 1)) * 100)}% (${U.fmtNum((+T.coal * (k + 1)) / (rN + 1), 0)} t)`).join(' · ') + (rN > 6 ? ' · …' : '') + ` · the full target from month ${rN + 1}` : 'none: the full target from the first month';
       const cs = sel([['insitu', 'Tons in situ'], ['ar', 'Tons as received']].concat(hasProd ? [['product', 'Tons of washed product']] : []), cb, v => { T.coalBasis = v; save(); });
       const us = sel([['bcm', 'bcm'], ['t', 'tons']], wu, v => { T.wasteUnit = v; save(); });
@@ -14865,12 +15283,27 @@ const Tabs = (() => {
       const eg = (v, u) => (basis === 'working' ? `${U.fmtNum(v / per, 0)} ${u} per working day` : `${U.fmtNum((v * 31) / per, 0)} ${u} in a 31-day month, ${U.fmtNum((v * 30) / per, 0)} ${u} in a 30-day month and ${U.fmtNum((v * 28) / per, 0)} ${u} in February`);
       body.append(sec('Monthly targets', any ? h('span', { class: 'chip' }, limit ? 'drive the schedule' : 'compare only') : null,
         h('div', { class: 'grid2' }, fld('Coal target (t per month)', ci), fld('Coal target in', cs)),
-        h('div', { class: 'grid2' }, fld('Waste target (per month)', wi), fld('Waste target in', us)),
+        h('div', { class: 'grid2' }, fld(Monthly.startMonths(P) ? 'Waste target, steady state (per month)' : 'Waste target (per month)', wi), fld('Waste target in', us)),
+        +T.waste > 0 ? h('div', { class: 'grid2' }, fld(`Start-up waste (${wu} per month)`, wsi), fld('For the first (months)', wsm)) : null,
+        +T.waste > 0 && (+T.wasteStart > 0 || +T.wasteStartMonths > 0) ? h('div', { class: 'dt', style: { whiteSpace: 'normal', fontSize: 'var(--fs-xs)', color: 'var(--muted)' } }, Monthly.startMonths(P) ? `The waste target is ${U.fmtNum(+T.wasteStart, 0)} ${wu} a month over the first ${Monthly.startMonths(P)} month${Monthly.startMonths(P) === 1 ? '' : 's'} of mining (from the month the first pit or activity starts), then ${U.fmtNum(+T.waste, 0)} ${wu} a month.${!(+T.coal > 0) ? ' With no coal target the waste gets the teams first in those months; the coal gets what is left.' : ''}${+T.wasteStart < +T.waste ? ' (The start-up figure is below the steady state.)' : ''}` : 'Type both the start-up waste and its months.') : null,
+        +T.waste > 0 && Monthly.startMonths(P) && wu === 'bcm' ? (() => { const wl = P.layers.filter(L => L.type !== 'coal'), sw = wl.length ? wl.reduce((a, L) => a + (+L.swell || 1.3), 0) / wl.length : 1.3, need = (+T.wasteStart * sw) / (TM.perTeam || Model.TEAM_LCM); return need > TM.count + 1e-6 ? msg('warn', `The start-up waste needs about ${U.fmtNum(need, 1)} teams for the waste alone (${U.fmtNum(+T.wasteStart, 0)} bcm × a swell of ${U.fmtNum(sw, 2)}), but there are ${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)}: the start-up months stay below it. Add teams (above) or lower the start-up waste.`) : null; })() : null,
+        limit ? h('div', { class: 'grid2' }, fld(`Minimum waste (${wu} per month)`, mi), h('div', { class: 'dt', style: { whiteSpace: 'normal', alignSelf: 'end' } }, +T.wasteMin > 0 ? `At least ${eg(+T.wasteMin, wu)}.` : 'The schedule moves at least this much waste every month.')) : null,
+        limit && +T.wasteMin > 0 && +T.waste > 0 && +T.wasteMin > +T.waste ? msg('warn', `The minimum waste (${U.fmtNum(+T.wasteMin, 0)} ${wu}) is more than the waste target (${U.fmtNum(+T.waste, 0)} ${wu}), which is the most a month may move: the target wins.`) : null,
         h('div', { class: 'grid2' }, fld('Each month follows its', bs), fld('Use the targets to', ms)),
         +T.coal > 0 ? h('div', { class: 'dt', style: { whiteSpace: 'normal', fontSize: 'var(--fs-xs)', color: 'var(--muted)' } }, `Coal: ${eg(+T.coal, 't')}${cb === 'ar' ? ' as received' : cb === 'product' ? ' of washed product (as received × the yield of each block, from the washability in the Geological Data tab)' : ''}.`) : null,
         +T.waste > 0 ? h('div', { class: 'dt', style: { whiteSpace: 'normal', fontSize: 'var(--fs-xs)', color: 'var(--muted)' } }, `Waste: ${eg(+T.waste, wu)}.`) : null,
         +T.coal > 0 ? h('div', { class: 'grid2' }, fld('Coal ramp-up (months)', ri), h('span')) : null,
+        !(+T.coal > 0) ? msg('info', 'No coal target: all the coal mined (ADC tons) goes onto the ROM stockpile, and comes off it as set below (empty rate: the plant feed of the ROM stockpile in the Dumps tab, from the start). Without either it only grows. The Results tab charts it.') : null,
+        !(+T.coal > 0) ? h('div', { class: 'grid2' }, fld('Coal off the stockpile', roBy), fld(RO.by === 'sale' ? 'ADC tons sold a day' : 'Plant feed (ADC t a working day)', roRate)) : null,
+        !(+T.coal > 0) ? h('div', { class: 'grid2' }, fld('Starting (months after the first coal)', roAfter), fld('Ramp-up (months)', roRamp)) : null,
+        !(+T.coal > 0) ? h('div', { class: 'dt', style: { whiteSpace: 'normal', fontSize: 'var(--fs-xs)', color: 'var(--muted)' } }, (+RO.after > 0 ? `The ${RO.by === 'sale' ? 'sales start' : 'plant starts'} ${U.fmtNum(+RO.after, +RO.after % 1 ? 1 : 0)} months after the first coal is mined; until then the stockpile only grows. ` : 'From the first coal. ') + (+RO.ramp > 0 && +RO.rate > 0 ? `Ramp-up: ${Array.from({ length: Math.min(+RO.ramp, 6) }, (_, k) => `month ${k + 1}: ${Math.round(((k + 1) / (+RO.ramp + 1)) * 100)}% (${U.fmtNum((+RO.rate * (k + 1)) / (+RO.ramp + 1), 0)} t)`).join(' · ')}${+RO.ramp > 6 ? ' · …' : ''} · the full ${U.fmtNum(+RO.rate, 0)} t from month ${+RO.ramp + 1}.` : 'No ramp-up: the full rate from the start.')) : null,
+        +T.coal > 0 && limit ? chk('Extra coal: when the waste would stand idle under a coal seam, mine that seam beyond the coal target onto the ROM stockpile', T.coalExtra === true, v => { if (v) T.coalExtra = true; else delete T.coalExtra; save(); }) : null,
+        +T.coal > 0 && limit && T.coalExtra ? h('div', { class: 'grid2' }, fld(`ROM stockpile at most (${cb === 'ar' ? 't as received' : cb === 'product' ? 't of product' : 't in situ'})`, xmi), h('div', { class: 'dt', style: { whiteSpace: 'normal', alignSelf: 'end' } }, 'Empty: no limit.')) : null,
+        +T.coal > 0 && limit && T.coalExtra ? h('div', { class: 'dt', style: { whiteSpace: 'normal', fontSize: 'var(--fs-xs)', color: 'var(--muted)' } }, 'After each day’s mining, a waste activity that stands idle only because a coal seam above it is not mined yet lets that seam be mined beyond the coal target, with the teams that are free. The coal over the target goes onto the ROM stockpile; a month whose coal from the pit is below the target is made up from it, and what is left at the end is sold then. The financial model sells the target and the stockpile; the mining costs stay on the coal mined. The Results tab charts the stockpile.') : null,
         +T.coal > 0 ? h('div', { class: 'dt', style: { whiteSpace: 'normal', fontSize: 'var(--fs-xs)', color: 'var(--muted)' } }, `Ramp-up: ${rampTxt}.`) : null,
+        WFo.on ? chk('Smooth the waste: a steady rate each month, faster only when the exposed coal runs short', T.smoothWaste === true, v => { if (v) T.smoothWaste = true; else delete T.smoothWaste; save(); }) : null,
+        WFo.on && T.smoothWaste ? h('div', { class: 'grid2' }, fld('Steady waste (bcm per month)', si), h('div', { class: 'dt', style: { whiteSpace: 'normal', alignSelf: 'end' } }, 'Empty: the waste of the schedule ÷ the months its coal takes at the coal target.')) : null,
+        WFo.on && T.smoothWaste ? h('div', { class: 'dt', style: { whiteSpace: 'normal', fontSize: 'var(--fs-xs)', color: 'var(--muted)' } }, 'The waste moves at the steady rate every month while the coal exposed is at least the exposed coal kept ahead (below); when it runs short the waste moves as fast as the coal needs until it is back. A month stays below the rate only when the waste cannot be moved: held by a dependency (Sequence tab), waiting for a void or a dump, or short of teams. A dependency counted in whole strips releases the waste a strip at a time, so the waste comes in bursts whatever the rate: count it in blocks, give it room, and keep a few months of coal exposed for a steady profile.') : null,
         WFo.on ? h('div', { class: 'grid2' }, fld('Exposed coal kept ahead (months)', xi), h('div', { class: 'dt', style: { whiteSpace: 'normal', alignSelf: 'end' } }, `${U.fmtNum(WFo.months * +T.coal, 0)} t${cb === 'ar' ? ' as received' : cb === 'product' ? ' of product' : ''}`)) : null,
         WFo.on ? msg('info', `The waste follows the coal: each working day the waste activities move only the waste above the coal the target needs over the next month, keeping ${U.fmtNum(WFo.months, WFo.months % 1 ? 1 : 0)} month${WFo.months === 1 ? '' : 's'} of coal exposed ahead. What a block's coal needs is due by the day the exposed coal would drop below that; what is late is moved straight away, as far as the teams allow.${rN ? ` During the ramp-up the waste is stripped for the full target, so the coal the ramp-up holds back is exposed as well and kept as inventory.` : ''} Type a waste target to hold the waste to it instead.`) : null,
         any && App.res && App.stale ? msg('warn', 'Run the simulation again to schedule to these targets.') : null,
@@ -14974,7 +15407,7 @@ const Tabs = (() => {
         body.append(sec('Financial model', h('span', { class: 'chip' }, `${F.annual.length} years`),
           h('div', { class: 'kpis' }, kp(`NPV at ${U.fmtNum(o.disc, 1)}%`, money(K.npv), K.npv >= 0 ? 'pos' : 'neg'), kp('IRR', K.irr === K.irr ? `${U.fmtNum(K.irr * 100, 1)}%` : '–'),
             kp('Payback', K.payback != null ? `${K.payback} months into mining (${F.label(K.paybackT)})` : 'not paid back'), kp('Peak funding', money(K.peak)),
-            kp('Revenue', money(K.rev)), kp('EBITDA', money(K.ebitda)), kp('Royalty and tax', money(K.royalty + K.tax)), kp('Free cash flow', money(K.fcf)),
+            kp('Revenue', money(K.rev)), kp('EBITDA', money(K.ebitda)), kp('Royalty and tax', money(K.royalty + K.tax)), kp('Net profit / (loss)', money(K.np), K.np >= 0 ? 'pos' : 'neg'), kp('Free cash flow', money(K.fcf)),
             kp(o.wash ? 'Coal mined → product' : 'Coal sold (as mined)', o.wash ? `${U.fmtBig(K.rom, 't')} → ${U.fmtBig(K.product, 't')} (${U.fmtNum(K.yield * 100, 1)}%)` : U.fmtBig(K.product, 't')),
             kp('Revenue a ton sold', perT(K.price)), kp('Cash cost a ton sold', perT(K.cashCost)), kp('FOB cost a ton exported', perT(K.fobCost))),
           ch,
@@ -14986,6 +15419,8 @@ const Tabs = (() => {
     }
     // the inputs
     const cu = txt(cur, v => { F0().currency = v.trim() || 'R'; save(); }); cu.setAttribute('aria-label', 'Finance currency'); cu.disabled = !edit();
+    const MR = App.ws ? App.margin() : null, NP = Fin.netPrice(o, MR ? MR.stats.cv.avg : undefined);
+    if (NP.warn) body.append(msg('error', NP.warn));
     for (const G of Fin.GROUPS) {
       const parts = [];
       if (G.id === 'econ') parts.push(h('div', { class: 'grid2' }, fld('Currency', cu), h('span')));
@@ -14996,14 +15431,16 @@ const Tabs = (() => {
         if (q.kind === 'chk') { parts.push(...flds.splice(0).reduce((a, x, i, arr) => (i % 2 ? a : a.concat(h('div', { class: 'grid2' }, x, arr[i + 1] || h('span')))), [])); const c = chk(q.label, o[q.k], set); c.querySelector('input').setAttribute('aria-label', q.label); parts.push(c); continue; }
         let e;
         if (q.kind === 'sel') { e = sel(q.opts, o[q.k], set); parts.push(...flds.splice(0).reduce((a, x, i, arr) => (i % 2 ? a : a.concat(h('div', { class: 'grid2' }, x, arr[i + 1] || h('span')))), [])); e.setAttribute('aria-label', q.label); e.disabled = !edit(); parts.push(fld(q.label, e)); continue; }
-        e = num(o[q.k], v => set(v == null ? null : v), { step: q.step, allowEmpty: true, placeholder: String(q.def) }); e.setAttribute('aria-label', q.label); e.disabled = !edit();
+        e = num(o[q.k], v => set(v == null ? (q.keep ? null : 0) : v), { step: q.step, allowEmpty: true, placeholder: q.keep ? String(q.def) : '0' }); e.setAttribute('aria-label', q.label); e.disabled = !edit();
         flds.push(fld(`${q.label} (${Fin.unitOf(q, cur)})`, e));
       }
       parts.push(...flds.reduce((a, x, i, arr) => (i % 2 ? a : a.concat(h('div', { class: 'grid2' }, x, arr[i + 1] || h('span')))), []));
+      if (G.id === 'sales' && NP.warn) parts.push(msg('error', NP.warn));
       if (G.id === 'sales' && o.wash && o.yieldSrc === 'wash' && !(typeof Wash !== 'undefined' && Wash.product(P))) parts.push(msg('warn', `There is no washability data (Geological Data tab), so the plant yield is the fixed ${U.fmtNum(o.yieldFixed, 1)}%.`));
+      if (G.id === 'sales' && o.domBasis === 'mj') parts.push(hint(`A domestic price per MJ/kg is × the CV of the coal sold each month (the ${MR && MR.qBasis === 'ADC' ? 'ADC ' : ''}CV of the seams mined${o.wash ? ', or of the washed product' : ''})${MR && MR.stats.cv.avg === MR.stats.cv.avg ? `: ${Fin.domWords(o)} × ${U.fmtNum(MR.stats.cv.avg, 2)} MJ/kg on average is ${o.currency} ${U.fmtNum(o.domPriceMJ * MR.stats.cv.avg, 0)}/t` : ''}. “Prices follow the CV” then applies to the export price only.`));
       if (G.id === 'sales') parts.push(hint(o.wash ? 'Washing: the coal mined (as received) is the plant feed; the product is sold and the discard is dumped. Untick it to sell the coal as mined (crushed and screened only).' : 'Not washed: the coal mined (as received) is crushed, screened and sold as it is. Tick “Wash the coal” to add a coal washing plant: its yield, its cost a ton of feed and the discard.'));
       if (G.id === 'mining') { const BL = Blast.settings(P); parts.push(hint(BL.on ? 'Drilling is priced on the bcm drilled and blasted, waste and coal at their own rates, and the explosives on the kg, of the drill and blast (Drill and Blast tab). Presplit is priced on the m² of presplit: one face per strip along its highwall, as high as the waste blasted, so the waste bcm drilled and blasted ÷ the strip width.' : 'Drill and blast is off (Drill and Blast tab), so there are no drilling or explosives costs.')); }
-      if (G.id === 'econ') parts.push(hint('Prices and costs are in today’s money, escalated from the start of mining by the rates set (0: a real model). The SA royalty on unrefined minerals is 0.5% + EBIT ÷ (gross sales × 9) of the gross sales at the mine, at most 7%, worked out year by year; capital spending is deducted from the EBIT and, for the tax, in full against the mining income as it is spent, with assessed losses carried forward.'));
+      if (G.id === 'econ') parts.push(hint('Prices and costs are in today’s money, escalated from the start of mining by the rates set (0: a real model). The SA royalty on unrefined minerals is 0.5% + EBIT ÷ (gross sales × 9) of the gross sales at the mine, at most 7%, worked out year by year; capital spending is deducted from the EBIT and, for the tax, in full against the mining income as it is spent, with assessed losses carried forward. A box you clear counts 0 (the exchange rate, reference CV, strip width and yield go back to their defaults); “Back to the default inputs” below puts every default back.'));
       body.append(sec(G.title, null, ...parts));
     }
     if (edit() && P.fin && Object.keys(P.fin).length) body.append(h('div', { class: 'row' }, btn('Back to the default inputs', () => { P.fin = {}; save(); }, 'sm ghost')));
@@ -15015,7 +15452,9 @@ const Tabs = (() => {
     return h('div', { class: 'tbl-wrap', style: { overflowX: 'auto' } }, h('table', { class: 'tbl fin-tbl', 'aria-label': 'Financial model by year' },
       h('thead', null, h('tr', null, h('th', null, `${F.o.currency} million`), ...A.map(Y => h('th', { class: 'r' }, String(Y.y))), h('th', { class: 'r' }, 'Total'))),
       h('tbody', null, t('rom', 'Coal mined (Mt)'), t('product', 'Coal sold (Mt)'), r('rev', 'Revenue'), r('logi', 'Logistics', true), r('mining', 'Mining', true), r('process', 'Processing', true), r('over', 'Overheads', true), r('mkt', 'Marketing', true),
-        r('ebitda', 'EBITDA'), r('royalty', 'Royalty', true), r('tax', 'Tax', true), r('capex', 'Capital', true), r('dwc', 'Working capital', true), r('fcf', 'Free cash flow'))));
+        r('ebitda', 'EBITDA'), r('royalty', 'Royalty', true), r('tax', 'Tax', true), r('capex', 'Capital', true), r('dwc', 'Working capital', true), r('fcf', 'Free cash flow'),
+        h('tr', null, h('td', { colspan: A.length + 2, style: { fontWeight: 600, paddingTop: '8px' } }, 'Profit and loss')),
+        r('depr', 'Depreciation', true), r('pbt', 'Profit / (loss) before tax'), r('np', 'Net profit / (loss)'))));
   }
 
   // =============== RECON ===============
@@ -15252,6 +15691,9 @@ const Tabs = (() => {
         h('div', { class: 'kpis' }, tiles),
         held.length ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, 'Held to the target: ' + held.map(A => `${A.name} on ${U.fmtNum(A.tgtDays, 0)} working days`).join(', ') + '.') : null,
         busy.length ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, 'Waited for the teams: ' + busy.map(A => `${A.name} on ${U.fmtNum(A.teamDays, 0)} working days`).join(', ') + '.') : null,
+        res.rain ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `The waste was derated for the rain: ${U.MONTHS.map((mn, i) => (res.rain.pct[i] >= 0.05 ? `${mn} ${U.fmtNum(res.rain.pct[i], 1)}%` : null)).filter(Boolean).join(', ')} (Production tab).`) : null,
+        res.minWaste ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `Minimum waste ${U.fmtNum(res.minWaste.min, 0)} ${res.minWaste.unit} in an average month: ` + (res.minWaste.short.length ? `not met in ${res.minWaste.short.length} month${res.minWaste.short.length === 1 ? '' : 's'} (${res.minWaste.short.slice(0, 6).map(q => `${q.label}: ${U.fmtNum(q.used, 0)} of ${U.fmtNum(q.bud, 0)}`).join(', ')}${res.minWaste.short.length > 6 ? ', …' : ''}); the teams, a dependency, a void or a dump held the waste back.` : 'met in every month while there was waste to move.')) : null,
+        res.steadyWaste ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `The waste was smoothed to ${U.fmtNum(res.steadyWaste.rate, 0)} bcm in an average month${res.steadyWaste.auto ? ' (the average of the schedule)' : ''}; the exposed coal ran short, so the waste moved faster, on ${U.fmtNum(res.steadyWaste.over, 0)} of ${U.fmtNum(res.steadyWaste.days, 0)} working days${res.steadyWaste.over > res.steadyWaste.days / 4 ? ' (a dependency in whole strips, or little exposed coal kept ahead, keeps the waste from getting ahead: see the Production tab)' : ''}.`) : null,
         res.wasteFollows ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `The waste followed the coal, keeping ${U.fmtNum(res.wasteFollows.months, res.wasteFollows.months % 1 ? 1 : 0)} month${res.wasteFollows.months === 1 ? '' : 's'} of coal exposed ahead.` + (res.acts.some(A => A.wfDays > 0) ? ' Held to what the coal needed: ' + res.acts.filter(A => A.wfDays > 0).map(A => `${A.name} on ${U.fmtNum(A.wfDays, 0)} working days`).join(', ') + '.' : '')) : null,
         hint(`${G.coal || G.waste ? `The targets and the teams are set in the Production tab. ${ran ? 'This run mined no more than the target of each month.' : G.limit ? 'Run the simulation again to schedule to them.' : 'The targets are only compared with the schedule.'} The charts below show the target as a line; the Excel monthly summary lists it against every month.` : 'Type a coal and a waste target for an average month in the Production tab to schedule to them.'} Teams used: the loose m³ moved in a month (mining, ramps and rehandling) ÷ what one team moves in that month.`)));
     }
@@ -15324,6 +15766,39 @@ const Tabs = (() => {
           hint(`Coal the schedule still has to mine. Exposed: the waste above it has been stripped; covered: still under waste. Months of production at ${iv.C.rateFrom === 'target' ? 'the monthly coal target' : `the schedule’s average of ${U.fmtBig(iv.C.perMonth, 't')} a month`}. The Excel schedule has the closing inventory of every month (“Coal Inventory” sheet); the report gives it block by block on any day.${iv.C.rom.some(r => r.tracked) ? '' : ' Give the ROM tip a plant feed rate (Dumps tab) to keep its stockpile in the inventory too.'}`)));
         requestAnimationFrame(() => Charts.inventory(ch, IV, P));
       } }
+    /* The total waste (bcm: every activity that is not coal, the ramps and the highwall batters), the coal mined as ADC
+       tons (the coal t × the Reserve tab's factor of its block and seam: losses, contamination, moisture; as received
+       without ADC settings) and the closing coal inventory (exposed, t in situ, at the end of the month), month by month */
+    { const iso = P.startDate, mk = d => { const t = U.dayDate(iso, d); return t.getUTCFullYear() * 12 + t.getUTCMonth(); }, k0 = mk(0), nM = mk(res.nDays - 1) - k0 + 1;
+      const waste = new Float64Array(nM), coal = new Float64Array(nM), QB = Tons.basis(P), labels = [];
+      for (const A of res.acts) if (A.type !== 'coal') for (let d = 0; d < res.nDays; d++) waste[mk(d) - k0] += A.bcm[d];
+      for (let d = 0; d < res.nDays; d++) waste[mk(d) - k0] += (res.rampDaily ? res.rampDaily[d] : 0) + (res.batterDaily ? res.batterDaily[d] : 0);
+      if (QB.on) { for (const r of res.records) { const A = res.acts[r.a]; if (A.type === 'coal' && r.t > 0) coal[mk(r.d) - k0] += r.t * QB.factor(r.b, A.layer); } }
+      else for (const A of res.acts) if (A.type === 'coal') for (let d = 0; d < res.nDays; d++) coal[mk(d) - k0] += A.t[d] * (A.arF || 1);
+      for (let m = 0; m < nM; m++) { const k = k0 + m; labels.push(`${U.MONTHS[k % 12]}/${Math.floor(k / 12)}`); }
+      const IVm = App.invMonths(), inv = IVm && IVm.rows.length === nM ? Float64Array.from(IVm.rows, r => r.tot.closing / 1000) : null;
+      const series = [{ name: 'Total waste (bcm)', color: '#b07a3b', v: waste.map(v => v / 1000), unit: 'bcm' }, { name: QB.on ? 'Coal mined, ADC (t)' : 'Coal mined, as received (t)', color: '#3c7fb0', v: coal.map(v => v / 1000), unit: 't' }]
+        .concat(inv ? [{ name: 'Closing coal inventory (t)', color: '#d64550', v: inv, unit: 't' }] : []);
+      const ch = h('div', { class: 'chart-box' });
+      body.append(sec('Waste, coal and inventory', h('span', { class: 'chip' }, 'a month'), ch,
+        hint(`Month by month, in thousands: the total waste moved (bcm: the waste activities, the ramps and the highwall batters), the coal mined ${QB.on ? 'as air dry contaminated (ADC) tons (the losses, contamination and moisture of the Reserve tab)' : 'as received (after the losses; set the contamination and moisture in the Reserve tab for ADC tons)'}${inv ? ' and the closing coal inventory: the coal exposed at the end of the month, still to be mined (t in situ)' : ''}. Point at a month for its figures.`)));
+      requestAnimationFrame(() => Charts.lines(ch, labels, series, 'thousand'));
+    }
+    // the ROM stockpile with extra coal: what went onto it, what it made up, what it held at the end of each month
+    if (res.romStock) {
+      const RS = res.romStock, iso = P.startDate, mk = d => { const t = U.dayDate(iso, d); return t.getUTCFullYear() * 12 + t.getUTCMonth(); }, k0 = mk(0), nM = mk(res.nDays - 1) - k0 + 1;
+      const closing = new Float64Array(nM), added = new Float64Array(nM), rec = new Float64Array(nM), labels = [], by = new Map(RS.months.map(q => [q.key, q]));
+      let last = 0;
+      for (let m = 0; m < nM; m++) { const k = k0 + m, q = by.get(k); labels.push(`${U.MONTHS[k % 12]}/${Math.floor(k / 12)}`); if (q) { added[m] = q.added / 1000; rec[m] = q.reclaimed / 1000; last = q.closing; } closing[m] = last / 1000; }
+      const all = RS.mode === 'all', peak = all ? { v: RS.peak, label: U.fmtDay(iso, RS.peakDay) } : RS.months.reduce((a, q) => (q.closing + q.reclaimed > a.v ? { v: q.closing + q.reclaimed, label: q.label } : a), { v: 0, label: '' });
+      const ch = h('div', { class: 'chart-box' });
+      body.append(sec('ROM stockpile', h('span', { class: 'chip' }, RS.unit), h('div', { class: 'kpis' },
+        kp(all ? 'Coal mined onto it' : 'Coal mined over the target', U.fmtBig(RS.added, 't')), kp(all ? (RS.by === 'sale' ? 'Sold off it' : 'Taken by the plant') : 'Made up months below the target', all && !(RS.feed > 0) ? 'nothing set' : U.fmtBig(RS.reclaimed, 't')),
+        kp('The most it held', peak.v > 0 ? `${U.fmtBig(peak.v, 't')} · ${peak.label}` : '–'), kp('Left at the end of mining', U.fmtBig(RS.end, 't')),
+        all ? kp(RS.by === 'sale' ? 'Sales' : 'Plant feed', RS.feed > 0 ? `${U.fmtBig(RS.feed, 't')} a ${RS.by === 'sale' ? 'day' : 'working day'}${RS.from > 0 ? ` from ${U.fmtDay(iso, RS.from)}` : ''}` : 'none (Production tab)') : kp('Months it made up', String(RS.months.filter(q => q.reclaimed > 1).length))), ch,
+        all ? hint(`No monthly coal target is set, so all the coal mined goes onto the ROM stockpile, as ${RS.unit === 't ADC' ? 'air dry contaminated (ADC) tons: the losses, contamination and moisture of the Reserve tab' : 'tons as received (set the contamination and moisture in the Reserve tab for ADC tons)'}${RS.open > 0 ? `, from an opening stock of ${U.fmtBig(RS.open, 't')}` : ''}. ${RS.feed > 0 ? `${RS.by === 'sale' ? `${U.fmtBig(RS.feed, 't')} of ADC coal is sold off it every day` : `The plant takes ${U.fmtBig(RS.feed, 't')} off it every working day`} while there is coal${RS.ramp ? `, ramping up over ${RS.ramp} month${RS.ramp === 1 ? '' : 's'}` : ''}${RS.from > 0 ? `, from ${U.fmtDay(iso, RS.from)}${RS.after ? ` (${U.fmtNum(RS.after, RS.after % 1 ? 1 : 0)} months after the first coal; until then the stockpile only grows)` : ''}` : ''} (${RS.own ? 'Production tab' : 'the plant feed of the ROM stockpile, Dumps tab'}); the financial model sells ${RS.by === 'sale' ? 'those ADC tons, unwashed' : 'the ADC tons the plant takes'}, and what is left when mining ends then.` : 'Nothing takes coal off it (no plant feed or sales set in the Production tab or the Dumps tab), so it only grows; the financial model sells it all when mining ends. Set a plant feed or sales to draw it down.'} Type a monthly coal target in the Production tab to mine to a target instead.`) : hint(`The coal mined beyond the coal target to free waste standing idle under a coal seam goes onto the ROM stockpile (added); a month whose coal from the pit is below the target is made up from it (reclaimed); closing: what it holds at the end of the month, ${RS.unit}${RS.max ? `, at most ${U.fmtNum(RS.max, 0)} t` : ''}. What is left when mining ends is sold then. The financial model sells the target and the stockpile.`)));
+      requestAnimationFrame(() => Charts.lines(ch, labels, [{ name: 'ROM stockpile, closing (t)', color: '#c9a86a', v: closing, unit: 't' }, { name: all ? 'Added: coal mined (t)' : 'Added: coal over the target (t)', color: '#3c7fb0', v: added, unit: 't' }].concat(!all || RS.feed > 0 ? [{ name: all ? (RS.by === 'sale' ? 'Sold (t)' : 'Taken by the plant (t)') : 'Reclaimed to the target (t)', color: '#d64550', v: rec, unit: 't' }] : []), 'thousand t'));
+    }
     // the rehandling jobs (the final landform of the run is in the Rehab tab)
     if (res.rehandles && res.rehandles.length) {
       const trs = res.rehandles.map(J => h('tr', null, h('td', null, h('span', { class: 'sw', style: { background: J.color, display: 'inline-block', width: '10px', height: '10px', marginRight: '6px', verticalAlign: '-1px' } }), J.name),
@@ -15525,6 +16000,46 @@ const Charts = (() => {
     cv.addEventListener('pointerleave', () => { draw(null); UI.tip(null); });
   }
 
+  /* Lines over the months, on one axis: labels (a name for each month) and series [{name, color, v (thousands, one a
+     month; NaN: no value), unit}]. The tip gives each series' value of the month under the pointer, in full. */
+  function lines(container, labels, series, yTitle) {
+    const nM = labels.length;
+    if (!nM || !series.length) { container.append(h('div', { class: 'hint' }, 'Nothing to show.')); return; }
+    const H = 200, { cv, ctx, w } = setup(container, H);
+    legend(container, series.map(s2 => [s2.name, s2.color, true]));
+    let max = 0; for (const s2 of series) for (const v of s2.v) if (v > max) max = v;
+    const step = niceStep(max || 1), top = Math.ceil((max || 1) / step) * step;
+    const L = 44, R = 8, T = 16, B = 20, pw = w - L - R, ph = H - T - B, y = v => T + ph - (v / top) * ph;
+    const band = pw / nM, xOf = m => L + band * (m + 0.5);
+    const draw = hover => {
+      ctx.clearRect(0, 0, w, H);
+      ctx.font = `10.5px ${css('--font-mono') || 'monospace'}`; ctx.fillStyle = css('--muted'); ctx.strokeStyle = css('--grid') || '#e1e0d9'; ctx.lineWidth = 1;
+      ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+      for (let v = 0; v <= top + 1e-9; v += step) { const yy = Math.round(y(v)) + 0.5; ctx.beginPath(); ctx.moveTo(L, yy); ctx.lineTo(w - R, yy); ctx.stroke(); ctx.fillText(U.fmtNum(v, step < 1 ? 1 : 0), L - 5, yy); }
+      if (yTitle) { ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(yTitle, 2, 0); }
+      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      const every = Math.max(1, Math.ceil(64 / band));
+      for (let m = 0; m < nM; m += every) ctx.fillText(labels[m], xOf(m), H - B + 5);
+      if (hover != null) { ctx.strokeStyle = css('--axis') || '#c3c2b7'; ctx.beginPath(); ctx.moveTo(Math.round(xOf(hover)) + 0.5, T); ctx.lineTo(Math.round(xOf(hover)) + 0.5, T + ph); ctx.stroke(); }
+      for (const s2 of series) {
+        ctx.strokeStyle = s2.color; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.beginPath();
+        let on = false;
+        for (let m = 0; m < nM; m++) { const v = s2.v[m]; if (!(v === v)) { on = false; continue; } const X = xOf(m), Y = y(v); if (on) ctx.lineTo(X, Y); else { ctx.moveTo(X, Y); on = true; } }
+        ctx.stroke();
+        if (hover != null && s2.v[hover] === s2.v[hover]) { ctx.fillStyle = s2.color; ctx.beginPath(); ctx.arc(xOf(hover), y(s2.v[hover]), 3.5, 0, Math.PI * 2); ctx.fill(); }
+      }
+      ctx.lineWidth = 1; ctx.strokeStyle = css('--axis') || '#c3c2b7'; ctx.beginPath(); ctx.moveTo(L, Math.round(y(0)) + 0.5); ctx.lineTo(w - R, Math.round(y(0)) + 0.5); ctx.stroke();
+    };
+    draw(null);
+    cv.addEventListener('pointermove', e => {
+      const r = cv.getBoundingClientRect(), m = Math.floor((e.clientX - r.left - L) / band);
+      if (m < 0 || m >= nM) { draw(null); UI.tip(null); return; }
+      draw(m);
+      UI.tip(e.clientX, e.clientY - 20 - 18 * series.length, `<b>${U.esc(labels[m])}</b><br>` + series.map(s2 => `${U.esc(s2.name)}: ${s2.v[m] === s2.v[m] ? `${U.fmtNum(s2.v[m] * 1000, 0)} ${s2.unit}` : '–'}`).join('<br>'));
+    });
+    cv.addEventListener('pointerleave', () => { draw(null); UI.tip(null); });
+  }
+
   /* The closing coal inventory at each month end (Inventory.months): exposed coal by seam, stacked (kt). */
   function inventory(container, IV, P) {
     const rows = IV.rows, nM = rows.length;
@@ -15698,7 +16213,7 @@ const Charts = (() => {
     });
     cv.addEventListener('pointerleave', () => { draw(null); UI.tip(null); });
   }
-  return { monthly, inventory, profile, water, cash };
+  return { monthly, lines, inventory, profile, water, cash };
 })();
 
 /* ===== Slicing: controls for the 3D cut and the 2D cross-section drawing ===== */
@@ -16341,15 +16856,16 @@ const Measure = (() => {
    Kept in this browser (localStorage), for every project. ===== */
 const Layout = (() => {
   const KEY = 'rollover.layout';
-  const DEF = { side: 372, insp: 290, tl: 0, sp: 250, legend: true, secLegend: true, gantt: true, acc: true };
+  const DEF = { side: 372, insp: 290, tl: 0, sp: 250, legend: false, secLegend: false, gantt: false, acc: false }; // (the legends start off)
+  const V = 2, LEG = ['legend', 'secLegend', 'gantt', 'acc']; // (version 2: the legends were on by default before, so a choice kept from then is dropped once)
   // limits in pixels; tl 0 = the timeline takes the height it needs
   const LIM = { side: [240, 900], insp: [220, 700], tl: [96, 900], sp: [130, 900] };
   const S = Object.assign({}, DEF);
   const $ = id => document.getElementById(id);
   const narrow = () => window.matchMedia('(max-width: 820px)').matches;
 
-  function load() { try { const o = JSON.parse(localStorage.getItem(KEY) || '{}'); for (const k of Object.keys(DEF)) if (typeof o[k] === typeof DEF[k]) S[k] = o[k]; } catch (e) {} }
-  function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
+  function load() { try { const o = JSON.parse(localStorage.getItem(KEY) || '{}'); for (const k of Object.keys(DEF)) if (typeof o[k] === typeof DEF[k] && (o.v === V || !LEG.includes(k))) S[k] = o[k]; } catch (e) {} }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(Object.assign({ v: V }, S))); } catch (e) {} }
   // the largest a panel may be in the window as it is now, so that the 3D view keeps some room
   function maxOf(k) {
     const W = window.innerWidth, H = window.innerHeight;
@@ -17269,13 +17785,13 @@ const Report = (() => {
     const head = ['Rank', 'Block'].concat(pitOf ? ['Pit'] : [], R.boundary ? ['In reserve'] : [], [`Coal t (${Margin.tonsWord(R.M)})`, 'Waste bcm', 'Strip ratio (bcm/t)', 'Strip ratio rank', 'Lowest seam mined', 'Depth to its floor (m)', `Blended ${R.qBasis} CV (MJ/kg)`, `Blended ${R.qBasis} ASH (%)`, `Blended ${R.qBasis} TS (%)`],
       lay.map(q => `${q.name} ${q.coal ? 't' : 'bcm'}`),
       R.seams.flatMap(s => (M.byCV ? [`${s.name} CV (MJ/kg)`] : []).concat(s.ashCol ? [`${s.name} ASH (%)`] : [], s.tsCol ? [`${s.name} TS (%)`] : [], M.plant ? [`${s.name} yield`] : [], M.revBy === 'seam' ? [`${s.name} revenue (${cur})`] : [])),
-      [`Revenue (${cur})`, `Waste mining (${cur})`, `Coal mining (${cur})`], M.plant ? [`Processing (${cur})`] : [], [`Total cost (${cur})`, `Revenue (${cur}/t)`, `Cost (${cur}/t)`, `Margin (${cur}/t)`]);
+      [`Revenue (${cur})`, `Waste mining (${cur})`, `Coal mining (${cur})`], M.plant ? [`Processing (${cur})`] : [], R.fin ? [`Rehabilitation (${cur})`, `Overheads and sustaining (${cur})`] : [], [`Total cost (${cur})`, `Revenue (${cur}/t)`, `Cost (${cur}/t)`, `Margin (${cur}/t)`]);
     const rowOf = r => [r.rank || null, r.id].concat(pitOf ? [pitOf[r.b] >= 0 ? pits[pitOf[r.b]].name : Model.REST] : [], R.boundary ? [r.inside ? 'Yes' : 'No'] : [], [r0(r.coalT), r0(r.waste), r2(r.sr), r.srRank || null, r.dep ? r.dep.seam : null, r.dep ? r2(r.dep.depth) : null, r2(r.cv), r2(r.ash), r2(r.ts)],
       lay.map(q => r0(q.coal ? r.byLayer[q.l].t : r.byLayer[q.l].v)),
       r.bySeam.flatMap((q, i) => (M.byCV ? [q.t > 0 ? r2(q.cv) : null] : []).concat(R.seams[i].ashCol ? [q.t > 0 && q.ash != null ? r2(q.ash) : null] : [], R.seams[i].tsCol ? [q.t > 0 && q.ts != null ? r2(q.ts) : null] : [], M.plant ? [q.t > 0 ? r2(q.y) : null] : [], M.revBy === 'seam' ? [q.t > 0 ? r0(q.rev) : null] : [])),
-      [r0(r.rev), r0(r.costW), r0(r.costC)], M.plant ? [r0(r.plant)] : [], [r0(r.cost), r.coalT > 0 ? r2(r.rev / r.coalT) : null, r.coalT > 0 ? r2(r.cost / r.coalT) : null, r2(r.margin)]);
+      [r0(r.rev), r0(r.costW), r0(r.costC)], M.plant ? [r0(r.plant)] : [], R.fin ? [r0(r.rehab), r0(r.over)] : [], [r0(r.cost), r.coalT > 0 ? r2(r.rev / r.coalT) : null, r.coalT > 0 ? r2(r.cost / r.coalT) : null, r2(r.margin)]);
     const aoa = [head].concat(R.ranked.map(rowOf), R.rows.filter(r => !(r.margin === r.margin)).map(rowOf));
-    const f = [M.revBy === 'seam' ? `Σ seam t × seam price${M.byCV ? ' × seam CV' : ''}` : `coal t × price${M.byCV ? ' × blended CV' : ''}`, '− waste bcm × waste cost', '− coal t × coal mining cost'].concat(M.plant ? ['− coal t × plant cost × yield'] : []);
+    const f = Margin.formula(M, R.fin);
     aoa.push([], ['Volumes and tons', 'each layer of each block from the 3D model, as the schedule mines it (seam cut-off, depth limits and keep-out zones taken off); tons = bcm × the density of the layer; the attribute file gives only the qualities'],
       ['Blended CV', (R.qBasis === 'ADC' ? 'on the air-dry contaminated basis: the ADC CV of the seams counted as coal (mixed with the contamination’s), weighted by their ADC tons; the coal is sold as ADC tons' : 'raw: the CV of the seams counted as coal, weighted by their tons') + (lay.some(q => P.layers[q.l].type === 'coal' && !q.coal) ? `; counted as waste: ${lay.filter(q => P.layers[q.l].type === 'coal' && !q.coal).map(q => q.name).join(', ')}` : '')],
       ['Blended ASH and TS', `the same, over the seams counted as coal that have the column (reported, not priced); all the blocks: ASH ${R.stats.ash.avg === R.stats.ash.avg ? R.stats.ash.avg.toFixed(1) + '%' : 'none'}, TS ${R.stats.ts.avg === R.stats.ts.avg ? R.stats.ts.avg.toFixed(2) + '%' : 'none'}`],
@@ -17283,8 +17799,8 @@ const Report = (() => {
       ['Block margin', `(${f.join(' ')}) ÷ coal t; rank 1 is the highest; blocks without coal are not ranked`],
       ['Depth to its floor', `from the ground (the original topography) down to the floor of the lowest seam mined in the block, on average over the block` + (R.stats.depth.n ? `; ${R.stats.depth.lo.toFixed(1)} to ${R.stats.depth.hi.toFixed(1)} m, ${R.stats.depth.avg.toFixed(1)} m on average` : '')],
       ['Revenue', M.revBy === 'seam' ? `seam by seam in each block: each seam's tons × its price${M.byCV ? ' × its CV' : ''}; ` + R.seams.map(s => `${s.name} at ${+((M.seamPrice || {})[s.id] != null && (M.seamPrice || {})[s.id] !== '' ? M.seamPrice[s.id] : M.price) || 0}`).join(', ') : `on the blended CV of each block: coal t × price${M.byCV ? ' × blended CV' : ''}`],
-      [`Waste mining cost (${cur}/bcm)`, +M.wasteCost || 0], [`Coal mining cost (${cur}/t)`, +M.coalCost || 0], [M.byCV ? `Coal price (${cur}/t per MJ/kg)` : `Coal price (${cur}/t)`, +M.price || 0],
-      ...(M.plant ? [[`Plant cost (${cur}/t)`, +M.plantCost || 0]] : []), ['Coal tons', M.basis === 'ar' ? 'as received (after the losses)' : M.basis === 'insitu' ? 'in situ' : 'air dry contaminated (losses, contamination, moisture; Reserve tab)'],
+      ...(R.fin ? [['Costs and price', 'from the Finance tab (its money, before escalation)'], ...Margin.finLines(P, R)] : [[`Waste mining cost (${cur}/bcm)`, +M.wasteCost || 0], [`Coal mining cost (${cur}/t)`, +M.coalCost || 0], [M.byCV ? `Coal price (${cur}/t per MJ/kg)` : `Coal price (${cur}/t)`, +M.price || 0],
+      ...(M.plant ? [[`Plant cost (${cur}/t)`, +M.plantCost || 0]] : [])]), ['Coal tons', M.basis === 'ar' ? 'as received (after the losses)' : M.basis === 'insitu' ? 'in situ' : 'air dry contaminated (losses, contamination, moisture; Reserve tab)'],
       ...R.seams.flatMap(s => (M.byCV ? [[`CV — ${s.name}`, s.cvCol ? `${s.cvCol} (average ${s.cvAvg.toFixed(2)})` : 'none']] : []).concat(
         [[`ASH — ${s.name}`, s.ashCol ? `${s.ashCol} (average ${s.ashAvg === s.ashAvg ? s.ashAvg.toFixed(1) + '%' : '–'})` : 'none']], [[`TS — ${s.name}`, s.tsCol ? `${s.tsCol} (average ${s.tsAvg === s.tsAvg ? s.tsAvg.toFixed(2) + '%' : '–'})` : 'none']], M.plant ? [[`Yield — ${s.name}`, s.yCol ? `${s.yCol}${s.yPct ? ' (%, as a fraction here)' : ''} (average ${(s.yAvg * 100).toFixed(1)}%)` : 'none']] : [])),
       ['Blocks', `${R.stats.n} ranked: ${R.stats.pos} positive (${r0(R.stats.tPos)} t), ${R.stats.neg} negative (${r0(R.stats.tNeg)} t)${R.stats.none ? `; ${R.stats.none} without coal` : ''}`],
@@ -17327,7 +17843,7 @@ const Report = (() => {
     aoa.push(['Phase', '', null, ...Array.from({ length: N }, (_, t) => (t < F.np ? 'before mining' : t < F.np + F.nM ? 'mining' : 'closure'))]);
     row('Days in the month', 'days', 'days');
     title('PRODUCTION'); row('Coal mined (as received)', 't', 'rom'); if (o.wash) { row('Plant feed', 't', 'feed'); row('Product', 't', 'product'); row('Discard', 't', 'discard'); } else row('Coal sold (as mined)', 't', 'product');
-    row('Exported', 't', 'expT'); row('Sold at home', 't', 'domT'); if (o.byCV) row('CV of the coal sold', 'MJ/kg', 'cv', { dp: true, total: cvAll });
+    row('Exported', 't', 'expT'); row('Sold at home', 't', 'domT'); if (o.byCV || o.domBasis === 'mj') row('CV of the coal sold', 'MJ/kg', 'cv', { dp: true, total: cvAll });
     row('Topsoil', 'bcm', 'topsoil'); row('Waste hauled', 'bcm', 'waste'); row('Waste dozed', 'bcm', 'dozed'); row('Drilled and blasted', 'bcm', 'blastB'); row('Waste drilled and blasted', 'bcm', 'blastW'); row('Coal drilled and blasted', 'bcm', 'blastC'); row('Drill metres', 'm', 'drillM'); row('Explosives', 'kg', 'explKg'); row('Presplit', 'm²', 'presplitM2'); row('Rehandled', 'm³ loose', 'reh'); row('Rehabilitated', 'ha', 'rehabHa', { dp: true }); if (F.hydro) row('Water pumped from the pit', 'm³', 'water');
     gap(); title(`CASH FLOW (${cur})`);
     row('Revenue, export', cur, 'revExp'); row('Revenue, domestic', cur, 'revDom'); row('Revenue', cur, 'rev');
@@ -17340,9 +17856,14 @@ const Report = (() => {
     row('Taxable income (of the year)', cur, null, { f: t => (last[t] ? F.annual[yOf[t]].taxable : null) }); row('Company tax', cur, 'tax', { sign: -1 });
     row('Initial capital', cur, 'capInit', { sign: -1 }); row('Sustaining capital', cur, 'capSust', { sign: -1 }); row('Closure less salvage', cur, 'capClose', { sign: -1 }); row('Working capital', cur, 'dwc', { sign: -1 });
     row('Free cash flow', cur, 'fcf'); row('Cumulative free cash flow', cur, 'cum', { total: null }); row('Present value', cur, 'pv');
+    // the profit and loss: depreciation by units of production (the capital spent so far × the coal mined ÷ the coal still to mine)
+    gap(); title(`PROFIT AND LOSS (${cur})`);
+    row('Revenue', cur, 'rev'); row('Operating costs (mining, processing, overheads, logistics, marketing)', cur, 'opex', { sign: -1 }); row('EBITDA', cur, 'ebitda');
+    row('Mineral royalty', cur, 'royalty', { sign: -1 }); row('Depreciation (units of production) and closure', cur, 'depr', { sign: -1 });
+    row('Profit / (loss) before tax', cur, 'pbt'); row('Company tax', cur, 'tax', { sign: -1 }); row('Net profit / (loss) after tax', cur, 'np'); row('Cumulative net profit / (loss)', cur, 'npCum', { total: null });
     gap(); title('MEASURES');
     aoa.push([`NPV at ${o.disc}% a year (real), to ${F.label(0)}`, cur, m0(K.npv)], ['IRR', '% a year', K.irr === K.irr ? r2(K.irr * 100) : null], ['Payback', 'months of mining', K.payback], ['Peak funding', cur, m0(K.peak)],
-      ['Revenue a ton sold', `${cur}/t`, r2(K.price)], ['Cash cost a ton sold (before the royalty)', `${cur}/t`, r2(K.cashCost)], ['FOB cost a ton exported', `${cur}/t`, r2(K.fobCost)], ['Mining, processing and overheads a ton mined', `${cur}/t`, r2(K.cost)], ['EBITDA a ton sold', `${cur}/t`, r2(K.margin)]);
+      ['Net profit / (loss) after tax, life of mine', cur, m0(K.np)], ['Revenue a ton sold', `${cur}/t`, r2(K.price)], ['Cash cost a ton sold (before the royalty)', `${cur}/t`, r2(K.cashCost)], ['FOB cost a ton exported', `${cur}/t`, r2(K.fobCost)], ['Mining, processing and overheads a ton mined', `${cur}/t`, r2(K.cost)], ['EBITDA a ton sold', `${cur}/t`, r2(K.margin)]);
     gap(); title('INPUTS (Finance tab)'); aoa.push(['Currency', cur]);
     for (const G of Fin.GROUPS) for (const q of G.fields) { if (q.when && !q.when(o)) continue; const v = o[q.k]; aoa.push([`${G.title}: ${q.label}`, Fin.unitOf(q, cur) || (q.kind === 'chk' ? '' : ''), q.kind === 'chk' ? (v ? 'yes' : 'no') : q.kind === 'sel' ? (q.opts.find(x => x[0] === v) || [, v])[1] : v]); }
     aoa.push(['Product from', '', F.prodFrom === 'wash' ? 'the washability data (Geological Data tab)' : F.prodFrom === 'fixed' ? 'a fixed yield' : 'not washed: sold as mined']);
@@ -18207,6 +18728,44 @@ const LoM = (() => {
       for (let m = 0; m < nM; m++) set(C0 + m, r, close[m], `MAX(0,${mc(m)}${ro}+${mc(m)}${re}-${mc(m)}${rm})`, '#,##0');
       r++;
       named.close = rc; }
+    /* The ROM stockpile, in ADC tons (as received without ADC settings): all the coal mined goes onto it (added: the
+       seams' ADC tons), the coal sold comes off it. Without a coal target: what the plant takes or is sold (Production
+       tab), from the opening stock of the ROM tips, and what is left when mining ends in the last month; with a coal
+       target and extra coal: the coal mined less what went over the target plus what the stockpile made up (its target
+       tons × the month's ADC ÷ target tons); otherwise the coal is sold as it is mined. The whole mine only. */
+    if (!pitOnly) {
+      const RS = D.res.romStock, adc = D.QB.on, aRows = cRows.map(x => (adc ? x.aRow : x.arRow)).filter(Boolean), added = valsOf(aRows), sold = new Float64Array(nM), k0 = D.M.k0;
+      let open0 = 0;
+      if (RS && RS.mode === 'all') {
+        open0 = RS.open || 0;
+        for (const q of RS.months) { const m = q.key - k0; if (m >= 0 && m < nM) sold[m] += q.reclaimed; }
+        if (nM) sold[nM - 1] += RS.end;
+      } else if (RS) {
+        const tu = valsOf([RS.basis === 'insitu' ? named.coal : named.ar]), avg = M.sum(tu) > 0 ? M.sum(added) / M.sum(tu) : 1, f = m => (tu[m] > 0 ? added[m] / tu[m] : avg);
+        for (let m = 0; m < nM; m++) sold[m] = added[m];
+        for (const q of RS.months) { const m = q.key - k0; if (m >= 0 && m < nM) sold[m] -= (q.added - q.reclaimed) * f(m); }
+        if (nM) sold[nM - 1] += RS.end * f(nM - 1);
+        for (let m = 0; m < nM; m++) sold[m] = Math.max(0, sold[m]);
+      } else for (let m = 0; m < nM; m++) sold[m] = added[m];
+      const u = adc ? 'ADC t' : 'AR t', wd = adc ? 'ADC' : 'as received', ro = r + 1, ra = r + 2, rs = r + 3, rc = r + 4;
+      let st = open0;
+      set(0, r, u); set(1, r, `Opening ROM Stockpile (${wd} t)`);
+      for (let m = 0; m < nM; m++) { set(C0 + m, r, st, m ? `${mc(m - 1)}${rc}` : null, '#,##0'); st = st + added[m] - sold[m]; }
+      r++;
+      set(0, r, u); set(1, r, `Coal Added for the Month (${wd} t)`);
+      for (let m = 0; m < nM; m++) set(C0 + m, r, added[m], aRows.length ? aRows.map(x => `${mc(m)}${x}`).join('+') : null, '#,##0');
+      set(TC, r, M.sum(added), `SUM(${mc(0)}${ra}:${mc(nM - 1)}${ra})`, '#,##0');
+      r++;
+      set(0, r, u); set(1, r, `Coal Sold for the Month (${wd} t)`);
+      for (let m = 0; m < nM; m++) set(C0 + m, r, sold[m], null, '#,##0');
+      set(TC, r, M.sum(sold), `SUM(${mc(0)}${rs}:${mc(nM - 1)}${rs})`, '#,##0');
+      r++;
+      st = open0;
+      set(0, r, u); set(1, r, `Closing ROM Stockpile (${wd} t)`);
+      for (let m = 0; m < nM; m++) { st = st + added[m] - sold[m]; set(C0 + m, r, Math.abs(st) < 0.5 ? 0 : st, `${mc(m)}${ro}+${mc(m)}${ra}-${mc(m)}${rs}`, '#,##0'); }
+      r++;
+      named.romOpen = ro; named.romAdd = ra; named.romSold = rs; named.romClose = rc;
+    }
     // volume moved and the teams it takes
     named.bcm = sumRow('Total Volume (bcm, waste + coal)', 'bcm', byM(rows, q => q.bcm), m => `SUMIFS(${rg(SD, 'X', NS)},${rg(SD, 'B', NS)},${mc(m)}$${MR}${pitCrit(SD, NS)})`);
     named.looseMine = sumRow('Mining (m³ loose)', 'm³ loose', byM(rows, q => q.loose), m => `SUMIFS(${rg(SD, 'W', NS)},${rg(SD, 'B', NS)},${mc(m)}$${MR}${pitCrit(SD, NS)})`);
@@ -18497,7 +19056,7 @@ const App = {
   P: null, surf: null, ws: null, res: null, pb: null, day: -1, stale: false,
   selBlock: -1, actId: null, roadId: null, dumpId: null,
   tab: 'project', colorBy: 'status', colorAttr: '',
-  show: { outlines: true, resOut: true, labels: true, paths: true, roads: true, dumps: true, contours: false, ovl: true, keep: true, limits: true, pits: true, drains: true, fills: true },
+  show: { outlines: false, resOut: false, labels: false, paths: false, roads: false, dumps: false, contours: false, ovl: false, keep: false, limits: false, pits: false, drains: false, fills: false }, // (every layer starts off; turned on in the Layers menu)
   drainId: null, rhId: null, fillId: null, raiseId: null,
   limitId: null, LIMIT_COLOR: '#b9a2ff', RESERVE_COLOR: '#e040fb', OUT_COLOR: '#e34948', pitId: null,
   sat: { on: false, canvas: null, sig: '', attribution: '' },
