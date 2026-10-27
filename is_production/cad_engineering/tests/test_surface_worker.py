@@ -111,3 +111,23 @@ qx, qy = rng.uniform(X0 - 70, X0 + 70, 50000), rng.uniform(Y0 - 70, Y0 + 70, 500
 ref = ct.z_at(qx, qy)
 grid_z = ct.z_at(qx, qy, triangles=sw.GridLocator(ct.xyz, ct.tri)(qx, qy))
 ok(np.array_equal(np.isnan(ref), np.isnan(grid_z)) and np.nanmax(np.abs(ref - grid_z)) < 1e-9, "grid locator = trapezoid map on 50 000 points")
+
+# display tiles of a closed 3D mesh: coarse levels by 3D clustering (a height grid would interleave top and bottom)
+ang = np.linspace(0, 2 * np.pi, 241)[:-1]
+lat = np.linspace(-np.pi / 2, np.pi / 2, 121)
+sx = np.array([[math.cos(b) * math.cos(a), math.cos(b) * math.sin(a), math.sin(b)] for b in lat for a in ang]) * 50
+nb, na = len(lat), len(ang)
+st = []
+for i in range(nb - 1):
+	for j in range(na):
+		a, b, c, d = i * na + j, i * na + (j + 1) % na, (i + 1) * na + (j + 1) % na, (i + 1) * na + j
+		st += [[a, b, c], [a, c, d]]
+sph = sw.Tin(sx, np.array(st))
+sph.write(f"{WS}/sphere.tin")
+r = sw.tiles({"workspace": WS, "tin": f"{WS}/sphere.tin", "out_dir": f"{WS}/sphere_tiles"}, [])
+idx = json.load(open(r["index"]))
+coarse = [lv for t in idx["tiles"] for lv in t["levels"][1:]]
+ok(not idx["heightfield"] and idx["version"] == 2 and coarse, f"sphere tiles: heightfield {idx['heightfield']}, {len(coarse)} clustered levels")
+cp, ct_ = sw.cluster(sx, np.array(st), 10.0)
+rad = np.linalg.norm(cp, axis=1)
+ok(len(ct_) < len(st) and rad.min() > 40 and rad.max() <= 50 + 1e-9, f"clustered sphere stays a shell: {len(ct_)} of {len(st)} triangles, radius {rad.min():.1f}-{rad.max():.1f}")

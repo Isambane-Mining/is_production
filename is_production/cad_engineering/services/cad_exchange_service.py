@@ -205,7 +205,7 @@ def commit_import(name, options):
 		"block_conflict": "keep" if options.get("block_conflict") == "keep" else "rename",
 		"layers": "used" if options.get("layers") == "used" else "all",
 		# surfaces, points and meshes (non-DXF formats)
-		"points_as": options.get("points_as") if options.get("points_as") in ("points", "surface", "both") else None,
+		"points_as": options.get("points_as") if options.get("points_as") in ("points", "surface", "both", "cloud") else None,
 		"surface_type": options.get("surface_type") or "Survey Surface",
 		"columns": options.get("columns") or "",
 		"ground_only": bool(options.get("ground_only")),
@@ -213,6 +213,9 @@ def commit_import(name, options):
 		"max_edge": flt(options.get("max_edge")),
 		"as_mesh": bool(options.get("as_mesh")),
 		"layer": (options.get("layer") or "").strip()[:140] or None,
+		# IFC: one mesh per element / IFC class / storey; through the file's IfcMapConversion or not
+		"ifc_group": options.get("ifc_group") if options.get("ifc_group") in ("element", "class", "storey") else "element",
+		"ifc_georeference": bool(options.get("ifc_georeference", True)),
 	}
 	io.db_set({"processing_status": "Importing", "source_units": units, "unit_scale": scale, "axis_mapping": axes, "source_crs": source_crs, "options": json.dumps(clean)})
 	job = cad_job_service.start_job("Import", io.cad_model, None, {"io": io.name})
@@ -438,6 +441,8 @@ def run_export(job, parameters, workspace, log):
 	entities = []
 	missing_meshes = []
 	for e in content["entities"]:
+		if e["entity_type"] == "Point Cloud":
+			continue  # point clouds are exported as LAZ / LAS / XYZ (Point Cloud → Export)
 		row = {k: e.get(k) for k in ("entity_type", "geometry", "color", "line_type", "line_weight")}
 		row["layer"] = e.get("layer") or "0"
 		if e["entity_type"] == "Solid":

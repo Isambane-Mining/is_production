@@ -26,7 +26,9 @@ WORKER = "geometry_worker.py"  # Open CASCADE
 DXF_WORKER = "dxf_worker.py"  # ezdxf + pyproj
 SURFACE_WORKER = "surface_worker.py"  # NumPy + CDT: TINs and surface analysis
 MINING_WORKER = "mining_worker.py"  # haul roads and mining-block volumes (uses surface_worker.py)
-SCRIPTS = {WORKER, DXF_WORKER, SURFACE_WORKER, MINING_WORKER}
+CLOUD_WORKER = "cloud_worker.py"  # point clouds: import, editing, display tiles (uses surface_worker.py)
+IFC_WORKER = "ifc_worker.py"  # IFC with IfcOpenShell: inspect, import as meshes, export
+SCRIPTS = {WORKER, DXF_WORKER, SURFACE_WORKER, MINING_WORKER, CLOUD_WORKER, IFC_WORKER}
 HEALTH_TIMEOUT = 120
 
 

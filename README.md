@@ -302,6 +302,21 @@ It is safe to run again. Options:
 - `--skip-account` to keep an existing database account;
 - `--manage-server-plugins` for the one site that manages QGIS Server plugins.
 
+**Bench users with limited sudo.** Folders that already exist with the right owner, group and mode are skipped,
+so a re-run needs no sudo. For a first run without a password prompt, allow exactly the commands `--print-only`
+shows. sudoers matches every argument literally, so the user and site must be exact (`<bench user>`, `<site>`):
+
+```
+Cmnd_Alias <BENCH>_GIS = \
+    /usr/bin/install -d -o root -g www-data -m 0751 /var/lib/qgis-server/projects, \
+    /usr/bin/install -d -o <bench user> -g www-data -m 2750 /var/lib/qgis-server/projects/<site>
+<bench user> ALL=(root) NOPASSWD: <BENCH>_GIS
+```
+
+Without `root_password` in the bench config, the database step tries `sudo -n mariadb`, which never prompts. It
+then asks for the MariaDB administrator password, the same as `bench new-site`. Pass `--skip-account` if an
+administrator creates the account.
+
 To set it up by hand instead, see sections 2–3 and enter the values in **GIS Settings**, then click **Check
 Dependencies**.
 
@@ -849,7 +864,8 @@ sudo install -d -o root -g root -m 0755 /opt/cad-worker
 sudo python3 -m venv /opt/cad-worker/venv
 sudo /opt/cad-worker/venv/bin/pip install --upgrade pip
 sudo /opt/cad-worker/venv/bin/pip install "cadquery-ocp==7.9.3.1.1" "ezdxf==1.4.5" "pyproj>=3.7,<4" "numpy>=2.2,<3" "scipy>=1.15,<2" \
-    "PythonCDT==2.0.2" "matplotlib>=3.9,<4" "laspy==2.7.0" "lazrs==0.8.2"
+    "PythonCDT==2.0.2" "matplotlib>=3.9,<4" "laspy==2.7.0" "lazrs==0.8.2" \
+    "ifcopenshell==0.9.0.post1" "pye57==0.4.19"          # Phase 6: IFC (LGPL-3) and E57 (MIT, libE57Format BSL-1.0)
 
 # check: prints the OCCT self-test result (a boolean cut at survey coordinates)
 echo '{"command": "health"}' | /opt/cad-worker/venv/bin/python -I \
@@ -917,12 +933,15 @@ refer to B-Rep files by checksum, and revision records refer to their snapshot f
 | CSV / XYZ / TXT / PTS points (columns detected, or given as e.g. `id,y,x,z`) | import/export | Phase 3 ✅ |
 | STL (ASCII and binary), OBJ (triangles; polygons fanned) | import/export | Phase 3 ✅ |
 | LAS / LAZ point clouds (laspy + lazrs; ground class only, grid thinning) | import | Phase 3 ✅ |
+| LAS / LAZ / E57 point clouds as Point Cloud entities (every point, classes, intensity, colour; E57: every scan in its pose, pye57 / libE57Format) | import/export (also XYZ / CSV out) | Phase 6 ✅ |
+| IFC2X3 / IFC4 (IfcOpenShell): products as meshes per element (GlobalId, class, name, storey kept) / IFC class / storey, placed by the IfcMapConversion | import | Phase 6 ✅ |
+| IFC4: surfaces (IfcGeographicElement), meshes and solids (IfcBuildingElementProxy, tessellated), lines and polylines (IfcAnnotation); IfcProjectedCRS + IfcMapConversion at the model origin | export | Phase 6 ✅ |
 | STEP AP214 solids (OCCT) | import/export | Phase 3 ✅ |
 | DXF 3DFACE / MESH / polyface | import as surfaces or meshes; surfaces export as MESH (3DFACE for R12) | Phase 3 ✅ |
 | GeoJSON of the mining design (pit rings, roads, block outlines with their design data) | export | Phase 4 ✅ |
 | Mining blocks table (CSV: id, sequence, bench, material, volume, area, centroid, WKT outline) | export | Phase 4 ✅ |
 | Drill holes (CSV: pattern, hole id, row, collar and toe XYZ, length, inclination, dip, diameter, subdrill, burden, spacing) | export | Phase 4 ✅ |
-| IFC, DWG/DGN, E57 | conditional | later; only after interoperability testing |
+| DWG / DGN | — | not supported: no open-source converter is packaged for the server's OS (LibreDWG's DWG writing is experimental; the ODA converter is proprietary). DXF is the AutoCAD route — AutoCAD reads and writes it natively |
 
 No export is described as lossless unless round-trip tests prove it for the entities concerned.
 
@@ -1071,6 +1090,88 @@ change to the extrusion or a step rebuilds the solid with every step (Open CASCA
 refused with the reason). Pits, roads, block grids and drill patterns are parametric the same way: double-click one
 (or Mining → *Edit Design*) and its generator opens with the values it was made with; *Regenerate* replaces it from
 the source outline as it is now, as one undo step.
+
+#### Geological modelling (Phase 6)
+
+Mining → *Geology from Geo Planning* builds seam surfaces from a **Geo Project**:
+
+- **Model grids** (Geo Model Points): variables named `<code> - <description>` are grouped into seams by their code
+  (`S1USR` = seam S1U roof, `S1USF` floor, `S1UST` thickness, `S1URD` relative density, `S1UAS` ash, CV, volatiles, …;
+  the latest version of each). Each variable's points are triangulated with long outer edges trimmed at 2.5 × the
+  grid spacing, so a surface does not bridge gaps. A `Topo` variable becomes the topography.
+- **Drillholes** (Geo Drillhole): straight holes desurveyed from collar, azimuth and dip; a seam's roof is the
+  shallowest from-depth and its floor the deepest to-depth of its Geo Material Interval rows (optionally per ply);
+  qualities are the length-weighted Geo Quality Interval values over the seam, density from the intervals. Between
+  holes: linear (the intercepts triangulated — floor never above roof) or inverse distance (roof and thickness
+  gridded, floor = roof − thickness). Holes are drawn in 3D with their seam intercepts; the collars can make a
+  topography.
+- **Axes:** Geo data of south-orientated (Lo) projects is often stored easting/northing-style (x = −westing,
+  y = −southing). *Negate X and Y* maps it onto an EPSG:2053 model and is suggested when the model is
+  south-orientated and the data's y values are negative.
+
+Seam roofs and floors (and the topography) become *Coal Seam* / *Terrain Surface* entities on `GEOLOGY <seam>`
+layers; property surfaces (thickness, density, qualities — the value as Z) are stored with the record only. A
+**CAD Geology Model** record keeps the source, axes, method, per-seam totals (plan area, volume, mean / max
+thickness, tonnes, mean density, tonnage-weighted qualities) and the checks: floor below roof, seams not crossing
+(in order of elevation), seams below the topography. Re-running a project's geology supersedes its previous record
+and replaces its surfaces; double-click a seam surface to change and regenerate it.
+
+Mining → *Block Geology* puts the geology into the mining blocks: for each block and seam, in the block's own bench
+slab, the **exact** seam volume, the tonnes (∫ thickness × density, a default density where there is no density
+grid) and the **tonnage-weighted** qualities — the roof, floor, every property surface and the block outlines are
+overlaid in one constrained triangulation, so all are linear on each triangle and ∫t·q is integrated in closed form.
+The rest of the block is waste; a block is coal when the seams fill at least the chosen share of it (one coal material,
+or named after its main seam), and the report gives coal tonnes, waste and strip ratio by seam and bench. Each block's
+geology is shown in its Properties. Lab demos: DEMO-GEOLOGY-BNK (the Bankfontein Permit model grids) and
+DEMO-MINE-DESIGN (121 synthetic drillholes in "Demo CAD Mine (synthetic)").
+
+#### Pit-shell optimisation (Phase 6)
+
+Mining → *Pit Optimisation (nested shells)* finds the best pit for a range of prices, from a **CAD Geology Model**:
+
+- **Block model:** a regular grid of columns (block size) × benches (the standard's bench height and levels) from above
+  the ground (the geology's topography, or a chosen surface) down to below the lowest seam floor. Every block's in-situ
+  volume and coal tonnes (∫ thickness × density per seam; a default density where there is no density grid) are
+  integrated **exactly** over one composite of the ground, the seam surfaces and the grid lines.
+- **Value:** RF × price × recovery × t − processing × recovery × t − mining cost × volume (mining cost per bcm of all
+  material). Blocks outside a selected closed outline (a mining right) cannot be mined.
+- **Slope:** a block needs the blocks of the bench above within bench height / tan(overall slope) of it.
+- **Solution:** for every revenue factor, the closure of greatest value (Lerchs–Grossmann) as a minimum cut (Dinic
+  maximum flow; values scaled to integers, so tied or near-tied pits may differ in a few rand); the shells are kept
+  nested. Undiscounted — no schedule.
+
+The report gives, per revenue factor, blocks, coal tonnes, waste bcm, strip ratio and the value at RF 1 (the
+pit-by-pit graph). The chosen shell is drawn as a surface through the block columns and a pit-limit outline (layer
+PIT SHELL) — a starting outline for Generate Pit Benches; double-click it to draw another revenue factor. A **CAD Pit
+Optimisation** record keeps the block model, the economics, every shell and the method. Seams that are a split of
+another seam (S1A inside S1) are left out of the geology by default, so their coal is not counted twice; a negative
+modelled thickness (floor above roof) is taken as the seam being absent and reported as a warning. Lab demos:
+DEMO-GEOLOGY-RDP (the Roodepoort Permit grids, with topography) and DEMO-MINE-DESIGN; the economics are illustrative.
+
+#### Point clouds (Phase 6)
+
+A LAS / LAZ (or XYZ / CSV with x y z [intensity] [r g b]) file can be imported as a **Point Cloud** entity (File →
+Import, *Points become: a point cloud* — the default for LAS / LAZ): every point is kept, with its classification,
+intensity and colour, stored as content-addressed LAZ like the other geometry files. It is drawn as points, loaded by
+view (tiles with nested random levels: all points, 1 in 8, 1 in 64, within a budget of points on screen), coloured
+by elevation, ASPRS class, intensity, RGB or deviation (Point Cloud menu; Point Size sets the size and the deviation
+colour range).
+
+| Point Cloud menu | What it does |
+|---|---|
+| Crop | keeps the points inside (or outside) a selected closed outline and / or an elevation band |
+| Remove Noise | statistical outliers: a point whose mean distance to its *k* nearest neighbours is more than *n* standard deviations above the cloud's typical spacing (birds, dust, multipath) |
+| Decimate | one point per cube (the lowest — for terrain —, the highest, or the one nearest the centre), or a random share |
+| Classify Ground | progressive morphological filter (Zhang et al. 2003): the lowest point per cell, opened with growing windows; what stands out (plant, buildings, vegetation, equipment) is not ground. The largest window must be wider than the widest object to remove; non-ground points become *unclassified* (1), points far below the ground *low noise* (7) |
+| Set Class / Keep or Remove Classes | reclassify points in an outline, elevation band or class, or filter by class |
+| Surface from Point Cloud | a TIN from the chosen classes (ground by default), thinned to the lowest point per cell |
+| Compare with Surface | every point's vertical distance to a surface: % within the tolerance, above / below, mean, RMSE, percentiles and a histogram centred on zero; the cloud keeps the deviation (a LAZ extra dimension) and is coloured by it |
+| Export | LAZ, LAS, XYZ or CSV |
+
+Every edit is a *Point Cloud* job that writes a new LAZ; the cloud then points to it as one undoable change (the
+earlier files stay in storage and in revisions), and edits can follow one another before saving. Clouds are left out
+of DXF exports. Lab demo: DEMO-MINE-DESIGN has a simulated 1.37 M-point drone scan of the 2026-11-30 survey
+(stockpile, trucks, vegetation, birds), cleaned, classified, surfaced and compared with the survey.
 
 #### Mine planning integration (Phase 5)
 
@@ -1237,7 +1338,7 @@ is_production/cad_engineering/cad_worker/surface_worker.py <empty folder>`; brow
 | 3 — 3D and surfaces | CAD Surface, CAD Volume Calculation, TIN with breaklines/boundary/holes (from entities, GIS datasets, surfaces), repair/clip/smooth, checks, contours, intersections, profiles, cross-sections, slope/elevation analysis, exact cut/fill volumes, Booleans/revolve/loft/sweep, section lines and section view, LandXML/CSV/XYZ/STL/OBJ/LAS/LAZ/STEP exchange, view-driven surface tiles | ✅ |
 | 4 — Mining design | CAD Design Standard (versioned, frozen when Active), CAD Design Validation, pit bench generation (floor → crest, berms, geotechnical berms, stages/pushbacks, daylight, post-mining surface), haul roads (fitted curves, vertical alignment, superelevation, batters, cut/fill), mining blocks (bench slabs, exact volumes, subdivision, materials, sequencing, report), design validation recorded on revisions, drill-pattern layout (geometry only) with hole table, GeoJSON / block / hole CSV exports, 3D orbit navigation, object tool window (line weight, outline / filled / solid) with a draggable Fusion-style extrude | ✅ |
 | 5 — Integration | CAD Design Publication (approved revision → Geo Pit Layout, Mining Blocks, material stack and summaries), CAD sequence → Mining Schedule Selection, republishing with review flags, planning view (status / schedule period / % mined), CAD Survey Reconciliation (planned vs actual, beyond design, schedule to date), revision comparison with overlay, Mining Block ↔ CAD links | ✅ |
-| 6 — Advanced | ✅ parametric extrusions and regenerable pit / road / block / drill designs; fillet, chamfer, shell and tapered extrusions as an editable feature history; in-pit ramps, automatic pit stages with incremental volumes and pushback checks, road vertical curves — *next:* geological modelling from drillholes, pit-shell optimisation, point-cloud editing, more formats (IFC, E57) | in progress |
+| 6 — Advanced | parametric extrusions and regenerable pit / road / block / drill designs; fillet, chamfer, shell and tapered extrusions as an editable feature history; in-pit ramps, automatic pit stages with incremental volumes and pushback checks, road vertical curves; geological modelling from Geo model grids and drillholes (CAD Geology Model, seam checks, exact block geology: seam tonnes, tonnage-weighted qualities, coal/waste and strip ratio); 3D mesh display tiles; pit-shell optimisation (exact block model from the geology, nested Lerchs–Grossmann shells by minimum cut, CAD Pit Optimisation); point clouds (Point Cloud entities as LAZ, view-driven display, crop / noise / decimate / ground classification / classes, surface from cloud, cloud-to-surface comparison, LAZ / LAS / E57 / XYZ export); IFC import / export and E57 import / export (IfcOpenShell, pye57); DWG not supported (no open-source converter) | ✅ |
 
 **Permissions.** There are no CAD-specific roles. *Production Manager* administers settings, creates and edits
 models and **approves or rejects revisions**; *Production User* creates and edits models and submits revisions

@@ -1,0 +1,280 @@
+{
+ "doctype": "DocType",
+ "name": "CAD Pit Optimisation",
+ "module": "CAD Engineering",
+ "autoname": "format:CAD-OPT-{YYYY}-{#####}",
+ "naming_rule": "Expression",
+ "title_field": "title",
+ "engine": "InnoDB",
+ "description": "Nested pit shells from a regular block model valued with a CAD Geology Model (maximum closure per revenue factor). Written by the optimisation job; read-only.",
+ "creation": "2026-10-27 15:00:00.000000",
+ "modified": "2026-10-27 15:00:00.000000",
+ "modified_by": "Administrator",
+ "owner": "Administrator",
+ "fields": [
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Title",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "cad_model",
+   "fieldtype": "Link",
+   "label": "CAD Model",
+   "read_only": 1,
+   "options": "CAD Model",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "geology_model",
+   "fieldtype": "Link",
+   "label": "Geology Model",
+   "read_only": 1,
+   "options": "CAD Geology Model"
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "revision",
+   "fieldtype": "Link",
+   "label": "Revision",
+   "read_only": 1,
+   "options": "CAD Design Revision"
+  },
+  {
+   "fieldname": "processing_job",
+   "fieldtype": "Link",
+   "label": "Processing Job",
+   "read_only": 1,
+   "options": "CAD Processing Job"
+  },
+  {
+   "fieldname": "section_block_model",
+   "fieldtype": "Section Break",
+   "label": "Block model"
+  },
+  {
+   "fieldname": "cell_size",
+   "fieldtype": "Float",
+   "label": "Cell Size (m)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bench_height",
+   "fieldtype": "Float",
+   "label": "Bench Height (m)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "slope_angle",
+   "fieldtype": "Float",
+   "label": "Overall Slope (°)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_block",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "top_elevation",
+   "fieldtype": "Float",
+   "label": "Top Elevation",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bottom_elevation",
+   "fieldtype": "Float",
+   "label": "Bottom Elevation",
+   "read_only": 1
+  },
+  {
+   "fieldname": "blocks",
+   "fieldtype": "Int",
+   "label": "Blocks",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_economics",
+   "fieldtype": "Section Break",
+   "label": "Economics (at revenue factor 1)"
+  },
+  {
+   "fieldname": "price",
+   "fieldtype": "Currency",
+   "label": "Coal Price (per t)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "recovery",
+   "fieldtype": "Percent",
+   "label": "Mining Recovery",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_economics",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "mining_cost",
+   "fieldtype": "Currency",
+   "label": "Mining Cost (per bcm)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "processing_cost",
+   "fieldtype": "Currency",
+   "label": "Processing Cost (per t)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "default_density",
+   "fieldtype": "Float",
+   "label": "Density without a density grid",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_result",
+   "fieldtype": "Section Break",
+   "label": "Selected shell"
+  },
+  {
+   "fieldname": "selected_revenue_factor",
+   "fieldtype": "Float",
+   "label": "Revenue Factor",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "shell_tonnes",
+   "fieldtype": "Float",
+   "label": "Coal (t)",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "shell_waste",
+   "fieldtype": "Float",
+   "label": "Waste (bcm)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_result",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "strip_ratio",
+   "fieldtype": "Float",
+   "label": "Strip Ratio (bcm/t)",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "shell_value",
+   "fieldtype": "Currency",
+   "label": "Value at RF 1 (undiscounted)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "shell_surface_ref",
+   "fieldtype": "Data",
+   "label": "Shell Surface Ref",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "section_shells",
+   "fieldtype": "Section Break",
+   "label": "All shells",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "shells",
+   "fieldtype": "JSON",
+   "label": "Shells",
+   "read_only": 1
+  },
+  {
+   "fieldname": "method",
+   "fieldtype": "Small Text",
+   "label": "Method",
+   "read_only": 1
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production User",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "field_order": [
+  "title",
+  "cad_model",
+  "geology_model",
+  "column_break_main",
+  "revision",
+  "processing_job",
+  "section_block_model",
+  "cell_size",
+  "bench_height",
+  "slope_angle",
+  "column_break_block",
+  "top_elevation",
+  "bottom_elevation",
+  "blocks",
+  "section_economics",
+  "price",
+  "recovery",
+  "column_break_economics",
+  "mining_cost",
+  "processing_cost",
+  "default_density",
+  "section_result",
+  "selected_revenue_factor",
+  "shell_tonnes",
+  "shell_waste",
+  "column_break_result",
+  "strip_ratio",
+  "shell_value",
+  "shell_surface_ref",
+  "section_shells",
+  "shells",
+  "method"
+ ]
+}

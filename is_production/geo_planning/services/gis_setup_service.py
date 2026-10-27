@@ -95,6 +95,26 @@ def plugin_dir_owned_elsewhere(plugin_dir, user):
 	return owner if owner not in (user, "root") else None
 
 
+def folder_ready(command):
+	"""True when the folder an ``install -d -o <user> -g <group> -m <mode> <path>`` command makes already exists
+	with that owner, group and mode, so a re-run needs no sudo."""
+	import grp
+	import pwd
+	import stat
+
+	owner, group, mode, path = command[3], command[5], command[7], command[8]
+	try:
+		st = os.stat(path)
+		return (
+			stat.S_ISDIR(st.st_mode)
+			and pwd.getpwuid(st.st_uid).pw_name == owner
+			and grp.getgrgid(st.st_gid).gr_name == group
+			and stat.S_IMODE(st.st_mode) == int(mode, 8)
+		)
+	except (OSError, KeyError):
+		return False
+
+
 def run_privileged(command, print_only, echo):
 	echo("  $ sudo " + " ".join(shlex.quote(c) for c in command))
 	if print_only:
@@ -199,7 +219,10 @@ def run_setup(
 				"Only one site may; leave out --manage-server-plugins."
 			)
 	for command in folder_commands(base, site, user, group, plugins_target):
-		run_privileged(command, print_only, echo)
+		if folder_ready(command):
+			echo(f"  {command[-1]}: already set up")
+		else:
+			run_privileged(command, print_only, echo)
 
 	password = None
 	db_user = settings.qgis_db_user

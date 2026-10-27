@@ -98,5 +98,88 @@ r = run("mining_worker.py", {"command": "road", "centreline": [[0, 0, 0], [200, 
 (c,) = r["vertical_curves"]
 ok(c["shortened"] and abs(c["length"] - 30) < 1e-9 and r["notes"], f"a curve longer than its tangents allow is shortened to {c['length']} m and reported")
 
+# 8. block geology: roof z = 100 + 0.01x, floor 2 m below, ash = 20 + 0.1x, density 1.5, on a 100 m square split in two
+#    blocks; slab [99, 200] clips the floor at 99: t = 1 + 0.01x. Volume ∫t = 100·150 = 15 000 (west half
+#    100·(50 + 12.5) = 6 250), ash weighted by t = 3833.33/150, tonnes = 1.5 · volume; the seam below 99 is 5 000.
+def plane_tin(name, f, n=11):
+	pts = [[100 * i / (n - 1), 100 * j / (n - 1), f(100 * i / (n - 1), 100 * j / (n - 1))] for i in range(n) for j in range(n)]
+	with open(f"{WS}/inputs/{name}.json", "w") as fh:
+		json.dump({"points": pts}, fh)
+	return run("surface_worker.py", {"command": "build", "name": name, "input": f"{WS}/inputs/{name}.json"})["tin"]
+roof = plane_tin("g_roof", lambda x, y: 100 + 0.01 * x)
+floor = plane_tin("g_floor", lambda x, y: 98 + 0.01 * x)
+ash = plane_tin("g_ash", lambda x, y: 20 + 0.1 * x, n=4)  # a coarser grid than the seam: its edges are constraints too
+rd = plane_tin("g_rd", lambda x, y: 1.5, n=3)
+cells = [{"key": "W", "polygon": [[0, 0], [50, 0], [50, 100], [0, 100]]}, {"key": "E", "polygon": [[50, 0], [100, 0], [100, 100], [50, 100]]}]
+r = run("mining_worker.py", {"command": "block_geology", "roof": roof, "floor": floor, "properties": {"ash": ash, "rd": rd}, "density": "rd", "cells": cells, "slabs": [[99, 200], [0, 99]]})
+w, e = r["blocks"]["W"], r["blocks"]["E"]
+vol = w[0]["volume"] + e[0]["volume"]
+ok(abs(vol - 15000) < 1e-6 and abs(w[0]["volume"] - 100 * (50 + 0.005 * 2500)) < 1e-6, f"seam volume above 99: {vol:.6f} (15000), west {w[0]['volume']:.6f} (6250)")
+ash_all = (w[0]["qualities"]["ash"] * w[0]["volume"] + e[0]["qualities"]["ash"] * e[0]["volume"]) / vol
+ok(abs(ash_all - 3833.3333333 / 150) < 1e-6, f"tonnage-weighted ash {ash_all:.6f} ({3833.3333333 / 150:.6f})")
+ok(abs(w[0]["tonnes"] + e[0]["tonnes"] - 22500) < 1e-6 and abs(w[0]["coverage"]["ash"] - 1) < 1e-9, f"tonnes {w[0]['tonnes'] + e[0]['tonnes']:.6f} (22500), full ash coverage")
+lower = w[1]["volume"] + e[1]["volume"]
+ok(abs(lower + vol - 20000) < 1e-6, f"the rest of the seam is in the slab below 99: {lower:.6f} (5000)")
+
+# 9. inverse distance: values at the data points are kept exactly, a constant field stays constant
+r = run("mining_worker.py", {"command": "idw_grid", "points": [[0, 0, 5], [10, 0, 5], [0, 10, 5], [10, 10, 5]], "cell": 2.5, "power": 2})
+g = np.load(r["points"])
+ok(r["nodes"] == 25 and np.allclose(g[:, 2], 5), f"idw: {r['nodes']} nodes, constant 5")
+r = run("mining_worker.py", {"command": "idw_grid", "points": [[0, 0, 1], [10, 0, 2], [0, 10, 3], [10, 10, 4]], "cell": 10})
+g = np.load(r["points"])
+ok(sorted(g[:, 2].tolist()) == [1, 2, 3, 4], "idw keeps the data values at the data points")
+
+# 10. maximum closure (min cut) against brute force on random layered graphs
+import itertools  # noqa: E402
+
+sys.path.insert(0, HERE)
+import mining_worker as mw  # noqa: E402
+
+rng = np.random.default_rng(11)
+worst = 0.0
+for trial in range(40):
+	n = 10
+	layer = np.sort(rng.integers(0, 3, n))
+	arcs = [(i, j) for i in range(n) for j in range(n) if layer[j] == layer[i] - 1 and rng.random() < 0.4]
+	vals = rng.normal(0, 10, n)
+	best = 0.0
+	for bits in itertools.product([0, 1], repeat=n):
+		if all(not bits[i] or bits[j] for i, j in arcs):
+			best = max(best, float(np.dot(bits, vals)))
+	got = mw.max_closure(vals, np.array(arcs).reshape(-1, 2))
+	ok_closed = all(not got[i] or got[j] for i, j in arcs)
+	worst = max(worst, abs(float(vals[got].sum()) - best) if ok_closed else 1e9)
+ok(worst < 1e-6, f"max closure = brute force on 40 random graphs (worst difference {worst:.2e})")
+
+# 11. pit shells on a 5 × 1 × 3 block model: flat ground 100, a 2 m seam 80–78 (density 1.5), 10 m cells and benches,
+#     45° (the blocks above and beside), price 12 / t, mining 1 / bcm: brute force over all 2^15 closures
+gnd = plane_tin("p_ground", lambda x, y: 100.0)
+sroof = plane_tin("p_roof", lambda x, y: 80.0)
+sfloor = plane_tin("p_floor", lambda x, y: 78.0)
+req = {"command": "pit_shells", "ground": gnd, "seams": [{"roof": sroof, "floor": sfloor}], "default_density": 1.5, "grid": {"x0": 0, "y0": 0, "dx": 10, "dy": 10, "nx": 5, "ny": 1, "top": 100, "bench": 10, "benches": 3}, "economics": {"price": 12, "mining_cost": 1, "recovery": 100}, "slope": 45, "revenue_factors": [0.5, 1.0, 2.0]}
+r = run("mining_worker.py", req)
+ok(abs(r["totals"]["volume"] - 50 * 10 * 30) < 1e-6 and abs(r["totals"]["tonnes"] - 5 * 300) < 1e-6, f"block model volume {r['totals']['volume']:.6f} (15000), tonnes {r['totals']['tonnes']:.6f} (1500)")
+
+
+def brute(rf, forbid=()):
+	nodes = [(c, k) for c in range(5) for k in range(3)]
+	value = {(c, k): (rf * 12 * 300 if k == 2 else 0) - 1000 for c, k in nodes}
+	best = 0.0
+	for bits in itertools.product([0, 1], repeat=15):
+		m = {nd: b for nd, b in zip(nodes, bits)}
+		if any(m[(c, k)] for c in forbid for k in range(3)):
+			continue
+		if all(not m[(c, k)] or all(m[(c2, k - 1)] for c2 in (c - 1, c, c + 1) if 0 <= c2 < 5) for c, k in nodes if k > 0):
+			best = max(best, sum(value[nd] for nd in nodes if m[nd]))
+	return best
+
+
+diffs = [abs(s_["value_at_rf"] - brute(s_["revenue_factor"])) for s_ in r["shells"]]
+full = r["shells"][-1]
+ok(abs(full["waste_volume"] - (15000 - 1000)) < 1e-6 and abs(full["strip_ratio"] - 14000 / 1500) < 1e-9, f"waste {full['waste_volume']:.6f} (14000), strip ratio {full['strip_ratio']:.6f} bcm/t")
+ok(max(diffs) < 1e-6 and [s_["blocks"] for s_ in r["shells"]] == sorted(s_["blocks"] for s_ in r["shells"]), f"shell values = brute force at RF 0.5/1/2 ({[round(s_['value_at_rf']) for s_ in r['shells']]}), nested {[s_['blocks'] for s_ in r['shells']]}")
+r2 = run("mining_worker.py", {**req, "limit": [[10, -1], [51, -1], [51, 11], [10, 11]], "revenue_factors": [2.0]})
+ok(abs(r2["shells"][0]["value_at_rf"] - brute(2.0, forbid=(0,))) < 1e-6 and r2["shells"][0]["depth"][0] == 0, f"mining limit: column 0 left, value {r2['shells'][0]['value_at_rf']:.0f} = {brute(2.0, forbid=(0,)):.0f}")
+
 print("FAILED" if failures else "all passed")
 sys.exit(1 if failures else 0)

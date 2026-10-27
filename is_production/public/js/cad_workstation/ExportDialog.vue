@@ -75,6 +75,7 @@ const FORMATS = [
 	{ value: "CSV", label: __("CSV surface points") },
 	{ value: "XYZ", label: __("XYZ surface points") },
 	{ value: "STEP", label: __("STEP solids (AP214)") },
+	{ value: "IFC", label: __("IFC4 (surfaces, meshes, solids, lines — georeferenced)") },
 	{ value: "GeoJSON", label: __("GeoJSON mining design (pits, roads, blocks)") },
 	{ value: "Blocks CSV", label: __("Mining blocks table (CSV)") },
 	{ value: "Drill Holes CSV", label: __("Drill holes: collars and toes (CSV)") },
@@ -87,7 +88,7 @@ const job = ref(null);
 const busy = ref(false);
 // geometry refs of the selected surfaces / meshes (or solids, for STEP)
 const chosen = computed(() =>
-	props.selected.filter((e) => e.geometry_ref && (options.format === "STEP" ? e.entity_type === "Solid" : ["Surface", "Mesh"].includes(e.entity_type))).map((e) => e.geometry_ref)
+	props.selected.filter((e) => e.geometry_ref && (options.format === "STEP" ? e.entity_type === "Solid" : options.format === "IFC" ? ["Surface", "Mesh", "Solid"].includes(e.entity_type) : ["Surface", "Mesh"].includes(e.entity_type))).map((e) => e.geometry_ref)
 );
 const frozen = computed(() => (props.revisions || []).filter((r) => r.geometry_checksum));
 

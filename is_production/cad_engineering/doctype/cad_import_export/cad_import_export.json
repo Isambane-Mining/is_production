@@ -28,7 +28,7 @@
    "fieldname": "file_format",
    "fieldtype": "Select",
    "label": "Format",
-   "options": "DXF\nLandXML\nCSV\nXYZ\nSTL\nOBJ\nLAS\nLAZ\nSTEP\nGeoJSON\nBlocks CSV\nDrill Holes CSV",
+   "options": "DXF\nLandXML\nCSV\nXYZ\nSTL\nOBJ\nLAS\nLAZ\nSTEP\nGeoJSON\nBlocks CSV\nDrill Holes CSV\nIFC\nE57",
    "default": "DXF",
    "read_only": 1
   },
@@ -255,5 +255,5 @@
   "options",
   "warnings"
  ],
- "modified": "2026-10-22 19:00:00.000000"
+ "modified": "2026-10-27 20:00:00.000000"
 }
