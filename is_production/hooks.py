@@ -4,7 +4,7 @@ app_publisher = "Isambane Mining (Pty) Ltd"
 app_description = "Isambane Mining Frappe App for Production Records"
 app_email = "eben@isambane.co.za"
 app_license = "gpl-3.0"
-required_apps = ["frappe/erpnext", "shridarpatil/frappe_whatsapp"]
+required_apps = ["frappe/erpnext", "shridarpatil/frappe_whatsapp", "Isambane-Mining/engineering"]
 source_link = "http://github.com/buff0k/is_production"
 app_logo_url = "/assets/is_production/images/is-logo.png"
 app_home = "/desk/production"
@@ -115,6 +115,11 @@ scheduler_events = {
     ],
 
     "cron": {
+        # HOD automatic delivery is paused. Uncomment only after LIVE testing.
+        # One hook checks each configuration's send_time; it does not replace other jobs.
+        # "* * * * *": [
+        #     "is_production.production.controllers.hod_presentation_scheduler.dispatch_due",
+        # ],
         # Current-period summaries: stagger after backups and existing reports.
         "22 * * * *": [
             "is_production.production.controllers.production_summary_scheduler.create_hourly_summaries",
