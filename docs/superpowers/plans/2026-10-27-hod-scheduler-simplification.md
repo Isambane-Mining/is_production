@@ -8,8 +8,8 @@ reconciliation/recovery scheduler. Manual previews and explicit test sends remai
 
 - [x] Test shared recipient User lookup, row/user enablement, and location field mapping.
 - [x] Retarget schedule tables to Production Notification Recipient and WearCheck Users;
-  populate each location row's required User from Run As; preserve LAB rows in a
-  pre-model-sync migration before removing the two redundant child DocTypes.
+  populate each location row's required User from Run As.
+  LAB conversion is complete; no conversion migration ships to production.
 - [x] Remove reconciliation, queue each newly claimed slot once, record enqueue failure.
 - [x] Reject expired scheduled workers and recheck configuration with a current locking
   read immediately before email creation; retain manual send behavior.

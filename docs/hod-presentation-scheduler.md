@@ -22,12 +22,11 @@ Engineering must be installed before this app is installed/migrated because
 it owns WearCheck Users. Install app dependencies and, as the worker Unix user:
     env/bin/python -m playwright install chromium
 
-Migrate the target site and restart its web and worker processes. Migration
-preserves pre-release LAB recipient/site rows using the shared child tables
-and disables those migrated schedules. Missing or ambiguous recipient Users
-stop migration for correction; records are never silently dropped. Legacy SQL
-tables remain as backup. No new recipient or location child DocTypes are added.
-Migration also synchronizes jobs and removes the old uncommented HOD hook.
+Migrate the target site and restart its web and worker processes.
+No LAB data-conversion patch is included in this release.
+LAB selections were already converted and verified.
+No new recipient or location child DocTypes are added.
+Migration synchronizes jobs; the HOD hook remains commented out.
 
 Use an enabled System User with HOD permissions. Delivery Frappe Site
 must match the target site exactly. Verify its default outgoing Email
