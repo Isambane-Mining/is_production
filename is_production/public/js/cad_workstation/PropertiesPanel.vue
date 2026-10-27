@@ -103,6 +103,7 @@
 <script setup>
 import { computed } from "vue";
 import { dimension_measurement, format_number, format_point, loop_area } from "./geometry";
+import { CLASS_NAMES } from "./pointclouds";
 import { tin_problems } from "./surface_commands";
 
 const props = defineProps({
@@ -234,6 +235,20 @@ const geometry_fields = computed(() => {
 				info("ref", __("TIN (SHA-256)"), (e.value.geometry_ref || "").slice(0, 16) + "…"),
 			];
 		}
+		case "Point Cloud": {
+			const st = e.value._stats || {};
+			const classes = Object.entries(st.classes || {}).map(([c, n]) => `${CLASS_NAMES[c] || c} ${Number(n).toLocaleString()}`).join(" · ");
+			return [
+				{ key: "name", label: __("Name"), kind: "text", path: ["name"], value: g.name || "" },
+				info("count", __("Points"), st.count != null ? st.count.toLocaleString() : __("loading…")),
+				info("density", __("Density (pts/m²)"), st.density ? format_number(st.density, 2) : ""),
+				info("zr", __("Elevations"), st.min_elevation != null ? `${format_number(st.min_elevation, props.decimals)} … ${format_number(st.max_elevation, props.decimals)}` : ""),
+				info("classes", __("Classes"), classes),
+				info("rgb", __("Colour"), st.has_rgb ? __("RGB") : __("none")),
+				info("op", __("Made by"), (g.source && (g.source.operation || g.source.op)) || ""),
+				info("ref", __("LAZ (SHA-256)"), (e.value.geometry_ref || "").slice(0, 16) + "…"),
+			];
+		}
 		case "Solid":
 			return [info("op", __("Made by"), (g.source && g.source.op) || ""), info("ref", __("B-Rep (SHA-256)"), (e.value.geometry_ref || "").slice(0, 16) + "…")];
 		default:
@@ -247,15 +262,27 @@ const DESIGN = {
 	haul_road: [__("Haul road"), { name: __("Road"), role: __("Part"), width: __("Width"), standard: __("Standard") }],
 	drill_hole: [__("Drill hole"), { pattern: __("Pattern"), hole_id: __("Hole"), row: __("Row"), number: __("Number"), length: __("Length (design)"), inclination: __("Inclination (°)"), dip: __("Dip direction (°)"), diameter_mm: __("Diameter (mm)"), subdrill: __("Subdrill"), burden: __("Burden"), spacing: __("Spacing"), standard: __("Standard") }],
 	mining_block: [__("Mining block"), { block_id: __("Block"), sequence: __("Sequence"), bench_bottom: __("Bench bottom"), bench_top: __("Bench top"), material: __("Material"), volume: __("Volume (m³)"), plan_area: __("Plan area"), direction: __("Mining direction (°)"), upper: __("Upper surface"), lower: __("Lower surface"), standard: __("Standard") }],
+	geology: [__("Geology"), { geo_project: __("Geo Project"), source: __("Source"), seam: __("Seam"), role: __("Part"), variable: __("Variable"), hole_id: __("Hole"), model: __("Geology model") }],
 };
 const design_key = computed(() => Object.keys(DESIGN).find((k) => e.value.metadata && e.value.metadata[k]));
 const design_title = computed(() => (design_key.value ? DESIGN[design_key.value][0] : ""));
 const design_rows = computed(() => {
 	if (!design_key.value) return [];
 	const data = e.value.metadata[design_key.value];
-	return Object.entries(DESIGN[design_key.value][1])
+	const rows = Object.entries(DESIGN[design_key.value][1])
 		.filter(([k]) => data[k] !== undefined && data[k] !== null && data[k] !== "")
 		.map(([k, label]) => [label, typeof data[k] === "number" && !Number.isInteger(data[k]) ? format_number(data[k], props.decimals) : __(String(data[k]))]);
+	const g = design_key.value === "mining_block" && data.geology;
+	if (g) {
+		// block geology (Mining → Block Geology): coal, strip ratio and every seam's tonnes and qualities
+		rows.push([__("Coal (t)"), format_number(g.coal_tonnes, 0)], [__("Coal share"), `${format_number(g.coal_percent, 1)} %`], [__("Waste (m³)"), format_number(g.waste_volume, 0)]);
+		if (g.strip_ratio) rows.push([__("Strip ratio (bcm/t)"), format_number(g.strip_ratio, 2)]);
+		for (const [seam, x] of Object.entries(g.seams || {})) {
+			const q = Object.entries(x.qualities || {}).filter(([k]) => k !== "Relative Density").map(([k, v]) => `${k} ${format_number(v, 2)}`);
+			rows.push([x.label || seam, [`${format_number(x.tonnes, 0)} t`, `${format_number(x.volume, 0)} m³`, ...q].join(" · ")]);
+		}
+	}
+	return rows;
 });
 
 function update(values) {

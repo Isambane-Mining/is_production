@@ -19,6 +19,7 @@ import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeome
 import { dimension_graphics, hatch_graphics } from "./annotate";
 import { entity_nearest, intersect, perpendicular_foot, primitives, tangent_points } from "./geom2d";
 import { block_extent, block_matrix, curve_points, entity_extent, snap_points } from "./geometry";
+import { PointCloudLayer } from "./pointclouds";
 import { SurfaceLayer } from "./surfaces";
 import { font_ready, glyph_geometry, mtext_glyphs, text_glyphs } from "./text";
 
@@ -79,6 +80,8 @@ export class Viewport {
 		this.scene.add(this.grid, this.reference_group, this.content, this.highlight);
 		this.surfaces = new SurfaceLayer(this);
 		this.content.add(this.surfaces.group);
+		this.clouds = new PointCloudLayer(this);
+		this.content.add(this.clouds.group);
 		// the cursor, snap marker and previews are drawn over a cached image of the rest (see render)
 		this.overlay_scene = new THREE.Scene();
 		this.overlay_scene.add(this.overlay);
@@ -152,6 +155,7 @@ export class Viewport {
 		const d = new THREE.Vector3(this.origin[0] - origin[0], this.origin[1] - origin[1], this.origin[2] - origin[2]);
 		this.set_origin(origin);
 		this.surfaces.clear(); // tiles are placed relative to the origin: they reload
+		this.clouds.clear();
 		this.camera.position.add(d);
 		this.controls.target.add(d);
 		this.controls.update();
@@ -491,6 +495,8 @@ export class Viewport {
 			this.entity_keys.clear();
 			this.surfaces.model = session.model && session.model.name;
 			for (const id of [...this.surfaces.items.keys()]) if (!session.entities.has(id)) this.surfaces.remove(id);
+			this.clouds.model = this.surfaces.model;
+			for (const id of [...this.clouds.items.keys()]) if (!session.entities.has(id)) this.clouds.remove(id);
 			for (const b of this.batches.values()) b.members.clear();
 			this.snap_index.rebuild(session, this.blocks);
 		}
@@ -514,8 +520,13 @@ export class Viewport {
 			const entity = session.entities.get(id);
 			if (!all) this.snap_index.update(id, entity, this.blocks);
 			if (!entity || !["Surface", "Mesh"].includes(entity.entity_type)) this.surfaces.remove(id);
+			if (!entity || entity.entity_type !== "Point Cloud") this.clouds.remove(id);
 			if (!entity) continue;
 			const layer = this.layer_of(session, entity);
+			if (entity.entity_type === "Point Cloud") {
+				this.clouds.sync(entity, this.style_of(session, entity).color, !layer || Boolean(layer.visible));
+				continue;
+			}
 			if (entity.entity_type === "Surface" || entity.entity_type === "Mesh") {
 				this.surfaces.sync(entity, this.style_of(session, entity).color, !layer || Boolean(layer.visible));
 				continue;
@@ -763,6 +774,7 @@ export class Viewport {
 	set_selection(ids, session) {
 		this.selected = new Set(ids);
 		this.surfaces.set_selection(ids);
+		this.clouds.set_selection(ids);
 		this.rebuild_highlight(session);
 		this.invalidate();
 	}
@@ -1103,7 +1115,10 @@ export class Viewport {
 		this.apply_text_lod();
 		this.invalidate();
 		clearTimeout(this.surface_timer);
-		this.surface_timer = setTimeout(() => this.surfaces.update(), 150); // load the surface tiles the view needs
+		this.surface_timer = setTimeout(() => {
+			this.surfaces.update(); // load the surface and point-cloud tiles the view needs
+			this.clouds.update();
+		}, 150);
 		if (this.extrude_preview) this.extrude_preview.refresh(); // the handle keeps its size on screen
 		this.on_view_change(this);
 	}

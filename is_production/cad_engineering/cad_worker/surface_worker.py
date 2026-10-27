@@ -16,7 +16,8 @@ Commands
 --------
 ``build``      TIN from points and breaklines (constrained Delaunay, CDT), optional boundary and holes,
                optional maximum outer edge length; reports merged/conflicting points.
-``tiles``      display tiles: per tile the full triangles plus two resampled levels (view-driven loading).
+``tiles``      display tiles: per tile the full triangles plus two coarser levels (view-driven loading) — resampled
+               grids for a 2.5D surface, vertex clustering for a 3D mesh (a grid has one Z per point).
 ``validate``   degenerate, flipped and duplicate triangles, non-manifold edges, spikes, holes.
 ``repair``     remove degenerate/duplicate triangles, reorient flipped ones, remove spike vertices.
 ``clip``       keep the part inside (or outside) boundary polygons; boundary points get the surface's Z.
@@ -533,7 +534,10 @@ def tiles(request, log):
 	cen = tin.xyz[tin.tri].mean(axis=1)
 	ti = np.minimum(((cen[:, 0] - x0) / sx).astype(int), n - 1)
 	tj = np.minimum(((cen[:, 1] - y0) / sy).astype(int), n - 1)
-	index = {"version": 1, "grid": [n, n], "bbox": stats["bbox"], "triangles": len(tin.tri), "tiles": []}
+	# a grid holds one Z per plan point: right for a surface, wrong for a closed or overhanging 3D mesh (its top and
+	# bottom over one point would interleave into spikes and curtains) — those are simplified in 3D instead
+	heightfield = is_two_and_half_d(tin.xyz, tin.tri)
+	index = {"version": 2, "grid": [n, n], "bbox": stats["bbox"], "triangles": len(tin.tri), "heightfield": heightfield, "tiles": []}
 	order = np.lexsort((tj, ti))
 	bounds = np.searchsorted(ti[order] * n + tj[order], np.arange(n * n + 1))
 	del cen, ti, tj
@@ -561,8 +565,11 @@ def tiles(request, log):
 			for level, cells in enumerate(LEVELS, start=1):
 				if len(tri) <= cells * cells * 2:
 					break
-				near = around(i, j) if near is None else near
-				gp, gi = resample(tin, bx, cells, near)
+				if heightfield:
+					near = around(i, j) if near is None else near
+					gp, gi = resample(tin, bx, cells, near)
+				else:
+					gp, gi = cluster(p, local.reshape(-1, 3), max(bx[2] - bx[0], bx[3] - bx[1]) / cells)
 				if not len(gi):
 					break
 				write_mesh(os.path.join(out_dir, f"{name}_{level}.cadmesh"), origin, gp - origin, gi)
@@ -607,6 +614,25 @@ def grid_z(xyz, tri, xs, ys):
 	z = l1 * p[t, 0, 2] + l2 * p[t, 1, 2] + l3 * p[t, 2, 2]
 	gz[gi[inside], gj[inside]] = z[inside]
 	return gz
+
+
+def cluster(xyz, tri, cell):
+	"""A 3D mesh simplified by vertex clustering: vertices in one cube of side `cell` merge into their mean, triangles
+	that collapse are dropped (and duplicates). Keeps the shape's outline at any orientation, unlike a height grid."""
+	if not len(tri) or cell <= 0:
+		return xyz, tri
+	key = np.floor((xyz - xyz.min(axis=0)) / cell).astype(np.int64)
+	m = key.max(axis=0) + 1
+	packed = (key[:, 0] * m[1] + key[:, 1]) * m[2] + key[:, 2]
+	cells, inverse = np.unique(packed, return_inverse=True)
+	count = np.bincount(inverse, minlength=len(cells))
+	pts = np.stack([np.bincount(inverse, weights=xyz[:, k], minlength=len(cells)) for k in range(3)], axis=1) / count[:, None]
+	t = inverse[tri]
+	t = t[(t[:, 0] != t[:, 1]) & (t[:, 1] != t[:, 2]) & (t[:, 0] != t[:, 2])]
+	if len(t):
+		t = t[np.unique(np.sort(t, axis=1), axis=0, return_index=True)[1]]
+	used, local = np.unique(t, return_inverse=True)
+	return pts[used], local.reshape(-1, 3)
 
 
 def resample(tin, box, cells, tri=None):
@@ -1519,7 +1545,7 @@ def mesh_checks(mesh):
 	e = np.sort(np.r_[mesh.tri[:, [0, 1]], mesh.tri[:, [1, 2]], mesh.tri[:, [2, 0]]], axis=1)
 	_u, counts = unique_rows(e, return_counts=True)
 	closed = bool((counts == 2).all())
-	p = mesh.xyz[mesh.tri]
+	p = mesh.xyz[mesh.tri] - mesh.xyz.mean(axis=0)  # about the centre: at survey coordinates the products cancel badly
 	vol = float(np.einsum("ij,ij->i", p[:, 0], np.cross(p[:, 1], p[:, 2])).sum() / 6) if closed else None
 	return {"closed": closed, "open_edges": int((counts == 1).sum()), "non_manifold_edges": int((counts > 2).sum()), "volume": abs(vol) if vol is not None else None}
 

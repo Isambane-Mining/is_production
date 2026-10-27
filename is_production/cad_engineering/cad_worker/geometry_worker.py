@@ -914,7 +914,7 @@ def health(request):
 		report["self_test"] = {"ok": check(o, cut) and abs(volume - expected) < 1e-6, "volume": volume, "expected": expected}
 	except Exception as e:
 		report["self_test"] = {"ok": False, "message": str(e)}
-	report["libraries"] = {name: package_version(name) for name in ("ezdxf", "numpy", "scipy", "vtk", "pythoncdt", "matplotlib", "laspy", "lazrs")}
+	report["libraries"] = {name: package_version(name) for name in ("ezdxf", "numpy", "scipy", "vtk", "pythoncdt", "matplotlib", "laspy", "lazrs", "ifcopenshell", "pye57")}
 	workspace = request.get("workspace")
 	if workspace:
 		try:

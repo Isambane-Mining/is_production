@@ -148,6 +148,121 @@
 				</p>
 			</template>
 
+			<!-- geology -->
+			<template v-else-if="data.kind === 'geology_report'">
+				<div class="cad-report">
+					<div><span>{{ __("Record") }}</span><b><a :href="`/desk/cad-geology-model/${encodeURIComponent(r.geology)}`" target="_blank">{{ r.geology }}</a></b></div>
+					<div><span>{{ __("Source") }}</span><b>{{ r.geo_project }} · {{ __(r.source) }}</b></div>
+					<div><span>{{ __("Axes") }}</span><b>{{ __(r.axis) }}</b></div>
+					<div><span>{{ __("Checks") }}</span><b :class="r.checks_status === 'Pass' ? '' : r.checks_status === 'Fail' ? 'is-error' : 'is-warning'">{{ __(r.checks_status) }}</b></div>
+				</div>
+				<table class="cad-table small">
+					<tr><th>{{ __("Seam") }}</th><th>{{ __("Area m²") }}</th><th>{{ __("Thickness") }}</th><th>{{ __("Volume m³") }}</th><th>{{ __("Density") }}</th><th>{{ __("Tonnes") }}</th><th>{{ __("Qualities") }}</th></tr>
+					<tr v-for="s in r.seams" :key="s.seam">
+						<td>{{ s.seam_label || s.seam }}</td>
+						<td class="mono">{{ f(s.plan_area) }}</td>
+						<td class="mono">{{ f(s.mean_thickness) }}</td>
+						<td class="mono">{{ f(s.volume) }}</td>
+						<td class="mono">{{ s.mean_density ? s.mean_density.toFixed(3) : "—" }}</td>
+						<td class="mono">{{ s.tonnes ? f(s.tonnes) : "—" }}</td>
+						<td class="small">{{ Object.entries(JSON.parse(s.qualities || "{}")).filter(([k]) => k !== "Relative Density").map(([k, v]) => `${k} ${Number(v).toFixed(2)}`).join(" · ") }}</td>
+					</tr>
+				</table>
+				<h4 class="cad-subhead">{{ __("Checks") }}</h4>
+				<ul class="small cad-warnings">
+					<li v-for="(c, i) in r.checks" :key="i" :class="c.status === 'pass' ? '' : c.status === 'fail' ? 'is-error' : 'is-warning'">{{ c.status === "pass" ? "✓" : "!" }} {{ c.message }}</li>
+				</ul>
+				<p class="muted small">{{ r.method }} {{ __("Qualities are tonnage-weighted (thickness × density). Next: Mining → Block Geology.") }}</p>
+			</template>
+
+			<template v-else-if="data.kind === 'block_geology_report'">
+				<div class="cad-report">
+					<div><span>{{ __("Coal") }}</span><b class="mono">{{ f(r.totals.coal_tonnes) }} t · {{ f(r.totals.coal_volume) }} m³</b></div>
+					<div><span>{{ __("Waste") }}</span><b class="mono">{{ f(r.totals.waste_volume) }} m³</b></div>
+					<div><span>{{ __("Strip ratio") }}</span><b class="mono">{{ r.totals.strip_ratio ? r.totals.strip_ratio.toFixed(2) + " bcm/t" : "—" }}</b></div>
+					<div><span>{{ __("Rule") }}</span><b>{{ __("coal from {0} % of a block", [r.rule.min_coal]) }}</b></div>
+				</div>
+				<table class="cad-table small">
+					<tr><th>{{ __("Seam") }}</th><th>{{ __("Volume m³") }}</th><th>{{ __("Tonnes") }}</th><th>{{ __("Qualities (tonnage-weighted)") }}</th></tr>
+					<tr v-for="s in r.seams" :key="s.seam">
+						<td>{{ s.label || s.seam }}</td>
+						<td class="mono">{{ f(s.volume) }}</td>
+						<td class="mono">{{ f(s.tonnes) }}</td>
+						<td class="small">{{ Object.entries(s.qualities).map(([k, v]) => `${k} ${Number(v).toFixed(2)}`).join(" · ") }}</td>
+					</tr>
+				</table>
+				<h4 class="cad-subhead">{{ __("By bench") }}</h4>
+				<table class="cad-table small">
+					<tr><th>{{ __("Bench") }}</th><th>{{ __("Blocks") }}</th><th>{{ __("Coal blocks") }}</th><th>{{ __("Coal t") }}</th><th>{{ __("Waste m³") }}</th><th>{{ __("Strip ratio") }}</th></tr>
+					<tr v-for="b in geology_benches" :key="b.bench">
+						<td class="mono">{{ f(b.bench) }}</td>
+						<td class="mono">{{ b.blocks }}</td>
+						<td class="mono">{{ b.coal_blocks }}</td>
+						<td class="mono">{{ f(b.tonnes) }}</td>
+						<td class="mono">{{ f(b.waste) }}</td>
+						<td class="mono">{{ b.tonnes ? (b.waste / b.tonnes).toFixed(2) : "—" }}</td>
+					</tr>
+				</table>
+				<p class="muted small">{{ __("Each block's geology (seams, tonnes, qualities, strip ratio) is in its Properties; materials are set from the rule. Save to keep them.") }}</p>
+			</template>
+
+			<!-- point clouds -->
+			<template v-else-if="data.kind === 'cloud_report'">
+				<table class="cad-table small">
+					<tr><th>{{ __("Step") }}</th><th>{{ __("Points before") }}</th><th>{{ __("After") }}</th><th></th></tr>
+					<tr v-for="(s, i) in r.report" :key="i">
+						<td>{{ __(s.op) }}</td>
+						<td class="mono">{{ n(s.before) }}</td>
+						<td class="mono">{{ n(s.after) }}</td>
+						<td class="small">{{ s.changed !== undefined ? __("{0} reclassified", [n(s.changed)]) : s.ground !== undefined ? __("{0} ground, {1} low noise", [n(s.ground), n(s.low_noise)]) : "" }}</td>
+					</tr>
+				</table>
+				<div class="cad-report">
+					<div><span>{{ __("Classes") }}</span><b class="small">{{ cloud_classes(r.stats.classes) }}</b></div>
+					<div><span>{{ __("Elevations") }}</span><b class="mono">{{ f(r.stats.min_elevation) }} … {{ f(r.stats.max_elevation) }}</b></div>
+				</div>
+				<p class="muted small">{{ __("A new version of the cloud; Undo returns to the previous one. Save to keep it.") }}</p>
+			</template>
+
+			<template v-else-if="data.kind === 'cloud_compare'">
+				<div class="cad-report">
+					<div><span>{{ __("Compared / off the surface") }}</span><b class="mono">{{ n(r.comparison.compared) }} / {{ n(r.comparison.off_surface) }}</b></div>
+					<div><span>{{ __("Within ±{0} m", [r.comparison.tolerance]) }}</span><b class="mono">{{ r.comparison.within !== undefined ? r.comparison.within.toFixed(1) + " %" : "—" }}</b></div>
+					<div><span>{{ __("Above / below") }}</span><b class="mono">{{ r.comparison.above !== undefined ? `${r.comparison.above.toFixed(1)} % / ${r.comparison.below.toFixed(1)} %` : "—" }}</b></div>
+					<div><span>{{ __("Mean / RMSE") }}</span><b class="mono">{{ f(r.comparison.mean) }} / {{ f(r.comparison.rmse) }}</b></div>
+					<div><span>{{ __("5 % / median / 95 %") }}</span><b class="mono">{{ f(r.comparison.p05) }} / {{ f(r.comparison.p50) }} / {{ f(r.comparison.p95) }}</b></div>
+					<div><span>{{ __("Min / max") }}</span><b class="mono">{{ f(r.comparison.min) }} / {{ f(r.comparison.max) }}</b></div>
+				</div>
+				<template v-if="r.comparison.histogram">
+					<h4 class="cad-subhead">{{ __("Deviation (m)") }}</h4>
+					<Bars :rows="deviation_rows" :format="n" />
+				</template>
+				<p class="muted small">{{ __("+ above the surface, − below. The cloud is coloured by its deviation (blue below, red above); Point Cloud → Point Size sets the colour range.") }}</p>
+			</template>
+
+			<!-- pit-shell optimisation -->
+			<template v-else-if="data.kind === 'optimisation_report'">
+				<Chart plain :series="shell_series" :x_label="__('Revenue factor')" :y_label="__('Value at RF 1 (millions)')" />
+				<div class="cad-report">
+					<div><span>{{ __("Record") }}</span><b><a :href="`/desk/cad-pit-optimisation/${encodeURIComponent(r.optimisation)}`" target="_blank">{{ r.optimisation }}</a></b></div>
+					<div><span>{{ __("Block model") }}</span><b class="mono">{{ r.grid.nx }} × {{ r.grid.ny }} × {{ r.grid.benches }} · {{ f(r.grid.dx) }} m · {{ f(r.grid.bench) }} m</b></div>
+					<div><span>{{ __("Drawn shell") }}</span><b class="mono">RF {{ r.selected_rf }} · {{ f(r.selected.tonnes) }} t · SR {{ r.selected.strip_ratio ? r.selected.strip_ratio.toFixed(2) : "—" }}</b></div>
+					<div><span>{{ __("Value (RF 1)") }}</span><b class="mono">{{ f(r.selected.value) }}</b></div>
+				</div>
+				<table class="cad-table small">
+					<tr><th>RF</th><th>{{ __("Blocks") }}</th><th>{{ __("Coal t") }}</th><th>{{ __("Waste bcm") }}</th><th>{{ __("Strip ratio") }}</th><th>{{ __("Value at RF 1") }}</th></tr>
+					<tr v-for="s in r.shells" :key="s.revenue_factor" :class="s.revenue_factor === r.selected_rf ? 'is-selected' : ''">
+						<td class="mono">{{ s.revenue_factor.toFixed(2) }}</td>
+						<td class="mono">{{ s.blocks }}</td>
+						<td class="mono">{{ f(s.tonnes) }}</td>
+						<td class="mono">{{ f(s.waste_volume) }}</td>
+						<td class="mono">{{ s.strip_ratio ? s.strip_ratio.toFixed(2) : "—" }}</td>
+						<td class="mono" :class="s.value < 0 ? 'is-error' : ''">{{ f(s.value) }}</td>
+					</tr>
+				</table>
+				<p class="muted small">{{ r.method }} {{ __("Slope reach per bench: {0} m. Double-click the shell (or Mining → Edit Design) to draw another revenue factor.", [f(r.reach)]) }}</p>
+			</template>
+
 			<!-- pit stages -->
 			<template v-else-if="data.kind === 'stages_report'">
 				<Bars :rows="r.table.map((t) => ({ label: t.stage, value: t.increment }))" :format="(v) => f(v) + ' m³'" />
@@ -368,6 +483,7 @@
 <script setup>
 import { computed, defineComponent, h, ref, watch } from "vue";
 import { format_number } from "./geometry";
+import { CLASS_NAMES } from "./pointclouds";
 import Icon from "./Icon.vue";
 
 const props = defineProps({ data: Object, decimals: { type: Number, default: 3 } });
@@ -417,6 +533,42 @@ function check_label(key) {
 // ------------------------------------------------------------------ profile and sections
 // ------------------------------------------------------------------ mining design
 const std = computed(() => props.data.standard || null);
+// the deviation histogram: bins from − to + range; the end bins also hold the tails beyond it
+const deviation_rows = computed(() => {
+	const h = props.data.kind === "cloud_compare" && r.value.comparison.histogram;
+	if (!h) return [];
+	const last = h.counts.length - 1;
+	return h.counts.map((c, i) => ({ label: i === 0 && h.below ? `≤ ${h.edges[1].toFixed(2)}` : i === last && h.beyond ? `≥ ${h.edges[last].toFixed(2)}` : `${h.edges[i].toFixed(2)} … ${h.edges[i + 1].toFixed(2)}`, value: c }));
+});
+
+function cloud_classes(classes) {
+	return Object.entries(classes || {})
+		.map(([c, k]) => `${CLASS_NAMES[c] || c} ${Number(k).toLocaleString()}`)
+		.join(" · ");
+}
+
+// block geology by bench (bottom elevation, top bench first)
+const geology_benches = computed(() => {
+	if (props.data.kind !== "block_geology_report") return [];
+	const by = new Map();
+	for (const b of props.data.rows || []) {
+		const g = b.geology || {};
+		const row = by.get(b.bench_bottom) || { bench: b.bench_bottom, blocks: 0, coal_blocks: 0, tonnes: 0, waste: 0 };
+		row.blocks += 1;
+		row.coal_blocks += g.coal_tonnes > 0 && b.material !== props.data.result.rule.waste_material ? 1 : 0;
+		row.tonnes += g.coal_tonnes || 0;
+		row.waste += g.waste_volume || 0;
+		by.set(b.bench_bottom, row);
+	}
+	return [...by.values()].sort((a, b) => b.bench - a.bench);
+});
+
+// value of each nested shell at revenue factor 1 (the pit-by-pit graph)
+const shell_series = computed(() => {
+	if (props.data.kind !== "optimisation_report") return [];
+	return [{ name: __("Value at RF 1"), color: COLORS[0], runs: [r.value.shells.map((s) => [s.revenue_factor, s.value / 1e6])] }];
+});
+
 const road_series = computed(() => {
 	const st = r.value.stations || [];
 	return st.length ? [{ name: __("Centreline"), color: COLORS[0], runs: [st.map((s) => [s[0], s[3]])] }] : [];
@@ -469,7 +621,7 @@ const section_series = computed(() =>
 
 // A line chart of runs of [x, y] (gaps between runs), with axes and a legend.
 const Chart = defineComponent({
-	props: { series: Array, x_label: String, y_label: String, equal: Boolean },
+	props: { series: Array, x_label: String, y_label: String, equal: Boolean, plain: Boolean }, // plain: not a section in metres (no exaggeration)
 	setup(p) {
 		const W = 560, H = 220, L = 56, R = 10, T = 10, B = 30;
 		return () => {
@@ -513,7 +665,7 @@ const Chart = defineComponent({
 				h(
 					"div",
 					{ class: "cad-row small" },
-					[...p.series.map((s) => h("span", { class: "cad-legend" }, [h("i", { style: { background: s.color } }), s.name])), h("span", { class: "muted" }, __("vertical × {0}", [exaggeration.toFixed(1)]))]
+					[...p.series.map((s) => h("span", { class: "cad-legend" }, [h("i", { style: { background: s.color } }), s.name])), ...(p.plain ? [] : [h("span", { class: "muted" }, __("vertical × {0}", [exaggeration.toFixed(1)]))])]
 				),
 			]);
 		};

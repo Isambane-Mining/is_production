@@ -45,6 +45,9 @@ export class MiningCommands {
 			drill_pattern: () => this.drill(),
 			edit_design: () => this.edit_design(args),
 			drill_report: () => this.drill_report(),
+			geology_build: () => this.geology(),
+			block_geology: () => this.block_geology(),
+			pit_shells: () => this.pit_shells(),
 		}[command];
 		if (!handler) return false;
 		await handler();
@@ -149,6 +152,14 @@ export class MiningCommands {
 		const all = [...this.session.entities.values()];
 		const group = (key, test) => all.filter((e) => e.metadata && e.metadata[key] && test(e.metadata[key])).map((e) => e.entity_id);
 		const params_in = (key, ids) => ids.map((id) => this.session.entities.get(id).metadata[key].params).find(Boolean);
+		if (m.pit_shell) {
+			const ids = group("pit_shell", (d) => d.optimisation === m.pit_shell.optimisation);
+			return { kind: "pit_shells", label: __("Pit Shell"), group: ids, params: params_in("pit_shell", ids) };
+		}
+		if (m.geology) {
+			const ids = group("geology", (d) => d.model === m.geology.model);
+			return { kind: "geology", label: __("Geology {0}", [m.geology.geo_project]), group: ids, params: params_in("geology", ids) };
+		}
 		if (m.pit_design && m.pit_design.run) {
 			const ids = group("pit_design", (d) => d.run === m.pit_design.run);
 			return { kind: "stages", label: __("Pit Stages"), group: ids, params: params_in("pit_design", ids) };
@@ -183,6 +194,8 @@ export class MiningCommands {
 		const edit = { group: d.group, params: d.params, run: d.run };
 		if (d.kind === "pit") return this.pit({ edit });
 		if (d.kind === "stages") return this.stages(edit);
+		if (d.kind === "geology") return this.geology(edit);
+		if (d.kind === "pit_shells") return this.pit_shells(edit);
 		if (d.kind === "road") return this.road(edit);
 		if (d.kind === "blocks") return this.blocks(edit);
 		return this.drill(edit);
@@ -421,6 +434,224 @@ export class MiningCommands {
 		this.ctx.select([entities[0].entity_id]);
 		this.ctx.show_result({ kind: "road_report", title: r.name, result: r, standard: await this.standard() });
 		this.ctx.message(done.status_message, "result");
+	}
+
+	// -------------------------------------------------------------- geology (Phase 6)
+
+	// Seam roof / floor surfaces (and the topography, and drillholes) from a Geo Project's model grids or drillholes.
+	async geology(edit = null) {
+		const projects = await call("list_geo_projects");
+		if (!projects.length) throw new Error(__("There is no Geo Project to read geology from (Geo Planning)."));
+		let project = edit && edit.params.geo_project;
+		if (!project) {
+			const first = await this.ctx.ask({
+				title: __("Geology from Geo Planning"),
+				intro: __("Seam surfaces from a Geo Project's model grids (Geo Model Points) or its drillholes."),
+				fields: [{ key: "geo_project", label: __("Geo Project"), type: "select", options: projects.map((p) => ({ value: p.name, label: p.name })), default: projects[0].name }],
+				submit_label: __("Next"),
+			});
+			if (!first) return;
+			project = first.geo_project;
+		}
+		const info = await call("geology_sources", { model: this.ctx.model().name, geo_project: project });
+		const grids = info.seams.length > 0;
+		const holes = info.drillholes.holes > 0;
+		if (!grids && !holes) throw new Error(__("{0} has no seam grids (roof and floor) and no drillholes with seams.", [project]));
+		const seam_fields = info.seams.map((s) => ({
+			key: `seam_${s.key}`,
+			label: s.key,
+			type: "check",
+			check_label: `${s.label || s.key} — ${[s.thickness && __("thickness"), s.density && __("density"), ...Object.keys(s.qualities)].filter(Boolean).join(", ") || __("roof and floor only")}${s.part_of ? " · " + __("inside {0}: off, so its coal is not counted twice", [s.part_of]) : ""}`,
+			default: !s.part_of,
+			show_if: (v) => v.source === "Model Grids",
+		}));
+		const hole_seams = info.drillholes.seams.map((s) => s.seam);
+		const values = await this.ask(edit, {
+			title: edit ? __("Edit Geology") : __("Geology: {0}", [project]),
+			intro: [
+				grids ? __("{0} seams in the model grids ({1} variables).", [info.seams.length, info.variables]) : "",
+				holes ? __("{0} drillholes, seams {1}.", [info.drillholes.holes, hole_seams.join(", ") || "—"]) : "",
+				info.axis === "Negate X and Y" ? __("The data's y values are negative: its x/y look like easting/northing of this south-orientated model, so X and Y are negated.") : "",
+			].filter(Boolean).join(" "),
+			fields: [
+				{ key: "source", label: __("Source"), type: "select", options: [...(grids ? ["Model Grids"] : []), ...(holes ? ["Drillholes"] : [])], default: grids ? "Model Grids" : "Drillholes" },
+				...seam_fields,
+				{ key: "topography", label: __("Topography"), type: "select", options: [{ value: "", label: __("None") }, ...info.others.map((o) => ({ value: o.variable, label: o.variable }))], default: info.topography || "", show_if: (v) => v.source === "Model Grids" },
+				{ key: "qualities", label: __("Qualities"), type: "check", check_label: __("Density, thickness and quality grids (for tonnes and block qualities)"), default: true, show_if: (v) => v.source === "Model Grids" },
+				{ key: "drill_seams", label: __("Seams"), default: hole_seams.join(", "), help: __("Comma-separated; empty: all."), show_if: (v) => v.source === "Drillholes" },
+				{
+					key: "interpolation",
+					label: __("Between holes"),
+					type: "select",
+					options: [
+						{ value: "tin", label: __("Linear (triangulate the intercepts)") },
+						{ value: "idw", label: __("Inverse distance grid") },
+					],
+					default: "tin",
+					show_if: (v) => v.source === "Drillholes",
+				},
+				{ key: "cell", label: __("Grid cell (m)"), type: "number", default: 10, show_if: (v) => v.source === "Drillholes" && v.interpolation === "idw" },
+				{ key: "power", label: __("Power"), type: "number", default: 2, show_if: (v) => v.source === "Drillholes" && v.interpolation === "idw" },
+				{ key: "radius", label: __("Search radius (m)"), type: "number", help: __("Empty: no limit."), show_if: (v) => v.source === "Drillholes" && v.interpolation === "idw" },
+				{ key: "by_ply", label: __("Plies"), type: "check", check_label: __("Model every ply as its own seam"), default: false, show_if: (v) => v.source === "Drillholes" },
+				{ key: "collars_as_topography", label: __("Topography"), type: "check", check_label: __("A topography surface through the collars"), default: true, show_if: (v) => v.source === "Drillholes" },
+				{ key: "axis", label: __("Axes"), type: "select", options: ["As stored", "Negate X and Y"], default: info.axis },
+			],
+			submit_label: __("Build Geology"),
+			check: (v) => (v.source === "Model Grids" && seam_fields.length && !seam_fields.some((f) => v[f.key]) ? __("Choose at least one seam.") : null),
+		});
+		if (!values) return;
+		const params = { geo_project: project, source: values.source, axis: values.axis };
+		if (values.source === "Model Grids") {
+			params.seams = info.seams.filter((s) => values[`seam_${s.key}`]).map((s) => s.key);
+			params.topography = values.topography || "";
+			params.qualities = values.qualities;
+		} else {
+			params.seams = (values.drill_seams || "").split(",").map((x) => x.trim()).filter(Boolean);
+			Object.assign(params, { interpolation: values.interpolation, cell: values.cell, power: values.power, radius: values.radius || null, by_ply: values.by_ply, collars_as_topography: values.collars_as_topography });
+		}
+		const form = { ...values, ...params };
+		const done = await this.ctx.run_job("mining_job", { model: this.ctx.model().name, operation: "geology", params });
+		if (!done) return;
+		const r = done.results;
+		// the previous geology of this project (and source) is replaced
+		const old = [...this.session.entities.values()].filter((e) => e.metadata && e.metadata.geology && e.metadata.geology.geo_project === project && e.metadata.geology.source === r.source).map((e) => e.entity_id);
+		const entities = this.geology_entities(r, form);
+		const group = [...new Set([...(edit ? edit.group : []), ...old])];
+		this.replace(group.length ? { group } : null, __("Geology {0}", [project]), entities);
+		this.ctx.zoom(entities.filter((e) => e.entity_type === "Surface").map((e) => e.entity_id)); // often a new or far-away area
+		this.ctx.show_result({ kind: "geology_report", title: __("Geology {0}", [r.geology]), result: r });
+		this.ctx.message(done.status_message, "result");
+	}
+
+	geology_entities(r, params) {
+		const colours = ["#2b2b2b", "#5b4a3a", "#3d5a80", "#6d597a", "#355c3a", "#7a5c2e"];
+		const seams = [...new Set(r.surfaces.filter((s) => s.seam).map((s) => s.seam))];
+		const colour = (seam) => colours[Math.max(0, seams.indexOf(seam)) % colours.length];
+		const label = (s) => r.seams.find((x) => x.seam === s)?.seam_label || s;
+		const meta = (more) => ({ geology: { model: r.geology, geo_project: r.geo_project, source: r.source, ...more } });
+		const entities = [];
+		let with_params = false;
+		for (const s of r.surfaces) {
+			const layer = s.role === "topography" ? this.ensure_layer("GEOLOGY TOPOGRAPHY", "#8fae6b") : this.ensure_layer(`GEOLOGY ${String(label(s.seam)).toUpperCase()}`, colour(s.seam));
+			const name = s.role === "topography" ? s.label : `${label(s.seam)} ${s.role === "roof" ? __("roof") : __("floor")}`;
+			const extra = { seam: s.seam, role: s.role, variable: s.variable };
+			if (!with_params) {
+				extra.params = params;
+				with_params = true;
+			}
+			entities.push(this.surface_entity(name, s.role === "topography" ? "Terrain Surface" : "Coal Seam", layer, { geometry_ref: s.geometry_ref, stats: s.stats, source: s.source }, meta(extra)));
+		}
+		if (r.holes.length) {
+			const holes = this.ensure_layer("GEOLOGY DRILLHOLES", "#d0d0d0");
+			for (const h of r.holes) {
+				entities.push(this.polyline([h.collar, h.end], false, holes, meta({ hole_id: h.hole_id, role: "drillhole" })));
+				for (const [seam, [roof, floor]] of Object.entries(h.seams)) {
+					entities.push(this.polyline([roof, floor], false, this.ensure_layer(`GEOLOGY ${String(label(seam)).toUpperCase()}`, colour(seam)), meta({ hole_id: h.hole_id, seam, role: "intercept" }), "#ffcc00"));
+				}
+			}
+		}
+		return entities;
+	}
+
+	// Seam volume, tonnes and qualities of mining blocks from a geology model; material from the coal share.
+	async block_geology() {
+		const models = (await call("list_geology_models", { model: this.ctx.model().name })).filter((g) => g.status === "Current");
+		if (!models.length) throw new Error(__("Build the geology first (Mining → Geology from Geo Planning)."));
+		const selected = this.blocks_selected();
+		const all = this.blocks_selected(true);
+		if (!all.length) throw new Error(__("The model has no mining blocks."));
+		const blocks = selected.length ? selected : all;
+		this.sc.require_saved(blocks);
+		this.materials = await call("list_material_types").catch(() => []);
+		const values = await this.ctx.ask({
+			title: __("Block Geology"),
+			intro: __("{0} block(s){1}: the seams in each block's own bench, exactly (seam volume, tonnes from the density grid, tonnage-weighted qualities); the rest of the block is waste.", [blocks.length, selected.length ? "" : " " + __("(all)")]),
+			fields: [
+				{ key: "geology", label: __("Geology"), type: "select", options: models.map((g) => ({ value: g.name, label: `${g.name} · ${g.title} · ${g.seams.map((x) => x.seam).join(", ")}` })), default: models[0].name },
+				{ key: "min_coal", label: __("Coal block from (% of the block)"), type: "number", default: 50 },
+				{
+					key: "material_by",
+					label: __("Coal blocks are"),
+					type: "select",
+					options: [
+						{ value: "coal", label: __("One coal material") },
+						{ value: "seam", label: __("Named after their main seam") },
+					],
+					default: "coal",
+				},
+				{ key: "coal_material", label: __("Coal material"), default: this.materials.find((m) => /coal/i.test(m)) || "Coal", show_if: (v) => v.material_by === "coal" },
+				{ key: "waste_material", label: __("Waste material"), default: this.materials.find((m) => /overburden|waste/i.test(m)) || "Overburden" },
+				{ key: "default_density", label: __("Density where there is no density grid"), type: "number", default: 1.5 },
+			],
+			submit_label: __("Calculate"),
+		});
+		if (!values) return;
+		const params = { ...values, blocks: selected.length ? selected.map((b) => b.entity_id) : null };
+		const done = await this.ctx.run_job("mining_job", { model: this.ctx.model().name, operation: "block_geology", params });
+		if (!done) return;
+		const r = done.results;
+		this.session.apply(__("Block Geology"), (w) => {
+			for (const [id, u] of Object.entries(r.updates)) {
+				const b = this.session.entities.get(id);
+				if (!b) continue;
+				w.put({ ...b, color: material_colour(u.material, this.materials), metadata: { ...b.metadata, mining_block: { ...b.metadata.mining_block, material: u.material, geology: u.geology } } });
+			}
+		});
+		const rows = Object.entries(r.updates).map(([id, u]) => ({ id, ...this.session.entities.get(id).metadata.mining_block }));
+		this.ctx.show_result({ kind: "block_geology_report", title: __("Block Geology"), result: r, rows });
+		this.ctx.message(done.status_message, "result");
+	}
+
+	// -------------------------------------------------------------- pit-shell optimisation (Phase 6)
+
+	// Nested pit shells (maximum closure per revenue factor) on a block model valued from a geology model.
+	async pit_shells(edit = null) {
+		const models = (await call("list_geology_models", { model: this.ctx.model().name })).filter((g) => g.status === "Current");
+		if (!models.length) throw new Error(__("Build the geology first (Mining → Geology from Geo Planning)."));
+		const std = (await this.standard()) || {};
+		const limits = this.sc.selected((e) => closed_loop(e) || (e.entity_type === "Polyline" && e.geometry.closed));
+		const values = await this.ask(edit, {
+			title: __("Pit Optimisation (nested shells)"),
+			intro: __("A block model over the seams, each block valued from the geology; the best pit for every revenue factor (Lerchs–Grossmann, as a minimum cut) within the overall slope. Undiscounted.") + (limits.length === 1 && !edit ? " " + __("The selected outline is the mining limit.") : ""),
+			fields: [
+				{ key: "geology", label: __("Geology"), type: "select", options: models.map((g) => ({ value: g.name, label: `${g.name} · ${g.title}` })), default: models[0].name },
+				{ key: "ground", label: __("Ground surface"), type: "select", options: this.surface_choices(__("The geology's topography")), default: "" },
+				{ key: "cell_size", label: __("Block size (m)"), type: "number", default: 20 },
+				{ key: "bench_height", label: __("Bench height (m)"), type: "number", default: std.bench_height || 10 },
+				{ key: "slope", label: __("Overall slope (°)"), type: "number", default: std.maximum_slope_angle || 45 },
+				{ key: "bottom_elevation", label: __("Bottom elevation"), type: "number", help: __("Empty: below the lowest seam floor.") },
+				{ key: "price", label: __("Coal price (per t)"), type: "number", default: 1200 },
+				{ key: "recovery", label: __("Mining recovery (%)"), type: "number", default: 95 },
+				{ key: "mining_cost", label: __("Mining cost (per bcm, all material)"), type: "number", default: 45 },
+				{ key: "processing_cost", label: __("Processing and haulage (per t coal)"), type: "number", default: 250 },
+				{ key: "default_density", label: __("Density without a density grid"), type: "number", default: 1.5 },
+				{ key: "rf_from", label: __("Revenue factors from"), type: "number", default: 0.5 },
+				{ key: "rf_to", label: __("…to"), type: "number", default: 1.5 },
+				{ key: "rf_step", label: __("…step"), type: "number", default: 0.1 },
+				{ key: "selected_rf", label: __("Shell to draw (revenue factor)"), type: "number", default: 1 },
+			],
+			submit_label: __("Optimise"),
+			check: (v) => (v.price > 0 && v.cell_size > 0 && v.slope > 0 && v.slope < 90 ? null : __("Give a price, a block size and a slope between 0° and 90°.")),
+		});
+		if (!values) return;
+		this.saved_surface(values.ground);
+		const params = { ...values, ground: values.ground || null, limit: edit ? edit.params.limit : limits.length === 1 ? limits[0].entity_id : null };
+		if (params.limit && !edit) this.sc.require_saved(limits);
+		for (const k of ["bottom_elevation"]) if (values[k] === "" || values[k] === null) delete params[k];
+		const done = await this.ctx.run_job("mining_job", { model: this.ctx.model().name, operation: "pit_shells", params });
+		if (!done) return;
+		const r = done.results;
+		const layer = this.ensure_layer("PIT SHELL", "#e07a5f");
+		const meta = (more) => ({ pit_shell: { optimisation: r.optimisation, revenue_factor: r.selected_rf, ...more } });
+		const entities = [];
+		if (r.shell) entities.push(this.surface_entity(__("Pit Shell RF {0}", [r.selected_rf]), "Design Surface", layer, r.shell, meta({ role: "surface", params })));
+		for (const ring of r.outline) entities.push(this.polyline(ring, true, layer, meta({ role: "limit", ...(r.shell ? {} : { params }) }), "#e07a5f"));
+		const old = [...this.session.entities.values()].filter((e) => e.metadata && e.metadata.pit_shell).map((e) => e.entity_id);
+		const group = [...new Set([...(edit ? edit.group : []), ...old])];
+		if (entities.length) this.replace(group.length ? { group } : null, __("Pit Shell"), entities);
+		this.ctx.show_result({ kind: "optimisation_report", title: __("Pit Optimisation {0}", [r.optimisation]), result: r });
+		this.ctx.message(done.status_message, r.shell ? "result" : "warning");
 	}
 
 	// -------------------------------------------------------------- mining blocks

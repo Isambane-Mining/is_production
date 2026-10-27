@@ -355,7 +355,7 @@ def check_surface_ref(model, geometry_ref):
 		raise frappe.PermissionError
 	if frappe.db.exists("CAD Entity", {"cad_model": model, "geometry_ref": geometry_ref}):
 		return
-	if frappe.db.exists("CAD Processing Job", {"cad_model": model, "job_type": ["in", ["Surface", "Import", "Mining Design"]], "results": ["like", f"%{geometry_ref}%"]}):
+	if frappe.db.exists("CAD Processing Job", {"cad_model": model, "job_type": ["in", ["Surface", "Import", "Mining Design", "Point Cloud"]], "results": ["like", f"%{geometry_ref}%"]}):
 		return
 	raise frappe.PermissionError
 
@@ -363,7 +363,7 @@ def check_surface_ref(model, geometry_ref):
 @frappe.whitelist(methods=["GET"])
 def get_surface_index(model, geometry_ref):
 	"""The display tile index of a surface (JSON), or 404 while the tiles are not made."""
-	from is_production.cad_engineering.services.cad_surface_service import sidecar, tile_key
+	from is_production.cad_engineering.services.cad_surface_service import TILE_VERSION, sidecar, tile_key
 
 	check_surface_ref(model, geometry_ref)
 	store = storage.provider()
@@ -371,6 +371,8 @@ def get_surface_index(model, geometry_ref):
 	if not store.exists(key):
 		return Response(b"", status=404)
 	index = json.loads(store.read(key))
+	if index.get("version", 1) < TILE_VERSION and frappe.db.exists("CAD Entity", {"cad_model": model, "geometry_ref": geometry_ref, "entity_type": "Mesh"}):
+		return Response(b"", status=404)  # made with height-grid coarse levels, wrong for a 3D mesh: make them again
 	meta = sidecar(model, geometry_ref) or {}
 	index["stats"] = meta.get("stats")
 	response = Response(json.dumps(index), mimetype="application/json")
@@ -472,6 +474,38 @@ def get_design_validation(name):
 	doc = frappe.get_doc("CAD Design Validation", name)
 	doc.check_permission("read")
 	return {**doc.as_dict(), "results": frappe.parse_json(doc.results), "standard_snapshot": frappe.parse_json(doc.standard_snapshot)}
+
+
+@frappe.whitelist(methods=["POST"])
+def cloud_job(model, operation, params=None):
+	check_enabled()
+	from is_production.cad_engineering.services import cad_cloud_service
+
+	return cad_cloud_service.start(model, operation, params)
+
+
+@frappe.whitelist()
+def list_geo_projects():
+	if not frappe.has_permission("Geo Project", "read"):
+		return []
+	return frappe.get_list("Geo Project", fields=["name", "project_name", "crs_name"], order_by="name asc", limit_page_length=500)
+
+
+@frappe.whitelist()
+def geology_sources(model, geo_project):
+	from is_production.cad_engineering.services import cad_geology_service
+
+	frappe.get_doc("CAD Model", model).check_permission("read")
+	return cad_geology_service.sources(model, geo_project)
+
+
+@frappe.whitelist()
+def list_geology_models(model):
+	frappe.get_doc("CAD Model", model).check_permission("read")
+	rows = frappe.get_all("CAD Geology Model", filters={"cad_model": model}, fields=["name", "title", "geo_project", "source", "status", "checks_status", "creation"], order_by="creation desc")
+	for r in rows:
+		r.seams = frappe.get_all("CAD Geology Seam", filters={"parent": r.name, "parenttype": "CAD Geology Model"}, fields=["seam", "seam_label", "volume", "tonnes"], order_by="idx")
+	return rows
 
 
 @frappe.whitelist()

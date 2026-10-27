@@ -33,7 +33,7 @@ from frappe import _
 
 MAX_POINTS = 200000
 TEXT_LIMIT = 20000
-BLOB_TYPES = {"Solid", "Mesh", "Surface"}
+BLOB_TYPES = {"Solid", "Mesh", "Surface", "Point Cloud"}
 SUPPORTED_TYPES = {
 	"Point",
 	"Line",
@@ -51,9 +51,10 @@ SUPPORTED_TYPES = {
 	"Solid",
 	"Surface",
 	"Mesh",
+	"Point Cloud",
 }
 SURFACE_TYPES = {"Survey Surface", "Terrain Surface", "Geological Surface", "Coal Seam", "Pit Surface", "Design Surface", "As-Built Surface"}
-BLOB_FORMATS = {"Solid": ("brep", "OCCT B-Rep"), "Surface": ("tin", "TIN"), "Mesh": ("tin", "TIN")}
+BLOB_FORMATS = {"Solid": ("brep", "OCCT B-Rep"), "Surface": ("tin", "TIN"), "Mesh": ("tin", "TIN"), "Point Cloud": ("laz", "LAZ")}
 HATCH_PATTERNS = {"SOLID", "ANSI31", "ANSI37", "LINES", "GRID", "DOTS"}
 DIMENSION_KINDS = {"aligned", "linear", "angular", "radius", "diameter"}
 HALIGN = {"left", "center", "right"}
@@ -286,8 +287,8 @@ def normalise(entity_type, geometry, block_exists=None):
 		if any(abs(s) < 1e-12 for s in scale):
 			frappe.throw(_("Block scale cannot be zero."))
 		return {"block": name, "insert": coordinate(g.get("insert"), _("Insertion point")), "scale": scale, "rotation": number(g.get("rotation", 0.0), _("Rotation"))}
-	if entity_type in ("Surface", "Mesh"):
-		# the triangles are in the TIN file (geometry_ref); the geometry keeps the name and where it came from
+	if entity_type in ("Surface", "Mesh", "Point Cloud"):
+		# the triangles (points) are in the TIN (LAZ) file, geometry_ref; the geometry keeps the name and where it came from
 		name = str(g.get("name") or g.get("surface_name") or "").strip()
 		if not name or len(name) > 140:
 			frappe.throw(_("A {0} needs a name.").format(_(entity_type)))

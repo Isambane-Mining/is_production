@@ -51,6 +51,8 @@ has_permission = {
     "CAD Design Validation": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
     "CAD Design Publication": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
     "CAD Survey Reconciliation": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
+    "CAD Geology Model": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
+    "CAD Pit Optimisation": "is_production.cad_engineering.services.cad_permissions.has_model_permission",
 }
 
 permission_query_conditions = {
@@ -65,6 +67,8 @@ permission_query_conditions = {
     "CAD Design Validation": "is_production.cad_engineering.services.cad_permissions.model_condition",
     "CAD Design Publication": "is_production.cad_engineering.services.cad_permissions.model_condition",
     "CAD Survey Reconciliation": "is_production.cad_engineering.services.cad_permissions.model_condition",
+    "CAD Geology Model": "is_production.cad_engineering.services.cad_permissions.model_condition",
+    "CAD Pit Optimisation": "is_production.cad_engineering.services.cad_permissions.model_condition",
 }
 
 override_whitelisted_methods = {

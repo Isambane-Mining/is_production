@@ -15,8 +15,8 @@ from frappe.utils import cint, flt
 from is_production.cad_engineering.services import cad_job_service, cad_model_service, cad_surface_service, cad_worker_service
 from is_production.cad_engineering.services import cad_storage_service as storage
 
-SURFACE_FORMATS = {"LandXML", "CSV", "XYZ", "STL", "OBJ", "LAS", "LAZ"}
-EXPORT_FORMATS = {"LandXML": "xml", "STL": "stl", "OBJ": "obj", "CSV": "csv", "XYZ": "xyz", "STEP": "step", "GeoJSON": "geojson", "Blocks CSV": "csv", "Drill Holes CSV": "csv"}
+SURFACE_FORMATS = {"LandXML", "CSV", "XYZ", "STL", "OBJ", "LAS", "LAZ", "IFC", "E57"}
+EXPORT_FORMATS = {"IFC": "ifc", "LandXML": "xml", "STL": "stl", "OBJ": "obj", "CSV": "csv", "XYZ": "xyz", "STEP": "step", "GeoJSON": "geojson", "Blocks CSV": "csv", "Drill Holes CSV": "csv"}
 POINT_ENTITY_LIMIT = 200_000
 
 
@@ -36,6 +36,8 @@ def format_of(file_name):
 		".laz": "LAZ",
 		".step": "STEP",
 		".stp": "STEP",
+		".ifc": "IFC",
+		".e57": "E57",
 	}.get(ext)
 
 
@@ -51,6 +53,9 @@ def worker_options(options):
 
 
 def read_file(job, io, path, workspace, log, options):
+	if io.file_format == "IFC":
+		request = {"command": "import", "workspace": workspace, "input": path, "options": {"group_by": options.get("ifc_group") or "element", "georeference": options.get("ifc_georeference", True), "axis_mapping": options.get("axis_mapping"), "unit_scale": flt(options.get("unit_scale")) or 1.0}}
+		return cad_job_service.run_worker(job, request, log, script=cad_worker_service.IFC_WORKER)
 	if io.file_format == "STEP":
 		return cad_job_service.run_worker(job, {"command": "step_read", "workspace": workspace, "input": path, "unit_scale": flt(options.get("unit_scale")) or 1.0}, log)
 	request = {"command": "import", "workspace": workspace, "input": path, "format": io.file_format, "file_name": os.path.basename(io.source_file), "options": worker_options(options)}
@@ -64,6 +69,12 @@ def read_file(job, io, path, workspace, log, options):
 
 def inspect(job, io, path, workspace, log):
 	"""The validation report of a non-DXF file (nothing is stored)."""
+	if io.file_format == "IFC":
+		r = cad_job_service.run_worker(job, {"command": "inspect", "workspace": workspace, "input": path}, log, script=cad_worker_service.IFC_WORKER)
+		return {**r, "entity_count": r["elements"], "invalid_count": 0, "units_name": None}
+	if io.file_format == "E57":
+		r = cad_job_service.run_worker(job, {"command": "inspect_e57", "workspace": workspace, "input": path}, log, script=cad_worker_service.CLOUD_WORKER)
+		return {**r, "entity_count": 1, "invalid_count": 0, "warnings": [], "units_name": None}
 	result = read_file(job, io, path, workspace, log, {})
 	if io.file_format == "STEP":
 		items = result["items"]
@@ -108,7 +119,7 @@ def union(boxes):
 # ---------------------------------------------------------------------------
 
 
-def add_blob_entity(model, working, entity_type, geometry, digest, layer, source_id=None):
+def add_blob_entity(model, working, entity_type, geometry, digest, layer, source_id=None, metadata=None):
 	doc = frappe.get_doc(
 		{
 			"doctype": "CAD Entity",
@@ -121,6 +132,7 @@ def add_blob_entity(model, working, entity_type, geometry, digest, layer, source
 			"revision": working,
 			"entity_version": 1,
 			"source_id": source_id,
+			"metadata": json.dumps(metadata) if metadata else None,
 		}
 	)
 	doc.flags.ignore_permissions = True
@@ -131,6 +143,12 @@ def add_blob_entity(model, working, entity_type, geometry, digest, layer, source
 def import_file(job, io, options, path, workspace, log, working):
 	"""Store the file's surfaces / meshes / solids / points in the model. Returns (entity ids, warnings)."""
 	model = io.cad_model
+	if io.file_format == "E57" or (options.get("points_as") == "cloud" and io.file_format in ("LAS", "LAZ", "XYZ", "CSV")):
+		from is_production.cad_engineering.services import cad_cloud_service
+
+		layer = cad_model_service.ensure_layers(model, [{"layer_name": options.get("layer") or io.file_format}])[options.get("layer") or io.file_format]
+		entity_id, _stats = cad_cloud_service.import_cloud(job, io, options, path, workspace, log, layer, working)
+		return [entity_id], []
 	result = read_file(job, io, path, workspace, log, options)
 	layer = cad_model_service.ensure_layers(model, [{"layer_name": options.get("layer") or io.file_format}])[options.get("layer") or io.file_format]
 	prefix = "I" + io.name.split("-")[-1]
@@ -160,7 +178,7 @@ def import_file(job, io, options, path, workspace, log, working):
 		created.append(add_blob_entity(model, working, "Surface", {"name": unique_surface_name(model, name), "surface_type": surface_type, "source": source}, digest, layer, f"{prefix}-{n}"))
 	for n, item in enumerate(result.get("meshes") or []):
 		digest = cad_surface_service.store_tin(job, workspace, item["tin"], item["stats"], source, entity_type="Mesh", log=log)
-		created.append(add_blob_entity(model, working, "Mesh", {"name": item["name"] or base_name, "source": source}, digest, layer, f"{prefix}-M{n}"))
+		created.append(add_blob_entity(model, working, "Mesh", {"name": item["name"] or base_name, "source": source}, digest, layer, f"{prefix}-M{n}", {"ifc": item["metadata"]} if item.get("metadata") else None))
 		if not item["stats"].get("closed"):
 			warnings.append(_("Mesh {0} is open ({1} open edges); it has no volume.").format(item["name"], item["stats"].get("open_edges")))
 
@@ -235,6 +253,8 @@ def export(job, io, options, content, workspace, log):
 		os.makedirs(os.path.dirname(out), exist_ok=True)
 		writer = {"GeoJSON": cad_mining_service.export_geojson, "Blocks CSV": cad_mining_service.export_blocks_csv, "Drill Holes CSV": cad_mining_service.export_drill_csv}[fmt]
 		return out, writer(model, content, out)
+	if fmt == "IFC":
+		return export_ifc(job, model, options, content, workspace, log, out, chosen)
 	if fmt == "STEP":
 		solids = [e for e in content["entities"] if e["entity_type"] == "Solid" and (not chosen or e["geometry_ref"] in chosen)]
 		if not solids:
@@ -249,3 +269,42 @@ def export(job, io, options, content, workspace, log):
 	request = {"command": "export", "workspace": workspace, "format": fmt, "out": out, "surfaces": items, "axis_mapping": options.get("axis_mapping") or "As in file", "date": str(frappe.utils.today())}
 	result = cad_job_service.run_worker(job, request, log, script=cad_worker_service.SURFACE_WORKER)
 	return result["out"], {"written": {"Surface": len(items)}, "format": fmt, "bytes": result["bytes"]}
+
+
+def export_ifc(job, model, options, content, workspace, log, out, chosen):
+	"""An IFC4 file of the model's surfaces, meshes, solids (their display tessellation) and lines / polylines,
+	georeferenced with the model's CRS and local origin."""
+	doc = frappe.get_doc("CAD Model", model)
+	meshes, polylines, tessellate = [], [], []
+	for n, e in enumerate(content["entities"]):
+		if chosen and e.get("geometry_ref") not in chosen and e["entity_type"] in ("Surface", "Mesh", "Solid"):
+			continue
+		name = (e.get("geometry") or {}).get("name") or e["entity_id"]
+		if e["entity_type"] in ("Surface", "Mesh"):
+			meshes.append({"name": name, "kind": "surface" if e["entity_type"] == "Surface" else "mesh", "tin": cad_surface_service.stage_tin(model, e["geometry_ref"], workspace, f"ifc_{n}")})
+		elif e["entity_type"] == "Solid":
+			if not storage.provider().exists(storage.mesh_key(model, e["geometry_ref"])):
+				tessellate.append(e["geometry_ref"])
+			meshes.append({"name": (e.get("metadata") or {}).get("name") or e["entity_id"], "kind": "solid", "ref": e["geometry_ref"]})
+		elif e["entity_type"] in ("Line", "Polyline", "Arc", "Circle", "Spline", "Ellipse") and not chosen:
+			pts = cad_surface_service.densify(e["entity_type"], e["geometry"])
+			if pts and len(pts) >= 2:
+				polylines.append({"name": f"{e.get('layer') or '0'} {e['entity_type']}", "points": pts, "closed": bool((e.get("geometry") or {}).get("closed"))})
+	if tessellate:
+		cad_job_service.run_tessellate(job, {"geometry_refs": list(set(tessellate))}, workspace, log)
+	for n, m in enumerate(meshes):
+		if m.get("ref"):
+			key = storage.mesh_key(model, m.pop("ref"))
+			if storage.provider().exists(key):
+				m["mesh"] = os.path.join(workspace, "inputs", f"solid_{n}.cadmesh")
+				os.makedirs(os.path.dirname(m["mesh"]), exist_ok=True)
+				import shutil
+
+				shutil.copyfile(storage.provider().local_path(key), m["mesh"])
+	meshes = [m for m in meshes if m.get("tin") or m.get("mesh")]
+	if not meshes and not polylines:
+		frappe.throw(_("There is nothing to export to IFC (surfaces, meshes, solids or lines)."))
+	origin = [flt(doc.local_origin_x), flt(doc.local_origin_y), flt(doc.local_origin_z)]
+	request = {"command": "export", "workspace": workspace, "out": out, "origin": origin, "crs": doc.crs or "unknown", "project": doc.model_name, "site": doc.model_code, "meshes": meshes, "polylines": polylines}
+	result = cad_job_service.run_worker(job, request, log, script=cad_worker_service.IFC_WORKER)
+	return result["out"], {"written": result["written"], "format": "IFC4", "bytes": result["bytes"]}

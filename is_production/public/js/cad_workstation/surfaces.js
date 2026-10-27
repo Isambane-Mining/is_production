@@ -149,7 +149,7 @@ export class SurfaceLayer {
 		while (this.active < MAX_PARALLEL && this.queue.length) {
 			const job = this.queue.shift();
 			this.active++;
-			get_surface_tile(this.model, job.item.entity.geometry_ref, job.tile.levels[job.level].file)
+			get_surface_tile(this.model, job.item.entity.geometry_ref, job.tile.levels[job.level].file, job.item.index.version)
 				.then((mesh) => this.place(job, mesh))
 				.catch(() => {})
 				.finally(() => {
