@@ -385,6 +385,7 @@ export function entity_extent(entity, blocks = null, depth = 0) {
 		case "Solid":
 		case "Surface":
 		case "Mesh":
+		case "Point Cloud":
 			return entity.bbox || (entity.min_x !== undefined ? [entity.min_x, entity.min_y, entity.min_z, entity.max_x, entity.max_y, entity.max_z] : null);
 		case "Point":
 			return extent([g.p]);

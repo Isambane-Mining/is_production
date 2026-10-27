@@ -1,0 +1,203 @@
+{
+ "doctype": "DocType",
+ "name": "CAD Geology Model",
+ "module": "CAD Engineering",
+ "autoname": "format:CAD-GEO-{YYYY}-{#####}",
+ "naming_rule": "Expression",
+ "title_field": "title",
+ "engine": "InnoDB",
+ "track_changes": 1,
+ "description": "Seam surfaces and property surfaces built in the CAD Workstation from a Geo Project's model grids or drillholes, with their checks and seam totals. Written by the geology job; read-only.",
+ "creation": "2026-10-27 12:00:00.000000",
+ "modified": "2026-10-27 12:00:00.000000",
+ "modified_by": "Administrator",
+ "owner": "Administrator",
+ "fields": [
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Title",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "cad_model",
+   "fieldtype": "Link",
+   "label": "CAD Model",
+   "options": "CAD Model",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "geo_project",
+   "fieldtype": "Link",
+   "label": "Geo Project",
+   "options": "Geo Project",
+   "read_only": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "source",
+   "fieldtype": "Select",
+   "label": "Source",
+   "options": "Model Grids\nDrillholes",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Current\nSuperseded",
+   "default": "Current",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "checks_status",
+   "fieldtype": "Select",
+   "label": "Checks",
+   "options": "Pass\nWarning\nFail",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "revision",
+   "fieldtype": "Link",
+   "label": "Revision",
+   "options": "CAD Design Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "processing_job",
+   "fieldtype": "Link",
+   "label": "Processing Job",
+   "options": "CAD Processing Job",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_source",
+   "fieldtype": "Section Break",
+   "label": "Source and method"
+  },
+  {
+   "fieldname": "axis_mapping",
+   "fieldtype": "Select",
+   "label": "Axis Mapping",
+   "options": "As stored\nNegate X and Y",
+   "read_only": 1,
+   "description": "Negate X and Y: the Geo data's x/y are easting/northing-style values of a south-orientated (Lo) model."
+  },
+  {
+   "fieldname": "method",
+   "fieldtype": "Small Text",
+   "label": "Method",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_source",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "summary",
+   "fieldtype": "Small Text",
+   "label": "Summary",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_seams",
+   "fieldtype": "Section Break",
+   "label": "Seams"
+  },
+  {
+   "fieldname": "seams",
+   "fieldtype": "Table",
+   "label": "Seams",
+   "options": "CAD Geology Seam",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_checks",
+   "fieldtype": "Section Break",
+   "label": "Checks and surfaces",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "checks",
+   "fieldtype": "JSON",
+   "label": "Checks",
+   "read_only": 1
+  },
+  {
+   "fieldname": "surfaces",
+   "fieldtype": "JSON",
+   "label": "Surfaces",
+   "read_only": 1,
+   "description": "Every surface of the model by key (seam roof / floor, topography, properties): geometry ref, variable and statistics."
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production Manager",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "share": 1,
+   "email": 1
+  },
+  {
+   "role": "Production User",
+   "read": 1,
+   "print": 1,
+   "report": 1,
+   "export": 1,
+   "create": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "field_order": [
+  "title",
+  "cad_model",
+  "geo_project",
+  "source",
+  "column_break_main",
+  "status",
+  "checks_status",
+  "revision",
+  "processing_job",
+  "section_source",
+  "axis_mapping",
+  "method",
+  "column_break_source",
+  "summary",
+  "section_seams",
+  "seams",
+  "section_checks",
+  "checks",
+  "surfaces"
+ ]
+}

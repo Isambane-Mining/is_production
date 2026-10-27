@@ -233,6 +233,7 @@ import PropertiesPanel from "./PropertiesPanel.vue";
 import ReferencePanel from "./ReferencePanel.vue";
 import RevisionPanel from "./RevisionPanel.vue";
 import { EditSession } from "./session";
+import { CloudCommands } from "./cloud_commands";
 import { MiningCommands } from "./mining_commands";
 import { PlanningCommands } from "./planning_commands";
 import { SurfaceCommands } from "./surface_commands";
@@ -257,6 +258,7 @@ let viewport = null;
 let tools = null;
 let surface_commands = null;
 let mining_commands = null;
+let cloud_commands = null;
 let planning_commands = null;
 let compare_ref = null; // an older revision drawn faded over the model (Compare Revisions)
 
@@ -377,7 +379,7 @@ const menus = computed(() => {
 				{ label: __("Save"), command: "save", key: "Ctrl+S", disabled: !has || !change_count.value },
 				{ label: __("Reload from Server"), command: "reload", disabled: !has },
 				"-",
-				{ label: __("Import (DXF, LandXML, CSV, STL, OBJ, LAS, STEP)…"), command: "import", disabled: !ed || !config.worker_enabled },
+				{ label: __("Import (DXF, LandXML, CSV, STL, OBJ, LAS, E57, STEP, IFC)…"), command: "import", disabled: !ed || !config.worker_enabled },
 				{ label: __("Export…"), command: "export", disabled: !has || !config.worker_enabled },
 				"-",
 				{ label: __("Validate Model (Open CASCADE)"), command: "validate", disabled: !has || !info.value.can_edit || !config.worker_enabled },
@@ -482,6 +484,30 @@ const menus = computed(() => {
 			],
 		},
 		{
+			label: __("Point Cloud"),
+			items: [
+				{ label: __("Import Point Cloud (LAS / LAZ / E57 / XYZ)…"), command: "import", disabled: !ed || !config.worker_enabled },
+				"-",
+				{ label: __("Colour by Elevation"), command: "cloud_colour", args: "elevation", disabled: !has },
+				{ label: __("Colour by Classification"), command: "cloud_colour", args: "classification", disabled: !has },
+				{ label: __("Colour by Intensity"), command: "cloud_colour", args: "intensity", disabled: !has },
+				{ label: __("Colour by RGB"), command: "cloud_colour", args: "rgb", disabled: !has },
+				{ label: __("Colour by Deviation"), command: "cloud_colour", args: "deviation", disabled: !has },
+				{ label: __("Point Size / Deviation Range…"), command: "cloud_size", disabled: !has },
+				"-",
+				{ label: __("Crop (outline / elevation)…"), command: "cloud_crop", disabled: !surface_ok },
+				{ label: __("Remove Noise…"), command: "cloud_noise", disabled: !surface_ok },
+				{ label: __("Decimate…"), command: "cloud_decimate", disabled: !surface_ok },
+				{ label: __("Classify Ground…"), command: "cloud_ground", disabled: !surface_ok },
+				{ label: __("Set Class (outline / elevation)…"), command: "cloud_set_class", disabled: !surface_ok },
+				{ label: __("Keep or Remove Classes…"), command: "cloud_classes", disabled: !surface_ok },
+				"-",
+				{ label: __("Surface from Point Cloud…"), command: "cloud_surface", disabled: !surface_ok },
+				{ label: __("Compare with Surface…"), command: "cloud_compare", disabled: !surface_ok },
+				{ label: __("Export Point Cloud (LAZ / LAS / E57 / XYZ)…"), command: "cloud_export", disabled: !has },
+			],
+		},
+		{
 			label: __("Solid"),
 			items: [
 				tool_item("box", solid_ok),
@@ -526,6 +552,12 @@ const menus = computed(() => {
 				"-",
 				{ label: __("Validate Design against Standard"), command: "design_validate", disabled: !has || !config.mining_tools },
 				{ label: __("Design Validations (Desk)"), command: "desk_list", args: "CAD Design Validation" },
+				"-",
+				{ label: __("Geology from Geo Planning (grids / drillholes)…"), command: "geology_build", disabled: !mine_ok },
+				{ label: __("Block Geology (tonnes, qualities, material)…"), command: "block_geology", disabled: !mine_ok },
+				{ label: __("Geology Models (Desk)"), command: "desk_list", args: "CAD Geology Model" },
+				{ label: __("Pit Optimisation (nested shells)…"), command: "pit_shells", disabled: !mine_ok },
+				{ label: __("Pit Optimisations (Desk)"), command: "desk_list", args: "CAD Pit Optimisation" },
 				"-",
 				{ label: __("Drill Pattern (layout)…"), command: "drill_pattern", disabled: !mine_ok },
 				{ label: __("Drill Pattern Report"), command: "drill_report", disabled: !has },
@@ -763,6 +795,7 @@ async function run(command, args) {
 				if (TOOLS[command]) tools.start(command);
 				else if (surface_commands && (await surface_commands.run(command, args))) after_surface_command(command);
 				else if (mining_commands && (await mining_commands.run(command, args))) break;
+				else if (cloud_commands && (await cloud_commands.run(command, args))) break;
 				else if (planning_commands) await planning_commands.run(command, args);
 		}
 	} catch (e) {
@@ -814,6 +847,19 @@ async function on_surface_loaded(event) {
 	const done = await run_job("surface_job", { model: model.value.name, operation: "tiles", params: { geometry_ref: e.geometry_ref } });
 	if (done) {
 		viewport.surfaces.remove(e.entity_id);
+		viewport.sync(session, [e.entity_id]);
+	}
+}
+
+// Point-cloud display tiles: a cloud without tiles gets them made (once per session), then reloads.
+async function on_cloud_loaded(event) {
+	if (event.stats) return tick.value++;
+	const e = event.missing;
+	if (!e || !config.worker_enabled || tiles_requested.has(e.geometry_ref)) return;
+	tiles_requested.add(e.geometry_ref);
+	const done = await cloud_commands.make_tiles(e);
+	if (done) {
+		viewport.clouds.remove(e.entity_id);
 		viewport.sync(session, [e.entity_id]);
 	}
 }
@@ -1844,6 +1890,22 @@ onMounted(async () => {
 			run_job,
 			current_layer: () => current_layer_key.value,
 			show_result,
+			zoom: (ids) => zoom_ids(ids),
+			surfaces: surface_commands,
+		})
+	);
+	cloud_commands = markRaw(
+		new CloudCommands({
+			session,
+			viewport,
+			config,
+			model: () => model.value,
+			selection: () => selection.value,
+			select: (ids) => select_ids(ids),
+			message,
+			ask,
+			run_job,
+			show_result,
 			surfaces: surface_commands,
 		})
 	);
@@ -1867,7 +1929,8 @@ onMounted(async () => {
 		})
 	);
 	viewport.surfaces.on_loaded = on_surface_loaded;
-	window.__cad = { viewport, session, tools, surface_commands, mining_commands, select: select_ids, run }; // for the browser console and automated UI tests
+	viewport.clouds.on_loaded = on_cloud_loaded;
+	window.__cad = { viewport, session, tools, surface_commands, mining_commands, cloud_commands, select: select_ids, run }; // for the browser console and automated UI tests
 	unsubscribe = session.on_change((ids) => {
 		const first = ids.length && session.entities.get(ids[0]);
 		const box = first && entity_extent(first, viewport.blocks);

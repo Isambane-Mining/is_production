@@ -357,6 +357,10 @@ HANDLERS = {"Build Geometry": run_build, "Validate Model": run_validate, "Tessel
 
 
 def handler_for(job_type):
+	if job_type == "Point Cloud":
+		from is_production.cad_engineering.services import cad_cloud_service
+
+		return cad_cloud_service.run
 	if job_type == "Mining Design":
 		from is_production.cad_engineering.services import cad_mining_service
 

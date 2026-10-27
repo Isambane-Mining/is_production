@@ -24,7 +24,7 @@ from frappe import _
 
 MODEL_CODE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\-]{0,59}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
-BLOB_EXTENSIONS = {"brep", "tin", "stl", "obj", "step", "json"}  # json: the server's record of a built file
+BLOB_EXTENSIONS = {"brep", "tin", "laz", "stl", "obj", "step", "json"}  # json: the server's record of a built file
 KEY = re.compile(r"^(models|mesh)/[A-Za-z0-9][A-Za-z0-9_.\-]{0,59}/[A-Za-z0-9_.\-/]{1,200}$")
 
 

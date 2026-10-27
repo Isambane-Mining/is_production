@@ -23,6 +23,9 @@ FIXTURE = os.path.join(os.path.dirname(__file__), "..", "..", "tests", "fixtures
 
 
 def upload(content, name="sample.dxf"):
+	# an older unattached upload of the same name (an interrupted run) would make Frappe rename this one
+	for old in frappe.get_all("File", filters={"file_name": name, "is_private": 1, "attached_to_name": ["is", "not set"]}, pluck="name"):
+		frappe.delete_doc("File", old, force=True, ignore_permissions=True)
 	return frappe.get_doc({"doctype": "File", "file_name": name, "is_private": 1, "content": content}).insert(ignore_permissions=True)
 
 

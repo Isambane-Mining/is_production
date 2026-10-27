@@ -300,6 +300,95 @@ class IntegrationTestCADSurface(IntegrationTestCase):
 			self.assertAlmostEqual(out[key]["volume"], expected, delta=1e-6 * expected, msg=key)
 
 
+	def test_point_cloud_import_edit_surface_compare_export(self):
+		"""Phase 6 point clouds: a sloping terrain (z = 100 + 0.05x, 1 m spacing) with a 20 × 20 m building 8 m high."""
+		from is_production.cad_engineering.services import cad_cloud_service, cad_storage_service, cad_workstation_service
+
+		model = make_model("CLOUD").name
+		rows = []
+		for i in range(60):
+			for j in range(60):
+				roof = 20 <= i <= 40 and 20 <= j <= 40
+				rows.append(f"{X0 + i:.3f} {Y0 + j:.3f} {100 + 0.05 * i + (8 if roof else 0):.3f} {i % 7} {j % 5} {(i + j) % 9}")
+		io = self.import_file(model, "\n".join(rows).encode(), "site.xyz", points_as="cloud")
+		self.assertEqual(io["entity_count"], 1)
+		cloud = frappe.get_doc("CAD Entity", {"cad_model": model, "entity_type": "Point Cloud"})
+		self.assertEqual((cloud.geometry_format, json.loads(cloud.geometry)["name"]), ("LAZ", "site"))
+		self.assertAlmostEqual(cloud.max_z, 100 + 0.05 * 40 + 8, places=6)
+		meta = cad_storage_service.provider().exists(cad_storage_service.blob_key(model, cloud.geometry_ref, "json"))
+		self.assertTrue(meta)
+		index = cad_workstation_service.get_surface_index(model, cloud.geometry_ref)
+		self.assertEqual(json.loads(index.get_data())["count"], 3600)
+
+		# classify ground, then keep the ground only: the building's 441 roof points go
+		edited = job_result(cad_cloud_service.start(model, "edit", {"geometry_ref": cloud.geometry_ref, "operations": [{"op": "ground", "cell": 1, "max_window": 40, "slope": 0.15}, {"op": "classes", "classes": [2]}]}))
+		self.assertEqual(edited["stats"]["count"], 3600 - 21 * 21)
+		self.assertEqual(edited["stats"]["classes"], {"2": 3600 - 441})
+		# the workstation swaps the entity's file (one undoable edit); the old one stays in storage
+		v = frappe.db.get_value("CAD Model", model, "edit_version")
+		cad_model_service.save_edits(model, v, {"upserts": [{"entity_id": cloud.entity_id, "entity_type": "Point Cloud", "geometry": json.loads(cloud.geometry), "geometry_ref": edited["geometry_ref"]}]})
+		self.assertEqual(frappe.db.get_value("CAD Entity", cloud.name, "max_z"), 100 + 0.05 * 59)
+
+		# a surface from the ground points: the terrain plane, so the original cloud's roof is 8 m above it
+		surface = job_result(cad_cloud_service.start(model, "surface", {"geometry_ref": edited["geometry_ref"], "classes": [2]}))
+		self.assertAlmostEqual(surface["stats"]["max_elevation"], 100 + 0.05 * 59, places=6)
+		v = frappe.db.get_value("CAD Model", model, "edit_version")
+		cad_model_service.save_edits(model, v, {"upserts": [{"entity_id": "PC-SRF", "entity_type": "Surface", "geometry": {"name": "Ground from cloud", "surface_type": "Terrain Surface", "source": surface["source"]}, "geometry_ref": surface["geometry_ref"]}]})
+		compared = job_result(cad_cloud_service.start(model, "compare", {"geometry_ref": edited["geometry_ref"], "surface": surface["geometry_ref"], "tolerance": 0.01}))
+		self.assertAlmostEqual(compared["comparison"]["within"], 100, places=6)  # the ground points are on their own surface
+		self.assertAlmostEqual(compared["comparison"]["rmse"], 0, places=3)
+
+		exported = job_result(cad_cloud_service.start(model, "export", {"geometry_ref": edited["geometry_ref"], "format": "XYZ"}))
+		self.assertEqual(exported["points"], 3159)
+		with open(frappe.get_doc("File", {"file_url": exported["file_url"]}).get_full_path()) as f:
+			self.assertEqual(sum(1 for _ in f), 3159)
+
+
+	def test_ifc_and_e57_exchange(self):
+		"""Phase 6 formats: IFC import (georeferenced meshes with their IFC data) and export, E57 import and export."""
+		import os
+
+		from is_production.cad_engineering.services import cad_cloud_service, cad_exchange_service
+
+		fixtures = os.path.join(os.path.dirname(__file__), "..", "..", "tests", "fixtures")
+		model = make_model("IFC").name
+		with open(os.path.join(fixtures, "sample_plant.ifc"), "rb") as f:
+			io = self.import_file(model, f.read(), "plant.ifc")
+		self.assertEqual(io["entity_count"], 2)
+		self.assertEqual(io["report"]["georeferencing"]["crs"], "EPSG:2053")
+		meshes = frappe.get_all("CAD Entity", filters={"cad_model": model, "entity_type": "Mesh"}, fields=["min_x", "min_y", "max_z", "metadata", "geometry_ref"], order_by="min_x")
+		self.assertEqual(len(meshes), 2)
+		ifc = json.loads(meshes[0].metadata)["ifc"]
+		self.assertEqual((ifc["ifc_class"], ifc["name"], len(ifc["global_id"])), ("IfcBuildingElementProxy", "Box 1", 22))
+		self.assertEqual((meshes[0].min_x, meshes[0].min_y, meshes[0].max_z), (-19500, 2860500, 103))  # through the IfcMapConversion
+		self.assertAlmostEqual(cad_surface_service.sidecar(model, meshes[0].geometry_ref)["stats"]["volume"], 150, places=6)
+
+		# export: the model's meshes and a polyline as IFC4
+		v = frappe.db.get_value("CAD Model", model, "edit_version")
+		cad_model_service.save_edits(model, v, {"upserts": [{"entity_id": "LIMIT", "entity_type": "Polyline", "geometry": {"points": [[X0, Y0, 100], [X0 + 40, Y0, 100], [X0 + 40, Y0 + 20, 100]], "closed": True}}]})
+		ex = cad_exchange_service.start_export(model, {"format": "IFC"})
+		ex = cad_exchange_service.get_exchange(ex["name"])
+		self.assertEqual(ex["processing_status"], "Completed", ex)
+		with open(frappe.get_doc("File", {"file_url": ex["result_file"]}).get_full_path()) as f:
+			text = f.read()
+		self.assertIn("FILE_SCHEMA(('IFC4'))", text)
+		self.assertEqual(text.count("IFCBUILDINGELEMENTPROXY("), 2)
+		self.assertEqual(text.count("IFCANNOTATION("), 1)
+		self.assertIn("EPSG:2053", text)
+
+		# E57: two scans (one posed by its translation) merged into one point cloud, then written out again
+		with open(os.path.join(fixtures, "sample_scan.e57"), "rb") as f:
+			io = self.import_file(model, f.read(), "scan.e57")
+		self.assertEqual((io["report"]["points"], len(io["report"]["scans"])), (882, 2))
+		cloud = frappe.get_doc("CAD Entity", {"cad_model": model, "entity_type": "Point Cloud"})
+		self.assertEqual((cloud.min_x, cloud.max_x, cloud.max_z), (-19500, -19450, 100))
+		stats = cad_surface_service.sidecar(model, cloud.geometry_ref)["stats"]
+		self.assertEqual((stats["count"], stats["has_rgb"]), (882, True))
+		out = job_result(cad_cloud_service.start(model, "export", {"geometry_ref": cloud.geometry_ref, "format": "E57"}))
+		self.assertEqual((out["format"], out["points"]), ("E57", 882))
+		self.assertTrue(out["file_url"].endswith(".e57"))
+
+
 def circle_polygon_area(r, n):
 	return 0.5 * n * r * r * math.sin(2 * math.pi / n)
 

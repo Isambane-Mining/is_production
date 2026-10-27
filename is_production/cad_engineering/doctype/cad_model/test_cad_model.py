@@ -28,6 +28,11 @@ def cleanup():
 	"""Jobs commit (the worker runs in the background), so test models are removed explicitly — by model
 	name pattern, so rows left behind by an interrupted run are removed too."""
 	models = frappe.get_all("CAD Model", filters={"name": ["like", f"{PREFIX}%"]}, pluck="name")
+	# uploaded files attached to the test models and their imports: left behind, they make Frappe rename later uploads
+	exchanges = frappe.get_all("CAD Import Export", filters={"cad_model": ["like", f"{PREFIX}%"]}, pluck="name")
+	for attached_to in (("CAD Model", models), ("CAD Import Export", exchanges)):
+		for f in frappe.get_all("File", filters={"attached_to_doctype": attached_to[0], "attached_to_name": ["in", attached_to[1] or [""]]}, pluck="name"):
+			frappe.delete_doc("File", f, force=True, ignore_permissions=True)
 	for doctype in ("CAD Entity", "CAD Layer", "CAD Block", "CAD Import Export", "CAD Design Revision", "CAD Processing Job", "CAD Surface", "CAD Volume Calculation", "CAD Design Validation"):
 		frappe.db.delete(doctype, {"cad_model": ["like", f"{PREFIX}%"]})
 	frappe.db.delete("CAD Model", {"name": ["like", f"{PREFIX}%"]})
