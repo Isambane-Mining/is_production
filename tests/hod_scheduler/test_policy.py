@@ -19,14 +19,14 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(policy.previous_sunday(date(2026, 11, 1)), date(2026, 10, 25))
 
     def test_filters_retain_plan_start_and_all_assets(self):
-        filters = policy.report_filters({'sites':[{'site':'Koppie'},{'site':'Uitgevallen'}]}, date(2026,10,26))
+        filters = policy.report_filters({'sites':[{'location':'Koppie'},{'location':'Uitgevallen'}]}, date(2026,10,26))
         self.assertEqual(filters, {'site':['Koppie','Uitgevallen'], 'end_date':'2026-10-25',
             'summary_type':'Average Per Machine', 'machine_scope':'Include Swing/Spare',
             'asset_ownership':'All Assets', 'au_target_filter':'85% A & U'})
         self.assertNotIn('start_date', filters)
 
     def test_each_run_resolves_dynamic_cutoff(self):
-        doc={'sites':[{'site':'Koppie'}]}
+        doc={'sites':[{'location':'Koppie'}]}
         self.assertNotEqual(policy.report_filters(doc,date(2026,10,26))['end_date'],
                             policy.report_filters(doc,date(2026,11,2))['end_date'])
 
@@ -50,17 +50,20 @@ class PolicyTests(unittest.TestCase):
         self.assertIsNotNone(policy.due_slot(doc,datetime(2026,10,26,6)))
 
     def test_recipients_and_sites_deduplicate(self):
-        doc={'recipients':[{'email':' Juan@example.com '},{'email':'juan@example.com'}],
-             'sites':[{'site':' Koppie '},{'site':'Koppie'}]}
-        self.assertEqual(policy.recipients(doc),['Juan@example.com'])
+        doc={'recipients':[{'user':'juan'}, {'user':'juan'}],
+             'sites':[{'location':' Koppie '},{'location':'Koppie'}]}
+        lookup=lambda user: {'email':'Juan@example.com', 'enabled':1}
+        self.assertEqual(policy.recipients(doc,lookup),['Juan@example.com'])
         self.assertEqual(policy.sites(doc),['Koppie'])
 
     def test_rejects_empty_sites_and_recipients(self):
-        for function in [policy.sites, policy.recipients]:
-            with self.assertRaises(ValueError): function({})
+        with self.assertRaises(ValueError): policy.sites({})
+        with self.assertRaises(ValueError): policy.recipients({},lambda user: None)
 
     def test_rejects_bad_recipient(self):
-        with self.assertRaises(ValueError): policy.recipients({'recipients':[{'email':'not-an-email'}]})
+        with self.assertRaises(ValueError):
+            policy.recipients({'recipients':[{'user':'juan'}]},
+                              lambda user: {'email':'not-an-email', 'enabled':1})
 
     def test_slots_distinguish_schedule_day_and_time(self):
         self.assertEqual(policy.delivery_key('daily','2026-10-26T06:00'),policy.delivery_key('daily','2026-10-26T06:00'))

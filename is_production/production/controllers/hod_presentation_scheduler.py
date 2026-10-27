@@ -17,8 +17,15 @@ def _now():
     return now_datetime()
 
 
-def _schedule(name):
-    return frappe.get_doc(SCHEDULE, name)
+def _schedule(name, *, for_update=False):
+    return frappe.get_doc(SCHEDULE, name, for_update=for_update)
+
+
+def _recipients(doc, *, sending=False):
+    def lookup(user):
+        return frappe.db.get_value('User', user, ['email', 'enabled'],
+                                   as_dict=True, for_update=sending)
+    return policy.recipients(doc, lookup, sending=sending)
 
 
 def check_environment(doc):
@@ -40,7 +47,7 @@ def validate_schedule(doc):
     if get_system_timezone() != 'Africa/Johannesburg':
         raise ValueError('HOD schedules require site timezone Africa/Johannesburg.')
     policy.sites(doc)
-    policy.recipients(doc)
+    _recipients(doc)
     policy.send_time(doc.get('send_time'))
     frequency = doc.get('frequency') or 'Daily'
     if frequency not in ('Daily', 'Weekly'):
@@ -64,7 +71,7 @@ def validate_schedule(doc):
 
 
 def dispatch_due():
-    """Minute hook; each configuration has one unique delivery slot per scheduled day/time."""
+    """One optional hook queues each due slot once. No recovery/reconciliation job."""
     if not frappe.db.exists('DocType', SCHEDULE):
         return
     now = _now()
@@ -79,57 +86,19 @@ def dispatch_due():
             key = _claim_delivery(doc, slot, 'Scheduled')
             if key:
                 frappe.db.commit()
+                try:
+                    frappe.enqueue('is_production.production.controllers.hod_presentation_scheduler.deliver',
+                        queue='long', timeout=1800, enqueue_after_commit=False, delivery_name=key)
+                except Exception:
+                    frappe.db.rollback()
+                    frappe.db.set_value(DELIVERY, key, {'status': 'Failed',
+                        'completed_at': _now(), 'error': 'Could not enqueue delivery. Review before manually retrying.'},
+                        update_modified=False)
+                    frappe.db.commit()
+                    raise
         except Exception:
             frappe.db.rollback()
             frappe.log_error(title='HOD schedule dispatch failed', message=frappe.get_traceback())
-    reconcile_pending(now)
-
-
-def reconcile_pending(now):
-    """Durable outbox: retry Redis enqueue; make interrupted workers visible without resending."""
-    pending = frappe.get_all(DELIVERY,filters={'status':['in',['Queued','Generating']]},
-        fields=['name','schedule','status','scheduled_slot','trigger_type','started_at','creation'],
-        order_by='creation asc',limit_page_length=100)
-    for entry in pending:
-        try:
-            if entry.status == 'Generating':
-                started = datetime.fromisoformat(str(entry.started_at)) if entry.started_at else now
-                if (now-started).total_seconds() > 2100:
-                    _pending_result(entry,'Interrupted',now,
-                        'Worker exceeded 35 minutes or stopped. Check Email Queue before explicitly resending.')
-                continue
-            if entry.trigger_type != 'Scheduled':
-                created = datetime.fromisoformat(str(entry.get('creation'))) if entry.get('creation') else now
-                if (now-created).total_seconds() > 2100:
-                    _pending_result(entry,'Interrupted',now,'Manual run stopped before generation. Review and run again explicitly.')
-                continue
-            scheduled = datetime.fromisoformat(entry.scheduled_slot)
-            if not 0 <= (now-scheduled).total_seconds() < 900:
-                _pending_result(entry,'Failed',now,'Scheduled job did not start within the 15-minute window. No automatic late send.')
-                continue
-            doc = _schedule(entry.schedule)
-            if not doc.get('enabled'):
-                _pending_result(entry,'Cancelled',now,'Schedule was disabled before generation.')
-                continue
-            check_environment(doc)
-            # The DB claim is committed before Redis is contacted. If Redis fails,
-            # the next minute retries this outbox entry. Duplicate queue entries are
-            # harmless: deliver() locks the row and only Queued can begin work.
-            frappe.enqueue('is_production.production.controllers.hod_presentation_scheduler.deliver',
-                queue='long', timeout=1800, enqueue_after_commit=False, delivery_name=entry.name)
-        except Exception:
-            frappe.db.rollback()
-            frappe.log_error(title='HOD pending delivery needs attention',message=frappe.get_traceback())
-
-
-def _pending_result(entry,status,now,message):
-    current = frappe.db.sql('SELECT status FROM `tabHOD Presentation Delivery` WHERE name=%s FOR UPDATE', (entry.name,))
-    if not current or current[0][0] != entry.status:
-        frappe.db.commit()
-        return
-    frappe.db.set_value(DELIVERY,entry.name,{'status':status,'completed_at':now,'error':message},update_modified=False)
-    frappe.db.set_value(SCHEDULE,entry.schedule,{'last_run':now,'last_status':status,'last_error':message},update_modified=False)
-    frappe.db.commit()
 
 
 def _claim_delivery(doc, slot, trigger):
@@ -196,6 +165,14 @@ def deliver(delivery_name):
         frappe.db.commit()
         return
     entry = frappe.get_doc(DELIVERY, delivery_name)
+    if entry.trigger_type == 'Scheduled':
+        scheduled = datetime.fromisoformat(entry.scheduled_slot)
+        if not 0 <= (_now() - scheduled).total_seconds() < 900:
+            frappe.db.set_value(DELIVERY, delivery_name, {'status': 'Failed',
+                'completed_at': _now(), 'error': 'Scheduled worker started outside the 15-minute window.'},
+                update_modified=False)
+            frappe.db.commit()
+            return {'status': 'Failed'}
     frappe.db.set_value(DELIVERY, delivery_name, {'status':'Generating','started_at':_now()}, update_modified=False)
     frappe.db.commit()
     try:
@@ -208,10 +185,12 @@ def deliver(delivery_name):
         _email_ready()
         content, filename, filters = _generate(doc)
         # Recheck immediately before queuing in case the schedule changed during capture.
-        fresh = _schedule(entry.schedule)
+        # A locking read sees current committed settings under MariaDB repeatable-read.
+        # Keep the parent/child locks until the email and delivery status are committed.
+        fresh = _schedule(entry.schedule, for_update=True)
         if fresh.modified != doc.modified or (entry.trigger_type == 'Scheduled' and not fresh.enabled):
             raise ValueError('Schedule changed during generation. No email was queued; run again explicitly.')
-        addresses = policy.recipients(doc)
+        addresses = _recipients(fresh, sending=True)
         file = _save_presentation(doc, content, filename)
         subject = 'HOD Presentation · '+filters['end_date']+' · '+' / '.join(filters['site'])
         message = ('Please find attached the HOD Presentation for '+escape(' / '.join(filters['site']))+

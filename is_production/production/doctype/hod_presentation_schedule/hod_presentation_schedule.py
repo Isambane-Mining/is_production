@@ -7,6 +7,8 @@ class HODPresentationSchedule(Document):
     def before_validate(self):
         if not self.delivery_site:
             self.delivery_site = frappe.local.site
+        for row in self.get('sites') or []:
+            row.user = self.run_as
 
     def validate(self):
         validate_schedule(self)

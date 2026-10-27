@@ -50,17 +50,30 @@ def due_slot(doc, now: datetime):
 
 
 def sites(doc):
-    values = list(dict.fromkeys(str(row.get('site') or '').strip() for row in doc.get('sites', [])))
-    values = [value for value in values if value]
-    if not values:
+    rows = doc.get('sites') or []
+    values = [str(row.get('location') or '').strip() for row in rows]
+    if not values or any(not value for value in values):
         raise ValueError('Select at least one site.')
-    return values
+    return list(dict.fromkeys(values))
 
 
-def recipients(doc):
+def recipients(doc, user_lookup, *, sending=False):
+    """Resolve shared recipient rows against User, never a cached email field.
+
+    Previews may use disabled LAB accounts; real sends require both an enabled
+    recipient row and an enabled User. receive_all_sites never expands HOD sites.
+    """
     result, seen = [], set()
-    for row in doc.get('recipients', []):
-        value = str(row.get('email') or '').strip()
+    for row in doc.get('recipients') or []:
+        if sending and not int(row.get('enabled', 1)):
+            continue
+        user = str(row.get('user') or '').strip()
+        account = user_lookup(user) if user else None
+        if not account:
+            raise ValueError('Select an existing User for every recipient.')
+        if sending and not int(account.get('enabled') or 0):
+            continue
+        value = str(account.get('email') or '').strip()
         if not re.fullmatch(r'[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+', value):
             raise ValueError('Every recipient must have a valid email address.')
         if value.casefold() not in seen:

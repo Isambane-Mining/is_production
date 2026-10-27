@@ -85,15 +85,17 @@
    "fieldname": "sites",
    "label": "Sites",
    "fieldtype": "Table",
-   "options": "HOD Presentation Schedule Site",
-   "reqd": 1
+   "options": "WearCheck Users",
+   "reqd": 1,
+   "description": "Selected locations only. The required row User follows Run As automatically."
   },
   {
    "fieldname": "recipients",
    "label": "Recipients",
    "fieldtype": "Table",
-   "options": "HOD Presentation Recipient",
-   "reqd": 1
+   "options": "Production Notification Recipient",
+   "reqd": 1,
+   "description": "Select Users; email and Enabled reflect the User account. Remove a row to exclude a recipient. Receive all sites does not expand the selected HOD locations."
   },
   {
    "fieldname": "filters_section",
