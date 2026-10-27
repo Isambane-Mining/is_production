@@ -40,7 +40,7 @@ UNITS_CUBED = {"Metres": "m³", "Millimetres": "mm³", "Kilometres": "km³", "Fe
 
 def tile_key(model, digest, name):
 	storage.check_model_code(model)
-	if not storage.SHA256.match(digest or "") or not (name == "index.json" or (name.startswith("t") and name.endswith(".cadmesh") and "/" not in name)):
+	if not storage.SHA256.match(digest or "") or not (name == "index.json" or (name.startswith("t") and name.endswith((".cadmesh", ".cadpts")) and "/" not in name)):
 		frappe.throw(_("Invalid surface tile {0}.").format(name))
 	return f"mesh/{model}/{digest}/{name}"
 
@@ -93,9 +93,13 @@ def store_tin(job, workspace, path, stats, source, entity_type="Surface", log=No
 	return digest
 
 
+TILE_VERSION = 2  # 2: 3D meshes get clustered (not height-grid) coarse levels
+
+
 def make_tiles(job, workspace, model, digest, log):
 	store = storage.provider()
-	if store.exists(tile_key(model, digest, "index.json")):
+	key = tile_key(model, digest, "index.json")
+	if store.exists(key) and json.loads(store.read(key)).get("version", 1) >= TILE_VERSION:
 		return
 	tin = stage_tin(model, digest, workspace, f"tiles_{digest[:8]}")
 	out_dir = os.path.join(workspace, "outputs", f"tiles_{digest[:8]}")

@@ -32,7 +32,7 @@ from is_production.cad_engineering.services import cad_storage_service as storag
 STANDARD = "CAD Design Standard"
 VALIDATION = "CAD Design Validation"
 ENTITY = "CAD Entity"
-OPERATIONS = {"pit", "stages", "road", "blocks", "subdivide", "drill", "reconcile"}
+OPERATIONS = {"pit", "stages", "road", "blocks", "subdivide", "drill", "reconcile", "geology", "block_geology", "pit_shells"}
 MAX_HOLES = 20000
 MAX_BENCHES = 200
 MAX_BLOCKS = 20000
@@ -181,9 +181,12 @@ def start(model, operation, params):
 
 def run(job, parameters, workspace, log):
 	operation = parameters["operation"]
+	from is_production.cad_engineering.services.cad_geology_service import run_block_geology, run_geology
+	from is_production.cad_engineering.services.cad_optimisation_service import run_pit_shells
 	from is_production.cad_engineering.services.cad_planning_service import run_reconcile
 
-	result, message = {"pit": run_pit, "stages": run_stages, "road": run_road, "blocks": run_blocks, "subdivide": run_subdivide, "drill": run_drill, "reconcile": run_reconcile}[operation](job, parameters, workspace, log)
+	handlers = {"pit": run_pit, "stages": run_stages, "road": run_road, "blocks": run_blocks, "subdivide": run_subdivide, "drill": run_drill, "reconcile": run_reconcile, "geology": run_geology, "block_geology": run_block_geology, "pit_shells": run_pit_shells}
+	result, message = handlers[operation](job, parameters, workspace, log)
 	job.db_set("results", json.dumps(result))
 	return message
 

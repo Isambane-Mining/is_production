@@ -1,6 +1,8 @@
 # Copyright (c) 2026, Isambane Mining (Pty) Ltd and Contributors
 # See license.txt
 
+import os
+
 import frappe
 from frappe.tests import IntegrationTestCase
 
@@ -86,6 +88,22 @@ class IntegrationTestGISSetup(IntegrationTestCase):
 		self.assertEqual(commands[0], ["install", "-d", "-o", "root", "-g", "qgis", "-m", "0751", "/srv/qgis/projects"])
 		self.assertEqual(commands[1], ["install", "-d", "-o", "alice", "-g", "qgis", "-m", "2750", "/srv/qgis/projects/erp.example.org"])
 		self.assertEqual(commands[2][-1], "/srv/qgis/plugins")
+
+	def test_existing_folders_need_no_sudo(self):
+		import getpass
+		import grp
+		import tempfile
+
+		from is_production.geo_planning.services import gis_setup_service as setup
+
+		with tempfile.TemporaryDirectory() as base:
+			group = grp.getgrgid(os.getgid()).gr_name
+			os.chmod(base, 0o2750)
+			command = setup.folder_commands("/x", "s", getpass.getuser(), group)[1][:8] + [base]
+			self.assertTrue(setup.folder_ready(command))
+			os.chmod(base, 0o750)
+			self.assertFalse(setup.folder_ready(command))
+			self.assertFalse(setup.folder_ready(command[:3] + ["someone-else"] + command[4:]))
 
 	def test_account_is_per_database_and_select_only(self):
 		from is_production.geo_planning.services import gis_setup_service as setup

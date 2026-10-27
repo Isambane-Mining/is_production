@@ -24,7 +24,8 @@
    "in_list_view": 1,
    "label": "Geo Project",
    "options": "Geo Project",
-   "reqd": 1
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "geo_model_output",
@@ -71,7 +72,8 @@
   {
    "fieldname": "variable_name",
    "fieldtype": "Data",
-   "label": "Variable Name"
+   "label": "Variable Name",
+   "search_index": 1
   },
   {
    "fieldname": "version_tag",
@@ -94,7 +96,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-05-12 10:38:00.210731",
+ "modified": "2026-10-27 12:30:00.000000",
  "modified_by": "Administrator",
  "module": "Geo Planning",
  "name": "Geo Model Points",

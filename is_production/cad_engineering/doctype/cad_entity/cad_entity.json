@@ -62,7 +62,7 @@
    "fieldname": "entity_type",
    "fieldtype": "Select",
    "label": "Entity Type",
-   "options": "Point\nLine\nPolyline\nArc\nCircle\nEllipse\nSpline\nConstruction Line\nText\nMultiline Text\nDimension\nHatch\nBlock Reference\nMesh\nSurface\nSolid",
+   "options": "Point\nLine\nPolyline\nArc\nCircle\nEllipse\nSpline\nConstruction Line\nText\nMultiline Text\nDimension\nHatch\nBlock Reference\nMesh\nSurface\nSolid\nPoint Cloud",
    "reqd": 1,
    "in_list_view": 1,
    "in_standard_filter": 1
@@ -255,7 +255,7 @@
  ],
  "grid_page_length": 50,
  "links": [],
- "modified": "2026-10-22 18:00:00.000000",
+ "modified": "2026-10-27 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "CAD Engineering",
  "name": "CAD Entity",

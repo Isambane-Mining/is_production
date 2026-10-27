@@ -24,6 +24,13 @@
 				<h4 class="cad-subhead">{{ __("Validation report") }} · {{ exchange.file_format }}</h4>
 				<div class="cad-report">
 					<div v-if="report.solids !== undefined"><span>{{ __("Solids") }}</span><b>{{ report.solids }}</b></div>
+					<template v-if="exchange.file_format === 'IFC'">
+						<div><span>{{ __("Schema / project") }}</span><b>{{ report.schema }} · {{ report.project || "—" }}</b></div>
+						<div><span>{{ __("Elements with geometry") }}</span><b>{{ report.elements.toLocaleString() }}</b></div>
+						<div><span>{{ __("Georeferencing") }}</span><b>{{ report.georeferencing ? `${report.georeferencing.crs || "?"} · E ${report.georeferencing.eastings} N ${report.georeferencing.northings}` : __("none") }}</b></div>
+						<div><span>{{ __("Classes") }}</span><b class="small">{{ Object.entries(report.by_class || {}).slice(0, 8).map(([k, n]) => `${k.replace("Ifc", "")} ${n}`).join(" · ") }}</b></div>
+					</template>
+					<div v-if="(report.scans || []).length"><span>{{ __("Scans") }}</span><b>{{ report.scans.length }}{{ report.has_rgb ? " · " + __("colour") : "" }}</b></div>
 					<div v-if="report.invalid_solids"><span>{{ __("Invalid solids (skipped)") }}</span><b class="is-warning">{{ report.invalid_solids }}</b></div>
 					<div v-if="(report.surfaces || []).length"><span>{{ __("Surfaces") }}</span><b>{{ report.surfaces.length }}</b></div>
 					<div v-if="(report.meshes || []).length"><span>{{ __("Meshes (not 2.5D)") }}</span><b>{{ report.meshes.length }}</b></div>
@@ -59,16 +66,27 @@
 					</select>
 					<label>{{ __("Layer") }}</label>
 					<input v-model="options.layer" :placeholder="exchange.file_format" />
-					<template v-if="exchange.file_format !== 'STEP'">
+					<template v-if="exchange.file_format === 'IFC'">
+						<label>{{ __("One mesh per") }}</label>
+						<select v-model="options.ifc_group">
+							<option value="element">{{ __("Element (with its IFC GlobalId, class and storey)") }}</option>
+							<option value="class">{{ __("IFC class") }}</option>
+							<option value="storey">{{ __("Storey") }}</option>
+						</select>
+						<label>{{ __("Georeferencing") }}</label>
+						<label class="cad-row"><input v-model="options.ifc_georeference" type="checkbox" /> {{ __("Place it with the file's IfcMapConversion") }}</label>
+					</template>
+					<template v-if="!['STEP', 'IFC', 'E57'].includes(exchange.file_format)">
 						<label>{{ __("Surface type") }}</label>
 						<select v-model="options.surface_type">
 							<option v-for="t in surface_types" :key="t">{{ t }}</option>
 						</select>
 					</template>
-					<template v-if="report.points">
+					<template v-if="report.points && exchange.file_format !== 'E57'">
 						<label>{{ __("Points become") }}</label>
 						<select v-model="options.points_as">
 							<option value="">{{ __("Automatic (surface when large)") }}</option>
+							<option v-if="['LAS', 'LAZ', 'XYZ', 'CSV'].includes(exchange.file_format)" value="cloud">{{ __("A point cloud (every point, editable)") }}</option>
 							<option value="surface">{{ __("A surface (TIN)") }}</option>
 							<option value="points">{{ __("Point objects") }}</option>
 							<option value="both">{{ __("Both") }}</option>
@@ -91,7 +109,8 @@
 						<label class="cad-row"><input v-model="options.as_mesh" type="checkbox" /> {{ __("Keep as a mesh (not a 2.5D surface)") }}</label>
 					</template>
 				</div>
-				<p class="muted small">{{ __("These formats carry no units or CRS: coordinates are taken in the model's CRS ({0}). Everything goes into the Working revision.", [model.crs || __("none")]) }}</p>
+				<p v-if="exchange.file_format === 'IFC'" class="muted small">{{ __("IFC carries its own units (read in metres; File units scale them further) and, when ticked, its georeferencing (IfcMapConversion): the result should be in the model's CRS ({0}). Everything goes into the Working revision.", [model.crs || __("none")]) }}</p>
+				<p v-else class="muted small">{{ __("These formats carry no units or CRS: coordinates are taken in the model's CRS ({0}). Everything goes into the Working revision.", [model.crs || __("none")]) }}</p>
 				<div class="cad-row">
 					<span class="cad-grow"></span>
 					<button @click="$emit('close')">{{ __("Cancel") }}</button>
@@ -181,7 +200,7 @@ import { tin_problems } from "./surface_commands";
 import Icon from "./Icon.vue";
 
 const props = defineProps({ model: Object, surface_types: Array });
-const ACCEPT = ".dxf,.xml,.landxml,.csv,.xyz,.txt,.pts,.stl,.obj,.las,.laz,.step,.stp";
+const ACCEPT = ".dxf,.xml,.landxml,.csv,.xyz,.txt,.pts,.stl,.obj,.las,.laz,.e57,.step,.stp,.ifc";
 const emit = defineEmits(["close", "error"]);
 const file = ref(null);
 const busy = ref(false);
@@ -203,6 +222,8 @@ const options = reactive({
 	ground_only: false,
 	thin: null,
 	as_mesh: false,
+	ifc_group: "element",
+	ifc_georeference: true,
 });
 const is_dxf = computed(() => !exchange.value || exchange.value.file_format === "DXF");
 
@@ -234,6 +255,7 @@ async function follow(name) {
 	if (io.processing_job) job.value = await wait_for_job(io.processing_job, (j) => (job.value = j));
 	exchange.value = await call("get_exchange", { name });
 	if (exchange.value.processing_status === "Ready to Commit") options.source_units = exchange.value.source_units || (is_dxf.value ? "" : props.model.linear_units || "Metres");
+	if (["LAS", "LAZ"].includes(exchange.value.file_format) && !options.points_as) options.points_as = "cloud"; // scans stay point clouds
 }
 
 async function upload() {

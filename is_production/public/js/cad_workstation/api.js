@@ -54,6 +54,40 @@ export function parse_mesh(buffer) {
 	return { origin, positions, index, edges: edge_positions };
 }
 
+// A point-cloud display tile (cloud_worker.py write_points): "ISPPTS01", count, flags (1 class, 2 intensity, 4 RGB,
+// 8 deviation), origin (float64 × 3), then float32 xyz, uint8 class, uint16 intensity, uint8 RGB, float32 deviation,
+// each section padded to 4 bytes.
+export function parse_points(buffer) {
+	const view = new DataView(buffer);
+	const magic = new TextDecoder().decode(new Uint8Array(buffer, 0, 8));
+	if (magic !== "ISPPTS01") throw new Error(__("Not a point-cloud tile."));
+	const n = view.getUint32(8, true);
+	const flags = view.getUint32(12, true);
+	const origin = [view.getFloat64(16, true), view.getFloat64(24, true), view.getFloat64(32, true)];
+	const pad = (k) => k + ((4 - (k % 4)) % 4);
+	let offset = 40;
+	const positions = new Float32Array(buffer.slice(offset, offset + n * 12));
+	offset += n * 12;
+	const classes = new Uint8Array(buffer.slice(offset, offset + n));
+	offset += pad(n);
+	const intensity = new Uint16Array(buffer.slice(offset, offset + n * 2));
+	offset += pad(n * 2);
+	let rgb = null;
+	if (flags & 4) {
+		rgb = new Uint8Array(buffer.slice(offset, offset + n * 3));
+		offset += pad(n * 3);
+	}
+	const deviation = flags & 8 ? new Float32Array(buffer.slice(offset, offset + n * 4)) : null;
+	return { origin, count: n, positions, classes, intensity, rgb, deviation };
+}
+
+export async function get_point_tile(model, geometry_ref, file, version = 1) {
+	const query = new URLSearchParams({ model, geometry_ref, file, v: String(version) });
+	const response = await fetch(`/api/method/${BASE}get_surface_tile?${query}`, { credentials: "same-origin" });
+	if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+	return parse_points(await response.arrayBuffer());
+}
+
 function server_message(data) {
 	try {
 		const messages = JSON.parse(data._server_messages || "[]").map((m) => JSON.parse(m).message);
@@ -81,16 +115,19 @@ export async function wait_for_job(name, on_progress) {
 }
 
 // Surface display tiles (see cad_worker/surface_worker.py tiles): the index (JSON) and one tile (binary mesh).
+// v: the tile format version, so a browser never reuses tiles it cached (immutable) before they were made again
+const TILE_VERSION = "2";
+
 export async function get_surface_index(model, geometry_ref) {
-	const query = new URLSearchParams({ model, geometry_ref });
+	const query = new URLSearchParams({ model, geometry_ref, v: TILE_VERSION });
 	const response = await fetch(`/api/method/${BASE}get_surface_index?${query}`, { credentials: "same-origin" });
 	if (response.status === 404) return null;
 	if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
 	return response.json();
 }
 
-export async function get_surface_tile(model, geometry_ref, file) {
-	const query = new URLSearchParams({ model, geometry_ref, file });
+export async function get_surface_tile(model, geometry_ref, file, version = 1) {
+	const query = new URLSearchParams({ model, geometry_ref, file, v: String(version) });
 	const response = await fetch(`/api/method/${BASE}get_surface_tile?${query}`, { credentials: "same-origin" });
 	if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
 	return parse_mesh(await response.arrayBuffer());

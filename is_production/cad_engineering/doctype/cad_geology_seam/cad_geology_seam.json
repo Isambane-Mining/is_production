@@ -1,0 +1,118 @@
+{
+ "doctype": "DocType",
+ "name": "CAD Geology Seam",
+ "module": "CAD Engineering",
+ "istable": 1,
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "creation": "2026-10-27 12:00:00.000000",
+ "modified": "2026-10-27 12:00:00.000000",
+ "modified_by": "Administrator",
+ "owner": "Administrator",
+ "fields": [
+  {
+   "fieldname": "seam",
+   "fieldtype": "Data",
+   "label": "Seam",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "seam_label",
+   "fieldtype": "Data",
+   "label": "Name",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "roof_variable",
+   "fieldtype": "Data",
+   "label": "Roof",
+   "read_only": 1
+  },
+  {
+   "fieldname": "floor_variable",
+   "fieldtype": "Data",
+   "label": "Floor",
+   "read_only": 1
+  },
+  {
+   "fieldname": "plan_area",
+   "fieldtype": "Float",
+   "label": "Plan Area (m²)",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "volume",
+   "fieldtype": "Float",
+   "label": "Volume (m³)",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "tonnes",
+   "fieldtype": "Float",
+   "label": "Tonnes",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "mean_thickness",
+   "fieldtype": "Float",
+   "label": "Mean Thickness (m)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "max_thickness",
+   "fieldtype": "Float",
+   "label": "Max Thickness (m)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "mean_density",
+   "fieldtype": "Float",
+   "label": "Mean Density",
+   "read_only": 1
+  },
+  {
+   "fieldname": "qualities",
+   "fieldtype": "Small Text",
+   "label": "Qualities (tonnage-weighted)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "roof_ref",
+   "fieldtype": "Data",
+   "label": "Roof Surface Ref",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "floor_ref",
+   "fieldtype": "Data",
+   "label": "Floor Surface Ref",
+   "read_only": 1,
+   "hidden": 1
+  }
+ ],
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "field_order": [
+  "seam",
+  "seam_label",
+  "roof_variable",
+  "floor_variable",
+  "plan_area",
+  "volume",
+  "tonnes",
+  "mean_thickness",
+  "max_thickness",
+  "mean_density",
+  "qualities",
+  "roof_ref",
+  "floor_ref"
+ ]
+}
