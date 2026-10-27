@@ -1,0 +1,113 @@
+{
+ "doctype": "DocType",
+ "name": "HOD Presentation Delivery",
+ "module": "Production",
+ "custom": 0,
+ "istable": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "delivery_key",
+  "schedule",
+  "scheduled_slot",
+  "trigger_type",
+  "status",
+  "started_at",
+  "completed_at",
+  "presentation",
+  "recipients_json",
+  "filters_json",
+  "error"
+ ],
+ "fields": [
+  {
+   "fieldname": "delivery_key",
+   "label": "Delivery Key",
+   "fieldtype": "Data",
+   "reqd": 1,
+   "unique": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "schedule",
+   "label": "Schedule",
+   "fieldtype": "Link",
+   "options": "HOD Presentation Schedule",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "scheduled_slot",
+   "label": "Scheduled Slot",
+   "fieldtype": "Data",
+   "read_only": 1
+  },
+  {
+   "fieldname": "trigger_type",
+   "label": "Trigger",
+   "fieldtype": "Select",
+   "options": "Scheduled\nManual",
+   "read_only": 1
+  },
+  {
+   "fieldname": "status",
+   "label": "Status",
+   "fieldtype": "Select",
+   "options": "Queued\nGenerating\nEmail Queued\nFailed\nCancelled\nInterrupted",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "started_at",
+   "label": "Started At",
+   "fieldtype": "Datetime",
+   "read_only": 1
+  },
+  {
+   "fieldname": "completed_at",
+   "label": "Completed At",
+   "fieldtype": "Datetime",
+   "read_only": 1
+  },
+  {
+   "fieldname": "presentation",
+   "label": "Presentation",
+   "fieldtype": "Link",
+   "options": "File",
+   "read_only": 1
+  },
+  {
+   "fieldname": "recipients_json",
+   "label": "Recipients Used",
+   "fieldtype": "Long Text",
+   "read_only": 1
+  },
+  {
+   "fieldname": "filters_json",
+   "label": "Filters Used",
+   "fieldtype": "Long Text",
+   "read_only": 1
+  },
+  {
+   "fieldname": "error",
+   "label": "Error",
+   "fieldtype": "Long Text",
+   "read_only": 1
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 0,
+   "create": 0,
+   "delete": 0,
+   "email": 0,
+   "print": 1,
+   "export": 1,
+   "share": 0
+  }
+ ],
+ "track_changes": 1,
+ "autoname": "field:delivery_key"
+}
