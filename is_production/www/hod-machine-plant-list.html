@@ -1,0 +1,152 @@
+{% set no_cache = 1 %}
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Machine Plant List - Total Fleet</title>
+<style>
+html { background:#edf2f7; }
+body {
+    box-sizing:border-box;
+    width:100%;
+    max-width:794px;
+    min-height:1123px;
+    margin:20px auto;
+    padding:30px;
+    background:#fff;
+    color:#17365d;
+    font:15px Arial,sans-serif;
+}
+h1 { font-size:28px; margin-bottom:8px; font-weight:800; }
+.subtitle {
+    font-size:16px;
+    color:#475569;
+    margin-bottom:24px;
+    font-weight:600;
+}
+section { width:100%; margin-bottom:20px; }
+h2 {
+    background:#075583;
+    color:#fff;
+    padding:12px 16px;
+    font-size:20px;
+    font-weight:800;
+    margin:18px 0 8px;
+}
+table {
+    width:100%;
+    table-layout:fixed;
+    border-collapse:collapse;
+    font-size:15px;
+    line-height:1.5;
+}
+th,td {
+    box-sizing:border-box;
+    text-align:left;
+    vertical-align:middle;
+    padding:9px 12px;
+    border:1px solid #dce5ee;
+    overflow-wrap:anywhere;
+}
+th { background:#eaf1f8; font-weight:800; }
+th:first-child,td:first-child { width:35%; }
+th:nth-child(2),td:nth-child(2) { width:65%; }
+td:first-child { font-weight:700; }
+tr:nth-child(even) { background:#f8fafc; }
+
+
+/* Production machines: black text. */
+.machine-production td {
+    color:#000000;
+}
+
+/* Swing/Spare machines: light purple highlighting. */
+.machine-swing td {
+    background:#e9d5ff;
+    color:#6b21a8;
+    font-weight:600;
+}
+
+
+.machine-group-production td {
+    background:#e8edf3;
+    color:#000000;
+    font-weight:800;
+}
+
+.machine-group-swing td {
+    background:#dcc8f5;
+    color:#54218a;
+    font-weight:800;
+}
+
+.machine-production td {
+    color:#000000;
+}
+
+.machine-swing td {
+    background:#e9d5ff;
+    color:#6b21a8;
+    font-weight:600;
+}
+
+@page { size:A4 portrait; margin:12mm; }
+@media print {
+    html { background:white; }
+    body {
+        max-width:none;
+        min-height:0;
+        margin:0;
+        padding:0;
+    }
+    section { break-inside:avoid; }
+    thead { display:table-header-group; }
+}
+</style>
+</head>
+<body>
+<h1>Machine Plant List - Total Fleet</h1>
+<div class="subtitle">{{ site | e }} | Excavators, Dozers and ADTs</div>
+
+{% for section in sections %}
+<section>
+    <h2>{{ section.label | e }} ({{ section.count }})</h2>
+    <table>
+        <thead>
+            <tr><th>Fleet / Asset</th><th>Machine</th></tr>
+        </thead>
+        <tbody>
+        {% if section.production_rows %}
+            <tr class="machine-group-production">
+                <td colspan="2">{{ section.label | e }} - Production</td>
+            </tr>
+            {% for row in section.production_rows %}
+            <tr class="machine-production">
+                <td>{{ row.name | e }}</td>
+                <td>{{ row.item_name | e }}</td>
+            </tr>
+            {% endfor %}
+        {% endif %}
+
+        {% if section.swing_rows %}
+            <tr class="machine-group-swing">
+                <td colspan="2">{{ section.label | e }} - Swing/Spare</td>
+            </tr>
+            {% for row in section.swing_rows %}
+            <tr class="machine-swing">
+                <td>{{ row.name | e }}</td>
+                <td>{{ row.item_name | e }}</td>
+            </tr>
+            {% endfor %}
+        {% endif %}
+
+        {% if not section.rows %}
+            <tr><td colspan="2">No machines found</td></tr>
+        {% endif %}
+        </tbody>
+    </table>
+</section>
+{% endfor %}
+</body>
+</html>

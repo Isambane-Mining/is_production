@@ -1,4 +1,7 @@
 from __future__ import annotations
+import binascii
+from pathlib import Path
+from typing import BinaryIO
 
 from collections import defaultdict
 from copy import deepcopy
@@ -447,6 +450,7 @@ def get_report_payload(
     ) = validate_filters(filters)
 
     site = site_override or sites[0]
+    check_hod_site_access(site)
 
     monthly_plan = get_latest_hod_monthly_plan(
         site,
@@ -466,7 +470,10 @@ def get_report_payload(
         monthly_plan.prod_month_end_date
     )
 
-    start_date = plan_start
+    start_date = getdate(filters.start_date) if filters.get("start_date") else plan_start
+    if start_date < plan_start or start_date > end_date:
+        frappe.throw(_("Start Date must be between {0} and {1} for {2}.").format(
+            formatdate(plan_start), formatdate(end_date), frappe.bold(site)))
 
     if end_date < plan_start or end_date > plan_end:
         frappe.throw(
@@ -1019,6 +1026,7 @@ def validate_filters(filters):
     end_date = getdate(end_date)
 
     for site in sites:
+        check_hod_site_access(site)
         if not frappe.db.exists("Location", site):
             frappe.throw(
                 _("Location {0} does not exist.").format(
@@ -2498,6 +2506,8 @@ def get_availability_dashboard_html(
             _("Start Date cannot be after End Date.")
         )
 
+    check_hod_site_access(site)
+
     if not frappe.db.exists(
         "Location",
         site,
@@ -2537,90 +2547,23 @@ def get_availability_dashboard_html(
 
     module = _load_daily_availability_module()
 
-    dashboard_filters = frappe._dict(
-        {
-            "start_date": str(start_date),
-            "end_date": str(end_date),
-            "from_date": str(start_date),
-            "to_date": str(end_date),
-            "location": site,
-            "site": site,
-            "summary_type": summary_type,
-            "machine_scope": machine_scope,
-            "au_target_filter": au_target_filter,
-            "asset_ownership": asset_ownership,
-            "chart_categories": [
-                "ADT",
-                "Dozer",
-                "Excavator",
-            ],
-            "hours_display": "Hours Average per Category",
-        }
-    )
-    dashboard_filters["machine_scope"] = _dashboard_machine_scope(machine_scope)
 
-    try:
-        result = module.execute(
-            dashboard_filters
-        )
-
-    except Exception:
-        frappe.log_error(
-            frappe.get_traceback(),
-            "HOD Presentation Availability Dashboard HTML",
-        )
-
-        frappe.throw(
-            _(
-                "The Availability and Utilisation dashboard "
-                "could not be generated for {0}."
-            ).format(
-                frappe.bold(site)
-            )
-        )
-
-    dashboard_html = ""
-
-    if isinstance(
-        result,
-        (list, tuple),
-    ):
-        if len(result) >= 3:
-            dashboard_html = result[2] or ""
-
-    elif isinstance(result, dict):
-        dashboard_html = (
-            result.get("html")
-            or result.get("message")
-            or ""
-        )
-
-    if not dashboard_html:
-        frappe.throw(
-            _(
-                "No Availability and Utilisation dashboard "
-                "HTML was returned for {0}."
-            ).format(
-                frappe.bold(site)
-            )
-        )
-
-    downtime_summary = get_hod_downtime_summary(
+    # Match the Engineering dashboard's exclusion of future dates.
+    end_date = min(end_date, getdate(now_datetime()))
+    # The builder returns one FleetSummary mapping, not the former (machines,
+    # dates) pair. Keep its averages and period metadata intact for rendering.
+    fleet_summary = build_grid_data(
+        module,
+        site=site,
         start_date=start_date,
         end_date=end_date,
-        site=site,
+        machine_scope=_dashboard_machine_scope(machine_scope),
+        au_target_filter=au_target_filter,
+        asset_ownership=asset_ownership,
     )
-
-    downtime_html = build_hod_downtime_html(
-        downtime_summary,
-        site,
-        start_date,
-        end_date,
-    )
-
     return {
         "site": site,
-        "html": dashboard_html + downtime_html,
+        "html": render_grids(fleet_summary),
     }
 
 
@@ -2628,6 +2571,15 @@ def get_availability_dashboard_html(
 def ensure_interactive_report():
     """Keep HOD Presentation out of Frappe's prepared-report queue."""
     check_report_access()
+
+    report = frappe.get_doc("Report", REPORT_NAME)
+    if not frappe.has_permission(
+        "Report", "write", doc=report
+    ):
+        frappe.throw(
+            _("You do not have permission to change Report settings."),
+            frappe.PermissionError,
+        )
 
     values = frappe.db.get_value(
         "Report",
@@ -2719,9 +2671,7 @@ def download_presentation(
         }
 
     try:
-        from .presentation_builder import (
-            build_hod_presentation,
-        )
+        _load_hod_pptx()
 
     except ModuleNotFoundError as exc:
         if exc.name == "pptx":
@@ -2782,14 +2732,53 @@ def download_captured_presentation(
 ):
     check_report_access()
 
-    slides = frappe.parse_json(
-        captured_slides or "[]"
-    )
+    export_site = str(site or "").strip()
+    if not export_site:
+        frappe.throw(_("A presentation site is required."))
+
+    if frappe.db.exists("Location", export_site):
+        export_sites = [export_site]
+    else:
+        export_sites = [
+            value.strip()
+            for value in export_site.split(" / ")
+            if value.strip()
+        ]
+
+    if not export_sites or len(export_sites) > 30:
+        frappe.throw(_("Invalid presentation sites."))
+
+    for export_location in export_sites:
+        if not frappe.db.exists("Location", export_location):
+            frappe.throw(_("Invalid presentation site."))
+        check_hod_site_access(export_location)
+
+    raw_slides = captured_slides or "[]"
+
+    if not isinstance(raw_slides, str):
+        frappe.throw(_("Invalid presentation payload."))
+
+    if len(raw_slides) > 50 * 1024 * 1024:
+        frappe.throw(_("Presentation payload is too large."))
+
+    slides = frappe.parse_json(raw_slides)
 
     if not isinstance(slides, list) or not slides:
-        frappe.throw(
-            _("No report sections were captured.")
-        )
+        frappe.throw(_("No report sections were captured."))
+
+    if len(slides) > 100:
+        frappe.throw(_("Maximum 100 presentation slides allowed."))
+
+    for item in slides:
+        if not isinstance(item, dict):
+            frappe.throw(_("Invalid presentation slide."))
+
+        image_data = item.get("image_data")
+        if not isinstance(image_data, str) or not image_data:
+            frappe.throw(_("Invalid presentation image."))
+
+        if len(image_data) > 8 * 1024 * 1024:
+            frappe.throw(_("Presentation image is too large."))
 
     payload = {
         "site": site or "HOD Presentation",
@@ -2806,9 +2795,7 @@ def download_captured_presentation(
         "captured_slides": slides,
     }
 
-    from .presentation_builder import (
-        build_hod_presentation,
-    )
+    _load_hod_pptx()
 
     output = BytesIO()
 
@@ -2844,6 +2831,60 @@ def download_captured_presentation(
     }
 
 
+
+
+
+def check_hod_site_access(site):
+    """Enforce HOD Location assignments on the server."""
+    user = frappe.session.user
+
+    if user == "Administrator":
+        return
+
+    roles = set(frappe.get_roles(user))
+
+    if roles.intersection({
+        "Production Manager",
+        "Engineering Manager",
+    }):
+        return
+
+    if not roles.intersection({
+        "Production User",
+        "Engineering User",
+    }):
+        frappe.throw(
+            _("You are not authorised to access HOD site data."),
+            frappe.PermissionError,
+        )
+
+    permissions = frappe.get_all(
+        "User Permission",
+        filters={
+            "user": user,
+            "allow": "Location",
+            "for_value": site,
+        },
+        fields=[
+            "apply_to_all_doctypes",
+            "applicable_for",
+        ],
+        limit_page_length=0,
+    )
+
+    allowed = any(
+        row.apply_to_all_doctypes
+        or row.applicable_for == "Monthly Production Planning"
+        for row in permissions
+    )
+
+    if not allowed:
+        frappe.throw(
+            _("You do not have HOD access to site {0}.").format(
+                frappe.bold(site)
+            ),
+            frappe.PermissionError,
+        )
 
 
 def check_report_access():
@@ -2891,3 +2932,1330 @@ def check_report_access():
             ),
             frappe.PermissionError,
         )
+
+
+# Fleet availability grid helpers
+
+"""Single-slide fleet summaries using the existing A&U Engine's period maths."""
+
+from collections import defaultdict
+from html import escape
+from math import ceil, isfinite
+from typing import TypedDict
+
+
+CATEGORY_LABELS = {'ADT': 'ADTs', 'Dozer': 'Dozers', 'Excavator': 'Excavators'}
+
+
+class FleetSummary(TypedDict):
+    """All eligible machines and averages, before display ranking."""
+
+    machines: list[dict]
+    averages: dict[str, dict[str, float | None]]
+    category_averages: dict[str, dict[str, dict[str, float | None]]]
+    start_date: str
+    end_date: str
+
+
+def percentage_value(value):
+    if value is None or value == '':
+        return None
+    try:
+        value = float(value)
+        return value if isfinite(value) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def percentage_band(metric, value):
+    value = percentage_value(value)
+    if value is None:
+        return 'neutral'
+    low, high = (75, 85) if metric == 'avail' else (70, 80)
+    return 'red' if value < low else 'amber' if value < high else 'green'
+
+
+def build_grid_data(module, *, site, start_date, end_date, machine_scope,
+                    au_target_filter, asset_ownership) -> FleetSummary:
+    """Fetch once, retain Engine machine results and aggregate the same shift rows.
+
+    All averages are hour-weighted Engine summaries, not averages of displayed
+    machine percentages or daily percentages. The selected scope/ownership also
+    applies to both average cohorts; including = all filtered production + spare.
+    Only the three eligible categories enter this population. Display ranking
+    happens later in the renderer, so it cannot bias these averages.
+    """
+    source_rows = module.fetch_grouped_data(
+        site, str(start_date), str(end_date), machine_scope,
+        au_target_filter, asset_ownership,
+    ) or []
+    spare_map = module.get_engine_spare_swing_asset_map(source_rows)
+    period_series = module.build_machine_series_from_source_rows(source_rows)
+    machines = [
+        {**row, 'category': category, 'is_spare': row['machine'] in spare_map}
+        for category, rows in period_series.items() if category in CATEGORY_LABELS
+        for row in rows
+    ]
+    included = {(m['category'], m['machine']) for m in machines}
+    shifts = [
+        row for row in source_rows
+        if int(row.get('indent') or 0) == 3 and not row.get('is_formula_row')
+        and (module.get_category(row), module.get_machine(row)) in included
+    ]
+
+    def averages(rows):
+        output = {}
+        for cohort in ('excluding', 'including', 'swing'):
+            selected = [
+                row for row in rows
+                if (
+                    cohort == 'including'
+                    or (
+                        cohort == 'excluding'
+                        and module.get_machine(row) not in spare_map
+                    )
+                    or (
+                        cohort == 'swing'
+                        and int(row.get('is_spare_swing_unit') or 0) == 1
+                    )
+                )
+            ]
+            if not selected:
+                output[cohort] = {'avail': None, 'util': None}
+                continue
+            summary = module.au_engine.build_summary_row(selected, indent=0)
+            module.au_engine.apply_au_percentage_basis([summary], au_target_filter)
+            output[cohort] = {
+                'avail': summary.get('availability_percentage'),
+                'util': summary.get('utilisation_percentage'),
+            }
+        return output
+
+    production_avgs, swing_avgs = (
+        module.build_scope_averages_from_source_rows(source_rows)
+    )
+
+    category_averages = {
+        category: averages([
+            row for row in shifts
+            if module.get_category(row) == category
+        ])
+        for category, rows in period_series.items()
+        if rows and category in CATEGORY_LABELS
+    }
+
+    for category, values in category_averages.items():
+        values['swing'] = swing_avgs.get(
+            category, {'avail': None, 'util': None}
+        )
+
+    return {
+        'machines': machines,
+        'averages': averages(shifts),
+        'category_averages': category_averages,
+        'start_date': str(start_date), 'end_date': str(end_date),
+    }
+
+
+def _percent(value):
+    value = percentage_value(value)
+    return '—' if value is None else f'{value:.1f}'.rstrip('0').rstrip('.') + '%'
+
+
+def _cell(metric, value):
+    value = percentage_value(value)
+    return (f'<td class="hod-au-{percentage_band(metric, value)}" '
+            f'data-value="{value if value is not None else ""}" '
+            f'title="{value if value is not None else "Unavailable"}">{_percent(value)}</td>')
+
+
+def _average_pair(averages, metric):
+    output = []
+    for cohort, colour in (('excluding', 'production'), ('including', 'spare')):
+        value = percentage_value(averages.get(cohort, {}).get(metric))
+        style = colour if value is not None else 'neutral-text'
+        output.append(f'<span class="hod-au-{style}">{_percent(value)}</span>')
+    return ' / '.join(output)
+
+
+def _ranked_metric_rows(machines, metric):
+    """Keep the full fleet; only the worst half of valid values receives ranks."""
+    groups = {}
+    for category in ('ADT', 'Excavator', 'Dozer'):
+        rows = [row for row in machines if row['category'] == category]
+        if not rows:
+            continue
+        valid = sorted(
+            (row for row in rows if percentage_value(row.get(metric)) is not None),
+            key=lambda row: (percentage_value(row[metric]), str(row['machine'])),
+        )
+        limit = (len(valid) + 1) // 2
+        groups[category] = [
+            {**row, 'rank': index if index <= limit else None}
+            for index, row in enumerate(valid, 1)
+        ] + [
+            {**row, 'rank': None}
+            for row in sorted(rows, key=lambda row: str(row['machine']))
+            if percentage_value(row.get(metric)) is None
+        ]
+    return groups
+
+
+def _ordered_machines(machines):
+    categories = defaultdict(list)
+    for machine in machines:
+        if machine['category'] in CATEGORY_LABELS:
+            categories[machine['category']].append(machine)
+    ordered = []
+    for category, rows in categories.items():
+        valid = sorted(
+            (row for row in rows if percentage_value(row.get('avail')) is not None),
+            key=lambda m: (percentage_value(m['avail']), str(m['machine'])),
+        )
+        count = (len(valid) + 1) // 2
+        label = f'{CATEGORY_LABELS[category]} · worst {count} of {len(valid)}'
+        for position, row in enumerate(valid, 1):
+            ordered.append({**row, 'rank': position if position <= count else None,
+                            'group_label': label})
+        unavailable = sorted(
+            (row for row in rows if percentage_value(row.get('avail')) is None),
+            key=lambda m: str(m['machine']),
+        )
+        for row in unavailable:
+            ordered.append({**row, 'rank': None,
+                            'group_label': f'{CATEGORY_LABELS[category]} · unavailable ({len(unavailable)})'})
+    return ordered
+
+
+def _group_key(row):
+    return row['category'], percentage_value(row.get('avail')) is None
+
+
+def _table_units(rows):
+    """Count machine and category-header rows to balance the actual table heights."""
+    return len(rows) + sum(i == 0 or _group_key(row) != _group_key(rows[i - 1])
+                           for i, row in enumerate(rows))
+
+
+def _split_tables(ordered):
+    if len(ordered) < 2:
+        return ordered, []
+    split = min(range(1, len(ordered)), key=lambda index: (
+        max(_table_units(ordered[:index]), _table_units(ordered[index:])),
+        abs(index - len(ordered) / 2),
+    ))
+    return ordered[:split], ordered[split:]
+
+
+def _table(rows, category_averages, continued_group=None):
+    output = []
+    previous = None
+    for machine in rows:
+        category = machine['category']
+        group = _group_key(machine)
+        if group != previous:
+            continued = ' <span class="hod-au-continued">(continued)</span>' if group == continued_group else ''
+            averages = category_averages.get(category, {})
+            output.append(
+                f'<tr class="hod-au-category" data-category-header="{escape(str(category), quote=True)}">'
+                f'<th colspan="2" scope="rowgroup">{escape(machine["group_label"])}{continued}</th>'
+                f'<td>{_average_pair(averages, "avail")}</td><td>{_average_pair(averages, "util")}</td></tr>'
+            )
+            previous = group
+        fleet = escape(str(machine['machine']), quote=True)
+        rank = machine['rank']
+        rank_label = f'<span>{rank}</span>' if rank is not None else ''
+        colour = 'spare' if machine.get('is_spare') else 'production'
+        output.append(
+            f'<tr data-machine="{fleet}" data-category="{escape(str(category), quote=True)}" '
+            f'data-rank="{rank if rank is not None else ""}">'
+            f'<td class="hod-au-rank">{rank_label}</td>'
+            f'<th scope="row" class="hod-au-machine hod-au-{colour}">{fleet}</th>'
+            f'{_cell("avail", machine.get("avail"))}{_cell("util", machine.get("util"))}</tr>'
+        )
+    return (
+        '<table class="hod-au-fleet-table"><colgroup><col class="hod-au-rank-col">'
+        '<col class="hod-au-fleet-col"><col><col></colgroup>'
+        '<thead><tr><th scope="col">Rank</th><th scope="col">Fleet number</th>'
+        '<th scope="col">Availability %</th><th scope="col">Utilisation %</th></tr></thead>'
+        f'<tbody>{"".join(output)}</tbody></table>'
+    )
+
+
+def _is_number_section(machines):
+    """Show every eligible fleet number, with metric-specific worst-half ranks."""
+    columns = []
+    max_lines = 0
+    for metric, title in (('avail', 'Availability · all machines'), ('util', 'Utilisation · all machines')):
+        groups = []
+        lines = 0
+        ranked = _ranked_metric_rows(machines, metric)
+        for category in ('ADT', 'Excavator', 'Dozer'):
+            rows = ranked.get(category, [])
+            numbers = []
+            for row in rows:
+                fleet = escape(str(row['machine']).strip(), quote=True)
+                colour = 'spare' if row.get('is_spare') else 'production'
+                rank = row['rank']
+                unavailable = percentage_value(row.get(metric)) is None
+                marker = '<small class="hod-au-neutral-text">—</small>' if unavailable else ''
+                numbers.append(
+                    f'<span class="hod-au-{colour}" data-is-metric="{metric}" '
+                    f'data-is-category="{category}" data-is-machine="{fleet}" '
+                    f'data-rank="{rank if rank is not None else ""}" '
+                    f'data-unavailable="{str(unavailable).lower()}">'
+                    f'<b class="hod-au-list-rank">{rank if rank is not None else ""}</b>{fleet}{marker}</span>'
+                )
+            # Estimate conservatively, including the blank rank slot and gaps.
+            lines += max(1, ceil(sum(len(str(row['machine'])) * 9 + 34 for row in rows) / 600))
+            content = ''.join(numbers) or '<span class="hod-au-neutral-text">—</span>'
+            groups.append(
+                f'<div class="hod-au-is-group"><strong>{CATEGORY_LABELS[category]}</strong>'
+                f'<div class="hod-au-is-numbers">{content}</div></div>'
+            )
+        max_lines = max(max_lines, lines)
+        columns.append(f'<section><h4>{title} <small>Only worst 50% ranked</small></h4>{"".join(groups)}</section>')
+    height = 54 + max_lines * 20
+    return (f'<div class="hod-au-is-section" style="height:{height}px">'
+            f'{"".join(columns)}</div>'), height
+
+
+def render_grids(data: FleetSummary) -> str:
+    ordered = _ordered_machines(data['machines'])
+    left, right = _split_tables(ordered)
+    continued = _group_key(left[-1]) if left and right and _group_key(left[-1]) == _group_key(right[0]) else None
+    tables = _table(left, data['category_averages']) + _table(right, data['category_averages'], continued)
+    is_section, is_section_height = _is_number_section(data['machines'])
+    units = max(_table_units(left), _table_units(right), 1)
+    row_height = min(22, (588 - is_section_height - 7) // units)
+    # Around 50 machines fit with 16px text. Denser sites retain a single
+    # summary slide, with the height distributed across every filtered row.
+    font_size = min(16, max(12, row_height - 2))
+    period = f'{escape(data["start_date"])} to {escape(data["end_date"])}'
+    overall = data.get('averages', {})
+    ranked_count = sum(row['rank'] is not None for row in ordered)
+    unavailable_count = sum(percentage_value(row.get('avail')) is None for row in ordered)
+    shown = f'{len(ordered)} machines shown · {ranked_count} ranked'
+    if unavailable_count:
+        shown += f' · {unavailable_count} unavailable shown separately'
+    empty = '' if ordered else '<div class="hod-au-empty">No machines match the selected filters.</div>'
+    body = (
+        f'<div class="hod-au-page-period">{period} · {shown}</div>'
+        '<div class="hod-au-overall"><strong>Overall averages (all eligible)</strong>'
+        f'<span>Availability {_average_pair(overall, "avail")}</span>'
+        f'<span>Utilisation {_average_pair(overall, "util")}</span></div>'
+        f'<div class="hod-au-grid-pair">{tables}</div>{empty}{is_section}'
+        '<div class="hod-au-legend">'
+        '<div><span><i class="hod-au-dot hod-au-production-dot"></i>Production fleet</span>'
+        '<span><i class="hod-au-dot hod-au-spare-dot"></i>Spare fleet</span>'
+        '<span>Average key: <b class="hod-au-production">Excluding spares</b> / '
+        '<b class="hod-au-spare">Including spares</b></span>'
+        '<span>List ranks: worst half per category / metric; unavailable last</span></div>'
+        '<div><span>Availability: <i class="hod-au-dot hod-au-red-dot"></i>&lt;75% '
+        '<i class="hod-au-dot hod-au-amber-dot"></i>75–&lt;85% '
+        '<i class="hod-au-dot hod-au-green-dot"></i>≥85%</span>'
+        '<span>Utilisation: <i class="hod-au-dot hod-au-red-dot"></i>&lt;70% '
+        '<i class="hod-au-dot hod-au-amber-dot"></i>70–&lt;80% '
+        '<i class="hod-au-dot hod-au-green-dot"></i>≥80%</span>'
+        '<span>— Unavailable / not applicable</span></div></div>'
+    )
+    return (f'<style>{GRID_CSS}</style><div class="hod-au-grids"><div class="hod-au-grid-page" '
+            f'style="--row-height:{row_height}px;--row-font:{font_size}px">{body}</div></div>')
+
+
+GRID_CSS = """
+.hod-au-grids { max-width:100%; }
+.hod-au-grid-page { box-sizing:border-box; width:1500px; height:760px; padding:10px 12px;
+    display:flex; flex-direction:column; gap:7px; background:#fff; color:#172033;
+    font-family:Arial,sans-serif; line-height:1.1; }
+.hod-au-page-period { font-size:15px; color:#526071; line-height:18px; }
+.hod-au-overall { display:flex; align-items:center; gap:36px; font-size:18px;
+    line-height:25px; border-bottom:1px solid #d5d9df; padding-bottom:5px; }
+.hod-au-overall span { white-space:nowrap; }
+.hod-au-grid-pair { display:grid; grid-template-columns:1fr 1fr; gap:18px; align-items:start; flex:1; min-height:0; }
+.hod-au-is-section { box-sizing:border-box; flex-shrink:0; display:grid; grid-template-columns:1fr 1fr;
+    gap:18px; padding:8px 10px; border:1px solid #d5d9df; border-radius:4px; background:#f7f8fa; }
+.hod-au-is-section > section { min-width:0; }
+.hod-au-is-section h4 { font-family:Arial,sans-serif; font-size:16px; font-weight:700;
+    line-height:20px; margin:0 0 4px; }
+.hod-au-is-group { display:grid; grid-template-columns:96px minmax(0,1fr); gap:8px;
+    margin-top:4px; font-size:15px; line-height:20px; }
+.hod-au-is-numbers { display:flex; flex-wrap:wrap; gap:0 10px; align-content:start; }
+.hod-au-is-numbers > span { display:inline-flex; align-items:baseline; white-space:nowrap; font-weight:700; }
+.hod-au-is-section h4 small { font-size:12px; font-weight:normal; margin-left:8px; }
+.hod-au-list-rank { display:inline-block; min-width:18px; margin-right:3px; color:#526071;
+    font-size:11px; text-align:right; }
+.hod-au-is-numbers small { margin-left:3px; font-size:12px; }
+.hod-au-fleet-table { width:100%; table-layout:fixed; border-collapse:collapse;
+    font-size:var(--row-font); line-height:1; margin:0; }
+.hod-au-rank-col { width:8%; }
+.hod-au-fleet-col { width:36%; }
+.hod-au-fleet-table th, .hod-au-fleet-table td { box-sizing:border-box; border:1px solid #d5d9df;
+    padding:0 5px; text-align:center; height:var(--row-height); white-space:nowrap; }
+.hod-au-fleet-table thead th { background:#17365d; color:white; height:26px; font-size:16px; }
+.hod-au-fleet-table .hod-au-machine { text-align:left; font-weight:700; }
+.hod-au-category th, .hod-au-category td { background:#e9edf3; font-weight:700; }
+.hod-au-category th { text-align:left; }
+.hod-au-continued { font-size:0.85em; font-weight:normal; }
+.hod-au-rank span { box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center;
+    width:calc(var(--row-height) - 2px); height:calc(var(--row-height) - 2px);
+    border:1px solid #7c8594; border-radius:50%; font-size:0.8em; }
+.hod-au-production { color:#17365d; }
+.hod-au-spare { color:#7030a0; }
+.hod-au-red { background:#f8d8d5; color:#9f211b; }
+.hod-au-amber { background:#ffebba; color:#805400; }
+.hod-au-green { background:#d6efdf; color:#176239; }
+.hod-au-neutral { background:#edf0f4; color:#6b7280; }
+.hod-au-neutral-text { color:#6b7280; }
+.hod-au-legend { font-size:14px; line-height:19px; border-top:1px solid #d5d9df; padding-top:6px; }
+.hod-au-legend > div { display:flex; align-items:center; gap:24px; margin:2px 0; }
+.hod-au-legend span { display:inline-flex; align-items:center; gap:5px; white-space:nowrap; }
+.hod-au-dot { display:inline-block; width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+.hod-au-production-dot { background:#17365d; }
+.hod-au-spare-dot { background:#7030a0; }
+.hod-au-red-dot { background:#d63830; }
+.hod-au-amber-dot { background:#d99400; }
+.hod-au-green-dot { background:#229451; }
+.hod-au-empty { font-size:18px; }
+"""
+
+
+# PowerPoint rendering
+
+def _load_hod_pptx():
+    global Presentation, MSO_SHAPE, MSO_ANCHOR, PP_ALIGN
+    global Inches, Pt, RGBColor
+
+    from pptx import Presentation
+    from pptx.enum.shapes import MSO_SHAPE
+    from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+    from pptx.util import Inches, Pt
+    from pptx.dml.color import RGBColor
+
+SLIDE_WIDTH = 13.333
+SLIDE_HEIGHT = 7.5
+FONT_NAME = "Aptos"
+
+BLACK = "050505"
+WHITE = "FFFFFF"
+MUTED = "AAB4C3"
+RED = "E03124"
+HEADING_YELLOW = "FFF200"
+
+LOGO_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "public"
+    / "images"
+    / "isambane_logo.png"
+)
+
+
+def build_hod_presentation(
+    payload: dict,
+    output: BinaryIO | BytesIO,
+) -> None:
+    """Build a PowerPoint from browser-captured ERP report sections.
+
+    Expected payload format::
+
+        {
+            "site": "Koppie / Uitgevallen",
+            "period_label": "01 Jul 2026 to 17 Jul 2026",
+            "generated_by": "Administrator",
+            "generated_at": "2026-07-17 13:00:00",
+            "captured_slides": [
+                {
+                    "title": "HOD Production Summary",
+                    "image_data": "data:image/jpeg;base64,..."
+                },
+                {
+                    "title": "Availability & Utilisation - Koppie",
+                    "image_data": "data:image/jpeg;base64,..."
+                }
+            ]
+        }
+
+    Each captured image is fitted proportionally onto a widescreen slide.
+    This preserves the rendered ERP design instead of redrawing it with
+    PowerPoint shapes.
+    """
+
+    _load_hod_pptx()
+    prs = Presentation()
+    prs.slide_width = Inches(SLIDE_WIDTH)
+    prs.slide_height = Inches(SLIDE_HEIGHT)
+
+    site = str(payload.get("site") or "HOD Presentation")
+    generated_by = str(payload.get("generated_by") or "Isambane")
+
+    prs.core_properties.title = f"HOD Presentation - {site}"
+    prs.core_properties.subject = (
+        "HOD Production Summary and Availability & Utilisation"
+    )
+    prs.core_properties.author = generated_by
+
+    captured_slides = payload.get("captured_slides") or []
+    captured_slides = [
+        item
+        for item in captured_slides
+        if isinstance(item, dict) and item.get("image_data")
+    ]
+
+    if not captured_slides:
+        _add_error_slide(
+            prs,
+            "No captured report sections were supplied. "
+            "Refresh the report and click Download Presentation again.",
+        )
+    else:
+        for captured in captured_slides:
+            image_bytes = _decode_image_data(captured.get("image_data"))
+            if not image_bytes:
+                continue
+
+            slide = _blank_slide(prs)
+            slide_title = str(
+                captured.get("title")
+                or site
+            )
+            slide_subtitle = str(
+                captured.get("subtitle")
+                or ""
+            )
+            slide_period = str(
+                captured.get("period_label")
+                or ""
+            )
+            heading_style = str(
+                captured.get("heading_style")
+                or ""
+            )
+
+            # Dashboard captures already include the complete branded heading.
+            if heading_style == "dashboard":
+                _add_image_fitted(
+                    slide,
+                    image_bytes,
+                    top_inches=0,
+                    height_inches=SLIDE_HEIGHT,
+                    top_align=True,
+                    side_margin_inches=0,
+                    stretch_to_fill=True,
+                )
+
+                # Overlay invisible PowerPoint hyperlinks on the
+                # actual captured positions of the View Detail buttons.
+                from urllib.parse import urlencode, quote
+                from pptx.oxml.xmlchemy import OxmlElement
+
+                dashboard_image = slide.shapes[-1]
+                report_site = str(captured.get("site") or site)
+                report_from = str(payload.get("start_date") or "")
+                report_to = str(payload.get("end_date") or "")
+
+                for area in captured.get("link_areas") or []:
+                    if not isinstance(area, dict):
+                        continue
+
+                    kind = area.get("kind")
+                    if kind not in ("au", "fleet", "breakdown"):
+                        continue
+
+                    try:
+                        x, y, w, h = (
+                            float(area[key])
+                            for key in ("x", "y", "w", "h")
+                        )
+                    except (ValueError, TypeError, KeyError):
+                        continue
+
+                    # Keep captured button areas within the slide image.
+                    # Minor browser rounding must not discard valid links.
+                    if not all(
+                        __import__("math").isfinite(value)
+                        for value in (x, y, w, h)
+                    ):
+                        continue
+
+                    if w <= 0 or h <= 0:
+                        continue
+
+                    x = max(0.0, min(x, 0.999))
+                    y = max(0.0, min(y, 0.999))
+                    w = min(w, 1.0 - x)
+                    h = min(h, 1.0 - y)
+
+                    if w <= 0 or h <= 0:
+                        continue
+
+                    if kind == "au":
+                        params = urlencode({
+                            "site": report_site,
+                            "from_date": report_from,
+                            "to_date": report_to,
+                            "asset_category": "All Equipment",
+                            "machine_scope": "Production + Swing/Spare Machines",
+                            "asset_ownership": "All Assets",
+                            "au_target_filter": "85% A & U",
+                        })
+                        target = frappe.utils.get_url(
+                            "/app/query-report/"
+                            + quote(
+                                "Availability and Utilisation Month End Report",
+                                safe=""
+                            )
+                            + "?" + params
+                        )
+                    elif kind == "breakdown":
+                        machine = str(area.get("machine") or "").strip()
+                        detail_from = str(captured.get("start_date") or "")
+                        detail_to = str(captured.get("end_date") or "")
+
+                        if not machine or not detail_from or not detail_to:
+                            continue
+
+                        detail_params = urlencode({
+                            "machine": machine,
+                            "site": report_site,
+                            "from_date": detail_from,
+                            "to_date": detail_to,
+                        })
+
+                        target = frappe.utils.get_url(
+                            "/hod-breakdown-reasons?" + detail_params
+                        )
+                    else:
+                        # Open the permanent Machine Plant List using
+                        # the same reporting period as this dashboard.
+                        fleet_params = urlencode({
+                            "site": report_site,
+                            "from_date": str(
+                                captured.get("start_date")
+                                or report_from
+                            ),
+                            "to_date": str(
+                                captured.get("end_date")
+                                or report_to
+                            ),
+                        })
+                        target = frappe.utils.get_url(
+                            "/hod-machine-plant-list?" + fleet_params
+                        )
+
+                    link_shape = slide.shapes.add_shape(
+                        MSO_SHAPE.RECTANGLE,
+                        dashboard_image.left + int(dashboard_image.width * x),
+                        dashboard_image.top + int(dashboard_image.height * y),
+                        max(1, int(dashboard_image.width * w)),
+                        max(1, int(dashboard_image.height * h)),
+                    )
+
+                    link_shape.fill.solid()
+                    link_shape.fill.fore_color.rgb = RGBColor(255, 255, 255)
+
+                    # Fully transparent, but still clickable.
+                    solid = link_shape._element.spPr.solidFill
+                    color = solid.srgbClr
+                    alpha = OxmlElement("a:alpha")
+                    alpha.set("val", "0")
+                    color.append(alpha)
+
+                    link_shape.line.fill.background()
+                    # Preserve the site URL while using HTTPS for links.
+                    if target.startswith("http://"):
+                        target = "https://" + target[len("http://"):]
+
+                    link_shape.click_action.hyperlink.address = target
+
+                # HOD_FIXED_SLIDE_BACKGROUND
+                # Use the captured dashboard image as the actual slide
+                # background, not as an independently movable picture.
+                from pptx.oxml.ns import qn
+
+                image_relationship = (
+                    dashboard_image._element.blipFill.blip.get(
+                        qn("r:embed")
+                    )
+                )
+
+                if not image_relationship:
+                    raise ValueError(
+                        "Dashboard image relationship is missing."
+                    )
+
+                background = OxmlElement("p:bg")
+                properties = OxmlElement("p:bgPr")
+                image_fill = OxmlElement("a:blipFill")
+
+                image_ref = OxmlElement("a:blip")
+                image_ref.set(qn("r:embed"), image_relationship)
+
+                stretch = OxmlElement("a:stretch")
+                stretch.append(OxmlElement("a:fillRect"))
+
+                image_fill.append(image_ref)
+                image_fill.append(stretch)
+                properties.append(image_fill)
+                properties.append(OxmlElement("a:effectLst"))
+                background.append(properties)
+
+                slide_content = slide._element.cSld
+
+                for existing_background in slide_content.findall(
+                    qn("p:bg")
+                ):
+                    slide_content.remove(existing_background)
+
+                slide_content.insert(0, background)
+
+                # Remove the original movable image.
+                # Hyperlinks remain as invisible clickable shapes.
+                slide.shapes._spTree.remove(
+                    dashboard_image._element
+                )
+
+                continue
+
+            detailed_heading = bool(
+                slide_subtitle
+                or slide_period
+            )
+
+            engineering_heading = (
+                heading_style
+                == "engineering"
+            )
+
+            no_machines = captured.get("no_machines") is True
+
+            hours_heading = (
+                "Hours Based Performance"
+                in slide_title
+            )
+
+            _add_slide_heading(
+                slide,
+                slide_title,
+                subtitle=slide_subtitle,
+                period_label=slide_period,
+                heading_style=heading_style,
+            )
+
+            image_top = (
+                0.58
+                if hours_heading
+                else (
+                    0.80
+                    if engineering_heading
+                    else (
+                        1.48
+                        if detailed_heading
+                        else 0.72
+                    )
+                )
+            )
+
+            image_bottom_margin = (
+                0.08
+                if hours_heading
+                else (
+                    0.28
+                    if detailed_heading
+                    else 0.18
+                )
+            )
+
+            # Maintain clearance below the enlarged header logo
+            # without changing the captured chart or its values.
+            safe_image_top = max(
+                image_top,
+                0.92 if engineering_heading else (
+                    0.86 if hours_heading else image_top
+                ),
+            )
+
+            _add_image_fitted(
+                slide,
+                (
+                    _trim_engineering_image(image_bytes)
+                    if engineering_heading
+                    else image_bytes
+                ),
+                top_inches=safe_image_top,
+                height_inches=(
+                    SLIDE_HEIGHT
+                    - safe_image_top
+                    - (0.42 if hours_heading else image_bottom_margin)
+                ),
+                top_align=(
+                    engineering_heading
+                    or hours_heading
+                ),
+                side_margin_inches=(
+                    0.22
+                    if hours_heading
+                    else (
+                        0.10
+                        if engineering_heading
+                        else (
+                            0.22
+                            if detailed_heading
+                            else 0.0
+                        )
+                    )
+                ),
+                stretch_to_fill=False,
+            )
+
+            # Hours Based only: standardise the presentation image area.
+            # Keep the whole captured image visible with no cropping.
+            # This intentionally expands short chart images vertically.
+            if hours_heading:
+                for picture in slide.shapes:
+                    if (
+                        picture.shape_type == 13
+                        and picture.width > Inches(5)
+                    ):
+                        picture.left = Inches(0.22)
+                        picture.top = Inches(0.92)
+                        picture.width = Inches(12.89)
+                        picture.height = Inches(5.95)
+
+            # Engineering only: extend the picture downwards.
+            # Preserve its width and horizontal position.
+            # Leave clearance above the black footer.
+            if engineering_heading and not hours_heading and not no_machines:
+                for picture in slide.shapes:
+                    if (
+                        picture.shape_type == 13
+                        and picture.width > Inches(5)
+                    ):
+                        picture.left = Inches(0.22)
+                        picture.top = Inches(0.92)
+                        picture.width = Inches(12.90)
+                        picture.height = Inches(5.95)
+
+            if engineering_heading and not hours_heading and no_machines:
+                for picture in slide.shapes:
+                    if (
+                        picture.shape_type == 13
+                        and picture.width > Inches(5)
+                    ):
+                        picture.left = Inches(0.22)
+                        picture.top = Inches(0.92)
+                        picture.width = Inches(12.90)
+
+
+        if not prs.slides:
+            _add_error_slide(
+                prs,
+                "The report images could not be decoded. "
+                "Refresh the report and try the download again.",
+            )
+
+
+    # Final layout adjustments for exported slides.
+    for slide_number, export_slide in enumerate(prs.slides, start=1):
+
+        slide_text = " ".join(
+            shape.text
+            for shape in export_slide.shapes
+            if shape.has_text_frame
+        )
+
+        # White slide number in the bottom-right black border.
+        _add_text(
+            export_slide,
+            str(slide_number),
+            12.48,
+            7.30,
+            0.45,
+            0.16,
+            10,
+            WHITE,
+            align=PP_ALIGN.RIGHT,
+        )
+
+    # Move decorative borders into the slide layout.
+    # Layout shapes cannot be selected in normal PowerPoint editing.
+    from copy import deepcopy
+
+    border_positions = {
+        (0, 0, Inches(SLIDE_WIDTH), Inches(0.80)),
+        (0, Inches(7.30), Inches(SLIDE_WIDTH), Inches(0.20)),
+        (0, Inches(0.80), Inches(0.20),
+         Inches(SLIDE_HEIGHT - 0.80)),
+    }
+
+    def is_fixed_border(shape):
+        return (
+            shape.left,
+            shape.top,
+            shape.width,
+            shape.height,
+        ) in border_positions
+
+    first_slide_borders = [
+        shape for shape in prs.slides[0].shapes
+        if is_fixed_border(shape)
+    ]
+
+    if first_slide_borders:
+        if len(first_slide_borders) != 3:
+            raise ValueError(
+                "Expected exactly three black border shapes."
+            )
+
+        layout = prs.slide_layouts[6]
+
+        for shape in first_slide_borders:
+            copied = deepcopy(shape._element)
+
+            # Assign a unique ID within the slide layout.
+            copied.xpath(".//p:cNvPr")[0].set(
+                "id", str(layout.shapes._next_shape_id)
+            )
+
+            layout.shapes._spTree.append(copied)
+
+        # Remove original movable borders from individual slides.
+        for export_slide in prs.slides:
+            for shape in list(export_slide.shapes):
+                if is_fixed_border(shape):
+                    shape._element.getparent().remove(
+                        shape._element
+                    )
+
+    prs.save(output)
+def _decode_image_data(value) -> bytes | None:
+    if not value:
+        return None
+
+    if isinstance(value, bytes):
+        return value
+
+    text = str(value).strip()
+
+    if not text:
+        return None
+
+    if text.startswith("data:"):
+        marker = ";base64,"
+        if marker not in text:
+            return None
+        text = text.split(marker, 1)[1]
+
+    try:
+        decoded = base64.b64decode(text, validate=True)
+    except (ValueError, binascii.Error):
+        return None
+
+    from PIL import Image, UnidentifiedImageError
+
+    try:
+        with Image.open(BytesIO(decoded)) as image:
+            width, height = image.size
+
+            if (
+                width <= 0
+                or height <= 0
+                or width > 12000
+                or height > 12000
+                or width * height > 16000000
+            ):
+                raise ValueError(
+                    "Presentation image dimensions exceed safety limits."
+                )
+
+            if image.format not in ("JPEG", "PNG"):
+                raise ValueError(
+                    "Unsupported presentation image format."
+                )
+
+            image.verify()
+
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError):
+        raise ValueError("Invalid presentation image.") from None
+
+    return decoded
+
+
+
+def _trim_engineering_image(image_bytes: bytes) -> bytes:
+    """Trim empty engineering-chart margins so the graph fills the slide better."""
+    from PIL import Image
+
+    try:
+        image = Image.open(BytesIO(image_bytes)).convert("RGB")
+        width, height = image.size
+
+        if width < 100 or height < 100:
+            return image_bytes
+
+        pixels = image.load()
+
+        # Use the top-right corner as the background reference because the
+        # captured engineering report usually has a light plain background there.
+        bg_r, bg_g, bg_b = pixels[max(0, width - 5), 5]
+
+        def is_background(rgb):
+            r, g, b = rgb
+            return (
+                abs(r - bg_r) <= 12
+                and abs(g - bg_g) <= 12
+                and abs(b - bg_b) <= 12
+            )
+
+        top = 0
+        bottom = height - 1
+        left = 0
+        right = width - 1
+
+        # Find top boundary.
+        for y in range(height):
+            non_bg = 0
+            for x in range(width):
+                if not is_background(pixels[x, y]):
+                    non_bg += 1
+            if non_bg > max(12, width * 0.01):
+                top = y
+                break
+
+        # Find bottom boundary.
+        for y in range(height - 1, -1, -1):
+            non_bg = 0
+            for x in range(width):
+                if not is_background(pixels[x, y]):
+                    non_bg += 1
+            if non_bg > max(12, width * 0.01):
+                bottom = y
+                break
+
+        # Find left boundary.
+        for x in range(width):
+            non_bg = 0
+            for y in range(height):
+                if not is_background(pixels[x, y]):
+                    non_bg += 1
+            if non_bg > max(8, height * 0.01):
+                left = x
+                break
+
+        # Find right boundary.
+        for x in range(width - 1, -1, -1):
+            non_bg = 0
+            for y in range(height):
+                if not is_background(pixels[x, y]):
+                    non_bg += 1
+            if non_bg > max(8, height * 0.01):
+                right = x
+                break
+
+        # Add safe padding so labels stay visible.
+        pad_x = max(16, int(width * 0.025))
+        pad_top = max(14, int(height * 0.02))
+        pad_bottom = max(20, int(height * 0.03))
+
+        left = max(0, left - pad_x)
+        right = min(width, right + pad_x)
+        top = max(0, top - pad_top)
+        bottom = min(height, bottom + pad_bottom)
+
+        cropped_width = right - left
+        cropped_height = bottom - top
+
+        # Reject obviously bad crops.
+        if cropped_width < width * 0.55:
+            return image_bytes
+
+        if cropped_height < height * 0.22:
+            return image_bytes
+
+        cropped = image.crop((left, top, right, bottom))
+
+        output = BytesIO()
+        cropped.save(output, format="PNG")
+        return output.getvalue()
+
+    except (OSError, ValueError, IndexError):
+        return image_bytes
+
+
+def _add_image_fitted(
+    slide,
+    image_bytes: bytes,
+    *,
+    top_inches: float = 0.0,
+    height_inches: float = SLIDE_HEIGHT,
+    top_align: bool = False,
+    side_margin_inches: float = 0.0,
+    stretch_to_fill: bool = False,
+) -> None:
+    image_stream = BytesIO(image_bytes)
+
+    picture = slide.shapes.add_picture(
+        image_stream,
+        0,
+        0,
+    )
+
+    side_margin = Inches(side_margin_inches)
+    slide_w = Inches(
+        SLIDE_WIDTH
+        - (side_margin_inches * 2)
+    )
+    slide_h = Inches(height_inches)
+    top_offset = Inches(top_inches)
+
+    image_w = picture.width
+    image_h = picture.height
+
+    if stretch_to_fill:
+        picture.left = side_margin
+        picture.top = top_offset
+        picture.width = slide_w
+        picture.height = slide_h
+        return
+
+    if not image_w or not image_h:
+        picture.left = 0
+        picture.top = top_offset
+        picture.width = slide_w
+        picture.height = slide_h
+        return
+
+    scale = min(
+        slide_w / image_w,
+        slide_h / image_h,
+    )
+
+    fitted_w = int(image_w * scale)
+    fitted_h = int(image_h * scale)
+
+    picture.width = fitted_w
+    picture.height = fitted_h
+    picture.left = (
+        side_margin
+        + int((slide_w - fitted_w) / 2)
+    )
+
+    if top_align:
+        picture.top = top_offset
+    else:
+        picture.top = (
+            top_offset
+            + int((slide_h - fitted_h) / 2)
+        )
+
+
+
+def _add_isambane_logo(slide) -> None:
+    if not LOGO_PATH.exists():
+        return
+
+    slide.shapes.add_picture(
+        str(LOGO_PATH),
+        Inches(0.13),
+        Inches(0.06),
+        width=Inches(2.40),
+        height=Inches(0.75),
+    )
+
+
+def _add_slide_heading(
+    slide,
+    title: str,
+    *,
+    subtitle: str = "",
+    period_label: str = "",
+    heading_style: str = "",
+) -> None:
+    detailed_heading = bool(subtitle or period_label)
+
+    # Black header matching the reference PowerPoint.
+    banner = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE,
+        0,
+        0,
+        Inches(SLIDE_WIDTH),
+        Inches(0.80),
+    )
+    banner.fill.solid()
+    banner.fill.fore_color.rgb = _rgb(BLACK)
+    banner.line.fill.background()
+
+    # The slide itself is white; no moveable white panel.
+    # Keep a black bottom strip for slide numbers.
+
+    footer = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE,
+        0,
+        Inches(7.30),
+        Inches(SLIDE_WIDTH),
+        Inches(0.20),
+    )
+    footer.fill.solid()
+    footer.fill.fore_color.rgb = _rgb(BLACK)
+    footer.line.fill.background()
+
+    # Black left border only; right side remains white.
+    left_border = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE,
+        0,
+        Inches(0.80),
+        Inches(0.20),
+        Inches(SLIDE_HEIGHT - 0.80),
+    )
+    left_border.fill.solid()
+    left_border.fill.fore_color.rgb = _rgb(BLACK)
+    left_border.line.fill.background()
+
+    # White title in black header.
+    _add_text(
+        slide,
+        title,
+        2.70,
+        0.10,
+        10.20,
+        0.48,
+        17 if detailed_heading or heading_style == "engineering" else 20,
+        HEADING_YELLOW,
+        bold=True,
+        align=PP_ALIGN.CENTER,
+    )
+
+    if subtitle:
+        _add_text(
+            slide,
+            subtitle,
+            0.55,
+            0.82,
+            12.23,
+            0.42,
+            16,
+            "59647A",
+            align=PP_ALIGN.CENTER,
+            font_name="Calibri",
+        )
+
+    if period_label:
+        _add_text(
+            slide,
+            period_label,
+            0.75,
+            1.16,
+            3.00,
+            0.34,
+            14,
+            BLACK,
+            align=PP_ALIGN.LEFT,
+            font_name="Arial",
+        )
+
+    # Add last so the logo is never hidden behind the header.
+    _add_isambane_logo(slide)
+
+
+def _blank_slide(prs: Presentation):
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    fill = slide.background.fill
+    fill.solid()
+    fill.fore_color.rgb = _rgb(WHITE)
+    return slide
+
+
+def _add_error_slide(prs: Presentation, message: str) -> None:
+    slide = _blank_slide(prs)
+
+    shape = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE,
+        Inches(0.70),
+        Inches(2.25),
+        Inches(11.93),
+        Inches(2.30),
+    )
+    shape.fill.solid()
+    shape.fill.fore_color.rgb = _rgb("151515")
+    shape.line.color.rgb = _rgb(RED)
+    shape.line.width = Pt(1.2)
+
+    _add_text(
+        slide,
+        "PRESENTATION COULD NOT BE GENERATED",
+        1.05,
+        2.65,
+        11.25,
+        0.45,
+        22,
+        WHITE,
+        bold=True,
+        align=PP_ALIGN.CENTER,
+    )
+    _add_text(
+        slide,
+        message,
+        1.25,
+        3.25,
+        10.85,
+        0.75,
+        13,
+        MUTED,
+        align=PP_ALIGN.CENTER,
+    )
+
+
+def _add_text(
+    slide,
+    text: str,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    font_size: float,
+    colour: str,
+    *,
+    bold: bool = False,
+    align=None,
+    font_name: str | None = None,
+):
+    if align is None:
+        _load_hod_pptx()
+        align = PP_ALIGN.LEFT
+
+    box = slide.shapes.add_textbox(
+        Inches(x),
+        Inches(y),
+        Inches(w),
+        Inches(h),
+    )
+    frame = box.text_frame
+    frame.clear()
+    frame.word_wrap = True
+    frame.vertical_anchor = MSO_ANCHOR.MIDDLE
+    frame.margin_left = Inches(0.02)
+    frame.margin_right = Inches(0.02)
+    frame.margin_top = Inches(0.01)
+    frame.margin_bottom = Inches(0.01)
+
+    paragraph = frame.paragraphs[0]
+    paragraph.alignment = align
+    paragraph.space_before = Pt(0)
+    paragraph.space_after = Pt(0)
+
+    run = paragraph.add_run()
+    run.text = str(text or "")
+    run.font.name = font_name or FONT_NAME
+    run.font.size = Pt(font_size)
+    run.font.bold = bold
+    run.font.color.rgb = _rgb(colour)
+    return box
+
+
+
+def _rgb(hex_colour: str) -> RGBColor:
+    text = str(hex_colour or "000000").strip().lstrip("#")
+    return RGBColor(
+        int(text[0:2], 16),
+        int(text[2:4], 16),
+        int(text[4:6], 16),
+    )
