@@ -2531,10 +2531,10 @@ const Model = (() => {
   function rasterRes(r) { const A = r.geo.affine; return Math.hypot(A.a, A.d); }
 
   // Resample a raster band (file CRS) onto the working grid (display coords)
-  function resample(r, grid, sign) {
+  function resample(r, grid, sign, band = 0) {
     const { x0, y0, nx, ny, cell } = grid;
     const out = new Float32Array(nx * ny).fill(NaN);
-    const inv = Tiff.invAffine(r.geo.affine), B = r.bands[0], W = r.width, H = r.height;
+    const inv = Tiff.invAffine(r.geo.affine), B = r.bands[band] || r.bands[0], W = r.width, H = r.height;
     const px = rasterRes(r);
     const k = Math.max(1, Math.min(5, Math.round(cell / px)));
     const val = (i, j) => (i < 0 || j < 0 || i >= W || j >= H ? NaN : B[j * W + i]);
@@ -2596,13 +2596,53 @@ const Model = (() => {
   }
 
   // ---------- workspace ----------
-  function buildWorkspace(project, surf) {
+  function buildWorkspace(project, surf, dep) {
     const g = project.grid;
-    // surfRaw: the surfaces as loaded; surf: the ones that are mined (a seam below its cut-off has no thickness there)
+    // surfRaw: the surfaces as loaded (cut down to a survey of the ground now, dep, when there is one: surf0 keeps them as
+    // loaded); surf: the ones that are mined (a seam below its cut-off has no thickness there)
     const ws = { project, nx: g.nx, ny: g.ny, cell: g.cell, x0: g.x0, y0: g.y0, n: g.nx * g.ny, surf, surfRaw: surf, A: g.cell * g.cell };
-    ws.topo = surf[0];
+    if (dep && dep.length === ws.n) { ws.surf0 = surf; ws.dep = dep; ws.surf = ws.surfRaw = deplete(surf, dep); }
+    ws.topo = ws.surf[0];
     rasterizeBlocks(ws);
     return ws;
+  }
+  /* Depletion: a survey DEM of the ground now (P.depletion, Geological Data tab) takes out what was mined before it. Every
+     surface is cut down to the survey where the survey lies below it, so the blocks keep only what is still in the ground
+     and the schedule starts from that ground (ws.topo). Where the survey lies above the model (dumps, stockpiles,
+     backfill) nothing changes: the layers of the model are in situ there. dep: on the model grid, NaN where the survey
+     has no value. */
+  function deplete(S, dep) {
+    return S.map(a => { let t = null; for (let c = 0; c < a.length; c++) if (dep[c] < a[c]) { if (!t) t = Float32Array.from(a); t[c] = dep[c]; } return t || a; });
+  }
+  function setDepletion(ws, dep) {
+    const S0 = ws.surf0 || ws.surfRaw;
+    if (dep && dep.length === ws.n) { ws.surf0 = S0; ws.dep = dep; ws.surfRaw = deplete(S0, dep); }
+    else { ws.surfRaw = S0; ws.surf0 = null; ws.dep = null; }
+    ws.surf = ws.surfRaw; ws.topo = ws.surf[0]; // (the keep-out zones stay: their floors are the layers', and mined ground has nothing above them)
+    applyCutoff(ws);
+  }
+  /* What the survey took out: per layer the bcm and tons above it (after the seam cut-off, as the schedule has them), the blocks mined out
+     (less than 1% left) and partly mined, the area cut, and where the survey lies above the model (not in situ) */
+  function depletionStats(ws) {
+    if (!ws || !ws.surf0 || !ws.dep) return null;
+    const P = ws.project, nL = P.layers.length, key = P.layers.map(L => L.density).join('|');
+    if (ws._depl && ws._depl.surf === ws.surf && ws._depl.key === key) return ws._depl.q; // (kept until the surfaces or the densities change)
+    // (as the schedule has them: after the seam cut-off, which the model as built gets too)
+    const w0 = Object.assign({}, ws, { surfRaw: ws.surf0, surf: ws.surf0 }); applyCutoff(w0);
+    const v0 = blockVolumes(w0), v1 = blockVolumes(ws);
+    const layers = P.layers.map(() => ({ bcm: 0, t: 0 }));
+    let full = 0, part = 0;
+    for (let b = 0; b < v0.length; b++) {
+      let a = 0, z = 0;
+      for (let l = 0; l < nL; l++) { const d = v0[b][l] - v1[b][l]; a += v0[b][l]; z += v1[b][l]; if (d > 1e-6) { layers[l].bcm += d; layers[l].t += d * blockDensity(P, b, l); } }
+      if (a > 1 && a - z > 0.5) { if (z < 0.01 * a) full++; else part++; }
+    }
+    const top = ws.surf0[0], dep = ws.dep;
+    let cut = 0, up = 0, upV = 0;
+    for (let c = 0; c < ws.n; c++) { const d = dep[c]; if (d !== d) continue; if (d < top[c] - 0.1) cut++; else if (d > top[c] + 0.3) { up++; upV += (d - top[c]) * ws.A; } }
+    const q = { layers, full, part, cut: { area: cut * ws.A }, above: { area: up * ws.A, bcm: upV } };
+    ws._depl = { surf: ws.surf, key, q };
+    return q;
   }
   function cellXY(ws, c) { const i = c % ws.nx, j = (c / ws.nx) | 0; return [ws.x0 + (i + 0.5) * ws.cell, ws.y0 + (j + 0.5) * ws.cell]; }
   function cellAt(ws, x, y) {
@@ -3165,7 +3205,7 @@ const Model = (() => {
   function arFactor(P, L) { const q = losses(P, L); return Math.max(0, (1 - q.geo / 100) * (1 - q.mining / 100) * (1 + q.contam / 100)); }
   function newEquipment(kind, extra) { return Object.assign({ id: U.uid('eq'), kind, activityId: '' }, U.deepClone(FLEET_DEFAULTS[kind]), extra || {}); }
 
-  return { LAYER_TYPES, ACT_COLORS, DUMP_COLORS, newProject, autoLayers, seamToken, proposeGrid, rasterExtent, rasterRes, resample, fillHoles, conformSurfaces, buildWorkspace, applyCutoff, cutTarget, cutTargets, cellXY, cellAt, sampleGrid, cellsInPolygon, rasterizeBlocks, layerIndex, blockVolumes, layerThickness, blockDensity, kindStart, kindOf, rampToeSurf, rampSlopes, RAMP_BATTER, RAMP_FILL, surfaceLabel, rampEnd, actDests, syncActColors, blockLimits, blockDepth, zoneBlocks, stripSource, pathStrips, idStrip, blockPits, pitIndex, pitName, boxCuts, boxDef, boxMonths, boxName, boxTitle, BOX_MONTHS, pitBaseName, fleetHost, actFleet, syncPits, dropActivity, setTopsoilAsWaste, PIT_COLORS, REST, defaultActivities, newEquipment, FLEET_DEFAULTS, niceCell, teams, losses, arFactor, TEAM_LCM, pitStart, bench, wasteFollows, rainDerate, reserveInside, hasReserve, reserveRings, inReserve };
+  return { LAYER_TYPES, ACT_COLORS, DUMP_COLORS, deplete, setDepletion, depletionStats, newProject, autoLayers, seamToken, proposeGrid, rasterExtent, rasterRes, resample, fillHoles, conformSurfaces, buildWorkspace, applyCutoff, cutTarget, cutTargets, cellXY, cellAt, sampleGrid, cellsInPolygon, rasterizeBlocks, layerIndex, blockVolumes, layerThickness, blockDensity, kindStart, kindOf, rampToeSurf, rampSlopes, RAMP_BATTER, RAMP_FILL, surfaceLabel, rampEnd, actDests, syncActColors, blockLimits, blockDepth, zoneBlocks, stripSource, pathStrips, idStrip, blockPits, pitIndex, pitName, boxCuts, boxDef, boxMonths, boxName, boxTitle, BOX_MONTHS, pitBaseName, fleetHost, actFleet, syncPits, dropActivity, setTopsoilAsWaste, PIT_COLORS, REST, defaultActivities, newEquipment, FLEET_DEFAULTS, niceCell, teams, losses, arFactor, TEAM_LCM, pitStart, bench, wasteFollows, rainDerate, reserveInside, hasReserve, reserveRings, inReserve };
 })();
 
 /* ===== KML overlays and keep-out zones (DOM-free) =====
@@ -5077,6 +5117,9 @@ const Sim = (() => {
     const mineStart0 = acts.filter(X => X.path.length).reduce((a, X) => Math.min(a, X.startDay), Infinity), mineDay0 = isFinite(mineStart0) ? mineStart0 : 0;
     const suKey0 = (t => t.getUTCFullYear() * 12 + t.getUTCMonth())(U.addDays(start, mineDay0));
     { const sn = Monthly.startMonths(P); if (sn && TL.waste > 0) events.push({ day: 0, type: 'info', msg: `Start-up waste: the waste target is ${U.fmtNum(+TG.wasteStart, 0)} ${TL.wT ? 't' : 'bcm'} in an average month over the first ${sn} month${sn === 1 ? '' : 's'} of mining (from ${U.fmtMonth(U.addDays(start, mineDay0))}), then the steady ${U.fmtNum(TL.waste, 0)} ${TL.wT ? 't' : 'bcm'}${!(TL.coal > 0) ? '; with no coal target the waste gets the teams first in those months, the coal what is left' : ''}.` }); }
+    // (the model cut down to a survey of the ground, Geological Data tab: the schedule mines from that ground)
+    if (ws.dep && P.depletion && P.depletion.survey) { const sv = Recon.settings(P).surveys.find(q => q.id === P.depletion.survey), early = sv && sv.date && P.startDate && P.startDate < sv.date;
+      if (sv) events.push({ day: 0, type: early ? 'warn' : 'info', msg: `The 3D model is cut down to the survey “${sv.name}” of ${sv.date ? U.fmtDate(U.parseISO(sv.date)) : 'no date'}${P.depletion.earlier !== false ? ' (with the earlier surveys)' : ''}: the schedule mines from the ground as surveyed, and the blocks hold only what lies below it.${early ? ` The schedule starts on ${U.fmtDate(U.parseISO(P.startDate))}, before the survey: start it on the survey date (Geological Data tab).` : ''}` }); }
     { const rn = Monthly.rampMonths(P); if (rn && TL.coal > 0) events.push({ day: 0, type: 'info', msg: `Coal ramp-up: over the first ${rn} month${rn === 1 ? '' : 's'} the coal target steps up (${Array.from({ length: rn }, (_, k) => Math.round(((k + 1) / (rn + 1)) * 100) + '%').join(', ')} of ${U.fmtNum(TL.coal, 0)} t), and is met in full from month ${rn + 1}, so the waste can get ahead and build up exposed coal first.` }); }
     const tg = { key: -1, bud: [Infinity, Infinity, Infinity], used: [0, 0, 0], wdLeft: 0, left: [Infinity, Infinity, Infinity], resv: [0, 0, 0] };
     for (const X of acts) {
@@ -9648,7 +9691,9 @@ const Recon = (() => {
     return { surveys: Array.isArray(R.surveys) ? R.surveys : [], from: R.from || 'model', to: R.to || '', tol: R.tol != null && R.tol !== '' && isFinite(tol) ? Math.max(0, tol) : DEF.tol };
   }
   const key = s => s.id; // the store key of a survey's grid (ids are 'dtm_…')
-  const blobKeys = P => settings(P).surveys.map(key);
+  // the store keys of a GeoTIFF survey's bands on the grid of the DEM display (Dem); all of a survey's, all of a project's
+  const dispKey = (s, b) => `${s.id}_v${b}`, keysOf = s => [key(s)].concat(s.disp ? Array.from({ length: s.disp.bands }, (_, b) => dispKey(s, b)) : []);
+  const blobKeys = P => settings(P).surveys.flatMap(keysOf).concat(Dem.blobKeys(P));
   const byDate = P => settings(P).surveys.slice().sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.name || '').localeCompare(b.name || ''));
   // a date in a file name: 2026-09-30, 2026_09_30, 20260930 → ISO, or null
   function dateFromName(name) {
@@ -9747,7 +9792,7 @@ const Recon = (() => {
   /* A GeoTIFF DTM onto the grid of the model: {grid, info} as readPoints gives. One band of elevations, placed by its
      GeoTIFF tags or else by its world file (.tfw); read at half a cell (an overview when it has one) and averaged onto the
      cells; its "no data" pixels stay empty, and small holes in it are filled as the gaps between points are. */
-  async function readRaster(P, ws, file, worldFile, onProgress) {
+  async function readRaster(P, ws, file, worldFile, onProgress, disp) {
     const info = await Tiff.info(file);
     if (info.spp >= 3 && info.bps === 8) throw new Error('it is a picture (RGB), not a grid of elevations.');
     let affine = info.geo.affine;
@@ -9756,16 +9801,26 @@ const Recon = (() => {
     // (a raster in another coordinate system than the model's, by its EPSG code)
     const pid = info.geo.epsg ? Geo.presetForEpsg(info.geo.epsg) : null, name = id => (Geo.PRESETS.find(p => p.id === id) || { name: id }).name;
     const crs = pid && pid !== 'custom' && P.crs.preset !== 'custom' && P.crs.preset !== 'local' && pid !== P.crs.preset ? `It is in ${name(pid)}${/EPSG/.test(name(pid)) ? '' : ` (EPSG ${info.geo.epsg})`}, the model in ${name(P.crs.preset)}.` : '';
-    const r = await Tiff.read(info, { targetRes: P.grid.cell / 2, affine, onProgress }), B = r.bands[0];
+    const r = await Tiff.read(info, { targetRes: Math.min(P.grid.cell / 2, disp ? disp.cell : Infinity), maxBands: Math.min(info.spp, 4), affine, onProgress }), sign = Geo.axisSign(P.crs);
     // (a DTM without a "no data" tag often marks its gaps -9999, -32767 or -32768: no ground lies that low)
-    for (let i = 0; i < B.length; i++) if (B[i] <= -9999) B[i] = NaN;
-    const grid = Model.resample(r, P.grid, Geo.axisSign(P.crs));
+    for (const B of r.bands) for (let i = 0; i < B.length; i++) if (B[i] <= -9999) B[i] = NaN;
+    // the band of elevations: of several, the one nearest the ground of the model as built (over a sample of the cells)
+    let band = 0;
+    if (r.bands.length > 1) {
+      const ground = (ws.surf0 || ws.surfRaw || ws.surf)[0], inv = Tiff.invAffine(r.geo.affine), step = Math.max(1, Math.floor(ws.n / 4000)), at = [];
+      for (let c = 0; c < ws.n; c += step) { if (ground[c] !== ground[c]) continue; const [x, y] = Model.cellXY(ws, c), [pi, pj] = inv(sign * x, sign * y), i = Math.floor(pi), j = Math.floor(pj); if (i >= 0 && j >= 0 && i < r.width && j < r.height) at.push([j * r.width + i, ground[c]]); }
+      let best = Infinity;
+      r.bands.forEach((B, b) => { const d = at.map(([k, z]) => Math.abs(B[k] - z)).filter(v => v === v).sort((p, q) => p - q), med = d.length ? d[d.length >> 1] : Infinity; if (med < best) { best = med; band = b; } });
+    }
+    const grid = Model.resample(r, P.grid, sign, band);
     let hit = 0, zMin = Infinity, zMax = -Infinity;
     for (let c = 0; c < ws.n; c++) { const z = grid[c]; if (z !== z) continue; hit++; if (z < zMin) zMin = z; if (z > zMax) zMax = z; }
     if (!hit) throw new Error(`it does not cover the model. Check that it is in the coordinate system of the model (${name(P.crs.preset)}).${crs ? ' ' + crs : ''}`);
     const filled = fillGaps(grid, ws.nx, ws.ny, 2), res = Math.hypot(affine.a, affine.d);
-    const raster = `${info.width.toLocaleString('en-ZA')} × ${info.height.toLocaleString('en-ZA')} px at ${U.fmtNum(res, res < 10 ? 2 : 1)} m${info.bps === 8 ? ' (8-bit values: check they are elevations)' : ''}`;
-    return { grid, info: { raster, cells: hit + filled, filled, zMin, zMax, crs: crs || null } };
+    const raster = `${info.width.toLocaleString('en-ZA')} × ${info.height.toLocaleString('en-ZA')} px at ${U.fmtNum(res, res < 10 ? 2 : 1)} m${r.bands.length > 1 ? `, ${info.spp} bands (the elevations in band ${band + 1})` : ''}${info.bps === 8 ? ' (8-bit values: check they are elevations)' : ''}`;
+    // the bands on the grid of the DEM display (Dem), when it is given
+    const dv = disp ? r.bands.map((_, b) => Model.resample(r, disp, sign, b)) : null;
+    return { grid, band, disp: dv, info: { raster, cells: hit + filled, filled, zMin, zMax, crs: crs || null } };
   }
   /* An empty cell takes the inverse-distance mean of the surveyed cells within `reach` cells of it, when they lie on
      three or four sides of it (so the survey is not carried out past its edge). → how many cells were filled */
@@ -9896,7 +9951,7 @@ const Recon = (() => {
     return wb;
   }
 
-  return { DEF, settings, key, blobKeys, byDate, dateFromName, readPoints, readRaster, fillGaps, usable, compute, workbook };
+  return { DEF, settings, key, dispKey, keysOf, blobKeys, byDate, dateFromName, readPoints, readRaster, fillGaps, usable, compute, workbook };
 })();
 
 /* ===== Project storage: IndexedDB (standalone), artifact db (shared, owner writes), memory (view-only file) ===== */
@@ -10108,6 +10163,7 @@ const View = (() => {
   let surfNow = null, insNow = null;
   let vex = 3;
   const show = { outlines: false, resOut: false, labels: false, paths: false, roads: false, dumps: false, contours: false, ovl: false, keep: false, limits: false, pits: false, drains: false, fills: false, water: true }; // (the layers start off: Layers menu)
+  let rasOn = false, rasTex = null, rasOpacity = 0.9; // (the survey DEM's picture, Dem)
   let satOn = false, satTex = null, tintTex = null, tintData = null, tintOn = false, matTex = null, matData = null;
   let needsRender = true, needsDrape = false, labelsDirty = true;
   const G = {};
@@ -10138,6 +10194,7 @@ const View = (() => {
     uniform int uNS; uniform vec3 uCol[16];
     uniform vec3 uSpoil; uniform vec3 uGround; uniform vec3 uBase; uniform vec3 uLight;
     uniform sampler2D uSat; uniform float uSatOn; uniform float uSatOpacity;
+    uniform sampler2D uRas; uniform float uRasOn; uniform float uRasOpacity;
     uniform sampler2D uTint; uniform float uTintOn;
     uniform sampler2D uMat; uniform float uMatOn; uniform vec3 uSpoilT; uniform vec3 uSpoilS; uniform vec3 uSpoilH;
     uniform float uContour; uniform float uZOff;
@@ -10156,6 +10213,7 @@ const View = (() => {
       vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
       float z = vPos.z;
       vec3 col = uBase;
+      float img = 0.0; // (how much of a picture lies on the ground: it is lit more softly)
       bool spoil = z > vIns + 0.08;
       bool undisturbed = !spoil && vIns > vTopo - 0.08 && abs(z - vTopo) < 0.15;
       if (spoil) {
@@ -10165,7 +10223,8 @@ const View = (() => {
         col = sc * (0.82 + 0.3 * g);
       } else if (undisturbed) {
         col = uGround * (0.94 + 0.08 * hash(floor(vPos.xy * 0.08)));
-        if (uSatOn > 0.5) col = mix(col, texture2D(uSat, vUv).rgb, uSatOpacity);
+        if (uSatOn > 0.5) { col = mix(col, texture2D(uSat, vUv).rgb, uSatOpacity); img = 1.0; }
+        if (uRasOn > 0.5) { vec4 rc = texture2D(uRas, vUv); col = mix(col, rc.rgb, rc.a * uRasOpacity); img = max(img, rc.a); }
       } else {
         for (int i = 1; i < 16; i++) {
           if (i >= uNS) break;
@@ -10173,7 +10232,7 @@ const View = (() => {
         }
       }
       float diff = max(dot(n, normalize(uLight)), 0.0);
-      float light = (uSatOn > 0.5 && undisturbed) ? 0.78 + 0.3 * diff : 0.44 + 0.66 * diff;
+      float light = undisturbed ? mix(0.44 + 0.66 * diff, 0.78 + 0.3 * diff, img) : 0.44 + 0.66 * diff;
       col *= light;
       if (uContour > 0.0 && undisturbed) {
         float e = (z + uZOff) / uContour;
@@ -10326,6 +10385,7 @@ const View = (() => {
         uSpoil: { value: new THREE.Color('#8e877c') }, uGround: { value: new THREE.Color('#8d9a74') }, uBase: { value: new THREE.Color('#5d5a55') },
         uLight: { value: new THREE.Vector3(-0.55, 0.45, 0.72) },
         uSat: { value: satTex || blank }, uSatOn: { value: 0 }, uSatOpacity: { value: 1 },
+        uRas: { value: rasTex || blank }, uRasOn: { value: rasOn && rasTex ? 1 : 0 }, uRasOpacity: { value: rasOpacity },
         uTint: { value: tintTex }, uTintOn: { value: 0 },
         uMat: { value: matTex }, uMatOn: { value: 1 }, uSpoilT: { value: new THREE.Color('#5b4631') }, uSpoilS: { value: new THREE.Color('#c8a96e') }, uSpoilH: { value: new THREE.Color('#8e877c') },
         uContour: { value: 0 }, uZOff: { value: zOff }, uGrid: { value: new THREE.Vector4(-W / 2, -H / 2, W, H) }
@@ -10387,6 +10447,15 @@ const View = (() => {
   }
   function setSatVisible(on, opacity) { satOn = !!on; if (mat) { mat.uniforms.uSatOn.value = satOn && satTex ? 1 : 0; if (opacity != null) mat.uniforms.uSatOpacity.value = opacity; } needsRender = true; }
   function hasSat() { return !!satTex; }
+  // the survey DEM's picture (Dem), draped where the ground is still as surveyed
+  function setRasTexture(cnv) {
+    if (rasTex && rasTex.image !== cnv) { rasTex.dispose(); rasTex = null; }
+    if (cnv && !rasTex) { rasTex = new THREE.CanvasTexture(cnv); rasTex.anisotropy = 4; }
+    if (rasTex) rasTex.needsUpdate = true;
+    if (mat) { mat.uniforms.uRas.value = rasTex || mat._blank; mat.uniforms.uRasOn.value = rasOn && rasTex ? 1 : 0; }
+    needsRender = true;
+  }
+  function setRasVisible(on, opacity) { rasOn = !!on; if (opacity != null) rasOpacity = opacity; if (mat) { mat.uniforms.uRasOn.value = rasOn && rasTex ? 1 : 0; mat.uniforms.uRasOpacity.value = rasOpacity; } needsRender = true; }
   function setVex(v, silent) {
     vex = +v || 1;
     world.scale.set(1, 1, vex);
@@ -11538,7 +11607,7 @@ const View = (() => {
   function requestRender() { needsRender = true; labelsDirty = true; }
   function snapshot() { R.render(scene, camera); return canvas.toDataURL('image/jpeg', 0.85); }
 
-  return { init, setWorkspace, setResBlocks, setLayerColors, setSurface, setOverlays, setGeo, setKeepOut, setToes, setLimits, setPits, setDrains, setFills, setWater, setGroundwater, setMeasure, beginCapture, frame, endCapture, viewSize, labelsShown, setTool, getSurface, getInsitu, setSlice, getSlice, modelBounds, viewAlong, setTint, setSatTexture, setSatVisible, hasSat, setVex, setShow, setSelectedBlock, setDumps, setRoads, setRoadHidden, roadShown: id => !roadHidden.has(id) && G.roads.children.some(o => o.userData.roadId === id && o.visible), setPaths, setLabelMode, fit, focusOn, pickAt, on, startDraw, finishDraw, cancelDraw, isDrawing, requestRender, snapshot, get vex() { return vex; }, get zOff() { return zOff; } };
+  return { init, setWorkspace, setResBlocks, setLayerColors, setSurface, setOverlays, setGeo, setKeepOut, setToes, setLimits, setPits, setDrains, setFills, setWater, setGroundwater, setMeasure, beginCapture, frame, endCapture, viewSize, labelsShown, setTool, getSurface, getInsitu, setSlice, getSlice, modelBounds, viewAlong, setTint, setSatTexture, setSatVisible, setRasTexture, setRasVisible, hasSat, setVex, setShow, setSelectedBlock, setDumps, setRoads, setRoadHidden, roadShown: id => !roadHidden.has(id) && G.roads.children.some(o => o.userData.roadId === id && o.visible), setPaths, setLabelMode, fit, focusOn, pickAt, on, startDraw, finishDraw, cancelDraw, isDrawing, requestRender, snapshot, get vex() { return vex; }, get zOff() { return zOff; } };
 })();
 
 /* ===== Satellite imagery: live tiles (Google Map Tiles API, Esri, custom XYZ) or a georeferenced image file ===== */
@@ -11710,6 +11779,180 @@ const Imagery = (() => {
   return { PROVIDERS, fromTiles, fromImageFile, canvasToJpeg, jpegToCanvas, parseWorld };
 })();
 
+/* ===== Survey DEM display: a band of a survey DEM as a singleband pseudocolour — a colour ramp stretched over its
+   values — over a hillshade, with a blending mode (as a DEM layer in Soft light over its hillshade in QGIS). The picture
+   is draped on the 3D view like the satellite photo (View.setRasTexture), on the ground that is still as surveyed.
+   P.demView: {on, survey, band, ramp, invert, range, min, max, interp, classes, mode, blend, opacity, hs, az, alt, zf,
+   view, hsFile}; the bands are kept on the grid of the picture (grid(ws)) in the store, one blob each (Recon.dispKey). ===== */
+const Dem = (() => {
+  // the colour ramps, low to high: [position 0..1, colour]
+  const even = cs => cs.map((c, i) => [i / (cs.length - 1), c]);
+  const RAMPS = {
+    spectral: even(['#9e0142', '#d53e4f', '#f46d43', '#fdae61', '#fee08b', '#ffffbf', '#e6f598', '#abdda4', '#66c2a5', '#3288bd', '#5e4fa2']),
+    rdylgn: even(['#a50026', '#d73027', '#f46d43', '#fdae61', '#fee08b', '#ffffbf', '#d9ef8b', '#a6d96a', '#66bd63', '#1a9850', '#006837']),
+    viridis: even(['#440154', '#482878', '#3e4989', '#31688e', '#26828e', '#1f9e89', '#35b779', '#6ece58', '#b5de2b', '#fde725']),
+    magma: even(['#000004', '#180f3d', '#440f76', '#721f81', '#9e2f7f', '#cd4071', '#f1605d', '#fd9668', '#feca8d', '#fcfdbf']),
+    turbo: even(['#30123b', '#4662d7', '#36aaf9', '#1ae4b6', '#72fe5e', '#c8ef34', '#faba39', '#f66b19', '#ca2a04', '#7a0403']),
+    terrain: [[0, '#333399'], [0.15, '#0099ff'], [0.25, '#00cc66'], [0.5, '#ffff99'], [0.75, '#80605c'], [1, '#ffffff']],
+    ylorbr: even(['#ffffe5', '#fff7bc', '#fee391', '#fec44f', '#fe9929', '#ec7014', '#cc4c02', '#993404', '#662506']),
+    blues: even(['#f7fbff', '#deebf7', '#c6dbef', '#9ecae1', '#6baed6', '#4292c6', '#2171b5', '#08519c', '#08306b']),
+    greys: even(['#000000', '#ffffff'])
+  };
+  const RAMP_NAMES = [['spectral', 'Spectral'], ['rdylgn', 'Red–yellow–green'], ['viridis', 'Viridis'], ['magma', 'Magma'], ['turbo', 'Turbo'], ['terrain', 'Terrain'], ['ylorbr', 'Yellow–orange–brown'], ['blues', 'Blues'], ['greys', 'Greys']];
+  const BLENDS = [['normal', 'Normal'], ['soft-light', 'Soft light'], ['multiply', 'Multiply'], ['overlay', 'Overlay'], ['screen', 'Screen'], ['hard-light', 'Hard light'], ['darken', 'Darken'], ['lighten', 'Lighten']];
+  const RANGES = [['cut', 'Cumulative count cut 2–98%'], ['minmax', 'Min / max'], ['sd', 'Mean ± 2 standard deviations'], ['user', 'User defined']];
+  const DEF = { on: false, survey: '', band: null, ramp: 'spectral', invert: true, range: 'cut', min: null, max: null, interp: 'linear', classes: 8, mode: 'equal', blend: 'soft-light', opacity: 100, hs: 'dem', az: 315, alt: 45, zf: 1, view: 90, hsFile: null };
+  const settings = P => Object.assign({}, DEF, (P && P.demView) || {});
+  const blobKeys = P => { const f = settings(P).hsFile; return f && f.id ? [f.id] : []; };
+  // the grid of the picture: the model's extent at about 1 400 pixels on its long side (not finer than 0.5 m)
+  function grid(ws) {
+    const W = ws.nx * ws.cell, H = ws.ny * ws.cell, c0 = Math.max(0.5, Math.max(W, H) / 1400), nx = Math.max(2, Math.round(W / c0)), cell = W / nx;
+    return { x0: ws.x0, y0: ws.y0, nx, ny: Math.max(2, Math.round(H / cell)), cell };
+  }
+  const rgb = c => [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)];
+  // the ramp of the settings, [position, [r, g, b]], turned round when inverted
+  function stops(o) {
+    let s = RAMPS[o.ramp] || RAMPS.spectral;
+    if (o.invert) s = s.map(([p, c]) => [1 - p, c]).reverse();
+    return s.map(([p, c]) => [p, rgb(c)]);
+  }
+  function at(S, t) {
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    let k = 1; while (k < S.length - 1 && S[k][0] < t) k++;
+    const [p0, a] = S[k - 1], [p1, b] = S[k], f = p1 > p0 ? U.clamp((t - p0) / (p1 - p0), 0, 1) : 0;
+    return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+  }
+  // a band's values: min, max, mean, standard deviation, the 2% and 98% points, a sorted sample (a: for the quantiles)
+  function stats(g) {
+    const step = Math.max(1, Math.floor(g.length / 200000)), v = [];
+    let s = 0, s2 = 0, n = 0, lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < g.length; i++) { const x = g[i]; if (x !== x) continue; n++; s += x; s2 += x * x; if (x < lo) lo = x; if (x > hi) hi = x; if (i % step === 0) v.push(x); }
+    if (!n) return null;
+    const a = Float64Array.from(v).sort(), q = p => a[Math.min(a.length - 1, Math.max(0, Math.round(p * (a.length - 1))))], mean = s / n;
+    return { n, min: lo, max: hi, mean, sd: Math.sqrt(Math.max(0, s2 / n - mean * mean)), p2: q(0.02), p98: q(0.98), a };
+  }
+  // the values the ramp is stretched over
+  function range(o, st) {
+    const has = v => v != null && v !== '' && isFinite(+v);
+    let lo, hi;
+    if (o.range === 'user' && has(o.min) && has(o.max) && +o.max > +o.min) { lo = +o.min; hi = +o.max; }
+    else if (o.range === 'minmax') { lo = st.min; hi = st.max; }
+    else if (o.range === 'sd') { lo = Math.max(st.min, st.mean - 2 * st.sd); hi = Math.min(st.max, st.mean + 2 * st.sd); }
+    else { lo = st.p2; hi = st.p98; }
+    if (!(hi > lo)) { lo = st.min; hi = st.max > st.min ? st.max : st.min + 1; }
+    return [lo, hi];
+  }
+  // the classes of a discrete ramp: n + 1 breaks (equal intervals, or equal counts of the values) and the colour of each
+  function classes(o, st, lo, hi) {
+    const n = U.clamp(Math.round(+o.classes || 8), 2, 32), S = stops(o), br = [];
+    if (o.mode === 'quantile') {
+      const a = st.a, find = x => { let p = 0, q = a.length; while (p < q) { const m = (p + q) >> 1; if (a[m] < x) p = m + 1; else q = m; } return p; };
+      const i0 = find(lo), i1 = Math.max(i0, find(hi) - 1);
+      for (let k = 0; k <= n; k++) br.push(k === 0 ? lo : k === n ? hi : a[Math.round(i0 + ((i1 - i0) * k) / n)]);
+      for (let k = 1; k <= n; k++) if (!(br[k] > br[k - 1])) br[k] = br[k - 1] + 1e-6; // (no empty class)
+    } else for (let k = 0; k <= n; k++) br.push(lo + ((hi - lo) * k) / n);
+    return { br, cols: Array.from({ length: n }, (_, k) => at(S, k / (n - 1))) };
+  }
+  // the colour of each value: RGBA, alpha 0 where there is none; values beyond the range take the end colours
+  function colorize(g, o, st) {
+    const out = new Uint8ClampedArray(g.length * 4); if (!st) return out;
+    const [lo, hi] = range(o, st);
+    if (o.interp === 'discrete') {
+      const { br, cols } = classes(o, st, lo, hi), n = cols.length;
+      for (let i = 0; i < g.length; i++) {
+        const v = g[i]; if (v !== v) continue;
+        let p = 0, q = n - 1; while (p < q) { const m = (p + q + 1) >> 1; if (v >= br[m]) p = m; else q = m - 1; }
+        const c = cols[p], k = i * 4; out[k] = c[0]; out[k + 1] = c[1]; out[k + 2] = c[2]; out[k + 3] = 255;
+      }
+    } else {
+      const S = stops(o), lut = new Uint8ClampedArray(1024 * 3), f = 1023 / (hi - lo);
+      for (let k = 0; k < 1024; k++) lut.set(at(S, k / 1023).map(Math.round), k * 3);
+      for (let i = 0; i < g.length; i++) {
+        const v = g[i]; if (v !== v) continue;
+        let t = Math.round((v - lo) * f); t = t < 0 ? 0 : t > 1023 ? 1023 : t;
+        const k = i * 4; out[k] = lut[t * 3]; out[k + 1] = lut[t * 3 + 1]; out[k + 2] = lut[t * 3 + 2]; out[k + 3] = 255;
+      }
+    }
+    return out;
+  }
+  /* The hillshade of a grid of elevations (Horn's method, as gdaldem and QGIS): 0..1, NaN where there is no value.
+     Rows run north (j + 1 is north of j); the sun from azimuth az (degrees from north, clockwise) at altitude alt; z factor zf. */
+  function hillshade(g, nx, ny, cell, az = 315, alt = 45, zf = 1) {
+    const out = new Float32Array(g.length).fill(NaN), A = ((isFinite(+az) ? +az : 315) * Math.PI) / 180, E = ((isFinite(+alt) ? U.clamp(+alt, 0, 90) : 45) * Math.PI) / 180;
+    const lx = Math.sin(A) * Math.cos(E), ly = Math.cos(A) * Math.cos(E), lz = Math.sin(E), k = (+zf > 0 ? +zf : 1) / (8 * cell);
+    const z = (i, j, c) => { const v = g[(j < 0 ? 0 : j >= ny ? ny - 1 : j) * nx + (i < 0 ? 0 : i >= nx ? nx - 1 : i)]; return v === v ? v : c; };
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      const c = g[j * nx + i]; if (c !== c) continue;
+      const a = z(i - 1, j + 1, c), b = z(i, j + 1, c), d = z(i + 1, j + 1, c), e = z(i - 1, j, c), f = z(i + 1, j, c), p = z(i - 1, j - 1, c), q = z(i, j - 1, c), r = z(i + 1, j - 1, c);
+      const gx = (d + 2 * f + r - (a + 2 * e + p)) * k, gy = (a + 2 * b + d - (p + 2 * q + r)) * k;
+      const s = (lz - gx * lx - gy * ly) / Math.sqrt(gx * gx + gy * gy + 1);
+      out[j * nx + i] = s < 0 ? 0 : s;
+    }
+    return out;
+  }
+  // an imported hillshade's values to 0..1 (0–255 for 8-bit, else its own range)
+  function normHs(g) {
+    let lo = Infinity, hi = -Infinity; for (let i = 0; i < g.length; i++) { const v = g[i]; if (v === v) { if (v < lo) lo = v; if (v > hi) hi = v; } }
+    const out = new Float32Array(g.length).fill(NaN); if (!(hi >= lo)) return out;
+    const [a, b] = lo >= 0 && hi <= 1 ? [0, 1] : lo >= 0 && hi <= 255 ? [0, 255] : [lo, hi > lo ? hi : lo + 1];
+    for (let i = 0; i < g.length; i++) { const v = g[i]; if (v === v) out[i] = U.clamp((v - a) / (b - a), 0, 1); }
+    return out;
+  }
+  // the blending modes (W3C compositing, as QGIS and the browsers do them): backdrop b and source s, 0..1 each
+  const softD = b => (b <= 0.25 ? ((16 * b - 12) * b + 4) * b : Math.sqrt(b));
+  const hard = (b, s) => (s <= 0.5 ? b * 2 * s : b + (2 * s - 1) - b * (2 * s - 1));
+  const MODE = {
+    normal: (b, s) => s, multiply: (b, s) => b * s, screen: (b, s) => b + s - b * s, overlay: (b, s) => hard(s, b), 'hard-light': hard,
+    'soft-light': (b, s) => (s <= 0.5 ? b - (1 - 2 * s) * b * (1 - b) : b + (2 * s - 1) * (softD(b) - b)), darken: Math.min, lighten: Math.max
+  };
+  /* The picture: the hillshade at the bottom (opaque grey), the pseudocolour on it in the blending mode at its opacity; with
+     no hillshade, the pseudocolour alone. Rows from the north, as a canvas wants them → Uint8ClampedArray RGBA */
+  function compose(dem, hs, nx, ny, o, st) {
+    const col = colorize(dem, o, st), out = new Uint8ClampedArray(nx * ny * 4), f = MODE[o.blend] || MODE.normal, a0 = U.clamp(+o.opacity, 0, 100) / 100;
+    for (let j = 0; j < ny; j++) {
+      const row = (ny - 1 - j) * nx;
+      for (let i = 0; i < nx; i++) {
+        const k = j * nx + i, q = k * 4, p = (row + i) * 4, h = hs ? hs[k] : NaN, a = (col[q + 3] / 255) * a0;
+        if (h === h) {
+          for (let ch = 0; ch < 3; ch++) out[p + ch] = 255 * (h * (1 - a) + f(h, col[q + ch] / 255) * a);
+          out[p + 3] = 255;
+        } else if (a > 0) { out[p] = col[q]; out[p + 1] = col[q + 1]; out[p + 2] = col[q + 2]; out[p + 3] = 255 * a; }
+      }
+    }
+    return out;
+  }
+  // the legend: the ramp as a CSS gradient over the range (in steps for classes)
+  function legend(o, st) {
+    if (!st) return null;
+    const [lo, hi] = range(o, st), css = c => `rgb(${c.map(Math.round).join(',')})`;
+    if (o.interp === 'discrete') {
+      const { br, cols } = classes(o, st, lo, hi), n = cols.length, pc = k => ((k / n) * 100).toFixed(1) + '%';
+      return { lo, hi, br, css: `linear-gradient(90deg, ${cols.map((c, k) => `${css(c)} ${pc(k)}, ${css(c)} ${pc(k + 1)}`).join(', ')})` };
+    }
+    const S = stops(o);
+    return { lo, hi, css: `linear-gradient(90deg, ${Array.from({ length: 11 }, (_, k) => `${css(at(S, k / 10))} ${k * 10}%`).join(', ')})` };
+  }
+  // an imported hillshade (a GeoTIFF; its world file when it has no GeoTIFF tags) on the grid of the picture
+  async function readHillshade(P, ws, file, worldFile, onProgress) {
+    const info = await Tiff.info(file);
+    let affine = info.geo.affine;
+    if (!affine && worldFile) affine = Imagery.parseWorld(await worldFile.text());
+    if (!affine) throw new Error('it has no georeferencing: no GeoTIFF tags and no world file (.tfw) with the same name. Choose its .tfw file together with it.');
+    const G = grid(ws), r = await Tiff.read(info, { targetRes: G.cell, affine, onProgress }), g = Model.resample(r, G, Geo.axisSign(P.crs));
+    let n = 0; for (let i = 0; i < g.length; i++) if (g[i] === g[i]) n++;
+    if (!n) throw new Error('it does not cover the model. Check that it is in the coordinate system of the model.');
+    const res = Math.hypot(affine.a, affine.d);
+    return { grid: g, raster: `${info.width.toLocaleString('en-ZA')} × ${info.height.toLocaleString('en-ZA')} px at ${U.fmtNum(res, res < 10 ? 2 : 1)} m` };
+  }
+  // the picture on a canvas (the texture of the 3D view)
+  function toCanvas(px, nx, ny) {
+    const c = document.createElement('canvas'); c.width = nx; c.height = ny;
+    const x = c.getContext('2d'), im = x.createImageData(nx, ny); im.data.set(px); x.putImageData(im, 0, 0);
+    return c;
+  }
+  return { RAMPS, RAMP_NAMES, BLENDS, RANGES, DEF, settings, blobKeys, grid, stats, range, classes, colorize, hillshade, normHs, MODE, compose, legend, readHillshade, toCanvas };
+})();
+
 /* ===== UI core: DOM helpers, top bar, viewport tools, inspector, legend, dialogs ===== */
 function h(tag, attrs, ...kids) {
   const el = document.createElement(tag);
@@ -11809,6 +12052,9 @@ const UI = (() => {
     const items = [['outlines', sepL ? 'Reserve blocks (the schedule)' : 'Block outlines'], ...(sepL ? [['resOut', 'Resource blocks']] : []), ['labels', 'Block labels'], ['paths', 'Mining path'], ['roads', 'Haul roads & ramps'], ['dumps', 'Dumps'], ['ovl', 'KML overlays'], ['keep', 'Keep-out zones'], ['limits', 'Depth limits & reserve boundary'], ['pits', 'Pit outlines & box cuts'], ['drains', 'Surface-water flow paths'], ['fills', 'Depression fills'], ['contours', 'Contours on natural ground']];
     p.append(h('div', { class: 'pop-h' }, 'Show in the 3D view'));
     for (const [k, label] of items) p.append(chk(label, App.show[k], v => { App.show[k] = v; View.setShow(k, v); if (k === 'paths') App.refreshOverlays(); }));
+    // the survey DEM's picture (Geological Data tab), when there is a GeoTIFF survey
+    { const P = App.P, sv = P ? Recon.byDate(P).filter(q => q.disp) : [];
+      if (sv.length) p.append(chk('Survey DEM (pseudocolour)', Dem.settings(P).on, v => { const o = Dem.settings(P); P.demView = Object.assign(o, { on: v, survey: sv.some(q => q.id === o.survey) ? o.survey : sv[sv.length - 1].id }); App.changed('dem'); if (App.tab === 'data') UI.renderTab(); })); }
     // legends and the table under the Gantt chart: on or off (kept in this browser)
     p.append(h('div', { class: 'pop-h' }, 'Legends'));
     const leg = [['legend', 'Legend of the 3D view'], ['secLegend', 'Legend of the section drawing'], ['gantt', 'Activity names on the Gantt chart'], ['acc', 'Running totals under the Gantt chart']];
@@ -12139,6 +12385,9 @@ const UI = (() => {
       h('div', { class: 'li' }, h('span', { class: 'sw line', style: { background: '#0d3b66' } }), 'Water table contours'), h('div', { class: 'li' }, h('span', { class: 'sw line', style: { background: '#d62828' } }), 'Cone of depression'),
       h('div', { class: 'li' }, h('span', { class: 'sw', style: { background: '#008b8b' } }), 'Groundwater flow'), h('div', { class: 'li' }, h('span', { class: 'sw', style: { background: '#ff7b00', borderRadius: '50%' } }), 'Seeping into the pit'), h('div', { class: 'li' }, h('span', { class: 'sw', style: { background: '#ffd400', borderRadius: '50%' } }), 'Decant / seepage'));
     el.append(h('div', { class: 'cols' }, items));
+    // the survey DEM's colour ramp (Geological Data tab)
+    { const I = App.dem && App.dem.info;
+      if (I && I.legend && Dem.settings(P).on) el.append(h('div', { class: 'cols', style: { marginTop: '4px' } }, h('div', { class: 't', style: { gridColumn: '1 / -1' } }, `${I.s.name}, band ${I.band + 1}`)), h('div', { class: 'ramp', style: { background: I.legend.css } }), h('div', { class: 'rl' }, h('span', null, U.fmtNum(I.legend.lo, 1)), h('span', null, U.fmtNum(I.legend.hi, 1)))); }
     const lg = lastLegend;
     if (lg && lg.type === 'status' && App.res) {
       el.append(h('div', { class: 'cols', style: { marginTop: '4px' } }, h('div', { class: 't', style: { gridColumn: '1 / -1' } }, 'Being mined'), App.res.acts.map(A => h('div', { class: 'li' }, h('span', { class: 'sw', style: { background: A.color } }), A.name.replace(/ \(dozer rollover\)/, ' (dozer)')))));
@@ -13086,6 +13335,8 @@ const Tabs = (() => {
     if (P.layers.length) strat.push(layersTable(), topsoilWaste());
     body.append(sec('Stratigraphy', P.grid ? h('span', { class: 'chip' }, `${P.grid.nx}×${P.grid.ny} @ ${P.grid.cell} m`) : null, ...strat));
     cutoffSection(body);
+    surveyDemSection(body);
+    demViewSection(body);
 
     // ---- blocks
     const bl = [];
@@ -13261,6 +13512,131 @@ const Tabs = (() => {
       const st = P.wash.stats || {}, seams = P.layers.filter(L => st[L.id]).map(L => `${L.name} ${U.fmtNum(st[L.id].yAvg, 1)}% yield`);
       UI.toast(`${name}: ${r.curves.length} washability curve${r.curves.length === 1 ? '' : 's'} read${seams.length ? ` — ${seams.join(', ')}` : ''}.${r.notes.length ? ' ' + r.notes.join(' ') : ''}${!seams.length ? ' Choose the seam of each curve in the Geological Data tab.' : ''}`, 8000);
     } catch (e) { UI.toast(`${name} could not be read as washability curves: ${e.message}`, 8000); console.warn(e); }
+  }
+
+  // =============== Survey DEM: the ground now, and its display ===============
+  /* A survey DEM of the ground as it is now (a GeoTIFF; the surveys are those of the Recon tab). The 3D model is cut down to
+     it (P.depletion, Model.setDepletion): what lies above it was mined before, the blocks keep what is still in the ground
+     and the schedule starts from that ground. */
+  function surveyDemSection(body) {
+    const P = App.P, ws = App.ws, list = Recon.byDate(P), DP = P.depletion || {}, ver = P.gridVersion || 0;
+    const parts = [hint('A survey DEM of the ground as it is now: a GeoTIFF (.tif or .tiff), with its world file (.tfw) chosen together with it when it has no GeoTIFF tags, in the coordinate system of the model. The 3D model is cut down to it: what lies above the survey was mined before it, so the blocks keep only what is still in the ground and the schedule starts from that ground. The surveys are shared with the Recon tab.')];
+    if (edit()) {
+      const fileIn = h('input', { type: 'file', accept: '.tif,.tiff,.gtif,.tfw,.tifw,.wld', multiple: true, hidden: true });
+      fileIn.setAttribute('aria-label', 'Survey DEM file');
+      fileIn.addEventListener('change', async () => { const fs = Array.from(fileIn.files); fileIn.value = ''; await addSurveys(fs, { use: true }); });
+      parts.push(h('div', { class: 'row' }, btn('Add survey DEM…', () => fileIn.click(), 'sm primary', 'Choose the GeoTIFF of the ground now, with its .tfw world file if it has no GeoTIFF tags'), fileIn));
+    }
+    if (!ws) { parts.push(msg('warn', 'Build the 3D model first: the survey is laid on its grid.')); body.append(sec('Survey DEM: the ground now', null, ...parts)); return; }
+    const setDP = patch => { const d = Object.assign({}, P.depletion || {}, patch); P.depletion = d.survey ? d : null; App.redeplete(); };
+    const usable = list.filter(s => (s.gridVersion || 0) === ver);
+    if (usable.length) {
+      const opts = [['', 'None: the model as built']].concat(usable.map(s => [s.id, `${s.name} (${s.date ? U.fmtDate(U.parseISO(s.date)) : 'no date'})`]));
+      parts.push(fld('Cut the 3D model down to the survey', edit() ? sel(opts, DP.survey || '', v => setDP({ survey: v || null })) : h('span', null, (opts.find(x => x[0] === (DP.survey || '')) || opts[0])[1])));
+      if (DP.survey && edit()) parts.push(chk('With the earlier surveys: the lowest ground of each cell, so a pit backfilled since an earlier survey is still seen as mined', DP.earlier !== false, v => setDP({ earlier: v })));
+    }
+    const s0 = DP.survey ? list.find(s => s.id === DP.survey) : null;
+    if (DP.survey && !s0) parts.push(msg('warn', 'The survey the model is cut down to was removed. Choose another, or None.'));
+    else if (s0 && (s0.gridVersion || 0) !== ver) parts.push(msg('warn', `“${s0.name}” was read for an earlier 3D model: add its file again to cut the model down to it.`));
+    const Q = ws.dep ? Model.depletionStats(ws) : null;
+    if (Q && s0) {
+      const L = P.layers, f0 = v => U.fmtNum(v, 0), th = (t, r) => h('th', r ? { class: 'r' } : null, t), td = (t, r) => h('td', r ? { class: 'r num' } : null, t);
+      const sum = (k, coal) => L.reduce((a, Ly, l) => a + ((Ly.type === 'coal') === coal ? Q.layers[l][k] : 0), 0);
+      parts.push(msg('info', `Above the survey, mined before ${s0.date ? U.fmtDate(U.parseISO(s0.date)) : 'it'}: ${f0(sum('bcm', false))} bcm of waste and ${f0(sum('t', true))} t of coal (as the schedule counts them, after the seam cut-offs), over ${U.fmtNum(Q.cut.area / 1e4, 1)} ha. ${Q.full} block${Q.full === 1 ? ' is' : 's are'} mined out and ${Q.part} partly mined; the blocks, the reports and the schedule hold only what lies below the survey.`));
+      const rows = L.map((Ly, l) => Q.layers[l].bcm > 0.5 ? h('tr', null, td(Ly.name), td(f0(Q.layers[l].bcm), 1), td(f0(Q.layers[l].t), 1)) : null).filter(Boolean);
+      for (const [nm, coal] of [['Total waste', false], ['Total coal', true]]) rows.push(h('tr', { class: 'tot' }, td(nm), td(f0(sum('bcm', coal)), 1), td(f0(sum('t', coal)), 1)));
+      parts.push(h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl recon-tbl' }, h('thead', null, h('tr', null, th('Mined before the survey'), th('bcm', 1), th('t', 1))), h('tbody', null, ...rows))));
+      if (Q.above.area > 0) parts.push(msg('warn', `Over ${U.fmtNum(Q.above.area / 1e4, 1)} ha the survey lies above the model (${f0(Q.above.bcm)} m³ in all): dumps, stockpiles or backfill. They are not in situ, so the layers there are left as they are, and the schedule does not see them as spoil.`));
+      if (s0.date && P.startDate && P.startDate < s0.date) parts.push(msg('warn', `The schedule starts on ${U.fmtDate(U.parseISO(P.startDate))}, before the survey: it mines from the surveyed ground from its first day.`),
+        edit() ? h('div', { class: 'row' }, btn(`Start the schedule on ${U.fmtDate(U.parseISO(s0.date))}`, () => { P.startDate = s0.date; App.changed('calendar'); if (App.res) { Timeline.setDay(App.day); Timeline.draw(); } else Timeline.setData(null, P); UI.renderTab(); }, 'sm')) : null);
+      parts.push(hint('Run the schedule (▶) to mine from the surveyed ground. Remove the survey, or choose None, to go back to the model as built.'));
+    }
+    body.append(sec('Survey DEM: the ground now', Q && s0 ? h('span', { class: 'chip' }, 'in use') : null, ...parts));
+  }
+  /* A band of a survey DEM shown on the 3D view as a singleband pseudocolour over a hillshade (computed from the DEM, or
+     imported), in a blending mode (Dem, P.demView) */
+  function demViewSection(body) {
+    const P = App.P, ws = App.ws, o = Dem.settings(P), list = Recon.byDate(P).filter(s => s.disp && (s.gridVersion || 0) === (P.gridVersion || 0));
+    const set = (patch, now) => { P.demView = Object.assign(Dem.settings(P), patch); App.changed('dem', { now }); UI.renderTab(); };
+    const parts = [hint('A band of a survey DEM on the 3D view as a singleband pseudocolour: a colour ramp stretched over its values, blended over a hillshade, as a DEM layer in Soft light over its hillshade in QGIS. It shows on the ground that is still as surveyed.')];
+    if (!ws || !list.length) {
+      parts.push(msg('info', ws ? 'Add a survey DEM as a GeoTIFF (above, or in the Recon tab) to show it here.' : 'Build the 3D model first.'));
+      body.append(sec('Survey DEM display', null, ...parts)); return;
+    }
+    const s = list.find(q => q.id === o.survey) || list[list.length - 1], band = o.band != null && +o.band < s.disp.bands ? +o.band : s.disp.band;
+    const pct = (v, f) => num(v, x => f(x == null ? null : U.clamp(x, 0, 100)), { min: 0, max: 100, step: 5 });
+    parts.push(chk('Show on the 3D view', !!o.on, v => set({ on: v, survey: s.id }, true)));
+    parts.push(h('div', { class: 'grid2' },
+      fld('Survey DEM', sel(list.map(q => [q.id, `${q.name} (${q.date ? U.fmtDate(U.parseISO(q.date)) : 'no date'})`]), s.id, v => set({ survey: v, band: null }))),
+      fld('Band', sel(Array.from({ length: s.disp.bands }, (_, b) => [String(b), `Band ${b + 1}${b === s.disp.band ? ' (elevations)' : ''}`]), String(band), v => set({ band: +v })))));
+    parts.push(h('div', { class: 'grid2' },
+      fld('Colour ramp', sel(Dem.RAMP_NAMES, o.ramp, v => set({ ramp: v }))),
+      fld('Blending mode', sel(Dem.BLENDS, o.blend, v => set({ blend: v })))));
+    parts.push(chk('Invert the colour ramp', !!o.invert, v => set({ invert: v })));
+    parts.push(h('div', { class: 'grid2' },
+      fld('Min / max', sel(Dem.RANGES, o.range, v => set({ range: v }))),
+      fld('Interpolation', sel([['linear', 'Linear (continuous)'], ['discrete', 'Discrete (classes)']], o.interp, v => set({ interp: v })))));
+    const I = App.dem && App.dem.info && App.dem.info.s === s && App.dem.info.band === band ? App.dem.info : null, st = I && I.st;
+    if (o.range === 'user') parts.push(h('div', { class: 'grid2' },
+      fld('Min', num(o.min, v => set({ min: v }), { step: 'any', allowEmpty: true, placeholder: st ? U.fmtNum(st.min, 1) : '' })),
+      fld('Max', num(o.max, v => set({ max: v }), { step: 'any', allowEmpty: true, placeholder: st ? U.fmtNum(st.max, 1) : '' }))));
+    if (o.interp === 'discrete') parts.push(h('div', { class: 'grid2' },
+      fld('Classes', num(o.classes, v => set({ classes: U.clamp(Math.round(v || 8), 2, 32) }), { min: 2, max: 32, step: 1 })),
+      fld('Mode', sel([['equal', 'Equal interval'], ['quantile', 'Quantile (equal count)']], o.mode, v => set({ mode: v })))));
+    parts.push(h('div', { class: 'grid2' },
+      fld('DEM opacity (%)', pct(o.opacity, v => set({ opacity: v == null ? 100 : v }))),
+      fld('Opacity on the 3D view (%)', pct(o.view, v => set({ view: v == null ? 90 : v })))));
+    // the hillshade under it
+    parts.push(fld('Hillshade under the DEM', sel([['dem', 'Computed from the DEM'], ['file', o.hsFile ? `Imported: ${o.hsFile.file}` : 'Imported hillshade (choose its file below)'], ['none', 'None']], o.hs, v => set({ hs: v }))));
+    if (o.hs === 'dem') parts.push(h('div', { class: 'grid3' },
+      fld('Azimuth (°)', num(o.az, v => set({ az: v == null ? 315 : ((v % 360) + 360) % 360 }), { min: 0, max: 360, step: 5 })),
+      fld('Altitude (°)', num(o.alt, v => set({ alt: v == null ? 45 : U.clamp(v, 1, 90) }), { min: 1, max: 90, step: 5 })),
+      fld('Z factor', num(o.zf, v => set({ zf: v > 0 ? v : 1 }), { min: 0.1, step: 0.5 }))));
+    if (edit()) {
+      const hsIn = h('input', { type: 'file', accept: '.tif,.tiff,.gtif,.tfw,.tifw,.wld', multiple: true, hidden: true });
+      hsIn.setAttribute('aria-label', 'Hillshade file');
+      hsIn.addEventListener('change', async () => { const fs = Array.from(hsIn.files); hsIn.value = ''; await importHillshade(fs); });
+      parts.push(h('div', { class: 'row' }, btn(o.hsFile ? 'Import another hillshade…' : 'Import a hillshade…', () => hsIn.click(), 'sm', 'A hillshade GeoTIFF (gdaldem or QGIS hillshade; with its .tfw if it has no GeoTIFF tags)'), hsIn,
+        o.hsFile ? btn('Remove it', () => removeHillshade(), 'sm ghost') : null));
+    }
+    if (o.hsFile) parts.push(h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `Hillshade: ${o.hsFile.file} · ${o.hsFile.raster || ''}${(o.hsFile.gridVersion || 0) !== (P.gridVersion || 0) ? ' · read for an earlier 3D model: import it again' : ''}`));
+    if (o.hs === 'file' && !o.hsFile) parts.push(msg('warn', 'Import a hillshade GeoTIFF to put under the DEM.'));
+    if (o.blend !== 'normal' && o.hs === 'none') parts.push(hint('A blending mode needs a layer under the DEM: choose a hillshade, or the DEM shows in plain colours.'));
+    // the legend and the band's values
+    if (I && I.legend) parts.push(h('div', { class: 'dem-leg' },
+      h('div', { class: 'dt' }, `Band ${band + 1}: ${U.fmtNum(st.min, 1)} to ${U.fmtNum(st.max, 1)}, mean ${U.fmtNum(st.mean, 1)}; the ramp from ${U.fmtNum(I.legend.lo, 1)} to ${U.fmtNum(I.legend.hi, 1)}`),
+      h('div', { style: { height: '10px', borderRadius: '2px', background: I.legend.css, margin: '4px 0 2px' } }),
+      h('div', { class: 'dt', style: { display: 'flex', justifyContent: 'space-between' } }, h('span', null, U.fmtNum(I.legend.lo, 1)), h('span', null, U.fmtNum(I.legend.hi, 1)))));
+    else if (o.on && App.dem && App.dem.info && App.dem.info.error) parts.push(msg('warn', App.dem.info.error));
+    body.append(sec('Survey DEM display', o.on ? h('span', { class: 'chip' }, 'on the 3D view') : null, ...parts));
+  }
+  async function importHillshade(files) {
+    const P = App.P, ws = App.ws;
+    if (!ws) { UI.toast('Build the 3D model first.'); return; }
+    const tif = files.find(f => TIF_EXT.test(ext(f.name)));
+    if (!tif) { UI.toast('Choose the hillshade GeoTIFF (.tif or .tiff), with its .tfw if it needs one.'); return; }
+    const wf = files.find(f => /^(tfw|tifw|tiffw|wld)$/.test(ext(f.name)) && stem(f.name).toLowerCase() === stem(tif.name).toLowerCase()) || null;
+    UI.busy(`Reading ${tif.name}…`, 0.05); await U.nextFrame();
+    try {
+      const r = await Dem.readHillshade(P, ws, tif, wf, fr => UI.busy(`Reading ${tif.name}… ${Math.round(fr * 100)}%`, 0.05 + fr * 0.8));
+      const o = Dem.settings(P), old = o.hsFile, id = U.uid('dtm');
+      UI.busy(`Saving ${tif.name}…`, 0.9);
+      await reconSaved();
+      await App.store.putBlob(P.id, id, U.encodeGrid(r.grid));
+      App.dem.cache.set(id, r.grid);
+      if (old && old.id) { App.dem.cache.delete(old.id); try { await App.store.delBlob(P.id, old.id); } catch (e) { console.warn(e); } }
+      P.demView = Object.assign(o, { hsFile: { id, file: tif.name, raster: r.raster, read: U.todayISO(), gridVersion: P.gridVersion || 0 }, hs: 'file' });
+      App.changed('dem', { now: true });
+      UI.toast(`${tif.name}: the hillshade is under the survey DEM${o.on ? '' : ' (tick Show on the 3D view to see it)'}.`);
+    } catch (e) { UI.toast(`${tif.name}: ${e.message || e}`, 8000); console.warn(e); }
+    finally { UI.busy(null); UI.renderTab(); }
+  }
+  async function removeHillshade() {
+    const P = App.P, o = Dem.settings(P), f = o.hsFile; if (!f) return;
+    P.demView = Object.assign(o, { hsFile: null, hs: o.hs === 'file' ? 'dem' : o.hs });
+    App.dem.cache.delete(f.id);
+    App.changed('dem', { now: true }); UI.renderTab();
+    try { await App.store.delBlob(P.id, f.id); } catch (e) { console.warn(e); }
   }
 
   // =============== Coal quality rasters ===============
@@ -16189,7 +16565,7 @@ const Tabs = (() => {
   }
   // the project is in the store before a survey's grid is put there
   async function reconSaved() { while (App.saving) await U.sleep(100); clearTimeout(App.saveTimer); await App.saveNow(); }
-  async function addSurveys(files) {
+  async function addSurveys(files, opts = {}) {
     const P = App.P, ws = App.ws;
     if (!ws || !P.grid) { UI.toast('Build the 3D model in the Geological Data tab first: the surveys are compared with it, cell by cell.'); return; }
     const R = P.recon || (P.recon = {}), G = reconFor(P), done = [], bad = [];
@@ -16202,11 +16578,20 @@ const Tabs = (() => {
       const f = files[k], nm = f.name, lead = `Reading ${nm} (${k + 1} of ${files.length})…`, prog = fr => UI.busy(`${lead} ${Math.round(fr * 100)}%`, (k + fr * 0.9) / files.length);
       UI.busy(lead, k / files.length); await U.nextFrame();
       try {
-        const out = TIF_EXT.test(ext(nm)) ? await Recon.readRaster(P, ws, f, worlds.get(stem(nm).toLowerCase()), prog) : await Recon.readPoints(P, ws, f, prog);
+        const out = TIF_EXT.test(ext(nm)) ? await Recon.readRaster(P, ws, f, worlds.get(stem(nm).toLowerCase()), prog, Dem.grid(ws)) : await Recon.readPoints(P, ws, f, prog);
         const s = Object.assign({ id: U.uid('dtm'), name: stem(nm), date: Recon.dateFromName(nm) || U.todayISO(), file: nm, read: U.todayISO(), gridVersion: P.gridVersion || 0 }, out.info);
         UI.busy(`Saving ${nm}…`, (k + 0.95) / files.length);
         await reconSaved();
         await App.store.putBlob(P.id, Recon.key(s), U.encodeGrid(out.grid));
+        // (a GeoTIFF's bands on the grid of the DEM display, to the centimetre)
+        if (out.disp) {
+          const DG = Dem.grid(ws);
+          for (let b = 0; b < out.disp.length; b++) {
+            const g = out.disp[b]; for (let i = 0; i < g.length; i++) if (g[i] === g[i]) g[i] = Math.round(g[i] * 100) / 100;
+            await App.store.putBlob(P.id, Recon.dispKey(s, b), U.encodeGrid(g)); App.dem.cache.set(Recon.dispKey(s, b), g);
+          }
+          s.disp = { nx: DG.nx, ny: DG.ny, cell: DG.cell, bands: out.disp.length, band: out.band || 0 };
+        }
         R.surveys.push(s); G.set(s.id, out.grid); done.push(s);
       } catch (e) { bad.push(`${nm}: ${e.message || e}`); console.warn(nm, e); }
     }
@@ -16217,18 +16602,30 @@ const Tabs = (() => {
       R.to = last.id; R.from = list.length > 1 ? list[list.length - 2].id : 'model';
       App.changed('recon', { now: true });
     }
+    // (added in the Geological Data tab: the model is cut down to the newest GeoTIFF, which is shown on the 3D view)
+    const newest = done.filter(s => s.disp).sort((a, b) => (a.date || '').localeCompare(b.date || '')).pop();
+    if (opts.use && newest) {
+      P.depletion = { survey: newest.id, earlier: !P.depletion || P.depletion.earlier !== false };
+      P.demView = Object.assign(Dem.settings(P), { on: true, survey: newest.id, band: null });
+      App.changed('dem');
+      await App.redeplete();
+    }
     UI.renderTab();
     if (bad.length) UI.toast(`${done.length ? `${done.length} survey${done.length === 1 ? '' : 's'} added. ` : ''}Not read: ${bad.join(' · ')}`);
     else if (done.length) UI.toast(`${done.length} survey${done.length === 1 ? '' : 's'} added: ${done.map(s => `${s.name} (${s.raster ? `raster, ${U.fmtNum((s.cells * P.grid.cell * P.grid.cell) / 1e4, 1)} ha` : `${U.fmtNum(s.points)} points`})`).join(', ')}. Check each survey date.${done.filter(s => s.crs).map(s => ` ${s.name}: ${s.crs}`).join('')}`);
   }
   async function removeSurvey(s) {
     const P = App.P, R = P.recon;
-    if (!(await UI.confirmBox('Remove the survey', `Remove “${s.name}” and its surface from the project?`, 'Remove', true))) return;
+    if (!(await UI.confirmBox('Remove the survey', `Remove “${s.name}” and its surface from the project?${P.depletion && P.depletion.survey === s.id ? ' The 3D model is cut down to it: it goes back to the model as built.' : ''}`, 'Remove', true))) return;
     R.surveys = R.surveys.filter(q => q !== s);
     if (R.to === s.id) R.to = ''; if (R.from === s.id) R.from = 'model';
     reconFor(P).delete(s.id);
+    // (the model cut down to it, or its picture on the 3D view: not any more)
+    if (P.depletion && P.depletion.survey === s.id) P.depletion = null;
+    if (P.demView && P.demView.survey === s.id) { P.demView = Object.assign(Dem.settings(P), { on: false, survey: '' }); App.changed('dem'); }
     App.changed('recon', { now: true });
-    try { await App.store.delBlob(P.id, Recon.key(s)); } catch (e) { console.warn(e); }
+    if (P.depletion || (App.ws && App.ws.dep)) App.redeplete();
+    for (const k of Recon.keysOf(s)) { App.dem.cache.delete(k); try { await App.store.delBlob(P.id, k); } catch (e) { console.warn(e); } }
     UI.renderTab();
   }
   function surveyCard(s, G) {
@@ -16239,13 +16636,14 @@ const Tabs = (() => {
       h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, [s.file, s.read ? `read ${U.fmtDate(U.parseISO(s.read))}` : null].filter(Boolean).join(' · ')),
       edit() ? h('div', { class: 'grid2' },
         fld('Name', txt(s.name, v => { s.name = v.trim() || s.file; App.changed('recon'); })),
-        fld('Survey date', txt(s.date, v => { if (!U.parseISO(v)) return; s.date = v; App.changed('recon'); UI.renderTab(); }, { type: 'date' }))) : null,
+        fld('Survey date', txt(s.date, v => { if (!U.parseISO(v)) return; s.date = v; App.changed('recon'); if (P.depletion) App.redeplete(); UI.renderTab(); }, { type: 'date' }))) : null,
       h('div', { class: 'kv' },
         ...(s.raster ? kv('GeoTIFF', s.raster) : kv('Points on the model', `${U.fmtNum(s.points)}${s.outside ? ` · ${U.fmtNum(s.outside)} outside it` : ''}`)),
         ...kv('Area covered', ha != null ? `${U.fmtNum(ha, 2)} ha${s.filled ? ` (${U.fmtNum((s.filled / s.cells) * 100, 0)}% interpolated)` : ''}` : '–'),
         ...kv('Elevations', `${U.fmtNum(s.zMin, 1)} to ${U.fmtNum(s.zMax, 1)} m`),
         ...(s.raster ? [] : kv('Columns used (X, Y, Z)', s.columns || '–'))),
       s.crs ? msg('warn', `${s.crs} Check that it lines up with the model.`) : null,
+      P.depletion && P.depletion.survey === s.id ? msg('info', 'The 3D model is cut down to this survey (Geological Data tab).') : null,
       g === undefined ? h('div', { class: 'dt' }, 'Reading the surface…') : null,
       g === null ? msg('warn', 'Its surface is not in the store. Add the file again.') : null,
       g && !ok ? msg('warn', 'It was read for an earlier 3D model. Add the file again to compare it with the model as it is now.') : null);
@@ -19866,21 +20264,26 @@ const App = {
         const u8 = await this.store.getBlob(id, 'grid');
         if (u8) surf = Store.unpackSurfaces(u8, P.surfaces.length, P.grid.nx * P.grid.ny);
       }
+      // (the survey of the ground now the model is cut down to, Geological Data tab)
+      let dep = null;
+      if (surf && P.depletion) try { dep = await this.depletionGrid(P); } catch (e) { console.warn(e); }
       UI.busy(null);
-      await this.setProject(P, surf, opts);
+      await this.setProject(P, surf, Object.assign({}, opts, { dep }));
       try { localStorage.setItem('rollover.lastProject', id); } catch (e) {}
     } catch (e) { UI.busy(null); UI.toast('Could not open the project: ' + e.message); }
   },
   async setProject(P, surf, opts = {}) {
     View.cancelDraw(true);
     this.P = P; this.surf = surf; this.res = null; this.pb = null; this.day = -1; this.stale = false; this.qgrid = new Map();
+    this.dep = opts.dep || null; this.dem = { tok: 0, cache: new Map(), canvas: null, info: null };
     Model.syncActColors(P); // the activities in the colours of their layers
     this.persisted = opts.persisted !== false;
     this.selBlock = -1; this.roadId = null; this.dumpId = null; this.drainId = null; this.rhId = null; this.fillId = null; this.raiseId = null;
     this.actId = P.activities[0] ? P.activities[0].id : null;
     this.sat = { on: false, canvas: null, sig: '', attribution: '' };
-    View.setSatTexture(null); View.setSatVisible(false);
+    View.setSatTexture(null); View.setSatVisible(false); View.setRasTexture(null); View.setRasVisible(false);
     this.buildWs({ keepCamera: false });
+    if (Dem.settings(P).on) this.refreshDem();
     Section.reset(); Measure.reset();
     UI.setProjectName(P.name, P.isDemo);
     UI.renderTab(); UI.renderInspector(); UI.renderLegend(); UI.renderColorBy();
@@ -19891,7 +20294,7 @@ const App = {
   },
   buildWs(opts = {}) {
     if (this.surf && this.P.grid) {
-      this.ws = Model.buildWorkspace(this.P, this.surf);
+      this.ws = Model.buildWorkspace(this.P, this.surf, this.dep && this.dep.ver === (this.P.gridVersion || 0) ? this.dep.grid : null);
       if (this.P.wash) Wash.assign(this.P, this.ws); // the washed product of the blocks, as they are now (washability, Geological Data tab)
       View.setWorkspace(this.ws, { vex: (this.P.view && this.P.view.vex) || 3, keepCamera: opts.keepCamera });
       UI.setVex((this.P.view && this.P.view.vex) || 3);
@@ -19919,6 +20322,7 @@ const App = {
     if (kind !== 'view' && this.selBlock < 0) UI.renderInspectorThrottled(); // (the pit overview shows the coal tons and qualities) // the coal inventory and the block margins are worked out again
     if (kind === 'view' && !this.persisted) return;
     if (kind === 'cutoff') { this.recut(); UI.renderInspector(); }
+    if (kind === 'dem') this.refreshDem();
     // the quality columns feed the quality cut-offs: work the cut-off out again when there are any
     if (kind === 'margin' && this.P && this.P.layers.some(L => L.qcut)) { this.recut(); if (this.res) { this.stale = true; Timeline.setStale(true); } }
     if ((kind === 'blocks' || kind === 'layers') && this.ws && (this.P.pits || []).length) this.syncPits();
@@ -20565,6 +20969,65 @@ const App = {
       for (const U2 of res.rampUse || []) if ((U2.from > 0 && d < U2.from) || (U2.to >= 0 && d >= U2.to)) hide.push(U2.id);
     }
     View.setRoadHidden(hide);
+  },
+
+  // ---------- the survey DEM: the model cut down to it, and its picture ----------
+  /* The survey the model is cut down to (P.depletion, Geological Data tab), on the model grid; with the earlier surveys,
+     the lowest ground of each cell (a pit backfilled since an earlier survey is still seen as mined). → {grid, ver, ids}
+     or null */
+  async depletionGrid(P) {
+    const DP = P && P.depletion; if (!DP || !DP.survey || !P.grid) return null;
+    const list = Recon.byDate(P), s0 = list.find(s => s.id === DP.survey), ver = P.gridVersion || 0, n = P.grid.nx * P.grid.ny;
+    if (!s0 || (s0.gridVersion || 0) !== ver) return null;
+    const use = DP.earlier === false ? [s0] : list.filter(s => s === s0 || (s.date && s0.date && s.date <= s0.date && (s.gridVersion || 0) === ver));
+    let dep = null; const ids = [];
+    for (const s of use) {
+      const u8 = await this.store.getBlob(P.id, Recon.key(s)); if (!u8) continue;
+      const g = U.decodeGrid(u8); if (g.length !== n) continue;
+      if (!dep) dep = Float32Array.from(g); else for (let c = 0; c < n; c++) if (g[c] === g[c] && !(dep[c] <= g[c])) dep[c] = g[c];
+      ids.push(s.id);
+    }
+    return dep && ids.includes(s0.id) ? { grid: dep, ver, ids } : null;
+  },
+  // the model cut down to the survey again (or back to the model as built): a run from the ground before no longer applies
+  async redeplete() {
+    const P = this.P; if (!P || !this.ws) return;
+    if (P.depletion) UI.busy('Cutting the 3D model down to the survey…', 0.3);
+    try { this.dep = await this.depletionGrid(P); } catch (e) { this.dep = null; UI.toast('The survey could not be read: ' + (e.message || e)); }
+    finally { UI.busy(null); }
+    if (this.P !== P || !this.ws) return;
+    Model.setDepletion(this.ws, this.dep ? this.dep.grid : null);
+    if (P.wash) Wash.assign(P, this.ws);
+    this.res = null; this.pb = null; this.day = -1; this.stale = false; Timeline.setData(null, P);
+    this.changed('cutoff', { now: true });
+    UI.renderTab(); UI.renderLegend();
+  },
+  /* The survey DEM on the 3D view (P.demView, Dem): its band and the hillshade read from the store once, the picture made
+     again when a setting changes */
+  async refreshDem() {
+    const P = this.P, ws = this.ws; if (!P || !this.dem) return;
+    const o = Dem.settings(P), tok = ++this.dem.tok, s = o.on && ws ? Recon.settings(P).surveys.find(q => q.id === o.survey && q.disp) : null;
+    const off = info => { this.dem.info = info; View.setRasVisible(false); UI.renderLegend(); };
+    if (!s) return off(null);
+    const G = Dem.grid(ws);
+    if (s.disp.nx !== G.nx || s.disp.ny !== G.ny || (s.gridVersion || 0) !== (P.gridVersion || 0)) return off({ error: `“${s.name}” was read for an earlier 3D model: add its file again to show it.` });
+    const get = async k => { if (!this.dem.cache.has(k)) { const u8 = await this.store.getBlob(P.id, k); this.dem.cache.set(k, u8 ? U.decodeGrid(u8) : null); } return this.dem.cache.get(k); };
+    try {
+      const band = o.band != null && +o.band < s.disp.bands ? +o.band : s.disp.band, dem = await get(Recon.dispKey(s, band));
+      if (tok !== this.dem.tok) return;
+      if (!dem || dem.length !== G.nx * G.ny) return off({ error: `The display copy of “${s.name}” is not in the store: add its file again.` });
+      let hs = null;
+      if (o.hs === 'file' && o.hsFile && (o.hsFile.gridVersion || 0) === (P.gridVersion || 0)) { const g = await get(o.hsFile.id); if (g && g.length === dem.length) hs = Dem.normHs(g); }
+      else if (o.hs === 'dem') { const el = band === s.disp.band ? dem : await get(Recon.dispKey(s, s.disp.band)); hs = Dem.hillshade(el && el.length === dem.length ? el : dem, G.nx, G.ny, G.cell, o.az, o.alt, o.zf); }
+      if (tok !== this.dem.tok) return;
+      const st = Dem.stats(dem);
+      if (!st) return off({ error: `Band ${band + 1} of “${s.name}” has no values on the model.` });
+      this.dem.info = { s, band, st, legend: Dem.legend(o, st) };
+      this.dem.canvas = Dem.toCanvas(Dem.compose(dem, hs, G.nx, G.ny, o, st), G.nx, G.ny);
+      View.setRasTexture(this.dem.canvas); View.setRasVisible(true, U.clamp(+o.view, 0, 100) / 100);
+      UI.renderLegend();
+      if (this.tab === 'data') UI.renderTab();
+    } catch (e) { console.warn(e); off({ error: 'The survey DEM could not be shown: ' + (e.message || e) }); }
   },
 
   // ---------- satellite ----------
