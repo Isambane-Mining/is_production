@@ -9744,6 +9744,29 @@ const Recon = (() => {
     const nm = j => (names && names[j] ? names[j] : 'column ' + (j + 1));
     return { grid, info: { points: n, outside, skipped, cells: hit + filled, filled, zMin, zMax, columns: `${nm(cols.x)}, ${nm(cols.y)}, ${nm(cols.z)}` } };
   }
+  /* A GeoTIFF DTM onto the grid of the model: {grid, info} as readPoints gives. One band of elevations, placed by its
+     GeoTIFF tags or else by its world file (.tfw); read at half a cell (an overview when it has one) and averaged onto the
+     cells; its "no data" pixels stay empty, and small holes in it are filled as the gaps between points are. */
+  async function readRaster(P, ws, file, worldFile, onProgress) {
+    const info = await Tiff.info(file);
+    if (info.spp >= 3 && info.bps === 8) throw new Error('it is a picture (RGB), not a grid of elevations.');
+    let affine = info.geo.affine;
+    if (!affine && worldFile) affine = Imagery.parseWorld(await worldFile.text());
+    if (!affine) throw new Error('it has no georeferencing: no GeoTIFF tags and no world file (.tfw) with the same name. Choose its .tfw file together with it.');
+    // (a raster in another coordinate system than the model's, by its EPSG code)
+    const pid = info.geo.epsg ? Geo.presetForEpsg(info.geo.epsg) : null, name = id => (Geo.PRESETS.find(p => p.id === id) || { name: id }).name;
+    const crs = pid && pid !== 'custom' && P.crs.preset !== 'custom' && P.crs.preset !== 'local' && pid !== P.crs.preset ? `It is in ${name(pid)}${/EPSG/.test(name(pid)) ? '' : ` (EPSG ${info.geo.epsg})`}, the model in ${name(P.crs.preset)}.` : '';
+    const r = await Tiff.read(info, { targetRes: P.grid.cell / 2, affine, onProgress }), B = r.bands[0];
+    // (a DTM without a "no data" tag often marks its gaps -9999, -32767 or -32768: no ground lies that low)
+    for (let i = 0; i < B.length; i++) if (B[i] <= -9999) B[i] = NaN;
+    const grid = Model.resample(r, P.grid, Geo.axisSign(P.crs));
+    let hit = 0, zMin = Infinity, zMax = -Infinity;
+    for (let c = 0; c < ws.n; c++) { const z = grid[c]; if (z !== z) continue; hit++; if (z < zMin) zMin = z; if (z > zMax) zMax = z; }
+    if (!hit) throw new Error(`it does not cover the model. Check that it is in the coordinate system of the model (${name(P.crs.preset)}).${crs ? ' ' + crs : ''}`);
+    const filled = fillGaps(grid, ws.nx, ws.ny, 2), res = Math.hypot(affine.a, affine.d);
+    const raster = `${info.width.toLocaleString('en-ZA')} × ${info.height.toLocaleString('en-ZA')} px at ${U.fmtNum(res, res < 10 ? 2 : 1)} m${info.bps === 8 ? ' (8-bit values: check they are elevations)' : ''}`;
+    return { grid, info: { raster, cells: hit + filled, filled, zMin, zMax, crs: crs || null } };
+  }
   /* An empty cell takes the inverse-distance mean of the surveyed cells within `reach` cells of it, when they lie on
      three or four sides of it (so the survey is not carried out past its edge). → how many cells were filled */
   function fillGaps(g, nx, ny, reach) {
@@ -9873,7 +9896,7 @@ const Recon = (() => {
     return wb;
   }
 
-  return { DEF, settings, key, blobKeys, byDate, dateFromName, readPoints, fillGaps, usable, compute, workbook };
+  return { DEF, settings, key, blobKeys, byDate, dateFromName, readPoints, readRaster, fillGaps, usable, compute, workbook };
 })();
 
 /* ===== Project storage: IndexedDB (standalone), artifact db (shared, owner writes), memory (view-only file) ===== */
@@ -16171,11 +16194,15 @@ const Tabs = (() => {
     if (!ws || !P.grid) { UI.toast('Build the 3D model in the Geological Data tab first: the surveys are compared with it, cell by cell.'); return; }
     const R = P.recon || (P.recon = {}), G = reconFor(P), done = [], bad = [];
     if (!Array.isArray(R.surveys)) R.surveys = [];
+    // (a world file places the GeoTIFF of the same name; it is not a survey itself)
+    const isWorld = f => /^(tfw|tifw|tiffw|wld)$/.test(ext(f.name)), worlds = new Map(files.filter(isWorld).map(f => [stem(f.name).toLowerCase(), f]));
+    files = files.filter(f => !isWorld(f));
+    if (!files.length) { UI.toast('Choose the GeoTIFF with its world file (.tfw), or point files.'); return; }
     for (let k = 0; k < files.length; k++) {
-      const f = files[k], nm = f.name, lead = `Reading ${nm} (${k + 1} of ${files.length})…`;
+      const f = files[k], nm = f.name, lead = `Reading ${nm} (${k + 1} of ${files.length})…`, prog = fr => UI.busy(`${lead} ${Math.round(fr * 100)}%`, (k + fr * 0.9) / files.length);
       UI.busy(lead, k / files.length); await U.nextFrame();
       try {
-        const out = await Recon.readPoints(P, ws, f, fr => UI.busy(`${lead} ${Math.round(fr * 100)}%`, (k + fr * 0.9) / files.length));
+        const out = TIF_EXT.test(ext(nm)) ? await Recon.readRaster(P, ws, f, worlds.get(stem(nm).toLowerCase()), prog) : await Recon.readPoints(P, ws, f, prog);
         const s = Object.assign({ id: U.uid('dtm'), name: stem(nm), date: Recon.dateFromName(nm) || U.todayISO(), file: nm, read: U.todayISO(), gridVersion: P.gridVersion || 0 }, out.info);
         UI.busy(`Saving ${nm}…`, (k + 0.95) / files.length);
         await reconSaved();
@@ -16192,7 +16219,7 @@ const Tabs = (() => {
     }
     UI.renderTab();
     if (bad.length) UI.toast(`${done.length ? `${done.length} survey${done.length === 1 ? '' : 's'} added. ` : ''}Not read: ${bad.join(' · ')}`);
-    else if (done.length) UI.toast(`${done.length} survey${done.length === 1 ? '' : 's'} added: ${done.map(s => `${s.name} (${U.fmtNum(s.points)} points)`).join(', ')}. Check each survey date.`);
+    else if (done.length) UI.toast(`${done.length} survey${done.length === 1 ? '' : 's'} added: ${done.map(s => `${s.name} (${s.raster ? `raster, ${U.fmtNum((s.cells * P.grid.cell * P.grid.cell) / 1e4, 1)} ha` : `${U.fmtNum(s.points)} points`})`).join(', ')}. Check each survey date.${done.filter(s => s.crs).map(s => ` ${s.name}: ${s.crs}`).join('')}`);
   }
   async function removeSurvey(s) {
     const P = App.P, R = P.recon;
@@ -16214,10 +16241,11 @@ const Tabs = (() => {
         fld('Name', txt(s.name, v => { s.name = v.trim() || s.file; App.changed('recon'); })),
         fld('Survey date', txt(s.date, v => { if (!U.parseISO(v)) return; s.date = v; App.changed('recon'); UI.renderTab(); }, { type: 'date' }))) : null,
       h('div', { class: 'kv' },
-        ...kv('Points on the model', `${U.fmtNum(s.points)}${s.outside ? ` · ${U.fmtNum(s.outside)} outside it` : ''}`),
+        ...(s.raster ? kv('GeoTIFF', s.raster) : kv('Points on the model', `${U.fmtNum(s.points)}${s.outside ? ` · ${U.fmtNum(s.outside)} outside it` : ''}`)),
         ...kv('Area covered', ha != null ? `${U.fmtNum(ha, 2)} ha${s.filled ? ` (${U.fmtNum((s.filled / s.cells) * 100, 0)}% interpolated)` : ''}` : '–'),
         ...kv('Elevations', `${U.fmtNum(s.zMin, 1)} to ${U.fmtNum(s.zMax, 1)} m`),
-        ...kv('Columns used (X, Y, Z)', s.columns || '–')),
+        ...(s.raster ? [] : kv('Columns used (X, Y, Z)', s.columns || '–'))),
+      s.crs ? msg('warn', `${s.crs} Check that it lines up with the model.`) : null,
       g === undefined ? h('div', { class: 'dt' }, 'Reading the surface…') : null,
       g === null ? msg('warn', 'Its surface is not in the store. Add the file again.') : null,
       g && !ok ? msg('warn', 'It was read for an earlier 3D model. Add the file again to compare it with the model as it is now.') : null);
@@ -16225,12 +16253,12 @@ const Tabs = (() => {
   function recon(body) {
     const P = App.P, ws = App.ws, st = Recon.settings(P), list = Recon.byDate(P), G = reconFor(P), R = () => P.recon || (P.recon = {});
     reconGrids();
-    const parts = [hint('Survey DTMs as point files: XYZ, CSV or TXT with X, Y and Z columns, in the coordinate system of the model (a header line is optional; point numbers and codes are skipped). Which columns are X, Y and Z is worked out from the points. The points are averaged onto the grid of the 3D model and the gaps between them interpolated; each survey is saved with the project.')];
+    const parts = [hint('Survey DTMs as point files (XYZ, CSV or TXT with X, Y and Z columns; a header line is optional, point numbers and codes are skipped, and which columns are X, Y and Z is worked out from the points) or as GeoTIFF rasters (.tif or .tiff: one band of elevations, with its world file .tfw chosen together with it when it has no GeoTIFF tags), in the coordinate system of the model. They are averaged onto the grid of the 3D model and the gaps interpolated; each survey is saved with the project.')];
     if (edit()) {
-      const fileIn = h('input', { type: 'file', accept: '.xyz,.csv,.txt,.pts', multiple: true, hidden: true });
-      fileIn.setAttribute('aria-label', 'Survey point files');
+      const fileIn = h('input', { type: 'file', accept: '.xyz,.csv,.txt,.pts,.tif,.tiff,.gtif,.tfw,.tifw,.wld', multiple: true, hidden: true });
+      fileIn.setAttribute('aria-label', 'Survey DTM files');
       fileIn.addEventListener('change', async () => { const fs = Array.from(fileIn.files); fileIn.value = ''; await addSurveys(fs); });
-      parts.push(h('div', { class: 'row' }, btn('Add survey DTMs…', () => fileIn.click(), 'sm primary', 'Choose one or more point files (.xyz, .csv, .txt)'), fileIn));
+      parts.push(h('div', { class: 'row' }, btn('Add survey DTMs…', () => fileIn.click(), 'sm primary', 'Choose one or more point files (.xyz, .csv, .txt) or GeoTIFF DTMs (.tif, .tiff, with a .tfw if needed)'), fileIn));
     }
     if (!ws || !P.grid) parts.push(msg('warn', 'Build the 3D model in the Geological Data tab first: the surveys are compared with it, cell by cell.'));
     for (const s of list) parts.push(surveyCard(s, G));
