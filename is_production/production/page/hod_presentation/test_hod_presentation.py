@@ -27,7 +27,17 @@ class TestHodPresentationPage(unittest.TestCase):
               patch.object(self.page.report, 'execute', side_effect=lambda value: (calls.append(value) or ([], rows, 'Period message', {'data': []}, [])))):
             result = self.page.get_data(frappe.as_json(filters))
         self.assertEqual(calls, ['permission', filters])
-        self.assertEqual(rows[0]['engineering'], {'machine_count': 20})
+        self.assertEqual(rows[0]['engineering']['machine_count'], 20)
+        self.assertIn('reliability', rows[0]['engineering'])
+        self.assertIn('breakdown_summary', rows[0]['engineering'])
+        self.assertIn(
+            'top_machines',
+            rows[0]['engineering']['breakdown_summary']
+        )
+        self.assertIn(
+            'classifications',
+            rows[0]['engineering']['breakdown_summary']
+        )
         self.assertEqual(rows[0]['fleet_summary_html'], '<div>Fleet summary</div>')
         summary.assert_called_once_with({'machines': []})
         self.assertEqual(fleet.call_args.kwargs['site'], 'Uitgevallen')
