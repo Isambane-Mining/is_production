@@ -23,6 +23,18 @@ def get_data(filters=None):
                 asset_ownership=filters.get('asset_ownership') or report.DEFAULT_ASSET_OWNERSHIP,
             )
             row['engineering'] = build_dashboard(module, fleet, row['site'])
+            row['engineering']['reliability'] = get_hod_reliability(
+                site=row['site'],
+                start_date=row['start_date'],
+                end_date=row['end_date'],
+                fleet=fleet,
+            )
+            row['engineering']['breakdown_summary'] = get_hod_breakdown_summary(
+                site=row['site'],
+                start_date=row['start_date'],
+                end_date=row['end_date'],
+                machines=fleet['machines'],
+            )
             # Both exported slides share the exact same filtered Engine snapshot.
             row['fleet_summary_html'] = render_grids(fleet)
     return result
@@ -87,6 +99,374 @@ def build_dashboard(module, fleet, site):
         },
         'top': top, 'bottom': bottom,
     }
+
+
+
+def get_hod_breakdown_summary(site, start_date, end_date, machines):
+    """Permission-filtered PBM totals for the existing HOD dashboard."""
+    from collections import defaultdict
+    from datetime import timedelta
+    from frappe.utils import getdate, get_datetime, now_datetime
+
+    report.check_hod_site_access(site)
+
+    start = get_datetime(f"{getdate(start_date)} 00:00:00")
+    end = get_datetime(
+        f"{getdate(end_date) + timedelta(days=1)} 00:00:00"
+    )
+
+    if end <= start:
+        frappe.throw("Invalid HOD reporting period.")
+
+    machine_names = sorted({
+        str(machine.get("machine") or "").strip()
+        for machine in machines
+        if machine.get("machine")
+    })
+
+    empty = {"top_machines": [], "classifications": []}
+
+    if not machine_names:
+        return empty
+
+    # get_list applies the current user's PBM record permissions.
+    allowed_names = frappe.get_list(
+        "Plant Breakdown or Maintenance",
+        filters={
+            "location": site,
+            "asset_name": ["in", machine_names],
+            "exclude_from_au": 0,
+            "breakdown_start_datetime": ["<", end],
+        },
+        pluck="name",
+        limit_page_length=0,
+    )
+
+    if not allowed_names:
+        return empty
+
+    rows = frappe.db.sql(
+        """
+        SELECT
+            name,
+            asset_name,
+            asset_category,
+            breakdown_reason,
+            failure_classification,
+            downtime_type,
+            breakdown_start_datetime,
+            resolved_datetime
+        FROM `tabPlant Breakdown or Maintenance`
+        WHERE name IN %(allowed_names)s
+          AND location = %(site)s
+          AND breakdown_start_datetime IS NOT NULL
+          AND breakdown_start_datetime < %(end)s
+          AND (
+              resolved_datetime IS NULL
+              OR resolved_datetime > %(start)s
+          )
+        ORDER BY name
+        """,
+        {
+            "allowed_names": tuple(allowed_names),
+            "site": site,
+            "start": start,
+            "end": end,
+        },
+        as_dict=True,
+    )
+
+    current_time = now_datetime()
+    machine_totals = defaultdict(float)
+    classification_totals = defaultdict(float)
+    seen_intervals = set()
+
+    for row in rows:
+        actual_start = get_datetime(
+            row["breakdown_start_datetime"]
+        )
+        actual_end = (
+            get_datetime(row["resolved_datetime"])
+            if row.get("resolved_datetime")
+            else current_time
+        )
+
+        clipped_start = max(start, actual_start)
+        clipped_end = min(end, actual_end)
+
+        if clipped_end <= clipped_start:
+            continue
+
+        fleet = str(row.get("asset_name") or "").strip()
+        category = str(row.get("asset_category") or "").strip()
+        downtime_type = str(
+            row.get("downtime_type") or ""
+        ).strip()
+
+        if downtime_type.casefold() == "planned maintenance":
+            classification = "Planned Maintenance"
+        else:
+            classification = (
+                str(row.get("failure_classification") or "").strip()
+                or "Unclassified"
+            )
+        reason = (
+            str(row.get("breakdown_reason") or "").strip()
+            or "No reason captured"
+        )
+
+        # Do not count an identical machine/failure/time interval twice.
+        interval_key = (
+            fleet, actual_start, actual_end,
+            classification, reason,
+        )
+        if interval_key in seen_intervals:
+            continue
+        seen_intervals.add(interval_key)
+
+        hours = (clipped_end - clipped_start).total_seconds() / 3600
+
+        if hours <= 0:
+            continue
+
+        machine_totals[
+            (fleet, category, classification, reason)
+        ] += hours
+
+        classification_totals[classification] += hours
+
+    top_machines = [
+        {
+            "fleet": fleet,
+            "category": category,
+            "classification": classification,
+            "reason": reason,
+            "hours": round(hours, 2),
+        }
+        for (fleet, category, classification, reason), hours
+        in machine_totals.items()
+    ]
+
+    top_machines.sort(
+        key=lambda row: (
+            -row["hours"],
+            row["fleet"],
+            row["classification"],
+            row["reason"],
+        )
+    )
+
+    # The classification graph follows the exact Bottom 10 table.
+    bottom_ten_classifications = defaultdict(float)
+
+    for machine in top_machines[:10]:
+        bottom_ten_classifications[machine["classification"]] += (
+            float(machine["hours"])
+        )
+
+    classifications = [
+        {"classification": name, "hours": round(hours, 2)}
+        for name, hours in bottom_ten_classifications.items()
+    ]
+    classifications.sort(
+        key=lambda row: (-row["hours"], row["classification"])
+    )
+
+    return {
+        "top_machines": top_machines[:10],
+        "classifications": classifications,
+    }
+
+
+
+def get_hod_reliability(site, start_date, end_date, fleet):
+    """MTBF and full-restoration MTTR for the selected HOD fleet."""
+    from collections import defaultdict
+    from datetime import timedelta
+    from frappe.utils import getdate, get_datetime
+
+    report.check_hod_site_access(site)
+
+    period_start = get_datetime(
+        f"{getdate(start_date)} 00:00:00"
+    )
+    period_end = get_datetime(
+        f"{getdate(end_date) + timedelta(days=1)} 00:00:00"
+    )
+
+    if period_end <= period_start:
+        frappe.throw("Invalid HOD reporting period.")
+
+    categories = ("Excavator", "Dozer", "ADT")
+
+    result = {
+        category: {"mtbf": None, "mttr": None, "downtime": None, "planned": {"mtbf": None, "mttr": None, "utilisation": None, "downtime": None}}
+        for category in categories
+    }
+
+    machine_categories = {
+        str(row.get("machine")): row.get("category")
+        for row in fleet["machines"]
+        if row.get("machine") and row.get("category") in categories
+    }
+
+    if not machine_categories:
+        return result
+
+    # Permission-filtered Frappe query. No unrestricted SQL.
+    records = frappe.get_list(
+        "Plant Breakdown or Maintenance",
+        filters=[
+            ["location", "=", site],
+            ["asset_name", "in", list(machine_categories)],
+            ["exclude_from_au", "=", 0],
+            ["breakdown_start_datetime", ">=", period_start],
+            ["breakdown_start_datetime", "<", period_end],
+        ],
+        fields=[
+            "name",
+            "asset_name",
+            "downtime_type",
+            "breakdown_start_datetime",
+            "resolved_datetime",
+        ],
+        limit_page_length=0,
+    )
+
+    failures = defaultdict(int)
+    completed_repairs = defaultdict(int)
+    repair_hours = defaultdict(float)
+    planned_events = defaultdict(int)
+    planned_repairs = defaultdict(int)
+    planned_repair_hours = defaultdict(float)
+    seen = set()
+
+    for row in records:
+        if row.name in seen:
+            continue
+        seen.add(row.name)
+
+        category = machine_categories.get(row.asset_name)
+        if category not in categories:
+            continue
+
+        downtime_type = str(
+            row.get("downtime_type") or ""
+        ).strip().casefold()
+
+        breakdown_start = row.get(
+            "breakdown_start_datetime"
+        )
+
+        if not breakdown_start:
+            continue
+
+        breakdown_start = get_datetime(breakdown_start)
+
+        if downtime_type == "planned maintenance":
+            planned_events[category] += 1
+            service_end = row.get("resolved_datetime")
+            if service_end:
+                service_end = get_datetime(service_end)
+                if breakdown_start < service_end <= period_end:
+                    planned_repairs[category] += 1
+                    planned_repair_hours[category] += (
+                        service_end - breakdown_start
+                    ).total_seconds() / 3600
+            continue
+
+        # Count each qualifying PBM failure event once.
+        failures[category] += 1
+
+        resolved = row.get("resolved_datetime")
+
+        if not resolved:
+            continue
+
+        resolved = get_datetime(resolved)
+
+        # MTTR uses only completed repairs within the period.
+        if not breakdown_start < resolved <= period_end:
+            continue
+
+        duration = (
+            resolved - breakdown_start
+        ).total_seconds() / 3600
+
+        if duration <= 0:
+            continue
+
+        completed_repairs[category] += 1
+        repair_hours[category] += duration
+
+    work_hours = fleet.get("reliability_work_hours") or {}
+    downtime_hours = fleet.get("reliability_downtime_hours") or {}
+
+    for category in categories:
+        hours = float(work_hours.get(category) or 0)
+
+        if hours > 0 and planned_events[category] > 0:
+            result[category]["planned"]["mtbf"] = round(
+                hours / planned_events[category], 1
+            )
+
+        category_downtime = downtime_hours.get(category) or {}
+        required = float(category_downtime.get("required") or 0)
+        breakdown = float(category_downtime.get("breakdown") or 0)
+        planned = float(category_downtime.get("planned") or 0)
+
+        # HOD Downtime card only: exclude planned maintenance
+        # from the required-hours denominator.
+        adjusted_required = required - planned
+        result[category]["adjusted_utilisation"] = (
+            round(
+                float(category_downtime.get("work") or 0)
+                / adjusted_required * 100,
+                1,
+            )
+            if adjusted_required > 0 else None
+        )
+
+        result[category]["planned"]["hours"] = round(planned, 1)
+        planned_work = float(category_downtime.get("work") or 0)
+
+        adjusted_required = required - planned
+
+        if adjusted_required > 0:
+            result[category]["planned"]["utilisation"] = round(
+                planned_work / adjusted_required * 100, 1
+            )
+
+        if required > 0:
+            result[category]["planned"]["downtime"] = round(
+                planned / required * 100, 2
+            )
+
+        if planned_repairs[category] > 0:
+            result[category]["planned"]["mttr"] = round(
+                planned_repair_hours[category]
+                / planned_repairs[category],
+                1,
+            )
+
+        if required > 0:
+            result[category]["downtime"] = round(
+                breakdown / required * 100, 1
+            )
+
+        if hours > 0 and failures[category] > 0:
+            result[category]["mtbf"] = round(
+                hours / failures[category], 1
+            )
+
+        if completed_repairs[category] > 0:
+            result[category]["mttr"] = round(
+                repair_hours[category]
+                / completed_repairs[category],
+                1,
+            )
+
+    return result
 
 
 @frappe.whitelist()

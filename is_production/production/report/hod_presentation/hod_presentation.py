@@ -3051,6 +3051,39 @@ def build_grid_data(module, *, site, start_date, end_date, machine_scope,
 
     return {
         'machines': machines,
+        'reliability_downtime_hours': {
+            category: {
+                'required': sum(
+                    float(row.get('required_hours') or 0)
+                    for row in shifts
+                    if module.get_category(row) == category
+                ),
+                'breakdown': sum(
+                    float(row.get('breakdown_hours') or 0)
+                    for row in shifts
+                    if module.get_category(row) == category
+                ),
+                'planned': sum(
+                    float(row.get('planned_maintenance_hours') or 0)
+                    for row in shifts
+                    if module.get_category(row) == category
+                ),
+                'work': sum(
+                    float(row.get('work_hours') or 0)
+                    for row in shifts
+                    if module.get_category(row) == category
+                ),
+            }
+            for category in CATEGORY_LABELS
+        },
+        'reliability_work_hours': {
+            category: sum(
+                float(row.get('work_hours') or 0)
+                for row in shifts
+                if module.get_category(row) == category
+            )
+            for category in CATEGORY_LABELS
+        },
         'averages': averages(shifts),
         'category_averages': category_averages,
         'start_date': str(start_date), 'end_date': str(end_date),
@@ -3443,129 +3476,8 @@ def build_hod_presentation(
                     stretch_to_fill=True,
                 )
 
-                # Overlay invisible PowerPoint hyperlinks on the
-                # actual captured positions of the View Detail buttons.
-                from urllib.parse import urlencode, quote
                 from pptx.oxml.xmlchemy import OxmlElement
-
                 dashboard_image = slide.shapes[-1]
-                report_site = str(captured.get("site") or site)
-                report_from = str(payload.get("start_date") or "")
-                report_to = str(payload.get("end_date") or "")
-
-                for area in captured.get("link_areas") or []:
-                    if not isinstance(area, dict):
-                        continue
-
-                    kind = area.get("kind")
-                    if kind not in ("au", "fleet", "breakdown"):
-                        continue
-
-                    try:
-                        x, y, w, h = (
-                            float(area[key])
-                            for key in ("x", "y", "w", "h")
-                        )
-                    except (ValueError, TypeError, KeyError):
-                        continue
-
-                    # Keep captured button areas within the slide image.
-                    # Minor browser rounding must not discard valid links.
-                    if not all(
-                        __import__("math").isfinite(value)
-                        for value in (x, y, w, h)
-                    ):
-                        continue
-
-                    if w <= 0 or h <= 0:
-                        continue
-
-                    x = max(0.0, min(x, 0.999))
-                    y = max(0.0, min(y, 0.999))
-                    w = min(w, 1.0 - x)
-                    h = min(h, 1.0 - y)
-
-                    if w <= 0 or h <= 0:
-                        continue
-
-                    if kind == "au":
-                        params = urlencode({
-                            "site": report_site,
-                            "from_date": report_from,
-                            "to_date": report_to,
-                            "asset_category": "All Equipment",
-                            "machine_scope": "Production + Swing/Spare Machines",
-                            "asset_ownership": "All Assets",
-                            "au_target_filter": "85% A & U",
-                        })
-                        target = frappe.utils.get_url(
-                            "/app/query-report/"
-                            + quote(
-                                "Availability and Utilisation Month End Report",
-                                safe=""
-                            )
-                            + "?" + params
-                        )
-                    elif kind == "breakdown":
-                        machine = str(area.get("machine") or "").strip()
-                        detail_from = str(captured.get("start_date") or "")
-                        detail_to = str(captured.get("end_date") or "")
-
-                        if not machine or not detail_from or not detail_to:
-                            continue
-
-                        detail_params = urlencode({
-                            "machine": machine,
-                            "site": report_site,
-                            "from_date": detail_from,
-                            "to_date": detail_to,
-                        })
-
-                        target = frappe.utils.get_url(
-                            "/hod-breakdown-reasons?" + detail_params
-                        )
-                    else:
-                        # Open the permanent Machine Plant List using
-                        # the same reporting period as this dashboard.
-                        fleet_params = urlencode({
-                            "site": report_site,
-                            "from_date": str(
-                                captured.get("start_date")
-                                or report_from
-                            ),
-                            "to_date": str(
-                                captured.get("end_date")
-                                or report_to
-                            ),
-                        })
-                        target = frappe.utils.get_url(
-                            "/hod-machine-plant-list?" + fleet_params
-                        )
-
-                    link_shape = slide.shapes.add_shape(
-                        MSO_SHAPE.RECTANGLE,
-                        dashboard_image.left + int(dashboard_image.width * x),
-                        dashboard_image.top + int(dashboard_image.height * y),
-                        max(1, int(dashboard_image.width * w)),
-                        max(1, int(dashboard_image.height * h)),
-                    )
-
-                    link_shape.fill.solid()
-                    link_shape.fill.fore_color.rgb = RGBColor(255, 255, 255)
-
-                    # Fully transparent, but still clickable.
-                    solid = link_shape._element.spPr.solidFill
-                    color = solid.srgbClr
-                    alpha = OxmlElement("a:alpha")
-                    alpha.set("val", "0")
-                    color.append(alpha)
-
-                    link_shape.line.fill.background()
-                    # Preserve the site URL while using HTTPS for links.
-                    if target.startswith("http://"):
-                        target = "https://" + target[len("http://"):]
-
-                    link_shape.click_action.hyperlink.address = target
 
                 # HOD_FIXED_SLIDE_BACKGROUND
                 # Use the captured dashboard image as the actual slide

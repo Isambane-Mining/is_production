@@ -1368,3 +1368,523 @@ tr.hod-machine-spare > :not([class*="hod-cell-"]) {
     color: #6b21a8;
     font-weight: 700;
 }
+
+
+/* HOD PROBLEM MACHINES AND RELIABILITY LAYOUT */
+
+.hod-performance-dashboard .hod-new-summary {
+    min-width: 0;
+    min-height: 235px;
+    border: 1px solid #dce5ee;
+    border-radius: 5px;
+    background: #fff;
+    overflow: hidden;
+}
+
+.hod-performance-dashboard .hod-new-summary-title {
+    background: #e72745;
+    color: #fff;
+    padding: 7px 9px;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1.3;
+}
+
+.hod-performance-dashboard .hod-new-problem-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-size: 11px;
+    color: #17365d;
+}
+
+.hod-performance-dashboard .hod-new-problem-table th,
+.hod-performance-dashboard .hod-new-problem-table td {
+    border: 1px solid #dce5ee;
+    padding: 5px;
+    text-align: left;
+}
+
+.hod-performance-dashboard .hod-new-problem-table th {
+    background: #eaf1f8;
+    font-weight: 800;
+}
+
+.hod-performance-dashboard .hod-new-problem-table th:nth-child(1) {
+    width: 7%;
+}
+
+.hod-performance-dashboard .hod-new-problem-table th:nth-child(2) {
+    width: 17%;
+}
+
+.hod-performance-dashboard .hod-new-problem-table th:nth-child(3) {
+    width: 19%;
+}
+
+.hod-performance-dashboard .hod-new-problem-table th:nth-child(4) {
+    width: 43%;
+}
+
+.hod-performance-dashboard .hod-new-problem-table th:nth-child(5) {
+    width: 14%;
+    text-align: right;
+}
+
+.hod-performance-dashboard .hod-new-empty {
+    text-align: center !important;
+    color: #64748b;
+    padding: 35px 6px !important;
+}
+
+.hod-performance-dashboard .hod-new-footnote {
+    padding: 8px;
+    font-size: 10px;
+    color: #64748b;
+}
+
+.hod-performance-dashboard .hod-new-reliability-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 5px;
+    padding: 7px;
+}
+
+.hod-performance-dashboard .hod-new-asset-card {
+    min-width: 0;
+    border: 1px solid #dce5ee;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.hod-performance-dashboard .hod-new-asset-name {
+    min-height: 65px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: #edf6fc;
+    color: #17365d;
+    font-size: 12px;
+    text-align: center;
+}
+
+.hod-performance-dashboard .hod-new-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    background: #082e57;
+}
+
+.hod-performance-dashboard .hod-new-metric {
+    min-width: 0;
+    min-height: 95px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px 2px;
+    border-right: 1px solid #48617f;
+    text-align: center;
+    color: #fff;
+}
+
+.hod-performance-dashboard .hod-new-metric span {
+    font-size: 9px;
+    overflow-wrap: anywhere;
+}
+
+.hod-performance-dashboard .hod-new-metric small {
+    font-size: 9px;
+}
+
+.hod-performance-dashboard .hod-new-metric strong {
+    font-size: 20px;
+    color: #fff;
+}
+
+
+/* HOD BREAKDOWN CLASSIFICATION CHART LAYOUT */
+
+.hod-performance-dashboard .hod-breakdown-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+    gap: 8px;
+    padding: 8px;
+}
+
+.hod-performance-dashboard .hod-breakdown-table-section,
+.hod-performance-dashboard .hod-breakdown-chart-section {
+    min-width: 0;
+}
+
+.hod-performance-dashboard .hod-breakdown-layout h4 {
+    margin: 0 0 8px;
+    font-size: 11px;
+    font-weight: 800;
+    line-height: 1.4;
+    color: #17365d;
+}
+
+.hod-performance-dashboard .hod-breakdown-chart-section {
+    border-left: 1px solid #dce5ee;
+    padding-left: 8px;
+}
+
+.hod-performance-dashboard .hod-breakdown-chart-empty {
+    position: relative;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 160px;
+    border: 1px solid #dce5ee;
+    border-radius: 4px;
+    background: #fbfdff;
+    overflow: hidden;
+}
+
+.hod-performance-dashboard .hod-breakdown-chart-grid {
+    position: absolute;
+    inset: 12px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    pointer-events: none;
+}
+
+.hod-performance-dashboard .hod-breakdown-chart-grid span {
+    display: block;
+    width: 100%;
+    border-top: 1px dashed #dce5ee;
+}
+
+.hod-performance-dashboard .hod-breakdown-chart-message {
+    position: relative;
+    z-index: 1;
+    max-width: 90%;
+    padding: 8px;
+    background: #fbfdff;
+    color: #64748b;
+    font-size: 10px;
+    text-align: center;
+}
+
+@container (max-width: 850px) {
+    .hod-performance-dashboard .hod-breakdown-layout {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .hod-performance-dashboard .hod-breakdown-chart-section {
+        border-left: 0;
+        border-top: 1px solid #dce5ee;
+        padding-left: 0;
+        padding-top: 8px;
+    }
+}
+
+
+/* HOD LIVE BREAKDOWN BAR CHART */
+
+.hod-performance-dashboard .hod-breakdown-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    padding: 4px 0;
+}
+
+.hod-performance-dashboard .hod-breakdown-bar-row {
+    display: grid;
+    grid-template-columns: minmax(0, 85px) minmax(0, 1fr) 40px;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+}
+
+.hod-performance-dashboard .hod-breakdown-bar-label {
+    overflow-wrap: anywhere;
+    color: #17365d;
+}
+
+.hod-performance-dashboard .hod-breakdown-bar-track {
+    height: 13px;
+    background: #eaf1f8;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.hod-performance-dashboard .hod-breakdown-bar-fill {
+    height: 100%;
+    background: #2379a7;
+    border-radius: 3px;
+}
+
+.hod-performance-dashboard .hod-breakdown-bar-row strong {
+    text-align: right;
+    font-size: 10px;
+    color: #17365d;
+}
+
+.hod-performance-dashboard .hod-breakdown-reason {
+    display: block;
+    margin-top: 2px;
+    font-size: 9px;
+    font-weight: normal;
+    color: #617487;
+    overflow-wrap: anywhere;
+}
+
+
+/* HOD CLASSIFICATION 3D BAR STYLING */
+
+/* Colourful raised bars with a subtle 3D appearance. */
+.hod-performance-dashboard .hod-breakdown-bar-track {
+    height: 18px;
+    overflow: visible;
+    border-radius: 4px;
+    background: #e8eef5;
+    box-shadow: inset 0 2px 4px rgba(15, 42, 75, 0.13);
+}
+
+.hod-performance-dashboard .hod-breakdown-bar-fill {
+    position: relative;
+    height: 100%;
+    border-radius: 4px;
+    background: linear-gradient(
+        180deg,
+        var(--hod-bar-light),
+        var(--hod-bar-main) 48%,
+        var(--hod-bar-dark)
+    );
+    box-shadow:
+        inset 0 1px 1px rgba(255,255,255,0.55),
+        inset 0 -2px 2px rgba(0,0,0,0.12),
+        1px 2px 3px rgba(15,42,75,0.23);
+}
+
+/* Each classification gets its own colour. */
+.hod-performance-dashboard .hod-breakdown-bar-row:nth-child(6n+1) {
+    --hod-bar-light: #52adff;
+    --hod-bar-main: #087cee;
+    --hod-bar-dark: #0755b9;
+}
+
+.hod-performance-dashboard .hod-breakdown-bar-row:nth-child(6n+2) {
+    --hod-bar-light: #ffac65;
+    --hod-bar-main: #ff761b;
+    --hod-bar-dark: #d64d08;
+}
+
+.hod-performance-dashboard .hod-breakdown-bar-row:nth-child(6n+3) {
+    --hod-bar-light: #70e98b;
+    --hod-bar-main: #17bd4d;
+    --hod-bar-dark: #0b8736;
+}
+
+.hod-performance-dashboard .hod-breakdown-bar-row:nth-child(6n+4) {
+    --hod-bar-light: #ff7884;
+    --hod-bar-main: #ee334b;
+    --hod-bar-dark: #b91d34;
+}
+
+.hod-performance-dashboard .hod-breakdown-bar-row:nth-child(6n+5) {
+    --hod-bar-light: #ca89ff;
+    --hod-bar-main: #9645d7;
+    --hod-bar-dark: #6d2aa8;
+}
+
+.hod-performance-dashboard .hod-breakdown-bar-row:nth-child(6n+6) {
+    --hod-bar-light: #ffdf72;
+    --hod-bar-main: #ffb900;
+    --hod-bar-dark: #d58a00;
+}
+
+/* Keep names and actual hours readable. */
+.hod-performance-dashboard .hod-breakdown-bar-row {
+    min-height: 23px;
+    grid-template-columns: minmax(0, 105px) minmax(0, 1fr) 48px;
+    gap: 6px;
+}
+
+.hod-performance-dashboard .hod-breakdown-bar-row strong {
+    white-space: nowrap;
+    font-weight: 800;
+}
+
+.hod-performance-dashboard .hod-breakdown-chart-section h4 {
+    font-weight: 800;
+    letter-spacing: 0.2px;
+}
+
+
+/* HOD CLASSIFICATION ICONS AND PERCENTAGES */
+
+.hod-performance-dashboard .hod-breakdown-bar-label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+}
+
+.hod-performance-dashboard .hod-breakdown-class-icon {
+    flex: 0 0 20px;
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    color: #fff;
+    background: #087cee;
+    font-size: 12px;
+    line-height: 1;
+}
+
+.hod-performance-dashboard .hod-breakdown-class-text {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font-size: 9px;
+    line-height: 1.3;
+}
+
+.hod-performance-dashboard .hod-breakdown-bar-row {
+    grid-template-columns: minmax(0, 118px) minmax(0, 1fr) 43px;
+    gap: 5px;
+}
+
+.hod-performance-dashboard .hod-breakdown-bar-row strong {
+    font-size: 10px;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.hod-performance-dashboard .hod-breakdown-bar-row:nth-child(6n+1)
+.hod-breakdown-class-icon {
+    background: #087cee;
+}
+
+.hod-performance-dashboard .hod-breakdown-bar-row:nth-child(6n+2)
+.hod-breakdown-class-icon {
+    background: #ff761b;
+}
+
+.hod-performance-dashboard .hod-breakdown-bar-row:nth-child(6n+3)
+.hod-breakdown-class-icon {
+    background: #17bd4d;
+}
+
+.hod-performance-dashboard .hod-breakdown-bar-row:nth-child(6n+4)
+.hod-breakdown-class-icon {
+    background: #ee334b;
+}
+
+.hod-performance-dashboard .hod-breakdown-bar-row:nth-child(6n+5)
+.hod-breakdown-class-icon {
+    background: #9645d7;
+}
+
+.hod-performance-dashboard .hod-breakdown-bar-row:nth-child(6n+6)
+.hod-breakdown-class-icon {
+    background: #ffb900;
+}
+
+
+/* HOD BOLD BREAKDOWN TABLE AND GRAPH */
+
+/* Bottom 10 Availability heading */
+.hod-performance-dashboard .hod-breakdown-table-section h4 {
+    font-weight: 800;
+    font-size: 12px;
+    color: #082e57;
+}
+
+/* Bottom 10 Availability table header */
+.hod-performance-dashboard .hod-new-problem-table thead th {
+    font-weight: 800;
+    color: #082e57;
+}
+
+/* Fleet numbers, machine categories, classifications and hours */
+.hod-performance-dashboard .hod-new-problem-table tbody td {
+    font-weight: 800;
+    color: #082e57;
+    font-size: 11px;
+}
+
+/* Keep the description smaller and lighter */
+.hod-performance-dashboard .hod-new-problem-table
+.hod-breakdown-reason {
+    display: block;
+    font-weight: 400;
+    font-size: 9px;
+    color: #617487;
+    margin-top: 2px;
+}
+
+/* Classification bar graph heading */
+.hod-performance-dashboard .hod-breakdown-chart-section h4 {
+    font-weight: 800;
+    font-size: 12px;
+    color: #082e57;
+}
+
+/* Classification names */
+.hod-performance-dashboard .hod-breakdown-class-text {
+    font-weight: 800;
+    font-size: 10px;
+    color: #082e57;
+}
+
+/* Percentage values */
+.hod-performance-dashboard .hod-breakdown-bar-row strong {
+    font-weight: 900;
+    font-size: 11px;
+    color: #082e57;
+}
+
+/* Maintain the colourful classification icons */
+.hod-performance-dashboard .hod-breakdown-class-icon {
+    font-weight: 800;
+}
+
+/* Highlight the numerical values in the table */
+.hod-performance-dashboard .hod-new-problem-table
+tbody td:last-child {
+    font-weight: 900;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Preserve the existing table alignment */
+.hod-performance-dashboard .hod-new-problem-table
+tbody td:first-child {
+    text-align: left;
+}
+
+
+/* HOD RELIABILITY KPI NUMBER FITTING */
+
+.hod-performance-dashboard .hod-new-metric {
+    min-width: 0;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+.hod-performance-dashboard .hod-new-metric > span,
+.hod-performance-dashboard .hod-new-metric > small {
+    display: block;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    text-align: center;
+}
+
+.hod-performance-dashboard .hod-new-metric > strong {
+    display: block;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    font-size: clamp(9px, 0.85vw, 13px);
+    font-weight: 800;
+    line-height: 1.3;
+    letter-spacing: -0.3px;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    font-variant-numeric: tabular-nums;
+}

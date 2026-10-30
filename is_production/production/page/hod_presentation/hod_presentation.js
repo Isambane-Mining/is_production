@@ -45,8 +45,6 @@ const hodPresentationPreviousSunday =
 
 
 const HOD_PRESENTATION_FILTERS = [
-        {fieldname: "start_date", label: __("Start Date (optional)"), fieldtype: "Date",
-         description: __("Defaults to the selected production planning period start.")},
         {
             fieldname: "end_date",
             label: __("End Date"),
@@ -413,6 +411,295 @@ function hodProduction(row) {
             return `<tr data-production-field="${field || 'days_worked_left'}"><th scope="row">${label}</th><td>${unit}</td><td class="${colour}">${field ? hodNumber(value,decimals,signed)+(unit==='%' && hodValue(value)!==null ? '%' : '') : `${hodNumber(row.days_worked,1)} / ${hodNumber(row.days_left,1)}`}</td></tr>`;
         }).join('')}</tbody></table>`;
 }
+
+function hodClassificationIcon(classification) {
+    const name = String(classification || "").toLowerCase();
+
+    // Icons only; categories and totals always come from ERP data.
+    if (/electrical|electric|electronic/.test(name)) return "⚡";
+    if (/hydraulic/.test(name)) return "💧";
+    if (/engine/.test(name)) return "🔧";
+    if (/tyre|tire|wheel/.test(name)) return "🛞";
+    if (/transmission|drivetrain/.test(name)) return "⚙";
+    if (/brake|braking/.test(name)) return "🛑";
+    if (/planned maintenance|service/.test(name)) return "🗓";
+    if (/structural/.test(name)) return "🏗";
+    if (/fuel/.test(name)) return "⛽";
+    if (/cooling/.test(name)) return "🌡";
+    if (/mechanical/.test(name)) return "🔩";
+
+    return "⚙";
+}
+
+function hodBreakdownBarChart(classifications) {
+    if (!classifications.length) {
+        return `<div class="hod-breakdown-chart-empty">
+            <span class="hod-breakdown-chart-message">
+                No classified downtime records for this period
+            </span>
+        </div>`;
+    }
+
+    const maximum = Math.max(
+        ...classifications.map(item => Number(item.hours) || 0),
+        0
+    );
+
+    const totalHours = classifications.reduce(
+        (sum, item) => sum + (Number(item.hours) || 0),
+        0
+    );
+
+    return `<div class="hod-breakdown-bars">
+        ${classifications.map(item => {
+            const hours = Number(item.hours) || 0;
+            const width = maximum > 0 ? hours / maximum * 100 : 0;
+            const percentage = totalHours > 0
+                ? hours / totalHours * 100
+                : 0;
+
+            return `<div class="hod-breakdown-bar-row">
+                <div class="hod-breakdown-bar-label"
+                    title="${hodEscape(item.classification)}">
+                    <span class="hod-breakdown-class-icon">
+                        ${hodClassificationIcon(item.classification)}
+                    </span>
+                    <span class="hod-breakdown-class-text">
+                        ${hodEscape(item.classification)}
+                    </span>
+                </div>
+                <div class="hod-breakdown-bar-track">
+                    <div class="hod-breakdown-bar-fill"
+                        style="width:${width.toFixed(2)}%">
+                    </div>
+                </div>
+                <strong>${percentage.toFixed(1)}%</strong>
+            </div>`;
+        }).join('')}
+    </div>`;
+}
+
+function hodProblemMachinesPanel(engineering) {
+    const breakdown = engineering?.breakdown_summary || {};
+    const machines = breakdown.top_machines || [];
+    const classifications = breakdown.classifications || [];
+
+    return `
+        <section class="hod-new-summary hod-problem-machines">
+            <div class="hod-new-summary-title"
+                style="background:#0b5a8c;">
+                BREAKDOWN CLASSIFICATION (Hours & Percentage)
+            </div>
+
+            <div class="hod-breakdown-layout">
+                <div class="hod-breakdown-table-section">
+                    <h4>Bottom 10 Availability</h4>
+
+                    <table class="hod-new-problem-table">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Fleet</th>
+                                <th>Category</th>
+                                <th>Breakdown cause</th>
+                                <th>Hours</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${machines.length ? machines.map((item, index) => `
+                                <tr>
+                                    <td>${index + 1}</td>
+                                    <td>${hodEscape(item.fleet)}</td>
+                                    <td>${hodEscape(item.category)}</td>
+                                    <td title="${hodEscape(item.reason)}">
+                                        ${hodEscape(item.classification)}
+                                        <small class="hod-breakdown-reason">
+                                            ${hodEscape(item.reason)}
+                                        </small>
+                                    </td>
+                                    <td>${Number(item.hours).toFixed(1)}</td>
+                                </tr>
+                            `).join('') : `
+                                <tr>
+                                    <td colspan="5" class="hod-new-empty">
+                                        No breakdown records for this period
+                                    </td>
+                                </tr>
+                            `}
+                        </tbody>
+                    </table>
+
+                </div>
+
+                <div class="hod-breakdown-chart-section">
+                    <h4>BREAKDOWN CLASSIFICATION BAR GRAPH</h4>
+                    ${hodBreakdownBarChart(classifications)}
+                </div>
+            </div>
+        </section>
+    `;
+}
+
+function hodReliabilityPanel(engineering) {
+    const categories = [
+        ['Excavators', 'Excavator'],
+        ['Dozers', 'Dozer'],
+        ['ADTs', 'ADT']
+    ];
+
+    const metrics = [
+        ['MTBF', 'hrs'],
+        ['MTTR', 'hrs'],
+        ['Utilisation', '%'],
+        ['Downtime', '%']
+    ];
+
+    return `
+        <section class="hod-new-summary hod-reliability-panel">
+            <div class="hod-new-summary-title"
+                style="background:#006b3f;">
+                MAINTENANCE & RELIABILITY (Production and Swing Machine)
+            </div>
+            <h4 class="hod-reliability-subheading"
+                style="margin:8px 8px 5px;font-size:12px;font-weight:800;color:#082e57">
+                DOWNTIME
+            </h4>
+            <div class="hod-new-reliability-grid">
+                ${categories.map(([label, category]) => `
+                    <div class="hod-new-asset-card">
+                        <div class="hod-new-asset-name">
+                            <strong>${label}</strong>
+                        </div>
+                        <div class="hod-new-metrics">
+                            ${metrics.map(([name, unit]) => `
+                                <div class="hod-new-metric">
+                                    <span>${name}</span>
+                                    <small>(${unit})</small>
+                                    <strong>${
+                                        name === 'Utilisation'
+                                            ? hodPercent(
+                                                hodValue(
+                                                    engineering?.reliability
+                                                        ?.[category]?.adjusted_utilisation
+                                                )
+                                            )
+                                            : (name === 'MTBF' || name === 'MTTR')
+                                                ? (
+                                                    hodValue(
+                                                        engineering?.reliability
+                                                            ?.[category]?.[name.toLowerCase()]
+                                                    ) === null
+                                                        ? '—'
+                                                        : hodNumber(
+                                                            engineering.reliability[category][name.toLowerCase()],
+                                                            1
+                                                        )
+                                                )
+                                                : name === 'Downtime'
+                                                    ? (
+                                                        hodValue(
+                                                            engineering?.reliability
+                                                                ?.[category]?.downtime
+                                                        ) === null
+                                                            ? '—'
+                                                            : hodPercent(
+                                                                engineering.reliability[category].downtime
+                                                            )
+                                                    )
+                                                    : '—'
+                                    }</strong>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+            <div class="hod-new-footnote">
+                MTBF: operating hours per failure. MTTR: average completed breakdown restoration hours. Downtime: mechanical breakdown hours / required hours.
+            </div>
+
+            <h4 class="hod-reliability-subheading"
+                style="margin:12px 8px 5px;font-size:12px;font-weight:800;color:#082e57">
+                PLANNED MAINTENANCE
+            </h4>
+
+            <div class="hod-new-reliability-grid">
+                ${categories.map(([label, category]) => `
+                    <div class="hod-new-asset-card">
+                        <div class="hod-new-asset-name">
+                            <strong>${label}</strong>
+                        </div>
+                        <div class="hod-new-metrics">
+                            ${metrics.map(([name, unit]) => `
+                                <div class="hod-new-metric">
+                                    <span title="${
+                                        name === 'Utilisation'
+                                            ? 'Adjusted Utilisation = Work Hours / (Required Hours - Planned Maintenance Hours) x 100'
+                                            : ''
+                                    }">${
+                                        name === 'Downtime'
+                                            ? 'Planned %'
+                                            : name === 'MTBF'
+                                                ? 'Hrs/Service'
+                                                : name === 'MTTR'
+                                                    ? 'Avg Service'
+                                            : name === 'Utilisation'
+                                                ? 'Planned Hrs'
+                                                : name
+                                    }</span>
+                                    <small>(${name === 'Utilisation' ? 'hrs' : unit})</small>
+                                    <strong>${
+                                        name === 'MTBF'
+                                            ? (
+                                                hodValue(
+                                                    engineering?.reliability
+                                                        ?.[category]?.planned?.mtbf
+                                                ) === null
+                                                    ? '—'
+                                                    : hodNumber(
+                                                        engineering.reliability[category].planned.mtbf,
+                                                        1
+                                                    )
+                                            )
+                                            : name === 'MTTR'
+                                                ? hodNumber(
+                                                    engineering?.reliability
+                                                        ?.[category]?.planned?.mttr,
+                                                    1
+                                                )
+                                                : name === 'Utilisation'
+                                                    ? hodNumber(
+                                                        engineering?.reliability
+                                                            ?.[category]?.planned?.hours,
+                                                        1
+                                                    )
+                                                    : (
+                                                        hodValue(
+                                                            engineering?.reliability
+                                                                ?.[category]?.planned?.downtime
+                                                        ) === null
+                                                            ? '—'
+                                                            : hodNumber(
+                                                                engineering.reliability[category].planned.downtime,
+                                                                2
+                                                            ) + '%'
+                                                    )
+                                    }</strong>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+
+            <div class="hod-new-footnote">
+                Planned Hrs = A&U Engine planned maintenance hours. Avg Service = average completed service duration.
+            </div>
+
+        </section>
+    `;
+}
+
 function hodDashboard(row) {
     const engineering = row.engineering;
     return `<article class="hod-performance-dashboard" data-site="${hodEscape(row.site)}">
@@ -424,7 +711,6 @@ function hodDashboard(row) {
                 <div class="hod-domain-heading" style="margin-top:8px;display:block;height:auto;min-height:85px;padding:10px 12px;overflow:visible">
                         <div style="display:flex;align-items:center;justify-content:space-between">
                             <h3>Total Site Fleet</h3>
-                            <button type="button" class="hod-view-plant-detail" data-site="${hodEscape(row.site)}" data-from="${hodEscape(row.start_date)}" data-to="${hodEscape(row.end_date)}" style="background:white;color:#075583;border:0;border-radius:4px;padding:3px 9px;font-size:11px;font-weight:700;cursor:pointer">View Detail</button>
                         </div>
                         <div style="color:white;font-size:10px;font-weight:500;text-transform:uppercase">
                             Production and Swing Machines
@@ -443,11 +729,11 @@ function hodDashboard(row) {
                     </h4>
                     ${['avail','util'].map(metric=>`<div class="hod-gauge-row"><strong class="hod-gauge-label">${metric==='avail'?'Availability':'Utilisation'}</strong>${['Excavator','Dozer','ADT'].map(category=>hodGauge(category,metric,engineering.category_averages[category])).join('')}</div>`).join('')}
                     </div>
-${hodRankings(engineering,'avail')}
+${hodProblemMachinesPanel(engineering)}
             </section>
             <section class="hod-domain-panel hod-production-panel">
                 <div class="hod-domain-heading"><div><h3>Production</h3><span>Production performance</span></div></div>
-                <div class="hod-domain-main">${hodProduction(row)}</div>${hodRankings(engineering,'util')}
+                <div class="hod-domain-main">${hodProduction(row)}</div>${hodReliabilityPanel(engineering)}
             </section>
         </div>
 
@@ -615,30 +901,7 @@ function bindHodDetailButtons(view) {
         window.open(url, '_blank', 'noopener');
     });
 
-    view.page.main.find('.hod-view-plant-detail')
-        .off('click')
-        .on('click', function () {
-            const site = $(this).attr('data-site') || '';
-            const from = $(this).attr('data-from') || '';
-            const to = $(this).attr('data-to') || '';
 
-            if (!site || !from || !to) {
-                frappe.msgprint(__('Site and reporting dates are required.'));
-                return;
-            }
-
-            const params = new URLSearchParams({
-                site: site,
-                from_date: from,
-                to_date: to
-            });
-
-            window.open(
-                '/hod-machine-plant-list?' + params.toString(),
-                '_blank',
-                'noopener'
-            );
-        });
 }
 
 async function renderHodPresentationLayout(view) {
@@ -660,16 +923,27 @@ async function downloadHodPresentation(view) {
             clone.style.width = '1600px';
             clone.classList.add('hod-export-dashboard');
 
-            // Enlarge the logo inside its existing header position.
-            // Do not change the header or dashboard dimensions.
+            // Export-only cropped logo; preserve live dashboard logo.
+            const exportHeader = clone.querySelector('.hod-brand');
             const exportLogo = clone.querySelector('.hod-brand img');
-            if (exportLogo) {
-                exportLogo.style.width = '220px';
-                exportLogo.style.height = '65px';
+
+            if (exportHeader && exportLogo) {
+                exportHeader.style.height = '80px';
+                exportHeader.style.minHeight = '80px';
+                exportHeader.style.padding = '5px 12px';
+                exportHeader.style.alignItems = 'center';
+                exportHeader.style.overflow = 'hidden';
+
+                exportLogo.src =
+                    '/assets/is_production/images/isambane_logo_pptx.png';
+                exportLogo.style.width = '216px';
+                exportLogo.style.height = '68px';
+                exportLogo.style.maxWidth = 'none';
                 exportLogo.style.objectFit = 'contain';
+                exportLogo.style.objectPosition = 'left center';
                 exportLogo.style.flexShrink = '0';
-                exportLogo.style.transform = 'scale(1.3)';
-                exportLogo.style.transformOrigin = 'left center';
+                exportLogo.style.transform = 'none';
+                exportLogo.style.margin = '0';
             }
 
             // PowerPoint frame: black left and bottom only.
@@ -684,38 +958,12 @@ async function downloadHodPresentation(view) {
             try {
                 await document.fonts.ready;
                 await Promise.all([...clone.querySelectorAll('img')].map(img=>img.decode()));
-                // Capture actual View Detail button positions.
-                const dashboardRect = clone.getBoundingClientRect();
-                const linkAreas = [
-                    ['au', '.hod-view-au-detail'],
-                    ['fleet', '.hod-view-plant-detail']
-                ].map(([kind, selector]) => {
-                    const button = clone.querySelector(selector);
-                    if (!button) return null;
-                    const rect = button.getBoundingClientRect();
-                    return {
-                        kind,
-                        x: (rect.left - dashboardRect.left) / dashboardRect.width,
-                        y: (rect.top - dashboardRect.top) / dashboardRect.height,
-                        w: rect.width / dashboardRect.width,
-                        h: rect.height / dashboardRect.height
-                    };
-                }).filter(Boolean);
 
-                // Capture every Bottom 10 Availability detail button.
-                clone.querySelectorAll('.hod-view-breakdown-detail')
-                    .forEach(button => {
-                        const rect = button.getBoundingClientRect();
-                        linkAreas.push({
-                            kind: 'breakdown',
-                            machine: button.dataset.fleet || '',
-                            x: (rect.left - dashboardRect.left) / dashboardRect.width,
-                            y: (rect.top - dashboardRect.top) / dashboardRect.height,
-                            w: rect.width / dashboardRect.width,
-                            h: rect.height / dashboardRect.height
-                        });
-                    });
-
+                // Static PowerPoint: remove live ERPNext action buttons
+                // from the captured image only.
+                clone.querySelectorAll(
+                    '.hod-view-au-detail, .hod-view-plant-detail, .hod-view-breakdown-detail'
+                ).forEach(button => button.remove());
                 const siteRow = (view.data || []).find(
                     row => row.site === board.dataset.site
                 );
@@ -724,7 +972,7 @@ async function downloadHodPresentation(view) {
                     site:board.dataset.site,
                     start_date:siteRow?.start_date || '',
                     end_date:siteRow?.end_date || '',
-                    link_areas:linkAreas,
+
                     image_data:await captureHodSection(clone,{width:1600,pixelRatio:1.5,quality:0.96})});
             } finally { root.remove(); }
         }
