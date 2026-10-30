@@ -703,7 +703,7 @@ function hodReliabilityPanel(engineering) {
 function hodDashboard(row) {
     const engineering = row.engineering;
     return `<article class="hod-performance-dashboard" data-site="${hodEscape(row.site)}">
-        <header class="hod-brand"><img src="/assets/is_production/images/isambane_logo.png" alt="Isambane Mining"><h2>${hodEscape(hodGetComplexName(row.site))} · Production Performance</h2></header>
+        <header class="hod-brand"><img src="/files/ISAMBANE-WHITE.png" alt="Isambane Mining"><h2>${hodEscape(hodGetComplexName(row.site))} · Production Performance</h2></header>
         <div class="hod-period"><strong>${hodEscape(row.site)}</strong><span>${hodEscape(row.period)}</span></div>
         <div class="hod-columns">
             <section class="hod-domain-panel hod-engineering-panel">
@@ -935,7 +935,7 @@ async function downloadHodPresentation(view) {
                 exportHeader.style.overflow = 'hidden';
 
                 exportLogo.src =
-                    '/assets/is_production/images/isambane_logo_pptx.png';
+                    '/files/ISAMBANE-WHITE.png';
                 exportLogo.style.width = '216px';
                 exportLogo.style.height = '68px';
                 exportLogo.style.maxWidth = 'none';
