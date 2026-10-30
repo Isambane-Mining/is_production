@@ -1,6 +1,7 @@
 from io import BytesIO
 import unittest
 from pptx import Presentation
+from pptx.oxml.ns import qn
 from is_production.production.report.hod_presentation.hod_presentation import build_hod_presentation
 
 
@@ -14,14 +15,20 @@ class TestDashboardExport(unittest.TestCase):
         output.seek(0)
         deck = Presentation(output)
         self.assertEqual(len(deck.slides), 1)
-        pictures = [shape for shape in deck.slides[0].shapes if shape.shape_type == 13]
-        self.assertEqual(len(pictures), 1)
-        self.assertEqual([s.text for s in deck.slides[0].shapes if s.has_text_frame], ['1'])
-        picture = pictures[0]
-        self.assertGreaterEqual(picture.left, 0)
-        self.assertGreaterEqual(picture.top, 0)
-        self.assertLessEqual(picture.left+picture.width, deck.slide_width+2)
-        self.assertLessEqual(picture.top+picture.height, deck.slide_height+2)
+        slide = deck.slides[0]
+        self.assertEqual(
+            [s.text for s in slide.shapes if s.has_text_frame], ['1']
+        )
+        self.assertFalse(any(s.shape_type == 13 for s in slide.shapes))
+        background = slide._element.cSld.bg
+        self.assertIsNotNone(background)
+        images = background.xpath('.//a:blip')
+        self.assertEqual(len(images), 1)
+        relationship = images[0].get(qn('r:embed'))
+        self.assertTrue(relationship)
+        self.assertTrue(
+            slide.part.related_part(relationship).content_type.startswith('image/')
+        )
 
     def test_two_sites_export_two_dashboard_slides(self):
         pixel = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAFUlEQVR4nGP8//8/A27AhEduBEsDAKXjAxF9kqZqAAAAAElFTkSuQmCC'
@@ -36,4 +43,13 @@ class TestDashboardExport(unittest.TestCase):
         self.assertEqual(len(deck.slides),2)
         for slide in deck.slides:
             self.assertEqual([s.text for s in slide.shapes if s.has_text_frame], [str(deck.slides.index(slide) + 1)])
-            self.assertEqual(len([shape for shape in slide.shapes if shape.shape_type == 13]),1)
+            self.assertFalse(any(shape.shape_type == 13 for shape in slide.shapes))
+            background = slide._element.cSld.bg
+            self.assertIsNotNone(background)
+            images = background.xpath('.//a:blip')
+            self.assertEqual(len(images), 1)
+            relationship = images[0].get(qn('r:embed'))
+            self.assertTrue(relationship)
+            self.assertTrue(
+                slide.part.related_part(relationship).content_type.startswith('image/')
+            )
