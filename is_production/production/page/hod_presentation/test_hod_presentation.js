@@ -116,7 +116,7 @@ test('gauges carry their threshold colours and font sizes into SVG image capture
     const context = load();
     const html = vm.runInContext("hodGauge('ADT','avail',{including:{avail:74},excluding:{avail:80}})",context);
     assert.match(html,/stroke="#e02f43"/);
-    assert.match(html,/fill="#b42131" font-family="Arial" font-size="24"/);
+    assert.match(html,/fill="#b42131" font-family="Arial" font-size="27" font-weight="800"/);
     assert.match(html,/stroke-dasharray="74 100"/);
     const missing = vm.runInContext("hodGauge('Dozer','util',{})",context);
     assert.match(missing,/stroke="#a0a8b2"/);
@@ -127,7 +127,15 @@ test('export includes only the unchanged dashboard for each selected site', asyn
     const context = load();
     const sites = ['Uitgevallen','Klipfontein'];
     const boards = sites.map(site=>({dataset:{site},cloneNode:()=>({
-        kind:`dashboard-${site}`,style:{},classList:{add(){}},querySelectorAll:()=>[]
+        kind:`dashboard-${site}`,
+        style:{},
+        classList:{add(){}},
+        querySelector: selector => (
+            selector === '.hod-brand' || selector === '.hod-brand img'
+                ? {style:{},src:''}
+                : null
+        ),
+        querySelectorAll:()=>[]
     })}));
     let removed = 0, exported, error;
     context.document = {

@@ -254,6 +254,16 @@ class TestAvailabilityGrids(unittest.TestCase):
         # the averages exercise the real Engine with unequal shift hours.
         module = SimpleNamespace(
             fetch_grouped_data=Mock(return_value=rows), au_engine=engine,
+            build_scope_averages_from_source_rows=lambda source: (
+                {
+                    'ADT': {'avail': 95, 'util': 50},
+                    'Dozer': {'avail': None, 'util': None},
+                },
+                {
+                    'ADT': {'avail': 0, 'util': 0},
+                    'Dozer': {'avail': None, 'util': None},
+                },
+            ),
             get_engine_spare_swing_asset_map=lambda source: {'S': 'Spare'},
             get_category=lambda row: row['asset_category'],
             get_machine=lambda row: row['asset_name'],
@@ -274,7 +284,8 @@ class TestAvailabilityGrids(unittest.TestCase):
             '100% A & U', 'All Assets',
         )
         expected = {'excluding': {'avail': 95, 'util': 50},
-                    'including': {'avail': 76, 'util': 50}}
+                    'including': {'avail': 76, 'util': 50},
+                    'swing': {'avail': None, 'util': None}}
         self.assertEqual(data['averages'], expected)
         self.assertEqual([m['machine'] for m in data['machines']], ['P', 'S', 'D'])
         self.assertNotIn('Loader', data['category_averages'])
@@ -282,10 +293,15 @@ class TestAvailabilityGrids(unittest.TestCase):
         self.assertIn('data-machine="P"', rendered)
         self.assertIn('data-machine="S"', rendered)
         self.assertIn('class="hod-au-spare">76%</span>', rendered)
-        self.assertEqual(data['category_averages']['ADT'], expected)
+        self.assertEqual(data['category_averages']['ADT'], {
+            'excluding': {'avail': 95, 'util': 50},
+            'including': {'avail': 76, 'util': 50},
+            'swing': {'avail': 0, 'util': 0},
+        })
         self.assertEqual(data['category_averages']['Dozer'], {
             'excluding': {'avail': None, 'util': None},
             'including': {'avail': None, 'util': None},
+            'swing': {'avail': None, 'util': None},
         })
         self.assertEqual([m['machine'] for m in data['machines'] if m['is_spare']], ['S'])
 

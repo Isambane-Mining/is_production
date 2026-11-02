@@ -450,6 +450,7 @@ def get_report_payload(
     ) = validate_filters(filters)
 
     site = site_override or sites[0]
+    check_hod_site_access(site)
 
     monthly_plan = get_latest_hod_monthly_plan(
         site,
@@ -1025,6 +1026,7 @@ def validate_filters(filters):
     end_date = getdate(end_date)
 
     for site in sites:
+        check_hod_site_access(site)
         if not frappe.db.exists("Location", site):
             frappe.throw(
                 _("Location {0} does not exist.").format(
@@ -2504,6 +2506,8 @@ def get_availability_dashboard_html(
             _("Start Date cannot be after End Date.")
         )
 
+    check_hod_site_access(site)
+
     if not frappe.db.exists(
         "Location",
         site,
@@ -2567,6 +2571,15 @@ def get_availability_dashboard_html(
 def ensure_interactive_report():
     """Keep HOD Presentation out of Frappe's prepared-report queue."""
     check_report_access()
+
+    report = frappe.get_doc("Report", REPORT_NAME)
+    if not frappe.has_permission(
+        "Report", "write", doc=report
+    ):
+        frappe.throw(
+            _("You do not have permission to change Report settings."),
+            frappe.PermissionError,
+        )
 
     values = frappe.db.get_value(
         "Report",
@@ -2719,14 +2732,53 @@ def download_captured_presentation(
 ):
     check_report_access()
 
-    slides = frappe.parse_json(
-        captured_slides or "[]"
-    )
+    export_site = str(site or "").strip()
+    if not export_site:
+        frappe.throw(_("A presentation site is required."))
+
+    if frappe.db.exists("Location", export_site):
+        export_sites = [export_site]
+    else:
+        export_sites = [
+            value.strip()
+            for value in export_site.split(" / ")
+            if value.strip()
+        ]
+
+    if not export_sites or len(export_sites) > 30:
+        frappe.throw(_("Invalid presentation sites."))
+
+    for export_location in export_sites:
+        if not frappe.db.exists("Location", export_location):
+            frappe.throw(_("Invalid presentation site."))
+        check_hod_site_access(export_location)
+
+    raw_slides = captured_slides or "[]"
+
+    if not isinstance(raw_slides, str):
+        frappe.throw(_("Invalid presentation payload."))
+
+    if len(raw_slides) > 50 * 1024 * 1024:
+        frappe.throw(_("Presentation payload is too large."))
+
+    slides = frappe.parse_json(raw_slides)
 
     if not isinstance(slides, list) or not slides:
-        frappe.throw(
-            _("No report sections were captured.")
-        )
+        frappe.throw(_("No report sections were captured."))
+
+    if len(slides) > 100:
+        frappe.throw(_("Maximum 100 presentation slides allowed."))
+
+    for item in slides:
+        if not isinstance(item, dict):
+            frappe.throw(_("Invalid presentation slide."))
+
+        image_data = item.get("image_data")
+        if not isinstance(image_data, str) or not image_data:
+            frappe.throw(_("Invalid presentation image."))
+
+        if len(image_data) > 8 * 1024 * 1024:
+            frappe.throw(_("Presentation image is too large."))
 
     payload = {
         "site": site or "HOD Presentation",
@@ -2779,6 +2831,60 @@ def download_captured_presentation(
     }
 
 
+
+
+
+def check_hod_site_access(site):
+    """Enforce HOD Location assignments on the server."""
+    user = frappe.session.user
+
+    if user == "Administrator":
+        return
+
+    roles = set(frappe.get_roles(user))
+
+    if roles.intersection({
+        "Production Manager",
+        "Engineering Manager",
+    }):
+        return
+
+    if not roles.intersection({
+        "Production User",
+        "Engineering User",
+    }):
+        frappe.throw(
+            _("You are not authorised to access HOD site data."),
+            frappe.PermissionError,
+        )
+
+    permissions = frappe.get_all(
+        "User Permission",
+        filters={
+            "user": user,
+            "allow": "Location",
+            "for_value": site,
+        },
+        fields=[
+            "apply_to_all_doctypes",
+            "applicable_for",
+        ],
+        limit_page_length=0,
+    )
+
+    allowed = any(
+        row.apply_to_all_doctypes
+        or row.applicable_for == "Monthly Production Planning"
+        for row in permissions
+    )
+
+    if not allowed:
+        frappe.throw(
+            _("You do not have HOD access to site {0}.").format(
+                frappe.bold(site)
+            ),
+            frappe.PermissionError,
+        )
 
 
 def check_report_access():
@@ -2899,9 +3005,24 @@ def build_grid_data(module, *, site, start_date, end_date, machine_scope,
 
     def averages(rows):
         output = {}
-        for cohort in ('excluding', 'including'):
-            selected = [row for row in rows if cohort == 'including'
-                        or module.get_machine(row) not in spare_map]
+        for cohort in ('excluding', 'including', 'swing'):
+            selected = [
+                row for row in rows
+                if (
+                    cohort == 'including'
+                    or (
+                        cohort == 'excluding'
+                        and module.get_machine(row) not in spare_map
+                    )
+                    or (
+                        cohort == 'swing'
+                        and int(row.get('is_spare_swing_unit') or 0) == 1
+                    )
+                )
+            ]
+            if not selected:
+                output[cohort] = {'avail': None, 'util': None}
+                continue
             summary = module.au_engine.build_summary_row(selected, indent=0)
             module.au_engine.apply_au_percentage_basis([summary], au_target_filter)
             output[cohort] = {
@@ -2910,13 +3031,61 @@ def build_grid_data(module, *, site, start_date, end_date, machine_scope,
             }
         return output
 
+    production_avgs, swing_avgs = (
+        module.build_scope_averages_from_source_rows(source_rows)
+    )
+
+    category_averages = {
+        category: averages([
+            row for row in shifts
+            if module.get_category(row) == category
+        ])
+        for category, rows in period_series.items()
+        if rows and category in CATEGORY_LABELS
+    }
+
+    for category, values in category_averages.items():
+        values['swing'] = swing_avgs.get(
+            category, {'avail': None, 'util': None}
+        )
+
     return {
         'machines': machines,
-        'averages': averages(shifts),
-        'category_averages': {
-            category: averages([row for row in shifts if module.get_category(row) == category])
-            for category, rows in period_series.items() if rows and category in CATEGORY_LABELS
+        'reliability_downtime_hours': {
+            category: {
+                'required': sum(
+                    float(row.get('required_hours') or 0)
+                    for row in shifts
+                    if module.get_category(row) == category
+                ),
+                'breakdown': sum(
+                    float(row.get('breakdown_hours') or 0)
+                    for row in shifts
+                    if module.get_category(row) == category
+                ),
+                'planned': sum(
+                    float(row.get('planned_maintenance_hours') or 0)
+                    for row in shifts
+                    if module.get_category(row) == category
+                ),
+                'work': sum(
+                    float(row.get('work_hours') or 0)
+                    for row in shifts
+                    if module.get_category(row) == category
+                ),
+            }
+            for category in CATEGORY_LABELS
         },
+        'reliability_work_hours': {
+            category: sum(
+                float(row.get('work_hours') or 0)
+                for row in shifts
+                if module.get_category(row) == category
+            )
+            for category in CATEGORY_LABELS
+        },
+        'averages': averages(shifts),
+        'category_averages': category_averages,
         'start_date': str(start_date), 'end_date': str(end_date),
     }
 
@@ -3297,8 +3466,66 @@ def build_hod_presentation(
 
             # Dashboard captures already include the complete branded heading.
             if heading_style == "dashboard":
-                _add_image_fitted(slide, image_bytes, top_inches=0,
-                                  height_inches=SLIDE_HEIGHT, side_margin_inches=0)
+                _add_image_fitted(
+                    slide,
+                    image_bytes,
+                    top_inches=0,
+                    height_inches=SLIDE_HEIGHT,
+                    top_align=True,
+                    side_margin_inches=0,
+                    stretch_to_fill=True,
+                )
+
+                from pptx.oxml.xmlchemy import OxmlElement
+                dashboard_image = slide.shapes[-1]
+
+                # HOD_FIXED_SLIDE_BACKGROUND
+                # Use the captured dashboard image as the actual slide
+                # background, not as an independently movable picture.
+                from pptx.oxml.ns import qn
+
+                image_relationship = (
+                    dashboard_image._element.blipFill.blip.get(
+                        qn("r:embed")
+                    )
+                )
+
+                if not image_relationship:
+                    raise ValueError(
+                        "Dashboard image relationship is missing."
+                    )
+
+                background = OxmlElement("p:bg")
+                properties = OxmlElement("p:bgPr")
+                image_fill = OxmlElement("a:blipFill")
+
+                image_ref = OxmlElement("a:blip")
+                image_ref.set(qn("r:embed"), image_relationship)
+
+                stretch = OxmlElement("a:stretch")
+                stretch.append(OxmlElement("a:fillRect"))
+
+                image_fill.append(image_ref)
+                image_fill.append(stretch)
+                properties.append(image_fill)
+                properties.append(OxmlElement("a:effectLst"))
+                background.append(properties)
+
+                slide_content = slide._element.cSld
+
+                for existing_background in slide_content.findall(
+                    qn("p:bg")
+                ):
+                    slide_content.remove(existing_background)
+
+                slide_content.insert(0, background)
+
+                # Remove the original movable image.
+                # Hyperlinks remain as invisible clickable shapes.
+                slide.shapes._spTree.remove(
+                    dashboard_image._element
+                )
+
                 continue
 
             detailed_heading = bool(
