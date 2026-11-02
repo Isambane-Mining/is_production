@@ -544,7 +544,7 @@ canvas.chart { width: 100%; display: block; }
           <select id="tabSelect">
             <optgroup label="Set-up"><option value="project">Project</option><option value="data">Geological Data</option><option value="layers">Feature layers</option></optgroup>
             <optgroup label="Resource"><option value="resource">Resource</option><option value="reserve">Reserve</option><option value="rank">Block Margin Rank</option><option value="strip">Strip Ratio</option></optgroup>
-            <optgroup label="Mining"><option value="production">Production</option><option value="blast">Drill and Blast</option><option value="dumps">Dumps</option><option value="roads">Roads</option><option value="sequence">Sequence</option></optgroup>
+            <optgroup label="Mining"><option value="production">Production</option><option value="blast">Drill and Blast</option><option value="geotech">Geotechnical</option><option value="dumps">Dumps</option><option value="roads">Roads</option><option value="sequence">Sequence</option></optgroup>
             <optgroup label="Water and rehabilitation"><option value="hydro">Hydrogeological</option><option value="rehab">Rehab</option></optgroup>
             <optgroup label="Outcomes"><option value="finance">Finance</option><option value="recon">Recon</option><option value="results">Results</option></optgroup>
           </select>
@@ -1738,30 +1738,32 @@ const Dxf = (() => {
     }
 
     // explode into world geometry
-    const out = { polylines: [], hatches: [], texts: [], inserts: [], points: [], layers: [], units, stats: {}, blockNames: [] };
+    const out = { polylines: [], hatches: [], circles: [], texts: [], inserts: [], points: [], layers: [], units, stats: {}, blockNames: [] };
     const stat = (layer, type) => { const s = out.stats[layer] || (out.stats[layer] = {}); s[type] = (s[type] || 0) + 1; };
     const I = [1, 0, 0, 1, 0, 0];
     const mul = (A, B) => [A[0] * B[0] + A[2] * B[1], A[1] * B[0] + A[3] * B[1], A[0] * B[2] + A[2] * B[3], A[1] * B[2] + A[3] * B[3], A[0] * B[4] + A[2] * B[5] + A[4], A[1] * B[4] + A[3] * B[5] + A[5]];
     const ap = (M, p) => [M[0] * p[0] + M[2] * p[1] + M[4], M[1] * p[0] + M[3] * p[1] + M[5]];
     const FLIP = [-1, 0, 0, 1, 0, 0];
     const usedBlocks = new Set();
-    function emit(e, M, layerFrom, depth) {
+    function emit(e, M, layerFrom, depth, from) {
       if (e.space === 1 && depth === 0) return; // paper space
       const layer = e.layer === '0' && layerFrom ? layerFrom : e.layer;
+      const tag = o => { if (from != null) o.ins = from; return o; }; // (drawn by a block reference: ins, the index of the outermost one)
       const Mx = e.flipX ? mul(M, FLIP) : M;
       stat(layer, e.type);
       switch (e.type) {
         case 'LWPOLYLINE': case 'POLYLINE': case 'SPLINE': {
           if (e.mesh || !e.pts || e.pts.length < 2) return;
           const pts = withBulges(e.pts, e.bul || [], e.closed).map(p => ap(Mx, p));
-          out.polylines.push({ layer, pts, closed: !!e.closed, src: e.type });
+          out.polylines.push(tag({ layer, pts, closed: !!e.closed, src: e.type }));
           return;
         }
-        case 'LINE': out.polylines.push({ layer, pts: e.pts.map(p => ap(Mx, p)), closed: false, src: 'LINE' }); return;
-        case 'ARC': out.polylines.push({ layer, pts: arcPoints(e.c, e.r, e.a0, e.a1).map(p => ap(Mx, p)), closed: false, src: 'ARC' }); return;
-        case 'HATCH': for (const L of e.loops) if (L.length > 2) out.hatches.push({ layer, pts: L.map(p => ap(Mx, p)) }); return;
+        case 'LINE': out.polylines.push(tag({ layer, pts: e.pts.map(p => ap(Mx, p)), closed: false, src: 'LINE' })); return;
+        case 'ARC': out.polylines.push(tag({ layer, pts: arcPoints(e.c, e.r, e.a0, e.a1).map(p => ap(Mx, p)), closed: false, src: 'ARC' })); return;
+        case 'HATCH': for (const L of e.loops) if (L.length > 2) out.hatches.push(tag({ layer, pts: L.map(p => ap(Mx, p)) })); return;
         case 'TEXT': case 'MTEXT': { if (!e.text) return; const p = ap(Mx, [e.x, e.y]); out.texts.push({ layer, x: p[0], y: p[1], text: e.text }); return; }
-        case 'POINT': { const p = ap(Mx, [e.x, e.y]); out.points.push({ layer, x: p[0], y: p[1] }); return; }
+        case 'POINT': { const p = ap(Mx, [e.x, e.y]); out.points.push(tag({ layer, x: p[0], y: p[1] })); return; }
+        case 'CIRCLE': { if (!(e.r > 0)) return; out.circles.push(tag({ layer, c: ap(Mx, e.c), r: e.r * Math.hypot(Mx[0], Mx[1]) })); return; }
         case 'INSERT': {
           const blk = blocks.get(e.name);
           const attribs = {};
@@ -1769,8 +1771,8 @@ const Dxf = (() => {
             if (a.tag) attribs[a.tag] = a.text;
             if (a.text) { const p = ap(a.flipX ? mul(M, FLIP) : M, [a.x, a.y]); out.texts.push({ layer: a.layer === '0' ? layer : a.layer, x: p[0], y: p[1], text: a.text, attrib: a.tag }); }
           }
-          const ins = ap(Mx, [e.x, e.y]);
-          out.inserts.push({ layer, name: e.name, x: ins[0], y: ins[1], attribs });
+          const ins = ap(Mx, [e.x, e.y]), k = out.inserts.length;
+          out.inserts.push(tag({ layer, name: e.name, x: ins[0], y: ins[1], attribs }));
           if (!blk || depth > 8) return;
           usedBlocks.add(e.name);
           const r = (e.rot * Math.PI) / 180, cr = Math.cos(r), sr = Math.sin(r);
@@ -1781,7 +1783,7 @@ const Dxf = (() => {
             const L = [cr * e.sx, sr * e.sx, -sr * e.sy, cr * e.sy, tx, ty];
             const B = [1, 0, 0, 1, -blk.base[0], -blk.base[1]];
             const Mi = mul(Mx, mul(L, B));
-            for (const be of blk.ents) if (be.type !== 'ATTDEF') emit(be, Mi, layer, depth + 1);
+            for (const be of blk.ents) if (be.type !== 'ATTDEF') emit(be, Mi, layer, depth + 1, from != null ? from : k);
           }
           return;
         }
@@ -2016,24 +2018,26 @@ const Dxf = (() => {
   }
 
   /* If the layout does not line up with the elevation model, try the usual convention mix-ups.
-     blocks: in display coords; grid bbox in display coords. Returns {name, fn} or null. */
-  function detectFix(blocks, bbox) {
-    if (!blocks.length) return null;
-    const cen = blocks.map(b => Geo.centroid(b.pts));
+     blocks: in display coords; grid bbox in display coords. Returns {id, name, fn, share} or null. */
+  const FIXES = [
+    ['flip', 'the signs of both coordinates were flipped (positive Westing/Southing versus negative CAD style)', p => [-p[0], -p[1]]],
+    ['swap', 'X and Y were swapped', p => [p[1], p[0]]],
+    ['swapflip', 'X and Y were swapped and their signs flipped', p => [-p[1], -p[0]]],
+    ['mm', 'millimetres were converted to metres', p => [p[0] / 1000, p[1] / 1000]],
+    ['mmflip', 'millimetres were converted to metres and the signs flipped', p => [-p[0] / 1000, -p[1] / 1000]]
+  ];
+  const fixFn = id => (FIXES.find(f => f[0] === id) || [null, null, p => p])[2];
+  // (on points: the share of them on the grid as they are, and with each mix-up put right)
+  function fixFor(cen, bbox) {
+    if (!cen.length) return null;
     const inside = f => cen.filter(c => { const p = f(c); return p[0] >= bbox[0] && p[0] <= bbox[2] && p[1] >= bbox[1] && p[1] <= bbox[3]; }).length / cen.length;
     const base = inside(p => p);
     if (base >= 0.5) return null;
-    const cands = [
-      ['the signs of both coordinates were flipped (positive Westing/Southing versus negative CAD style)', p => [-p[0], -p[1]]],
-      ['X and Y were swapped', p => [p[1], p[0]]],
-      ['X and Y were swapped and their signs flipped', p => [-p[1], -p[0]]],
-      ['millimetres were converted to metres', p => [p[0] / 1000, p[1] / 1000]],
-      ['millimetres were converted to metres and the signs flipped', p => [-p[0] / 1000, -p[1] / 1000]]
-    ];
     let best = null, bs = base;
-    for (const [name, fn] of cands) { const s = inside(fn); if (s > bs + 0.2 && s >= 0.6) { bs = s; best = { name, fn, share: s }; } }
+    for (const [id, name, fn] of FIXES) { const s = inside(fn); if (s > bs + 0.2 && s >= 0.6) { bs = s; best = { id, name, fn, share: s }; } }
     return best;
   }
+  function detectFix(blocks, bbox) { return blocks.length ? fixFor(blocks.map(b => Geo.centroid(b.pts)), bbox) : null; }
 
   // Minimal R12 writer: polylines (closed or open) + texts
   /* items: {kind: 'poly', layer, pts: [[x, y, z?]…], closed, d3} · {kind: 'line', layer, a, b} · {kind: 'text', layer, x, y, z?, text, h, align}
@@ -2066,7 +2070,7 @@ const Dxf = (() => {
     return L.join('\r\n');
   }
 
-  return { parse, summarize, buildBlocks, detectFix, polygonize, write, cleanMText, nearClosed };
+  return { parse, summarize, buildBlocks, detectFix, fixFor, fixFn, polygonize, write, cleanMText, nearClosed };
 })();
 
 /* ===== Minimal PDF writer (DOM-free): vector pages, the standard Helvetica fonts, RGB images, layers (optional content
@@ -2531,10 +2535,10 @@ const Model = (() => {
   function rasterRes(r) { const A = r.geo.affine; return Math.hypot(A.a, A.d); }
 
   // Resample a raster band (file CRS) onto the working grid (display coords)
-  function resample(r, grid, sign) {
+  function resample(r, grid, sign, band = 0) {
     const { x0, y0, nx, ny, cell } = grid;
     const out = new Float32Array(nx * ny).fill(NaN);
-    const inv = Tiff.invAffine(r.geo.affine), B = r.bands[0], W = r.width, H = r.height;
+    const inv = Tiff.invAffine(r.geo.affine), B = r.bands[band] || r.bands[0], W = r.width, H = r.height;
     const px = rasterRes(r);
     const k = Math.max(1, Math.min(5, Math.round(cell / px)));
     const val = (i, j) => (i < 0 || j < 0 || i >= W || j >= H ? NaN : B[j * W + i]);
@@ -2596,13 +2600,53 @@ const Model = (() => {
   }
 
   // ---------- workspace ----------
-  function buildWorkspace(project, surf) {
+  function buildWorkspace(project, surf, dep) {
     const g = project.grid;
-    // surfRaw: the surfaces as loaded; surf: the ones that are mined (a seam below its cut-off has no thickness there)
+    // surfRaw: the surfaces as loaded (cut down to a survey of the ground now, dep, when there is one: surf0 keeps them as
+    // loaded); surf: the ones that are mined (a seam below its cut-off has no thickness there)
     const ws = { project, nx: g.nx, ny: g.ny, cell: g.cell, x0: g.x0, y0: g.y0, n: g.nx * g.ny, surf, surfRaw: surf, A: g.cell * g.cell };
-    ws.topo = surf[0];
+    if (dep && dep.length === ws.n) { ws.surf0 = surf; ws.dep = dep; ws.surf = ws.surfRaw = deplete(surf, dep); }
+    ws.topo = ws.surf[0];
     rasterizeBlocks(ws);
     return ws;
+  }
+  /* Depletion: a survey DEM of the ground now (P.depletion, Geological Data tab) takes out what was mined before it. Every
+     surface is cut down to the survey where the survey lies below it, so the blocks keep only what is still in the ground
+     and the schedule starts from that ground (ws.topo). Where the survey lies above the model (dumps, stockpiles,
+     backfill) nothing changes: the layers of the model are in situ there. dep: on the model grid, NaN where the survey
+     has no value. */
+  function deplete(S, dep) {
+    return S.map(a => { let t = null; for (let c = 0; c < a.length; c++) if (dep[c] < a[c]) { if (!t) t = Float32Array.from(a); t[c] = dep[c]; } return t || a; });
+  }
+  function setDepletion(ws, dep) {
+    const S0 = ws.surf0 || ws.surfRaw;
+    if (dep && dep.length === ws.n) { ws.surf0 = S0; ws.dep = dep; ws.surfRaw = deplete(S0, dep); }
+    else { ws.surfRaw = S0; ws.surf0 = null; ws.dep = null; }
+    ws.surf = ws.surfRaw; ws.topo = ws.surf[0]; // (the keep-out zones stay: their floors are the layers', and mined ground has nothing above them)
+    applyCutoff(ws);
+  }
+  /* What the survey took out: per layer the bcm and tons above it (after the seam cut-off, as the schedule has them), the blocks mined out
+     (less than 1% left) and partly mined, the area cut, and where the survey lies above the model (not in situ) */
+  function depletionStats(ws) {
+    if (!ws || !ws.surf0 || !ws.dep) return null;
+    const P = ws.project, nL = P.layers.length, key = P.layers.map(L => L.density).join('|');
+    if (ws._depl && ws._depl.surf === ws.surf && ws._depl.key === key) return ws._depl.q; // (kept until the surfaces or the densities change)
+    // (as the schedule has them: after the seam cut-off, which the model as built gets too)
+    const w0 = Object.assign({}, ws, { surfRaw: ws.surf0, surf: ws.surf0 }); applyCutoff(w0);
+    const v0 = blockVolumes(w0), v1 = blockVolumes(ws);
+    const layers = P.layers.map(() => ({ bcm: 0, t: 0 }));
+    let full = 0, part = 0;
+    for (let b = 0; b < v0.length; b++) {
+      let a = 0, z = 0;
+      for (let l = 0; l < nL; l++) { const d = v0[b][l] - v1[b][l]; a += v0[b][l]; z += v1[b][l]; if (d > 1e-6) { layers[l].bcm += d; layers[l].t += d * blockDensity(P, b, l); } }
+      if (a > 1 && a - z > 0.5) { if (z < 0.01 * a) full++; else part++; }
+    }
+    const top = ws.surf0[0], dep = ws.dep;
+    let cut = 0, up = 0, upV = 0;
+    for (let c = 0; c < ws.n; c++) { const d = dep[c]; if (d !== d) continue; if (d < top[c] - 0.1) cut++; else if (d > top[c] + 0.3) { up++; upV += (d - top[c]) * ws.A; } }
+    const q = { layers, full, part, cut: { area: cut * ws.A }, above: { area: up * ws.A, bcm: upV } };
+    ws._depl = { surf: ws.surf, key, q };
+    return q;
   }
   function cellXY(ws, c) { const i = c % ws.nx, j = (c / ws.nx) | 0; return [ws.x0 + (i + 0.5) * ws.cell, ws.y0 + (j + 0.5) * ws.cell]; }
   function cellAt(ws, x, y) {
@@ -3165,7 +3209,7 @@ const Model = (() => {
   function arFactor(P, L) { const q = losses(P, L); return Math.max(0, (1 - q.geo / 100) * (1 - q.mining / 100) * (1 + q.contam / 100)); }
   function newEquipment(kind, extra) { return Object.assign({ id: U.uid('eq'), kind, activityId: '' }, U.deepClone(FLEET_DEFAULTS[kind]), extra || {}); }
 
-  return { LAYER_TYPES, ACT_COLORS, DUMP_COLORS, newProject, autoLayers, seamToken, proposeGrid, rasterExtent, rasterRes, resample, fillHoles, conformSurfaces, buildWorkspace, applyCutoff, cutTarget, cutTargets, cellXY, cellAt, sampleGrid, cellsInPolygon, rasterizeBlocks, layerIndex, blockVolumes, layerThickness, blockDensity, kindStart, kindOf, rampToeSurf, rampSlopes, RAMP_BATTER, RAMP_FILL, surfaceLabel, rampEnd, actDests, syncActColors, blockLimits, blockDepth, zoneBlocks, stripSource, pathStrips, idStrip, blockPits, pitIndex, pitName, boxCuts, boxDef, boxMonths, boxName, boxTitle, BOX_MONTHS, pitBaseName, fleetHost, actFleet, syncPits, dropActivity, setTopsoilAsWaste, PIT_COLORS, REST, defaultActivities, newEquipment, FLEET_DEFAULTS, niceCell, teams, losses, arFactor, TEAM_LCM, pitStart, bench, wasteFollows, rainDerate, reserveInside, hasReserve, reserveRings, inReserve };
+  return { LAYER_TYPES, ACT_COLORS, DUMP_COLORS, deplete, setDepletion, depletionStats, newProject, autoLayers, seamToken, proposeGrid, rasterExtent, rasterRes, resample, fillHoles, conformSurfaces, buildWorkspace, applyCutoff, cutTarget, cutTargets, cellXY, cellAt, sampleGrid, cellsInPolygon, rasterizeBlocks, layerIndex, blockVolumes, layerThickness, blockDensity, kindStart, kindOf, rampToeSurf, rampSlopes, RAMP_BATTER, RAMP_FILL, surfaceLabel, rampEnd, actDests, syncActColors, blockLimits, blockDepth, zoneBlocks, stripSource, pathStrips, idStrip, blockPits, pitIndex, pitName, boxCuts, boxDef, boxMonths, boxName, boxTitle, BOX_MONTHS, pitBaseName, fleetHost, actFleet, syncPits, dropActivity, setTopsoilAsWaste, PIT_COLORS, REST, defaultActivities, newEquipment, FLEET_DEFAULTS, niceCell, teams, losses, arFactor, TEAM_LCM, pitStart, bench, wasteFollows, rainDerate, reserveInside, hasReserve, reserveRings, inReserve };
 })();
 
 /* ===== KML overlays and keep-out zones (DOM-free) =====
@@ -3211,6 +3255,57 @@ const Keep = (() => {
     const name = String(fileName || 'Overlay').replace(/\.[^.]+$/, '');
     return { id: U.uid('ovl'), name, file: fileName || '', color: OVL_COLORS[(index || 0) % OVL_COLORS.length], show: true, surface: '', angle: 90, dumps: true, folders: outF, features };
   }
+  /* A DXF (Dxf.parse) as an overlay: each of its layers (o.layers: the ones chosen) is a folder; closed polylines, hatches
+     and circles are polygons, open polylines, lines and arcs are lines, points and block references are points. A
+     polygon is named by the text inside it. The coordinates stay as in the file, in the model's coordinate system
+     (ov.xy), with o.fix (a Dxf mix-up id) when they needed one to land on the model. */
+  function dxfShapes(d, want = () => true) {
+    const r3 = v => Math.round(v * 1000) / 1000, out = [];
+    // (a block reference under 20 m across is a symbol — a tree, a beacon, a grave — and comes in as its point; a larger one
+    // keeps its lines and shapes)
+    const ext = new Map(), grow = (k, pts) => { if (k == null) return; let b = ext.get(k); if (!b) ext.set(k, (b = [Infinity, Infinity, -Infinity, -Infinity])); for (const p of pts) { if (p[0] < b[0]) b[0] = p[0]; if (p[1] < b[1]) b[1] = p[1]; if (p[0] > b[2]) b[2] = p[0]; if (p[1] > b[3]) b[3] = p[1]; } };
+    for (const p of d.polylines) grow(p.ins, p.pts);
+    for (const q of d.hatches) grow(q.ins, q.pts);
+    for (const q of d.circles || []) grow(q.ins, [[q.c[0] - q.r, q.c[1] - q.r], [q.c[0] + q.r, q.c[1] + q.r]]);
+    for (const q of d.points) grow(q.ins, [[q.x, q.y]]);
+    const symbol = k => { const b = ext.get(k); return !b || Math.max(b[2] - b[0], b[3] - b[1]) <= 20; }, part = q => q.ins != null && symbol(q.ins);
+    for (const p of d.polylines) {
+      if (!want(p.layer) || part(p)) continue;
+      const cl = p.closed || Dxf.nearClosed(p.pts);
+      let pts = p.pts.map(q => [q[0], q[1]]);
+      if (cl && pts.length > 3 && Math.hypot(pts[0][0] - pts[pts.length - 1][0], pts[0][1] - pts[pts.length - 1][1]) < 1e-6) pts = pts.slice(0, -1);
+      pts = Geo.simplify(pts, 0.05);
+      if (cl && pts.length >= 3) out.push({ layer: p.layer, k: 'poly', pts }); else if (pts.length >= 2) out.push({ layer: p.layer, k: 'line', pts });
+    }
+    for (const q of d.hatches) if (want(q.layer) && !part(q) && q.pts.length >= 3) out.push({ layer: q.layer, k: 'poly', pts: Geo.simplify(q.pts.map(p => [p[0], p[1]]), 0.05) });
+    for (const q of d.circles || []) if (want(q.layer) && !part(q)) { const n = q.r < 2 ? 12 : 24; out.push({ layer: q.layer, k: 'poly', pts: Array.from({ length: n }, (_, i) => [q.c[0] + q.r * Math.cos((2 * Math.PI * i) / n), q.c[1] + q.r * Math.sin((2 * Math.PI * i) / n)]) }); }
+    for (const q of d.points) if (want(q.layer) && !part(q)) out.push({ layer: q.layer, k: 'point', pts: [[q.x, q.y]] });
+    d.inserts.forEach((q, k) => { if (want(q.layer) && q.ins == null && symbol(k)) out.push({ layer: q.layer, k: 'point', pts: [[q.x, q.y]], n: Object.values(q.attribs || {}).find(v => v) || q.name }); });
+    for (const F of out) F.pts = F.pts.map(p => [r3(p[0]), r3(p[1])]);
+    return out;
+  }
+  // what each layer of a DXF holds: {layer: {poly, line, point}}
+  function dxfCounts(d) {
+    const c = {};
+    for (const F of dxfShapes(d)) { const q = c[F.layer] || (c[F.layer] = { poly: 0, line: 0, point: 0 }); q[F.k]++; }
+    return c;
+  }
+  function fromDxf(d, fileName, index, o = {}) {
+    const shapes = dxfShapes(d, L => !o.layers || o.layers.has(L));
+    if (!shapes.length) throw new Error('The DXF has no polylines, lines, hatches, circles or points on the layers chosen.');
+    const names = Array.from(new Set(shapes.map(F => F.layer))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })), fi = new Map(names.map((L, i) => [L, i]));
+    // (a polygon's name: a text inside it, on its own layer first; over a box around it first)
+    const byLayer = new Map(); for (const t of d.texts) { if (!byLayer.has(t.layer)) byLayer.set(t.layer, []); byLayer.get(t.layer).push(t); }
+    const polys = shapes.filter(F => F.k === 'poly'), cheap = polys.length * d.texts.length < 4e6;
+    const nameIn = F => {
+      const bb = Geo.bbox(F.pts), hit = t => t.x >= bb[0] && t.x <= bb[2] && t.y >= bb[1] && t.y <= bb[3] && Geo.pip(t.x, t.y, F.pts);
+      const t = (byLayer.get(F.layer) || []).find(hit) || (cheap ? d.texts.find(hit) : null);
+      return t ? String(t.text).slice(0, 80) : '';
+    };
+    const features = shapes.map(F => ({ f: fi.get(F.layer), n: F.n || (F.k === 'poly' ? nameIn(F) : ''), k: F.k, c: F.pts.flat() }));
+    const name = String(fileName || 'Overlay').replace(/\.[^.]+$/, '');
+    return { id: U.uid('ovl'), name, file: fileName || '', color: OVL_COLORS[(index || 0) % OVL_COLORS.length], show: true, surface: '', angle: 90, dumps: true, folders: names.map(L => ({ name: L, show: true, dist: null })), features, xy: true, fix: o.fix || null };
+  }
   function counts(ov, f) {
     const c = { poly: 0, line: 0, point: 0 };
     for (const F of ov.features) if (f == null || F.f === f) c[F.k]++;
@@ -3230,11 +3325,12 @@ const Keep = (() => {
     const sig = JSON.stringify(P.crs);
     const hit = cache.get(ov.id);
     if (hit && hit.sig === sig && hit.src === ov.features) return hit.feats;
-    const crs = Geo.makeCRS(P.crs);
-    if (!crs) return [];
+    // (a KML is in latitude and longitude; a DXF in the model's coordinate system, as in the file: ov.xy)
+    const crs = ov.xy ? null : Geo.makeCRS(P.crs), sign = Geo.axisSign(P.crs), fix = ov.xy ? Dxf.fixFn(ov.fix) : null;
+    if (!ov.xy && !crs) return [];
     const feats = ov.features.map(F => {
       const pts = [];
-      for (let i = 0; i + 1 < F.c.length; i += 2) pts.push(crs.fromLonLat(F.c[i], F.c[i + 1]));
+      for (let i = 0; i + 1 < F.c.length; i += 2) pts.push(ov.xy ? fix([sign * F.c[i], sign * F.c[i + 1]]) : crs.fromLonLat(F.c[i], F.c[i + 1]));
       return { f: F.f, n: F.n, k: F.k, pts };
     });
     cache.set(ov.id, { sig, src: ov.features, feats });
@@ -3464,7 +3560,7 @@ const Keep = (() => {
     return { first: f, src: s, near, text: `The block lies ${where}, so it is ${left}.`, left: f > 0 ? L.slice(f).map(x => x.name) : L.map(x => x.name), mined: L.slice(0, f).map(x => x.name) };
   }
 
-  return { OVL_COLORS, KEEP_COLOR, DUG_COLOR: '#ffd23f', fromKml, counts, countText, features, featureField, contour, compute, stats, blockInfo, inZone, isNum, constrained, drapeIndex, firstLayer };
+  return { OVL_COLORS, KEEP_COLOR, DUG_COLOR: '#ffd23f', fromKml, fromDxf, dxfShapes, dxfCounts, counts, countText, features, featureField, contour, compute, stats, blockInfo, inZone, isNum, constrained, drapeIndex, firstLayer };
 })();
 
 /* ===== Synthetic demo colliery (DOM-free). Clearly marked as example data. ===== */
@@ -5077,6 +5173,9 @@ const Sim = (() => {
     const mineStart0 = acts.filter(X => X.path.length).reduce((a, X) => Math.min(a, X.startDay), Infinity), mineDay0 = isFinite(mineStart0) ? mineStart0 : 0;
     const suKey0 = (t => t.getUTCFullYear() * 12 + t.getUTCMonth())(U.addDays(start, mineDay0));
     { const sn = Monthly.startMonths(P); if (sn && TL.waste > 0) events.push({ day: 0, type: 'info', msg: `Start-up waste: the waste target is ${U.fmtNum(+TG.wasteStart, 0)} ${TL.wT ? 't' : 'bcm'} in an average month over the first ${sn} month${sn === 1 ? '' : 's'} of mining (from ${U.fmtMonth(U.addDays(start, mineDay0))}), then the steady ${U.fmtNum(TL.waste, 0)} ${TL.wT ? 't' : 'bcm'}${!(TL.coal > 0) ? '; with no coal target the waste gets the teams first in those months, the coal what is left' : ''}.` }); }
+    // (the model cut down to a survey of the ground, Geological Data tab: the schedule mines from that ground)
+    if (ws.dep && P.depletion && P.depletion.survey) { const sv = Recon.settings(P).surveys.find(q => q.id === P.depletion.survey), early = sv && sv.date && P.startDate && P.startDate < sv.date;
+      if (sv) events.push({ day: 0, type: early ? 'warn' : 'info', msg: `The 3D model is cut down to the survey “${sv.name}” of ${sv.date ? U.fmtDate(U.parseISO(sv.date)) : 'no date'}${P.depletion.earlier !== false ? ' (with the earlier surveys)' : ''}: the schedule mines from the ground as surveyed, and the blocks hold only what lies below it.${early ? ` The schedule starts on ${U.fmtDate(U.parseISO(P.startDate))}, before the survey: start it on the survey date (Geological Data tab).` : ''}` }); }
     { const rn = Monthly.rampMonths(P); if (rn && TL.coal > 0) events.push({ day: 0, type: 'info', msg: `Coal ramp-up: over the first ${rn} month${rn === 1 ? '' : 's'} the coal target steps up (${Array.from({ length: rn }, (_, k) => Math.round(((k + 1) / (rn + 1)) * 100) + '%').join(', ')} of ${U.fmtNum(TL.coal, 0)} t), and is met in full from month ${rn + 1}, so the waste can get ahead and build up exposed coal first.` }); }
     const tg = { key: -1, bud: [Infinity, Infinity, Infinity], used: [0, 0, 0], wdLeft: 0, left: [Infinity, Infinity, Infinity], resv: [0, 0, 0] };
     for (const X of acts) {
@@ -9648,7 +9747,9 @@ const Recon = (() => {
     return { surveys: Array.isArray(R.surveys) ? R.surveys : [], from: R.from || 'model', to: R.to || '', tol: R.tol != null && R.tol !== '' && isFinite(tol) ? Math.max(0, tol) : DEF.tol };
   }
   const key = s => s.id; // the store key of a survey's grid (ids are 'dtm_…')
-  const blobKeys = P => settings(P).surveys.map(key);
+  // the store keys of a GeoTIFF survey's bands on the grid of the DEM display (Dem); all of a survey's, all of a project's
+  const dispKey = (s, b) => `${s.id}_v${b}`, keysOf = s => [key(s)].concat(s.disp ? Array.from({ length: s.disp.bands }, (_, b) => dispKey(s, b)) : []);
+  const blobKeys = P => settings(P).surveys.flatMap(keysOf).concat(Dem.blobKeys(P));
   const byDate = P => settings(P).surveys.slice().sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.name || '').localeCompare(b.name || ''));
   // a date in a file name: 2026-09-30, 2026_09_30, 20260930 → ISO, or null
   function dateFromName(name) {
@@ -9743,6 +9844,39 @@ const Recon = (() => {
     const filled = fillGaps(grid, ws.nx, ws.ny, reach);
     const nm = j => (names && names[j] ? names[j] : 'column ' + (j + 1));
     return { grid, info: { points: n, outside, skipped, cells: hit + filled, filled, zMin, zMax, columns: `${nm(cols.x)}, ${nm(cols.y)}, ${nm(cols.z)}` } };
+  }
+  /* A GeoTIFF DTM onto the grid of the model: {grid, info} as readPoints gives. One band of elevations, placed by its
+     GeoTIFF tags or else by its world file (.tfw); read at half a cell (an overview when it has one) and averaged onto the
+     cells; its "no data" pixels stay empty, and small holes in it are filled as the gaps between points are. */
+  async function readRaster(P, ws, file, worldFile, onProgress, disp) {
+    const info = await Tiff.info(file);
+    if (info.spp >= 3 && info.bps === 8) throw new Error('it is a picture (RGB), not a grid of elevations.');
+    let affine = info.geo.affine;
+    if (!affine && worldFile) affine = Imagery.parseWorld(await worldFile.text());
+    if (!affine) throw new Error('it has no georeferencing: no GeoTIFF tags and no world file (.tfw) with the same name. Choose its .tfw file together with it.');
+    // (a raster in another coordinate system than the model's, by its EPSG code)
+    const pid = info.geo.epsg ? Geo.presetForEpsg(info.geo.epsg) : null, name = id => (Geo.PRESETS.find(p => p.id === id) || { name: id }).name;
+    const crs = pid && pid !== 'custom' && P.crs.preset !== 'custom' && P.crs.preset !== 'local' && pid !== P.crs.preset ? `It is in ${name(pid)}${/EPSG/.test(name(pid)) ? '' : ` (EPSG ${info.geo.epsg})`}, the model in ${name(P.crs.preset)}.` : '';
+    const r = await Tiff.read(info, { targetRes: Math.min(P.grid.cell / 2, disp ? disp.cell : Infinity), maxBands: Math.min(info.spp, 4), affine, onProgress }), sign = Geo.axisSign(P.crs);
+    // (a DTM without a "no data" tag often marks its gaps -9999, -32767 or -32768: no ground lies that low)
+    for (const B of r.bands) for (let i = 0; i < B.length; i++) if (B[i] <= -9999) B[i] = NaN;
+    // the band of elevations: of several, the one nearest the ground of the model as built (over a sample of the cells)
+    let band = 0;
+    if (r.bands.length > 1) {
+      const ground = (ws.surf0 || ws.surfRaw || ws.surf)[0], inv = Tiff.invAffine(r.geo.affine), step = Math.max(1, Math.floor(ws.n / 4000)), at = [];
+      for (let c = 0; c < ws.n; c += step) { if (ground[c] !== ground[c]) continue; const [x, y] = Model.cellXY(ws, c), [pi, pj] = inv(sign * x, sign * y), i = Math.floor(pi), j = Math.floor(pj); if (i >= 0 && j >= 0 && i < r.width && j < r.height) at.push([j * r.width + i, ground[c]]); }
+      let best = Infinity;
+      r.bands.forEach((B, b) => { const d = at.map(([k, z]) => Math.abs(B[k] - z)).filter(v => v === v).sort((p, q) => p - q), med = d.length ? d[d.length >> 1] : Infinity; if (med < best) { best = med; band = b; } });
+    }
+    const grid = Model.resample(r, P.grid, sign, band);
+    let hit = 0, zMin = Infinity, zMax = -Infinity;
+    for (let c = 0; c < ws.n; c++) { const z = grid[c]; if (z !== z) continue; hit++; if (z < zMin) zMin = z; if (z > zMax) zMax = z; }
+    if (!hit) throw new Error(`it does not cover the model. Check that it is in the coordinate system of the model (${name(P.crs.preset)}).${crs ? ' ' + crs : ''}`);
+    const filled = fillGaps(grid, ws.nx, ws.ny, 2), res = Math.hypot(affine.a, affine.d);
+    const raster = `${info.width.toLocaleString('en-ZA')} × ${info.height.toLocaleString('en-ZA')} px at ${U.fmtNum(res, res < 10 ? 2 : 1)} m${r.bands.length > 1 ? `, ${info.spp} bands (the elevations in band ${band + 1})` : ''}${info.bps === 8 ? ' (8-bit values: check they are elevations)' : ''}`;
+    // the bands on the grid of the DEM display (Dem), when it is given
+    const dv = disp ? r.bands.map((_, b) => Model.resample(r, disp, sign, b)) : null;
+    return { grid, band, disp: dv, info: { raster, cells: hit + filled, filled, zMin, zMax, crs: crs || null } };
   }
   /* An empty cell takes the inverse-distance mean of the surveyed cells within `reach` cells of it, when they lie on
      three or four sides of it (so the survey is not carried out past its edge). → how many cells were filled */
@@ -9873,7 +10007,7 @@ const Recon = (() => {
     return wb;
   }
 
-  return { DEF, settings, key, blobKeys, byDate, dateFromName, readPoints, fillGaps, usable, compute, workbook };
+  return { DEF, settings, key, dispKey, keysOf, blobKeys, byDate, dateFromName, readPoints, readRaster, fillGaps, usable, compute, workbook };
 })();
 
 /* ===== Project storage: IndexedDB (standalone), artifact db (shared, owner writes), memory (view-only file) ===== */
@@ -10085,6 +10219,7 @@ const View = (() => {
   let surfNow = null, insNow = null;
   let vex = 3;
   const show = { outlines: false, resOut: false, labels: false, paths: false, roads: false, dumps: false, contours: false, ovl: false, keep: false, limits: false, pits: false, drains: false, fills: false, water: true }; // (the layers start off: Layers menu)
+  let rasOn = false, rasTex = null, rasOpacity = 0.9; // (the survey DEM's picture, Dem)
   let satOn = false, satTex = null, tintTex = null, tintData = null, tintOn = false, matTex = null, matData = null;
   let needsRender = true, needsDrape = false, labelsDirty = true;
   const G = {};
@@ -10115,6 +10250,7 @@ const View = (() => {
     uniform int uNS; uniform vec3 uCol[16];
     uniform vec3 uSpoil; uniform vec3 uGround; uniform vec3 uBase; uniform vec3 uLight;
     uniform sampler2D uSat; uniform float uSatOn; uniform float uSatOpacity;
+    uniform sampler2D uRas; uniform float uRasOn; uniform float uRasOpacity;
     uniform sampler2D uTint; uniform float uTintOn;
     uniform sampler2D uMat; uniform float uMatOn; uniform vec3 uSpoilT; uniform vec3 uSpoilS; uniform vec3 uSpoilH;
     uniform float uContour; uniform float uZOff;
@@ -10133,6 +10269,7 @@ const View = (() => {
       vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
       float z = vPos.z;
       vec3 col = uBase;
+      float img = 0.0; // (how much of a picture lies on the ground: it is lit more softly)
       bool spoil = z > vIns + 0.08;
       bool undisturbed = !spoil && vIns > vTopo - 0.08 && abs(z - vTopo) < 0.15;
       if (spoil) {
@@ -10142,7 +10279,8 @@ const View = (() => {
         col = sc * (0.82 + 0.3 * g);
       } else if (undisturbed) {
         col = uGround * (0.94 + 0.08 * hash(floor(vPos.xy * 0.08)));
-        if (uSatOn > 0.5) col = mix(col, texture2D(uSat, vUv).rgb, uSatOpacity);
+        if (uSatOn > 0.5) { col = mix(col, texture2D(uSat, vUv).rgb, uSatOpacity); img = 1.0; }
+        if (uRasOn > 0.5) { vec4 rc = texture2D(uRas, vUv); col = mix(col, rc.rgb, rc.a * uRasOpacity); img = max(img, rc.a); }
       } else {
         for (int i = 1; i < 16; i++) {
           if (i >= uNS) break;
@@ -10150,7 +10288,7 @@ const View = (() => {
         }
       }
       float diff = max(dot(n, normalize(uLight)), 0.0);
-      float light = (uSatOn > 0.5 && undisturbed) ? 0.78 + 0.3 * diff : 0.44 + 0.66 * diff;
+      float light = undisturbed ? mix(0.44 + 0.66 * diff, 0.78 + 0.3 * diff, img) : 0.44 + 0.66 * diff;
       col *= light;
       if (uContour > 0.0 && undisturbed) {
         float e = (z + uZOff) / uContour;
@@ -10181,7 +10319,7 @@ const View = (() => {
     controls.addEventListener('change', () => { needsRender = true; labelsDirty = true; });
     world = new THREE.Group();
     scene.add(world);
-    for (const k of ['outlines', 'resOut', 'paths', 'roads', 'dumps', 'ovl', 'keep', 'limits', 'pits', 'drains', 'fills', 'water', 'gw', 'draw', 'sel', 'wall']) { G[k] = new THREE.Group(); world.add(G[k]); }
+    for (const k of ['outlines', 'resOut', 'paths', 'roads', 'dumps', 'ovl', 'keep', 'limits', 'pits', 'drains', 'fills', 'water', 'gw', 'draw', 'sel', 'wall', 'geo']) { G[k] = new THREE.Group(); world.add(G[k]); }
     G.draw.userData.noClip = true; G.wall.userData.noClip = true;
     applyTheme();
     const ro = new ResizeObserver(resize); ro.observe(el);
@@ -10233,7 +10371,7 @@ const View = (() => {
   // ---------- terrain ----------
   function setWorkspace(w, opts = {}) {
     ws = w;
-    clearGroup(G.outlines); clearGroup(G.resOut); resKey = null; clearGroup(G.paths); clearGroup(G.roads); clearGroup(G.dumps); clearGroup(G.draw); clearGroup(G.sel); clearGroup(G.wall); clearGroup(G.ovl); clearGroup(G.keep); clearGroup(G.limits); clearGroup(G.pits); clearGroup(G.drains); clearGroup(G.fills); clearGroup(G.water); clearGroup(G.gw); anim = null; ovlSig = ''; keepRef = null; slice.on = false;
+    clearGroup(G.outlines); clearGroup(G.resOut); resKey = null; clearGroup(G.paths); clearGroup(G.roads); clearGroup(G.dumps); clearGroup(G.draw); clearGroup(G.sel); clearGroup(G.wall); clearGroup(G.ovl); clearGroup(G.keep); clearGroup(G.limits); clearGroup(G.pits); clearGroup(G.drains); clearGroup(G.fills); clearGroup(G.water); clearGroup(G.gw); clearGroup(G.geo); anim = null; ovlSig = ''; keepRef = null; slice.on = false;
     if (terrain) { world.remove(terrain); geom.dispose(); mat.dispose(); terrain = null; }
     if (!ws) { needsRender = true; labelsEl.innerHTML = ''; return; }
     const { nx, ny, cell } = ws, n = nx * ny, S = ws.surf, nS = Math.min(16, S.length);
@@ -10303,6 +10441,7 @@ const View = (() => {
         uSpoil: { value: new THREE.Color('#8e877c') }, uGround: { value: new THREE.Color('#8d9a74') }, uBase: { value: new THREE.Color('#5d5a55') },
         uLight: { value: new THREE.Vector3(-0.55, 0.45, 0.72) },
         uSat: { value: satTex || blank }, uSatOn: { value: 0 }, uSatOpacity: { value: 1 },
+        uRas: { value: rasTex || blank }, uRasOn: { value: rasOn && rasTex ? 1 : 0 }, uRasOpacity: { value: rasOpacity },
         uTint: { value: tintTex }, uTintOn: { value: 0 },
         uMat: { value: matTex }, uMatOn: { value: 1 }, uSpoilT: { value: new THREE.Color('#5b4631') }, uSpoilS: { value: new THREE.Color('#c8a96e') }, uSpoilH: { value: new THREE.Color('#8e877c') },
         uContour: { value: 0 }, uZOff: { value: zOff }, uGrid: { value: new THREE.Vector4(-W / 2, -H / 2, W, H) }
@@ -10364,6 +10503,15 @@ const View = (() => {
   }
   function setSatVisible(on, opacity) { satOn = !!on; if (mat) { mat.uniforms.uSatOn.value = satOn && satTex ? 1 : 0; if (opacity != null) mat.uniforms.uSatOpacity.value = opacity; } needsRender = true; }
   function hasSat() { return !!satTex; }
+  // the survey DEM's picture (Dem), draped where the ground is still as surveyed
+  function setRasTexture(cnv) {
+    if (rasTex && rasTex.image !== cnv) { rasTex.dispose(); rasTex = null; }
+    if (cnv && !rasTex) { rasTex = new THREE.CanvasTexture(cnv); rasTex.anisotropy = 4; }
+    if (rasTex) rasTex.needsUpdate = true;
+    if (mat) { mat.uniforms.uRas.value = rasTex || mat._blank; mat.uniforms.uRasOn.value = rasOn && rasTex ? 1 : 0; }
+    needsRender = true;
+  }
+  function setRasVisible(on, opacity) { rasOn = !!on; if (opacity != null) rasOpacity = opacity; if (mat) { mat.uniforms.uRasOn.value = rasOn && rasTex ? 1 : 0; mat.uniforms.uRasOpacity.value = rasOpacity; } needsRender = true; }
   function setVex(v, silent) {
     vex = +v || 1;
     world.scale.set(1, 1, vex);
@@ -10437,6 +10585,7 @@ const View = (() => {
     }
     for (const o of G.paths.children) if (o.userData.pathXY) drapePath(o);
     for (const o of G.drains.children) { if (o.userData.tri) drapeTri(o); else if (o.userData.xy) drapeLine(o.geometry, o.userData.xy, o.userData.lift || 1.2); }
+    for (const o of G.geo.children) if (o.userData.xy) drapeLine(o.geometry, o.userData.xy, o.userData.lift || 1.5);
     for (const g of [G.ovl, G.keep]) for (const o of g.children) if (o.userData.drape && !o.userData.surf) drapeOvl(o);
   }
   function setSelectedBlock(b) {
@@ -10861,6 +11010,16 @@ const View = (() => {
     const p = o.geometry.attributes.position.array, xy = o.userData.tri, lift = o.userData.lift || 1.4;
     for (let k = 0, v = 0; k < xy.length; k += 2, v += 3) { p[v] = xy[k]; p[v + 1] = xy[k + 1]; p[v + 2] = surfMaxLocal(xy[k], xy[k + 1]) - zOff + lift; }
     o.geometry.attributes.position.needsUpdate = true; o.geometry.computeBoundingSphere();
+  }
+  /* the geotechnical results on the walls (Geotechnical tab): [{pts, color, bold, closed}] — lines draped on the ground, seen through it */
+  function setGeo(list) {
+    clearGroup(G.geo);
+    if (!ws) return;
+    for (const d of list || []) {
+      if (!d.pts || d.pts.length < 2) continue;
+      for (const lift of d.bold ? [1.5, 2.5, 3.5] : [1.5, 2.5]) { const L = lineObj(d.pts, d.color, !!d.closed, { opacity: 1, depthTest: false }); L.userData.lift = lift; drapeLine(L.geometry, L.userData.xy, lift); L.renderOrder = 9; G.geo.add(L); }
+    }
+    needsRender = true;
   }
   function setDrains(list) {
     drainDefs = list || [];
@@ -11504,7 +11663,7 @@ const View = (() => {
   function requestRender() { needsRender = true; labelsDirty = true; }
   function snapshot() { R.render(scene, camera); return canvas.toDataURL('image/jpeg', 0.85); }
 
-  return { init, setWorkspace, setResBlocks, setLayerColors, setSurface, setOverlays, setKeepOut, setToes, setLimits, setPits, setDrains, setFills, setWater, setGroundwater, setMeasure, beginCapture, frame, endCapture, viewSize, labelsShown, setTool, getSurface, getInsitu, setSlice, getSlice, modelBounds, viewAlong, setTint, setSatTexture, setSatVisible, hasSat, setVex, setShow, setSelectedBlock, setDumps, setRoads, setRoadHidden, roadShown: id => !roadHidden.has(id) && G.roads.children.some(o => o.userData.roadId === id && o.visible), setPaths, setLabelMode, fit, focusOn, pickAt, on, startDraw, finishDraw, cancelDraw, isDrawing, requestRender, snapshot, get vex() { return vex; }, get zOff() { return zOff; } };
+  return { init, setWorkspace, setResBlocks, setLayerColors, setSurface, setOverlays, setGeo, setKeepOut, setToes, setLimits, setPits, setDrains, setFills, setWater, setGroundwater, setMeasure, beginCapture, frame, endCapture, viewSize, labelsShown, setTool, getSurface, getInsitu, setSlice, getSlice, modelBounds, viewAlong, setTint, setSatTexture, setSatVisible, setRasTexture, setRasVisible, hasSat, setVex, setShow, setSelectedBlock, setDumps, setRoads, setRoadHidden, roadShown: id => !roadHidden.has(id) && G.roads.children.some(o => o.userData.roadId === id && o.visible), setPaths, setLabelMode, fit, focusOn, pickAt, on, startDraw, finishDraw, cancelDraw, isDrawing, requestRender, snapshot, get vex() { return vex; }, get zOff() { return zOff; } };
 })();
 
 /* ===== Satellite imagery: live tiles (Google Map Tiles API, Esri, custom XYZ) or a georeferenced image file ===== */
@@ -11676,6 +11835,180 @@ const Imagery = (() => {
   return { PROVIDERS, fromTiles, fromImageFile, canvasToJpeg, jpegToCanvas, parseWorld };
 })();
 
+/* ===== Survey DEM display: a band of a survey DEM as a singleband pseudocolour — a colour ramp stretched over its
+   values — over a hillshade, with a blending mode (as a DEM layer in Soft light over its hillshade in QGIS). The picture
+   is draped on the 3D view like the satellite photo (View.setRasTexture), on the ground that is still as surveyed.
+   P.demView: {on, survey, band, ramp, invert, range, min, max, interp, classes, mode, blend, opacity, hs, az, alt, zf,
+   view, hsFile}; the bands are kept on the grid of the picture (grid(ws)) in the store, one blob each (Recon.dispKey). ===== */
+const Dem = (() => {
+  // the colour ramps, low to high: [position 0..1, colour]
+  const even = cs => cs.map((c, i) => [i / (cs.length - 1), c]);
+  const RAMPS = {
+    spectral: even(['#9e0142', '#d53e4f', '#f46d43', '#fdae61', '#fee08b', '#ffffbf', '#e6f598', '#abdda4', '#66c2a5', '#3288bd', '#5e4fa2']),
+    rdylgn: even(['#a50026', '#d73027', '#f46d43', '#fdae61', '#fee08b', '#ffffbf', '#d9ef8b', '#a6d96a', '#66bd63', '#1a9850', '#006837']),
+    viridis: even(['#440154', '#482878', '#3e4989', '#31688e', '#26828e', '#1f9e89', '#35b779', '#6ece58', '#b5de2b', '#fde725']),
+    magma: even(['#000004', '#180f3d', '#440f76', '#721f81', '#9e2f7f', '#cd4071', '#f1605d', '#fd9668', '#feca8d', '#fcfdbf']),
+    turbo: even(['#30123b', '#4662d7', '#36aaf9', '#1ae4b6', '#72fe5e', '#c8ef34', '#faba39', '#f66b19', '#ca2a04', '#7a0403']),
+    terrain: [[0, '#333399'], [0.15, '#0099ff'], [0.25, '#00cc66'], [0.5, '#ffff99'], [0.75, '#80605c'], [1, '#ffffff']],
+    ylorbr: even(['#ffffe5', '#fff7bc', '#fee391', '#fec44f', '#fe9929', '#ec7014', '#cc4c02', '#993404', '#662506']),
+    blues: even(['#f7fbff', '#deebf7', '#c6dbef', '#9ecae1', '#6baed6', '#4292c6', '#2171b5', '#08519c', '#08306b']),
+    greys: even(['#000000', '#ffffff'])
+  };
+  const RAMP_NAMES = [['spectral', 'Spectral'], ['rdylgn', 'Red–yellow–green'], ['viridis', 'Viridis'], ['magma', 'Magma'], ['turbo', 'Turbo'], ['terrain', 'Terrain'], ['ylorbr', 'Yellow–orange–brown'], ['blues', 'Blues'], ['greys', 'Greys']];
+  const BLENDS = [['normal', 'Normal'], ['soft-light', 'Soft light'], ['multiply', 'Multiply'], ['overlay', 'Overlay'], ['screen', 'Screen'], ['hard-light', 'Hard light'], ['darken', 'Darken'], ['lighten', 'Lighten']];
+  const RANGES = [['cut', 'Cumulative count cut 2–98%'], ['minmax', 'Min / max'], ['sd', 'Mean ± 2 standard deviations'], ['user', 'User defined']];
+  const DEF = { on: false, survey: '', band: null, ramp: 'spectral', invert: true, range: 'cut', min: null, max: null, interp: 'linear', classes: 8, mode: 'equal', blend: 'soft-light', opacity: 100, hs: 'dem', az: 315, alt: 45, zf: 1, view: 90, hsFile: null };
+  const settings = P => Object.assign({}, DEF, (P && P.demView) || {});
+  const blobKeys = P => { const f = settings(P).hsFile; return f && f.id ? [f.id] : []; };
+  // the grid of the picture: the model's extent at about 1 400 pixels on its long side (not finer than 0.5 m)
+  function grid(ws) {
+    const W = ws.nx * ws.cell, H = ws.ny * ws.cell, c0 = Math.max(0.5, Math.max(W, H) / 1400), nx = Math.max(2, Math.round(W / c0)), cell = W / nx;
+    return { x0: ws.x0, y0: ws.y0, nx, ny: Math.max(2, Math.round(H / cell)), cell };
+  }
+  const rgb = c => [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)];
+  // the ramp of the settings, [position, [r, g, b]], turned round when inverted
+  function stops(o) {
+    let s = RAMPS[o.ramp] || RAMPS.spectral;
+    if (o.invert) s = s.map(([p, c]) => [1 - p, c]).reverse();
+    return s.map(([p, c]) => [p, rgb(c)]);
+  }
+  function at(S, t) {
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    let k = 1; while (k < S.length - 1 && S[k][0] < t) k++;
+    const [p0, a] = S[k - 1], [p1, b] = S[k], f = p1 > p0 ? U.clamp((t - p0) / (p1 - p0), 0, 1) : 0;
+    return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+  }
+  // a band's values: min, max, mean, standard deviation, the 2% and 98% points, a sorted sample (a: for the quantiles)
+  function stats(g) {
+    const step = Math.max(1, Math.floor(g.length / 200000)), v = [];
+    let s = 0, s2 = 0, n = 0, lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < g.length; i++) { const x = g[i]; if (x !== x) continue; n++; s += x; s2 += x * x; if (x < lo) lo = x; if (x > hi) hi = x; if (i % step === 0) v.push(x); }
+    if (!n) return null;
+    const a = Float64Array.from(v).sort(), q = p => a[Math.min(a.length - 1, Math.max(0, Math.round(p * (a.length - 1))))], mean = s / n;
+    return { n, min: lo, max: hi, mean, sd: Math.sqrt(Math.max(0, s2 / n - mean * mean)), p2: q(0.02), p98: q(0.98), a };
+  }
+  // the values the ramp is stretched over
+  function range(o, st) {
+    const has = v => v != null && v !== '' && isFinite(+v);
+    let lo, hi;
+    if (o.range === 'user' && has(o.min) && has(o.max) && +o.max > +o.min) { lo = +o.min; hi = +o.max; }
+    else if (o.range === 'minmax') { lo = st.min; hi = st.max; }
+    else if (o.range === 'sd') { lo = Math.max(st.min, st.mean - 2 * st.sd); hi = Math.min(st.max, st.mean + 2 * st.sd); }
+    else { lo = st.p2; hi = st.p98; }
+    if (!(hi > lo)) { lo = st.min; hi = st.max > st.min ? st.max : st.min + 1; }
+    return [lo, hi];
+  }
+  // the classes of a discrete ramp: n + 1 breaks (equal intervals, or equal counts of the values) and the colour of each
+  function classes(o, st, lo, hi) {
+    const n = U.clamp(Math.round(+o.classes || 8), 2, 32), S = stops(o), br = [];
+    if (o.mode === 'quantile') {
+      const a = st.a, find = x => { let p = 0, q = a.length; while (p < q) { const m = (p + q) >> 1; if (a[m] < x) p = m + 1; else q = m; } return p; };
+      const i0 = find(lo), i1 = Math.max(i0, find(hi) - 1);
+      for (let k = 0; k <= n; k++) br.push(k === 0 ? lo : k === n ? hi : a[Math.round(i0 + ((i1 - i0) * k) / n)]);
+      for (let k = 1; k <= n; k++) if (!(br[k] > br[k - 1])) br[k] = br[k - 1] + 1e-6; // (no empty class)
+    } else for (let k = 0; k <= n; k++) br.push(lo + ((hi - lo) * k) / n);
+    return { br, cols: Array.from({ length: n }, (_, k) => at(S, k / (n - 1))) };
+  }
+  // the colour of each value: RGBA, alpha 0 where there is none; values beyond the range take the end colours
+  function colorize(g, o, st) {
+    const out = new Uint8ClampedArray(g.length * 4); if (!st) return out;
+    const [lo, hi] = range(o, st);
+    if (o.interp === 'discrete') {
+      const { br, cols } = classes(o, st, lo, hi), n = cols.length;
+      for (let i = 0; i < g.length; i++) {
+        const v = g[i]; if (v !== v) continue;
+        let p = 0, q = n - 1; while (p < q) { const m = (p + q + 1) >> 1; if (v >= br[m]) p = m; else q = m - 1; }
+        const c = cols[p], k = i * 4; out[k] = c[0]; out[k + 1] = c[1]; out[k + 2] = c[2]; out[k + 3] = 255;
+      }
+    } else {
+      const S = stops(o), lut = new Uint8ClampedArray(1024 * 3), f = 1023 / (hi - lo);
+      for (let k = 0; k < 1024; k++) lut.set(at(S, k / 1023).map(Math.round), k * 3);
+      for (let i = 0; i < g.length; i++) {
+        const v = g[i]; if (v !== v) continue;
+        let t = Math.round((v - lo) * f); t = t < 0 ? 0 : t > 1023 ? 1023 : t;
+        const k = i * 4; out[k] = lut[t * 3]; out[k + 1] = lut[t * 3 + 1]; out[k + 2] = lut[t * 3 + 2]; out[k + 3] = 255;
+      }
+    }
+    return out;
+  }
+  /* The hillshade of a grid of elevations (Horn's method, as gdaldem and QGIS): 0..1, NaN where there is no value.
+     Rows run north (j + 1 is north of j); the sun from azimuth az (degrees from north, clockwise) at altitude alt; z factor zf. */
+  function hillshade(g, nx, ny, cell, az = 315, alt = 45, zf = 1) {
+    const out = new Float32Array(g.length).fill(NaN), A = ((isFinite(+az) ? +az : 315) * Math.PI) / 180, E = ((isFinite(+alt) ? U.clamp(+alt, 0, 90) : 45) * Math.PI) / 180;
+    const lx = Math.sin(A) * Math.cos(E), ly = Math.cos(A) * Math.cos(E), lz = Math.sin(E), k = (+zf > 0 ? +zf : 1) / (8 * cell);
+    const z = (i, j, c) => { const v = g[(j < 0 ? 0 : j >= ny ? ny - 1 : j) * nx + (i < 0 ? 0 : i >= nx ? nx - 1 : i)]; return v === v ? v : c; };
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      const c = g[j * nx + i]; if (c !== c) continue;
+      const a = z(i - 1, j + 1, c), b = z(i, j + 1, c), d = z(i + 1, j + 1, c), e = z(i - 1, j, c), f = z(i + 1, j, c), p = z(i - 1, j - 1, c), q = z(i, j - 1, c), r = z(i + 1, j - 1, c);
+      const gx = (d + 2 * f + r - (a + 2 * e + p)) * k, gy = (a + 2 * b + d - (p + 2 * q + r)) * k;
+      const s = (lz - gx * lx - gy * ly) / Math.sqrt(gx * gx + gy * gy + 1);
+      out[j * nx + i] = s < 0 ? 0 : s;
+    }
+    return out;
+  }
+  // an imported hillshade's values to 0..1 (0–255 for 8-bit, else its own range)
+  function normHs(g) {
+    let lo = Infinity, hi = -Infinity; for (let i = 0; i < g.length; i++) { const v = g[i]; if (v === v) { if (v < lo) lo = v; if (v > hi) hi = v; } }
+    const out = new Float32Array(g.length).fill(NaN); if (!(hi >= lo)) return out;
+    const [a, b] = lo >= 0 && hi <= 1 ? [0, 1] : lo >= 0 && hi <= 255 ? [0, 255] : [lo, hi > lo ? hi : lo + 1];
+    for (let i = 0; i < g.length; i++) { const v = g[i]; if (v === v) out[i] = U.clamp((v - a) / (b - a), 0, 1); }
+    return out;
+  }
+  // the blending modes (W3C compositing, as QGIS and the browsers do them): backdrop b and source s, 0..1 each
+  const softD = b => (b <= 0.25 ? ((16 * b - 12) * b + 4) * b : Math.sqrt(b));
+  const hard = (b, s) => (s <= 0.5 ? b * 2 * s : b + (2 * s - 1) - b * (2 * s - 1));
+  const MODE = {
+    normal: (b, s) => s, multiply: (b, s) => b * s, screen: (b, s) => b + s - b * s, overlay: (b, s) => hard(s, b), 'hard-light': hard,
+    'soft-light': (b, s) => (s <= 0.5 ? b - (1 - 2 * s) * b * (1 - b) : b + (2 * s - 1) * (softD(b) - b)), darken: Math.min, lighten: Math.max
+  };
+  /* The picture: the hillshade at the bottom (opaque grey), the pseudocolour on it in the blending mode at its opacity; with
+     no hillshade, the pseudocolour alone. Rows from the north, as a canvas wants them → Uint8ClampedArray RGBA */
+  function compose(dem, hs, nx, ny, o, st) {
+    const col = colorize(dem, o, st), out = new Uint8ClampedArray(nx * ny * 4), f = MODE[o.blend] || MODE.normal, a0 = U.clamp(+o.opacity, 0, 100) / 100;
+    for (let j = 0; j < ny; j++) {
+      const row = (ny - 1 - j) * nx;
+      for (let i = 0; i < nx; i++) {
+        const k = j * nx + i, q = k * 4, p = (row + i) * 4, h = hs ? hs[k] : NaN, a = (col[q + 3] / 255) * a0;
+        if (h === h) {
+          for (let ch = 0; ch < 3; ch++) out[p + ch] = 255 * (h * (1 - a) + f(h, col[q + ch] / 255) * a);
+          out[p + 3] = 255;
+        } else if (a > 0) { out[p] = col[q]; out[p + 1] = col[q + 1]; out[p + 2] = col[q + 2]; out[p + 3] = 255 * a; }
+      }
+    }
+    return out;
+  }
+  // the legend: the ramp as a CSS gradient over the range (in steps for classes)
+  function legend(o, st) {
+    if (!st) return null;
+    const [lo, hi] = range(o, st), css = c => `rgb(${c.map(Math.round).join(',')})`;
+    if (o.interp === 'discrete') {
+      const { br, cols } = classes(o, st, lo, hi), n = cols.length, pc = k => ((k / n) * 100).toFixed(1) + '%';
+      return { lo, hi, br, css: `linear-gradient(90deg, ${cols.map((c, k) => `${css(c)} ${pc(k)}, ${css(c)} ${pc(k + 1)}`).join(', ')})` };
+    }
+    const S = stops(o);
+    return { lo, hi, css: `linear-gradient(90deg, ${Array.from({ length: 11 }, (_, k) => `${css(at(S, k / 10))} ${k * 10}%`).join(', ')})` };
+  }
+  // an imported hillshade (a GeoTIFF; its world file when it has no GeoTIFF tags) on the grid of the picture
+  async function readHillshade(P, ws, file, worldFile, onProgress) {
+    const info = await Tiff.info(file);
+    let affine = info.geo.affine;
+    if (!affine && worldFile) affine = Imagery.parseWorld(await worldFile.text());
+    if (!affine) throw new Error('it has no georeferencing: no GeoTIFF tags and no world file (.tfw) with the same name. Choose its .tfw file together with it.');
+    const G = grid(ws), r = await Tiff.read(info, { targetRes: G.cell, affine, onProgress }), g = Model.resample(r, G, Geo.axisSign(P.crs));
+    let n = 0; for (let i = 0; i < g.length; i++) if (g[i] === g[i]) n++;
+    if (!n) throw new Error('it does not cover the model. Check that it is in the coordinate system of the model.');
+    const res = Math.hypot(affine.a, affine.d);
+    return { grid: g, raster: `${info.width.toLocaleString('en-ZA')} × ${info.height.toLocaleString('en-ZA')} px at ${U.fmtNum(res, res < 10 ? 2 : 1)} m` };
+  }
+  // the picture on a canvas (the texture of the 3D view)
+  function toCanvas(px, nx, ny) {
+    const c = document.createElement('canvas'); c.width = nx; c.height = ny;
+    const x = c.getContext('2d'), im = x.createImageData(nx, ny); im.data.set(px); x.putImageData(im, 0, 0);
+    return c;
+  }
+  return { RAMPS, RAMP_NAMES, BLENDS, RANGES, DEF, settings, blobKeys, grid, stats, range, classes, colorize, hillshade, normHs, MODE, compose, legend, readHillshade, toCanvas };
+})();
+
 /* ===== UI core: DOM helpers, top bar, viewport tools, inspector, legend, dialogs ===== */
 function h(tag, attrs, ...kids) {
   const el = document.createElement(tag);
@@ -11772,9 +12105,12 @@ const UI = (() => {
   function renderLayersPop() {
     const p = $('layersPop'); p.innerHTML = '';
     const sepL = App.rv ? App.rv().sep : false;
-    const items = [['outlines', sepL ? 'Reserve blocks (the schedule)' : 'Block outlines'], ...(sepL ? [['resOut', 'Resource blocks']] : []), ['labels', 'Block labels'], ['paths', 'Mining path'], ['roads', 'Haul roads & ramps'], ['dumps', 'Dumps'], ['ovl', 'KML overlays'], ['keep', 'Keep-out zones'], ['limits', 'Depth limits & reserve boundary'], ['pits', 'Pit outlines & box cuts'], ['drains', 'Surface-water flow paths'], ['fills', 'Depression fills'], ['contours', 'Contours on natural ground']];
+    const items = [['outlines', sepL ? 'Reserve blocks (the schedule)' : 'Block outlines'], ...(sepL ? [['resOut', 'Resource blocks']] : []), ['labels', 'Block labels'], ['paths', 'Mining path'], ['roads', 'Haul roads & ramps'], ['dumps', 'Dumps'], ['ovl', 'Overlays (KML, DXF)'], ['keep', 'Keep-out zones'], ['limits', 'Depth limits & reserve boundary'], ['pits', 'Pit outlines & box cuts'], ['drains', 'Surface-water flow paths'], ['fills', 'Depression fills'], ['contours', 'Contours on natural ground']];
     p.append(h('div', { class: 'pop-h' }, 'Show in the 3D view'));
     for (const [k, label] of items) p.append(chk(label, App.show[k], v => { App.show[k] = v; View.setShow(k, v); if (k === 'paths') App.refreshOverlays(); }));
+    // the survey DEM's picture (Geological Data tab), when there is a GeoTIFF survey
+    { const P = App.P, sv = P ? Recon.byDate(P).filter(q => q.disp) : [];
+      if (sv.length) p.append(chk('Survey DEM (pseudocolour)', Dem.settings(P).on, v => { const o = Dem.settings(P); P.demView = Object.assign(o, { on: v, survey: sv.some(q => q.id === o.survey) ? o.survey : sv[sv.length - 1].id }); App.changed('dem'); if (App.tab === 'data') UI.renderTab(); })); }
     // legends and the table under the Gantt chart: on or off (kept in this browser)
     p.append(h('div', { class: 'pop-h' }, 'Legends'));
     const leg = [['legend', 'Legend of the 3D view'], ['secLegend', 'Legend of the section drawing'], ['gantt', 'Activity names on the Gantt chart'], ['acc', 'Running totals under the Gantt chart']];
@@ -12105,6 +12441,9 @@ const UI = (() => {
       h('div', { class: 'li' }, h('span', { class: 'sw line', style: { background: '#0d3b66' } }), 'Water table contours'), h('div', { class: 'li' }, h('span', { class: 'sw line', style: { background: '#d62828' } }), 'Cone of depression'),
       h('div', { class: 'li' }, h('span', { class: 'sw', style: { background: '#008b8b' } }), 'Groundwater flow'), h('div', { class: 'li' }, h('span', { class: 'sw', style: { background: '#ff7b00', borderRadius: '50%' } }), 'Seeping into the pit'), h('div', { class: 'li' }, h('span', { class: 'sw', style: { background: '#ffd400', borderRadius: '50%' } }), 'Decant / seepage'));
     el.append(h('div', { class: 'cols' }, items));
+    // the survey DEM's colour ramp (Geological Data tab)
+    { const I = App.dem && App.dem.info;
+      if (I && I.legend && Dem.settings(P).on) el.append(h('div', { class: 'cols', style: { marginTop: '4px' } }, h('div', { class: 't', style: { gridColumn: '1 / -1' } }, `${I.s.name}, band ${I.band + 1}`)), h('div', { class: 'ramp', style: { background: I.legend.css } }), h('div', { class: 'rl' }, h('span', null, U.fmtNum(I.legend.lo, 1)), h('span', null, U.fmtNum(I.legend.hi, 1)))); }
     const lg = lastLegend;
     if (lg && lg.type === 'status' && App.res) {
       el.append(h('div', { class: 'cols', style: { marginTop: '4px' } }, h('div', { class: 't', style: { gridColumn: '1 / -1' } }, 'Being mined'), App.res.acts.map(A => h('div', { class: 'li' }, h('span', { class: 'sw', style: { background: A.color } }), A.name.replace(/ \(dozer rollover\)/, ' (dozer)')))));
@@ -12248,6 +12587,549 @@ const UI = (() => {
   return { init, fld, num, txt, sel, chk, btn, sec, hint, msg, showTab, renderTab, renderInspector, renderInspectorThrottled, renderLegend, renderColorBy, setVex, setProjectName, status, setSatButton, setAttribution, satMessage, onHover, busy, toast, tip, modal, closeModal, confirmBox, promptBox, copyProjectDialog, projectsDialog, importProjectFile, $ };
 })();
 
+/* ===== Geotechnical: highwall and low wall stability (Geotechnical tab) =====
+   After Slide2 and Slide3 (Rocscience): limit equilibrium on circular slip surfaces in 2D sections of vertical slices —
+   Bishop simplified (moment equilibrium), Janbu simplified with the Janbu correction (force equilibrium) and Ordinary
+   (Fellenius) — found by a grid search of centres and radii, refined around the lowest (the global minimum); and a
+   probabilistic analysis of that surface (Monte Carlo: the cohesion, friction angle and unit weight of every material it
+   cuts sampled from normal distributions truncated at ±3σ; PoF = the share of the samples with FoS < 1, PoS = 1 − PoF,
+   reliability index β = (mean FoS − 1) ÷ its standard deviation).
+   In 3D: (1) every wall of the pit on the date, highwall and low wall, cut by 2D sections across it every so many metres,
+   each with its own critical surface, FoS and PoS (the map of the walls); (2) a 3D limit equilibrium of the critical
+   highwall and low wall: ellipsoidal slip surfaces on the 2D critical circle, their half-width across the section searched,
+   on columns (the cells of the model's grid) by Bishop simplified in 3D (Hungr 1987: the vertical equilibrium of each
+   column gives its base normal force, the moment equilibrium about the axis of the ellipsoid the factor of safety), with
+   its own Monte Carlo PoS. The 3D factor of safety takes the ends of a slide into account (on a straight wall it is above
+   the 2D one); on the real, curved walls of the pit a convex corner can make it lower.
+   Materials: Mohr–Coulomb (unit weight γ, cohesion c, friction angle φ) of each layer of the model in situ, and of the
+   spoil (backfill, dumps) above the in-situ surface; below the base of the model, the lowest layer. Water: dry; a pore
+   pressure ratio Ru; a water table at a share of the wall's height above its toe under the crest, falling to the toe at the
+   face; or the water table of the Hydrogeological tab on the date. Earthquake: a pseudo-static horizontal coefficient kh.
+   Acceptance: Read & Stacey (2009), Guidelines for Open Pit Slope Design, by the scale of the slope and the consequence of
+   a failure (as commonly quoted; set your own). */
+const Geotech = (() => {
+  const GW = 9.81; // kN/m³, water
+  const SOFT = /\b(soil|soft|softs|weather(ed)?|clay|sand|alluvi\w*|loose|calcrete|ferricrete|colluvi\w*)\b/i;
+  const HARD = /\b(hard|hards|sandstone|siltstone|shale|mudstone|dolerite|tillite|rock|grit|conglomerate|dyke|sill)\b/i;
+  // [the least static FoS, the most PoF %] by the scale of the slope and the consequence of a failure
+  const ACCEPT = { bench: { low: [1.1, 50], moderate: [1.1, 35], high: [1.1, 25] }, interramp: { low: [1.15, 25], moderate: [1.2, 20], high: [1.3, 10] }, overall: { low: [1.2, 20], moderate: [1.3, 10], high: [1.5, 5] } };
+  const METHODS = { bishop: 'Bishop simplified', janbu: 'Janbu corrected', ordinary: 'Ordinary (Fellenius)' };
+  // typical strengths of a layer from its type and name (rock mass, Mohr–Coulomb): to be replaced by tested values
+  function defMat(L) {
+    const g = +L.density > 0 ? +L.density * GW : null, n = L.name || '';
+    if (L.type === 'topsoil') return { gamma: g || 17, c: 5, phi: 25 };
+    if (L.type === 'coal') return { gamma: g || 14, c: 150, phi: 30 };
+    if (SOFT.test(n)) return { gamma: g || 19, c: 20, phi: 28 };
+    if (HARD.test(n) || L.type === 'interburden' || L.type === 'parting') return { gamma: g || 24, c: 200, phi: 34 };
+    return { gamma: g || 21, c: 50, phi: 30 };
+  }
+  const SPOIL = { gamma: 18, c: 5, phi: 32, repose: 37 };
+  function settings(P) {
+    const G = P.geotech || {}, num = (v, d, lo, hi) => { const x = +v; return v != null && v !== '' && isFinite(x) ? U.clamp(x, lo, hi) : d; };
+    const mats = P.layers.map(L => { const d = defMat(L), m = (G.mat || {})[L.id] || {}; return { id: L.id, name: L.name, type: L.type, color: L.color || '#999999', gamma: num(m.gamma, d.gamma, 5, 35), c: num(m.c, d.c, 0, 20000), phi: num(m.phi, d.phi, 0, 60), def: d }; });
+    const sp = G.spoil || {}, spoil = { id: 'spoil', name: 'Spoil (backfill)', type: 'spoil', color: '#c2a878', gamma: num(sp.gamma, SPOIL.gamma, 5, 35), c: num(sp.c, SPOIL.c, 0, 20000), phi: num(sp.phi, SPOIL.phi, 0, 60), repose: num(sp.repose, SPOIL.repose, 20, 60), def: SPOIL };
+    const W = G.water || {}, cv = G.cov || {};
+    const scale = ['bench', 'interramp', 'overall'].includes(G.scale) ? G.scale : 'overall', cons = ['low', 'moderate', 'high'].includes(G.consequence) ? G.consequence : 'moderate';
+    const [fos0, pof0] = ACCEPT[scale][cons];
+    return {
+      mats, spoil, water: { mode: ['dry', 'ru', 'table', 'hydro'].includes(W.mode) ? W.mode : 'dry', ru: num(W.ru, 0.1, 0, 0.9), frac: num(W.frac, 0.5, 0, 1) },
+      kh: num(G.kh, 0, 0, 0.5), cov: { c: num(cv.c, 25, 0, 100) / 100, phi: num(cv.phi, 10, 0, 50) / 100, gamma: num(cv.gamma, 3, 0, 30) / 100 },
+      samples: Math.round(num(G.samples, 1000, 100, 10000)), spacing: num(G.spacing, 60, 20, 1000), minDepth: num(G.minDepth, 2, 0, 50),
+      method: METHODS[G.method] ? G.method : 'bishop', date: G.date === 'end' ? 'end' : 'timeline', line: G.line && G.line.a && G.line.b ? G.line : null,
+      scale, consequence: cons, minFos: num(G.minFos, fos0, 0.5, 5), maxPoF: num(G.maxPoF, pof0, 0, 100), accept: { fos: fos0, pof: pof0 }
+    };
+  }
+  // the materials as arrays, by index: the layers 0..nL−1, the spoil nL
+  function matArrays(o) {
+    const all = o.mats.concat([o.spoil]), n = all.length;
+    return { n, c: Float64Array.from(all, m => m.c), tan: Float64Array.from(all, m => Math.tan((m.phi * Math.PI) / 180)), g: Float64Array.from(all, m => m.gamma), all };
+  }
+
+  // ---------- 2D: the section, its slices ----------
+  /* A section along a → b on the date: the ground (the in-situ surface + the spoil on it), the in-situ surface, the
+     surfaces of the layers and the water table, every half cell */
+  function profile(ctx, a, b) {
+    const ws = ctx.ws, Lx = b[0] - a[0], Ly = b[1] - a[1], len = Math.hypot(Lx, Ly), n = Math.max(3, Math.ceil(len / Math.max(0.5, ws.cell / 2)) + 1);
+    const nS = ctx.S.length, P = { a, b, len, ds: len / (n - 1), n, ux: Lx / len, uy: Ly / len, g: new Float64Array(n), ins: new Float64Array(n), S: ctx.S.map(() => new Float64Array(n)), w: ctx.wt ? new Float64Array(n) : null, ok: new Uint8Array(n) };
+    const x1 = ws.x0 + ws.nx * ws.cell, y1 = ws.y0 + ws.ny * ws.cell;
+    for (let i = 0; i < n; i++) {
+      const s = i * P.ds, x = a[0] + P.ux * s, y = a[1] + P.uy * s, ins = Model.sampleGrid(ws, ctx.ins, x, y), fl = Model.sampleGrid(ws, ctx.fill, x, y);
+      P.ins[i] = ins; P.g[i] = ins + Math.max(0, fl || 0); P.ok[i] = x >= ws.x0 && x <= x1 && y >= ws.y0 && y <= y1 && ins === ins ? 1 : 0;
+      for (let l = 0; l < nS; l++) P.S[l][i] = Model.sampleGrid(ws, ctx.S[l], x, y);
+      if (P.w) P.w[i] = ctx.wt(x, y);
+    }
+    return P;
+  }
+  const at = (P, arr, s) => { const f = U.clamp(s / P.ds, 0, P.n - 1), i = Math.min(P.n - 2, Math.floor(f)), t = f - i; return arr[i] + (arr[i + 1] - arr[i]) * t; };
+  const xyAt = (P, s) => [P.a[0] + P.ux * s, P.a[1] + P.uy * s];
+  // what lies in a slice at s between zb and zt: [material, thickness, …] (the spoil above the in-situ surface: nL)
+  function column(P, s, zb, zt) {
+    const out = [], ins = at(P, P.ins, s), nl = P.S.length - 1;
+    if (zt > ins) { const lo = Math.max(zb, ins); if (zt > lo) out.push(nl, zt - lo); }
+    const top = Math.min(zt, ins);
+    for (let l = 0; l < nl && top > zb; l++) { const hi = Math.min(top, at(P, P.S[l], s)), lo = Math.max(zb, at(P, P.S[l + 1], s)); if (hi > lo) out.push(l, hi - lo); }
+    const base = at(P, P.S[nl], s); if (zb < base && top > zb) out.push(nl - 1, Math.min(top, base) - zb);
+    return out;
+  }
+  function matAt(P, s, z) { const ins = at(P, P.ins, s), nl = P.S.length - 1; if (z > ins) return nl; for (let l = 0; l < nl; l++) if (z >= at(P, P.S[l + 1], s)) return l; return nl - 1; }
+  // the water level at s under the ground gz, for a wall with its toe at zt
+  function waterAt(P, s, gz, wall, o) {
+    if (o.water.mode === 'table') return Math.min(gz, wall.ztoe + o.water.frac * Math.max(0, gz - wall.ztoe));
+    if (o.water.mode === 'hydro' && P.w) { const v = at(P, P.w, s); return v === v ? Math.min(gz, v) : -Infinity; }
+    return -Infinity;
+  }
+  /* The slices of a circle (centre xc, zc; radius R) on a wall facing d (+1: the slope faces increasing s): the run of
+     the circle below the ground with the most in it, its upslope end within lim.up and its downslope end within lim.dn;
+     null when it does not cut the wall that way */
+  function slices(P, xc, zc, R, wall, lim, o, n = 30) {
+    const d = wall.d, step = P.ds, lo = Math.max(0, xc - R), hi = Math.min(P.len, xc + R); if (hi - lo < step * 3) return null;
+    const below = s => { const q = R * R - (s - xc) * (s - xc); return q > 0 ? at(P, P.g, s) - (zc - Math.sqrt(q)) : -1; };
+    let best = null, cur = null;
+    for (let s = lo; s <= hi + 1e-9; s += step) {
+      const v = below(s), i = Math.min(P.n - 1, Math.round(s / P.ds));
+      if (v > 0.01 && P.ok[i]) { if (!cur) cur = { a: s, b: s, m: 0 }; cur.b = s; cur.m += v; } else if (cur) { if (!best || cur.m > best.m) best = cur; cur = null; }
+    }
+    if (cur && (!best || cur.m > best.m)) best = cur;
+    if (!best || best.b - best.a < step * 2) return null;
+    // the ends where the circle meets the ground
+    let a0 = Math.max(lo, best.a - step), a1 = best.a; for (let k = 0; k < 16; k++) { const m = (a0 + a1) / 2; if (below(m) > 0) a1 = m; else a0 = m; }
+    let b0 = best.b, b1 = Math.min(hi, best.b + step); for (let k = 0; k < 16; k++) { const m = (b0 + b1) / 2; if (below(m) > 0) b0 = m; else b1 = m; }
+    const s0 = a1, s1 = b0, up = d > 0 ? s0 : s1, dn = d > 0 ? s1 : s0;
+    if (up < lim.up[0] || up > lim.up[1] || dn < lim.dn[0] || dn > lim.dn[1]) return null;
+    const b = (s1 - s0) / n, S = { n, b, xc, zc, R, d, s0, s1, sm: new Float64Array(n), zb: new Float64Array(n), zt: new Float64Array(n), sin: new Float64Array(n), cos: new Float64Array(n), base: new Int16Array(n), hw: new Float64Array(n), comp: [] };
+    let deep = 0;
+    for (let i = 0; i < n; i++) {
+      const s = s0 + (i + 0.5) * b, q = Math.max(0, R * R - (s - xc) * (s - xc)), zb = zc - Math.sqrt(q), zt = Math.max(zb, at(P, P.g, s));
+      S.sm[i] = s; S.zb[i] = zb; S.zt[i] = zt; deep = Math.max(deep, zt - zb);
+      const sn = U.clamp((d * (xc - s)) / R, -1, 1); S.sin[i] = sn; S.cos[i] = Math.sqrt(1 - sn * sn);
+      S.base[i] = matAt(P, s, zb + 0.01); S.comp.push(column(P, s, zb, zt));
+      const zw = waterAt(P, s, zt, wall, o); S.hw[i] = Math.max(0, zw - zb);
+    }
+    if (deep < Math.max(o.minDepth, 0.1 * wall.H) || s1 - s0 < 0.25 * wall.H) return null; // (not a surficial slip)
+    // the chord and the deepest point below it (for the Janbu correction)
+    const ga = at(P, P.g, s0), gb = at(P, P.g, s1); let dm = 0;
+    for (let i = 0; i < n; i++) { const zc_ = ga + ((gb - ga) * (S.sm[i] - s0)) / (s1 - s0); dm = Math.max(dm, zc_ - S.zb[i]); }
+    S.chord = Math.hypot(s1 - s0, gb - ga); S.dm = dm;
+    return S;
+  }
+  /* The factor of safety of the slices with the materials M (c, tan φ, γ by index): Bishop simplified, Janbu corrected or
+     Ordinary; NaN when the surface does not hold (no driving, or the Bishop mα ≤ 0.2 at a slice that carries weight) */
+  function fos(S, M, method, o) {
+    const n = S.n, b = S.b, W = new Float64Array(n), ru = o.water.mode === 'ru' ? o.water.ru : 0, kh = o.kh;
+    let drive = 0, quake = 0, jd = 0;
+    for (let i = 0; i < n; i++) { const cp = S.comp[i]; let w = 0; for (let k = 0; k < cp.length; k += 2) w += M.g[cp[k]] * cp[k + 1]; W[i] = w * b; drive += W[i] * S.sin[i]; jd += W[i] * (S.sin[i] / S.cos[i]); quake += kh * W[i] * (S.zc - (S.zb[i] + S.zt[i]) / 2) / S.R; }
+    const u = i => (ru > 0 ? (ru * W[i]) / b : GW * S.hw[i]);
+    if (method === 'ordinary') {
+      let res = 0; for (let i = 0; i < n; i++) { const m = S.base[i], l = b / S.cos[i]; res += M.c[m] * l + Math.max(0, W[i] * S.cos[i] - u(i) * l) * M.tan[m]; }
+      const den = drive + quake; return den > 1e-6 ? res / den : NaN;
+    }
+    if (method === 'janbu') {
+      const den = jd + kh * W.reduce((a, v) => a + v, 0); if (!(den > 1e-6)) return NaN;
+      let F = 1.2;
+      for (let it = 0; it < 60; it++) {
+        let num = 0;
+        for (let i = 0; i < n; i++) { const m = S.base[i], ma = S.cos[i] + (S.sin[i] * M.tan[m]) / F; if (ma <= 0.2 && W[i] > 0) return NaN; num += (M.c[m] * b + Math.max(0, W[i] - u(i) * b) * M.tan[m]) / (S.cos[i] * ma); }
+        const F2 = num / den; if (Math.abs(F2 - F) < 1e-5) { F = F2; break; } F = F2;
+      }
+      // the Janbu correction for c–φ materials: f0 = 1 + 0.5 (d/L − 1.4 (d/L)²)
+      const r = S.chord > 0 ? S.dm / S.chord : 0; return F * (1 + 0.5 * (r - 1.4 * r * r));
+    }
+    const den = drive + quake; if (!(den > 1e-6)) return NaN;
+    let F = 1.2;
+    for (let it = 0; it < 60; it++) {
+      let num = 0;
+      for (let i = 0; i < n; i++) { const m = S.base[i], ma = S.cos[i] + (S.sin[i] * M.tan[m]) / F; if (ma <= 0.2 && W[i] > 0) return NaN; num += (M.c[m] * b + Math.max(0, W[i] - u(i) * b) * M.tan[m]) / ma; }
+      const F2 = num / den; if (Math.abs(F2 - F) < 1e-5) { F = F2; break; } F = F2;
+    }
+    return F;
+  }
+
+  // ---------- 2D: the wall, the search ----------
+  // the slope angle at i (degrees)
+  const angleAt = (P, i) => { const a = Math.max(0, i - 1), b = Math.min(P.n - 1, i + 1); return (Math.atan(Math.abs(P.g[b] - P.g[a]) / ((b - a) * P.ds)) * 180) / Math.PI; };
+  /* The wall through index i0 facing d: up to its crest (upslope until the ground flattens below 20° for 20 m: a berm is
+     narrower), down to its toe (the same, downslope); highwall when it is in situ, low wall when spoil makes its face */
+  function wallAt(P, i0, d) {
+    const run = Math.max(2, Math.round(20 / P.ds)), flatFrom = (start, dir) => {
+      let k = 0;
+      for (let i = start; i >= 0 && i < P.n; i += dir) { if (!P.ok[i]) return i - dir; if (angleAt(P, i) < 20) { if (++k >= run) return i - dir * (k - 1); } else k = 0; }
+      return dir > 0 ? P.n - 1 : 0;
+    };
+    const ic = U.clamp(flatFrom(i0, -d), 0, P.n - 1), it = U.clamp(flatFrom(i0, d), 0, P.n - 1);
+    const sc = ic * P.ds, st = it * P.ds, zcr = P.g[ic], ztoe = P.g[it], H = zcr - ztoe;
+    if (!(H > 3) || (st - sc) * d <= 0) return null;
+    // (a low wall when spoil makes most of the body of the wall: the ground above the level of the toe, from the toe to half
+    // a wall height behind the crest; an in-situ face with spoil on its crest, standing on backfill or with a skin of spoil
+    // on it is a highwall)
+    let sp = 0, si = 0; const back = Math.round((0.5 * H) / P.ds);
+    for (let i = Math.max(0, Math.min(ic, it) - (d > 0 ? back : 0)); i <= Math.min(P.n - 1, Math.max(ic, it) + (d < 0 ? back : 0)); i++) {
+      if (!P.ok[i]) continue;
+      sp += Math.max(0, P.g[i] - Math.max(P.ins[i], ztoe)); si += Math.max(0, Math.min(P.ins[i], P.g[i]) - ztoe);
+    }
+    const spoil = sp > si;
+    return { d, sc, st, zcr, ztoe, H, angle: (Math.atan(H / Math.abs(st - sc)) * 180) / Math.PI, kind: spoil ? 'lowwall' : 'highwall', crest: xyAt(P, sc), toe: xyAt(P, st) };
+  }
+  /* The global minimum surface of a wall: a grid of centres (from half a wall height before the crest to half beyond the
+     toe, from just above the crest to 1.7 wall heights over it) × circles reaching from 1 H below the toe (deep-seated,
+     through a soft floor) to 0.8 H above it, then a pattern search from the lowest; entry behind the crest (up to 2 H), exit
+     at or beyond the toe (up to 2 H) */
+  function search(P, wall, M, o, q = {}) {
+    const { H, d } = wall, sLo = Math.min(wall.sc, wall.st), sHi = Math.max(wall.sc, wall.st), mid = (sLo + sHi) / 2;
+    const lim = d > 0 ? { up: [sLo - 2 * H, mid], dn: [mid, sHi + 2 * H] } : { up: [mid, sHi + 2 * H], dn: [sLo - 2 * H, mid] };
+    const method = q.method || o.method, list = [];
+    const ev = (xc, zc, R) => { if (!(R > 1)) return null; const S = slices(P, xc, zc, R, wall, lim, o, q.slices || 30); if (!S) return null; const f = fos(S, M, method, o); return f === f && f > 0 ? { f, xc, zc, R, S } : null; };
+    const gx = q.grid || 14, gr = q.radii || 11, x0 = sLo - 0.5 * H, xw = sHi - sLo + 1.5 * H, z0 = wall.zcr + 0.1 * H, zw = 1.6 * H;
+    let best = null;
+    for (let i = 0; i < gx; i++) for (let j = 0; j < gx; j++) {
+      const xc = x0 + (xw * i) / (gx - 1), zc = z0 + (zw * j) / (gx - 1);
+      for (let k = 0; k < gr; k++) { const r = ev(xc, zc, zc - (wall.ztoe - 1.0 * H + (1.8 * H * k) / (gr - 1))); if (r) { list.push([r.f, xc, zc, r.R]); if (!best || r.f < best.f) best = r; } }
+    }
+    if (!best) return null;
+    let st = [xw / gx, zw / gx, (1.8 * H) / gr];
+    for (let it = 0; it < (q.refine || 60) && st[0] > 0.05; it++) {
+      let moved = false;
+      // (along, up, the radius, and up with the radius: the bottom of the circle kept)
+      for (const [dx, dz, dr] of [[st[0], 0, 0], [-st[0], 0, 0], [0, st[1], 0], [0, -st[1], 0], [0, 0, st[2]], [0, 0, -st[2]], [0, st[1], st[1]], [0, -st[1], -st[1]]]) {
+        const r = ev(best.xc + dx, best.zc + dz, best.R + dr);
+        if (r && r.f < best.f - 1e-6) { best = r; moved = true; list.push([r.f, r.xc, r.zc, r.R]); }
+      }
+      if (!moved) st = st.map(v => v / 2);
+    }
+    list.sort((p, q2) => p[0] - q2[0]);
+    const near = []; for (const e of list) { if (near.length >= 12) break; if (!near.some(x => Math.abs(x[1] - e[1]) + Math.abs(x[2] - e[2]) + Math.abs(x[3] - e[3]) < H * 0.05)) near.push(e); }
+    return { f: best.f, xc: best.xc, zc: best.zc, R: best.R, S: best.S, lim, near, method };
+  }
+  // the factor of safety of the critical surface by each method (Slide reports them side by side)
+  function allMethods(S, M, o) { return { bishop: fos(S, M, 'bishop', o), janbu: fos(S, M, 'janbu', o), ordinary: fos(S, M, 'ordinary', o) }; }
+
+  // ---------- probabilistic: Monte Carlo on a surface ----------
+  function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+  function gauss(r) { let u = 0, v = 0; while (u === 0) u = r(); v = r(); return U.clamp(Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v), -3, 3); }
+  /* N samples of the materials (each material its own c, φ and γ, independent normal, ±3σ): evalF(M) for each → the
+     FoS of each sample; PoF the share below 1 */
+  function monteCarlo(M0, used, o, N, evalF, seed = 12345) {
+    const r = rng(seed), F = new Float64Array(N), M = { n: M0.n, c: Float64Array.from(M0.c), tan: Float64Array.from(M0.tan), g: Float64Array.from(M0.g) };
+    const phi0 = Float64Array.from(M0.tan, t => Math.atan(t));
+    let k = 0;
+    for (let s = 0; s < N; s++) {
+      for (const m of used) {
+        M.c[m] = Math.max(0, M0.c[m] * (1 + o.cov.c * gauss(r)));
+        M.tan[m] = Math.tan(U.clamp(phi0[m] * (1 + o.cov.phi * gauss(r)), 0.01, 1.2));
+        M.g[m] = Math.max(1, M0.g[m] * (1 + o.cov.gamma * gauss(r)));
+      }
+      const f = evalF(M); if (f === f) F[k++] = f;
+    }
+    const v = F.subarray(0, k); if (!k) return null;
+    let sum = 0, fail = 0, mn = Infinity, mx = -Infinity; for (const f of v) { sum += f; if (f < 1) fail++; mn = Math.min(mn, f); mx = Math.max(mx, f); }
+    const mean = sum / k; let ss = 0; for (const f of v) ss += (f - mean) * (f - mean); const sd = Math.sqrt(ss / Math.max(1, k - 1));
+    const bins = 30, lo = Math.max(0, Math.min(mn, 0.6)), hi = Math.max(mx, 1.6), hist = new Array(bins).fill(0); for (const f of v) hist[Math.min(bins - 1, Math.floor(((f - lo) / (hi - lo)) * bins))]++;
+    return { n: k, mean, sd, pof: fail / k, pos: 1 - fail / k, beta: sd > 0 ? (mean - 1) / sd : Infinity, min: mn, max: mx, hist, lo, hi };
+  }
+  const usedOf = S => { const u = new Set(); for (let i = 0; i < S.n; i++) { u.add(S.base[i]); const cp = S.comp[i]; for (let k = 0; k < cp.length; k += 2) u.add(cp[k]); } return [...u]; };
+
+  // ---------- 3D: columns on an ellipsoid ----------
+  /* The columns of an ellipsoid on the critical circle of a section: its centre over s = xc of the section at zc, its
+     axes R along the section and up, B across it; the columns are the grid cells over the part of it below the ground */
+  function columns(ctx, sec, crit, B, o) {
+    const ws = ctx.ws, P = sec.P, w = sec.wall, ux = P.ux, uy = P.uy, nx = -uy, ny = ux, cx = P.a[0] + ux * crit.xc, cy = P.a[1] + uy * crit.xc, R = crit.R, zc = crit.zc, d = w.d, nS = ctx.S.length, nl = nS - 1;
+    const ex = Math.abs(ux) * R + Math.abs(nx) * B, ey = Math.abs(uy) * R + Math.abs(ny) * B;
+    const i0 = Math.max(0, Math.floor((cx - ex - ws.x0) / ws.cell)), i1 = Math.min(ws.nx - 1, Math.ceil((cx + ex - ws.x0) / ws.cell)), j0 = Math.max(0, Math.floor((cy - ey - ws.y0) / ws.cell)), j1 = Math.min(ws.ny - 1, Math.ceil((cy + ey - ws.y0) / ws.cell));
+    const C = { comp: [], base: [], sinA: [], cosG: [], hw: [], r: [], arm: [], zm: [], Ah: ws.cell * ws.cell, zc, n: 0, cells: [] };
+    // (the slide is the columns below the ground joined to the middle of the 2D slip: not the ground the ellipsoid passes under elsewhere)
+    const bw = i1 - i0 + 1, bh = j1 - j0 + 1; if (bw < 1 || bh < 1) return null;
+    const keep = new Uint8Array(bw * bh), S2 = sec.crit && sec.crit.S, sm = S2 ? (S2.s0 + S2.s1) / 2 : crit.xc, mx = P.a[0] + ux * sm, my = P.a[1] + uy * sm;
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const c = j * ws.nx + i, x = ws.x0 + (i + 0.5) * ws.cell, y = ws.y0 + (j + 0.5) * ws.cell, ds = (x - cx) * ux + (y - cy) * uy, dt = (x - cx) * nx + (y - cy) * ny;
+      const Q = 1 - (ds * ds) / (R * R) - (dt * dt) / (B * B); if (Q <= 0.02) continue;
+      const g = ctx.ins[c] + Math.max(0, ctx.fill[c] || 0); if (g - (zc - R * Math.sqrt(Q)) > 0.05 && ctx.ins[c] === ctx.ins[c]) keep[(j - j0) * bw + (i - i0)] = 1;
+    }
+    { let si = U.clamp(Math.floor((mx - ws.x0) / ws.cell), i0, i1) - i0, sj = U.clamp(Math.floor((my - ws.y0) / ws.cell), j0, j1) - j0, seed = sj * bw + si;
+      if (!keep[seed]) { let bd = Infinity; for (let k = 0; k < keep.length; k++) if (keep[k]) { const d2 = ((k % bw) - si) ** 2 + (((k / bw) | 0) - sj) ** 2; if (d2 < bd) { bd = d2; seed = k; } } if (!(bd < Infinity)) return null; }
+      const on = new Uint8Array(keep.length), st = [seed]; on[seed] = 1;
+      while (st.length) { const k = st.pop(), ki = k % bw, kj = (k / bw) | 0; for (const [a2, b2] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const ii = ki + a2, jj = kj + b2; if (ii < 0 || jj < 0 || ii >= bw || jj >= bh) continue; const q = jj * bw + ii; if (keep[q] && !on[q]) { on[q] = 1; st.push(q); } } }
+      keep.set(on); }
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      if (!keep[(j - j0) * bw + (i - i0)]) continue;
+      const c = j * ws.nx + i, x = ws.x0 + (i + 0.5) * ws.cell, y = ws.y0 + (j + 0.5) * ws.cell, ds = (x - cx) * ux + (y - cy) * uy, dt = (x - cx) * nx + (y - cy) * ny;
+      const Q = 1 - (ds * ds) / (R * R) - (dt * dt) / (B * B); if (Q <= 0.02) continue;
+      const sq = Math.sqrt(Q), zb = zc - R * sq, ins = ctx.ins[c], g = ins + Math.max(0, ctx.fill[c] || 0); if (!(g - zb > 0.05) || ins !== ins) continue;
+      const comp = []; if (g > ins) { const lo = Math.max(zb, ins); if (g > lo) comp.push(nl, g - lo); }
+      const top = Math.min(g, ins); for (let l = 0; l < nl && top > zb; l++) { const hi = Math.min(top, ctx.S[l][c]), lo = Math.max(zb, ctx.S[l + 1][c]); if (hi > lo) comp.push(l, hi - lo); }
+      if (zb < ctx.S[nl][c] && top > zb) comp.push(nl - 1, Math.min(top, ctx.S[nl][c]) - zb);
+      let base = nl - 1; if (zb + 0.01 > ins) base = nl; else for (let l = 0; l < nl; l++) if (zb + 0.01 >= ctx.S[l + 1][c]) { base = l; break; }
+      const gs = ds / (R * sq), gt = (R * dt) / (B * B * sq), tanA = -d * gs, sinA = tanA / Math.sqrt(1 + tanA * tanA), cosG = 1 / Math.sqrt(1 + gs * gs + gt * gt);
+      let zw = -Infinity; if (o.water.mode === 'table') zw = Math.min(g, w.ztoe + o.water.frac * Math.max(0, g - w.ztoe)); else if (o.water.mode === 'hydro' && ctx.wt) { const v = ctx.wt(x, y); if (v === v) zw = Math.min(g, v); }
+      C.comp.push(comp); C.base.push(base); C.sinA.push(sinA); C.cosG.push(cosG); C.hw.push(Math.max(0, zw - zb)); C.r.push(Math.hypot(ds, zc - zb)); C.arm.push(d * -ds); C.zm.push((zb + g) / 2); C.cells.push(c); C.n++;
+    }
+    return C.n >= 4 ? C : null;
+  }
+  // Bishop simplified in 3D (Hungr 1987) on the columns C with the materials M
+  function fos3d(C, M, o) {
+    const n = C.n, Ah = C.Ah, W = new Float64Array(n), ru = o.water.mode === 'ru' ? o.water.ru : 0; let den = 0;
+    for (let i = 0; i < n; i++) { const cp = C.comp[i]; let w = 0; for (let k = 0; k < cp.length; k += 2) w += M.g[cp[k]] * cp[k + 1]; W[i] = w * Ah; den += W[i] * C.arm[i] + o.kh * W[i] * (C.zc - C.zm[i]); }
+    if (!(den > 1e-6)) return NaN;
+    let F = 1.3;
+    for (let it = 0; it < 80; it++) {
+      let num = 0;
+      for (let i = 0; i < n; i++) {
+        const m = C.base[i], A = Ah / C.cosG[i], u = ru > 0 ? (ru * W[i]) / Ah : GW * C.hw[i], t = M.tan[m], sa = C.sinA[i];
+        const ma = Math.max(0.2 * C.cosG[i], C.cosG[i] + (t * sa) / F); // (kept from vanishing at the steep toe of the slide)
+        const N = (W[i] - ((M.c[m] * A - u * A * t) * sa) / F) / ma;
+        num += (M.c[m] * A + Math.max(0, N - u * A) * t) * C.r[i];
+      }
+      const F2 = num / den; if (Math.abs(F2 - F) < 1e-5) { F = F2; break; } F = F2;
+    }
+    return F;
+  }
+  const usedOf3 = C => { const u = new Set(C.base); for (const cp of C.comp) for (let k = 0; k < cp.length; k += 2) u.add(cp[k]); return [...u]; };
+  // the least 3D FoS over the half-widths B (0.5 to 5 wall heights) and radii of 0.9 to 1.1 × the 2D one
+  function search3d(ctx, sec, M, o) {
+    const crit = sec.crit, H = sec.wall.H; let best = null;
+    for (const k of [0.5, 0.75, 1, 1.5, 2, 3, 5]) for (const rs of [0.9, 1, 1.1]) {
+      const c2 = { xc: crit.xc, zc: crit.zc, R: crit.R * rs }, C = columns(ctx, sec, c2, k * H, o); if (!C) continue;
+      const f = fos3d(C, M, o); if (f === f && f > 0 && (!best || f < best.f)) best = { f, B: k * H, R: c2.R, C, crit: c2 };
+    }
+    return best;
+  }
+
+  // ---------- the analysis on a date ----------
+  /* ctx: {ws, ins, fill (the surface on the date), S (the layer surfaces), wt (x, y) → the water table (hydro), day,
+     label}. A section: {P, wall, crit (search), methods, mc, d3, mc3}. */
+  function analyseSection(ctx, a, b, i0, d, M, o, q) {
+    const P = profile(ctx, a, b), wall = wallAt(P, i0 != null ? i0 : Math.round(P.n / 2), d); if (!wall) return null;
+    const crit = search(P, wall, M, o, q); if (!crit) return { P, wall, crit: null };
+    const sec = { P, wall, crit, methods: allMethods(crit.S, M, o) };
+    const used = usedOf(crit.S); sec.mc = monteCarlo(M, used, o, q.samples || o.samples, Mx => fos(crit.S, Mx, o.method, o));
+    return sec;
+  }
+  // the walls of the pit on the date: steep cells of the excavated or backfilled ground, one per spacing × spacing square
+  function wallPoints(ctx, o) {
+    const ws = ctx.ws, n = ws.n, nx = ws.nx, G = new Float32Array(n);
+    for (let c = 0; c < n; c++) G[c] = ctx.ins[c] + Math.max(0, ctx.fill[c] || 0);
+    let deep = 0; const pts = new Map(), sp = o.spacing;
+    for (let j = 1; j < ws.ny - 1; j++) for (let i = 1; i < nx - 1; i++) {
+      const c = j * nx + i, dug = ws.topo[c] - ctx.ins[c], fl = ctx.fill[c] || 0; if (!(dug > 2 || fl > 2)) continue;
+      deep = Math.max(deep, ws.topo[c] - G[c]);
+      const gx = (G[c + 1] - G[c - 1]) / (2 * ws.cell), gy = (G[c + nx] - G[c - nx]) / (2 * ws.cell), gm = Math.hypot(gx, gy); if (!(gm > Math.tan((25 * Math.PI) / 180)) || !isFinite(gm)) continue;
+      const [x, y] = Model.cellXY(ws, c), key = Math.floor((x - ws.x0) / sp) + ',' + Math.floor((y - ws.y0) / sp), cur = pts.get(key);
+      if (!cur || gm > cur.gm) pts.set(key, { x, y, gm, vx: -gx / gm, vy: -gy / gm, c });
+    }
+    return { pts: [...pts.values()], deep };
+  }
+  /* The whole analysis: the walls scanned (each a coarse search and a quick PoS), then the highest highwall and low wall
+     (or the walls of the section drawn) in full: the search, the three methods, the Monte Carlo PoS, and 3D */
+  /* The spoil at its angle of repose: the schedule places the spoil cell by cell, so on the grid a spoil face against the
+     open cut can stand near vertical; for the analysis no spoil surface is steeper than its angle of repose (cut down to
+     it, not below the in-situ surface). → the fill to use, and how much was cut */
+  function regrade(ctx, o) {
+    const ws = ctx.ws, n = ws.n, nx = ws.nx, ny = ws.ny, z = new Float32Array(n), t = Math.tan((o.spoil.repose * Math.PI) / 180) * ws.cell, td = t * Math.SQRT2;
+    for (let c = 0; c < n; c++) z[c] = ctx.ins[c] + Math.max(0, ctx.fill[c] || 0);
+    const relax = (c, q, d) => { if (z[q] + d < z[c]) { const v = Math.max(ctx.ins[c], z[q] + d); if (v < z[c] - 1e-4) { z[c] = v; return true; } } return false; };
+    for (let pass = 0; pass < 60; pass++) {
+      let moved = false;
+      const sweep = (j0, j1, dj, i0, i1, di) => { for (let j = j0; j !== j1; j += dj) for (let i = i0; i !== i1; i += di) { const c = j * nx + i; if (!((ctx.fill[c] || 0) > 0.05)) continue; for (const [a, b, d] of [[-1, 0, t], [1, 0, t], [0, -1, t], [0, 1, t], [-1, -1, td], [1, -1, td], [-1, 1, td], [1, 1, td]]) { const ii = i + a, jj = j + b; if (ii < 0 || jj < 0 || ii >= nx || jj >= ny) continue; const q = jj * nx + ii; if (z[q] === z[q] && relax(c, q, d)) moved = true; } } };
+      sweep(0, ny, 1, 0, nx, 1); sweep(ny - 1, -1, -1, nx - 1, -1, -1);
+      if (!moved) break;
+    }
+    const fill = new Float32Array(n); let cells = 0, vol = 0, most = 0;
+    for (let c = 0; c < n; c++) { const f0 = Math.max(0, ctx.fill[c] || 0), f1 = Math.max(0, z[c] - ctx.ins[c]); fill[c] = f1; if (f0 - f1 > 0.5) { cells++; vol += (f0 - f1) * ws.cell * ws.cell; most = Math.max(most, f0 - f1); } }
+    return { fill, cells, vol, most };
+  }
+  async function run(ctx0, P0, onProgress = () => {}) {
+    const o = settings(P0), M = matArrays(o), rg = regrade(ctx0, o), ctx = Object.assign({}, ctx0, { fill: rg.fill }), out = { o, label: ctx.label, day: ctx.day, scan: [], walls: {}, at: new Date(), regrade: rg };
+    let { pts, deep } = wallPoints(ctx, o); const Ls = U.clamp(2.5 * deep, 60, 500);
+    if (pts.length > 120) { const st = pts.length / 120; pts = Array.from({ length: 120 }, (_, k) => pts[Math.floor(k * st)]); } // (at most 120 sections)
+    let k = 0;
+    for (const p of pts) {
+      if (++k % 4 === 0) { onProgress(k / (pts.length + 4)); await U.sleep(0); }
+      const a = [p.x - p.vx * Ls, p.y - p.vy * Ls], b = [p.x + p.vx * Ls, p.y + p.vy * Ls];
+      const sec = analyseSection(ctx, a, b, null, 1, M, o, { grid: 8, radii: 6, refine: 25, samples: 150, slices: 20 });
+      if (!sec || !sec.crit) continue;
+      out.scan.push({ x: p.x, y: p.y, kind: sec.wall.kind, H: sec.wall.H, angle: sec.wall.angle, f: sec.crit.f, pos: sec.mc ? sec.mc.pos : NaN, crest: sec.wall.crest, toe: sec.wall.toe, a, b });
+    }
+    // the walls analysed in full: the section drawn (both of its walls), else the highest highwall and low wall of the scan
+    const full = [];
+    if (o.line) {
+      const Pl = profile(ctx, o.line.a, o.line.b); let ib = -1; for (let i = 0; i < Pl.n; i++) if (Pl.ok[i] && (ib < 0 || Pl.g[i] < Pl.g[ib])) ib = i;
+      for (const side of [-1, 1]) { let im = -1, am = 0; for (let i = ib; i >= 0 && i < Pl.n; i += side) { if (!Pl.ok[i]) break; const an = angleAt(Pl, i); if (an > am) { am = an; im = i; } } if (im >= 0 && am > 15) full.push({ a: o.line.a, b: o.line.b, i0: im, d: -side }); }
+    } else {
+      for (const kind of ['highwall', 'lowwall']) { const s = out.scan.filter(q => q.kind === kind).sort((p, q) => p.f - q.f)[0]; if (s) full.push({ a: s.a, b: s.b, i0: null, d: 1 }); } // (the critical: the lowest FoS of each kind)
+    }
+    for (const f of full) {
+      onProgress(0.9); await U.sleep(0);
+      const sec = analyseSection(ctx, f.a, f.b, f.i0, f.d, M, o, {});
+      if (!sec || !sec.crit || out.walls[sec.wall.kind]) continue;
+      const d3 = search3d(ctx, sec, M, o);
+      if (d3) { sec.d3 = d3; sec.mc3 = monteCarlo(M, usedOf3(d3.C), o, Math.min(500, o.samples), Mx => fos3d(d3.C, Mx, o)); }
+      out.walls[sec.wall.kind] = sec;
+    }
+    out.findings = findings(out, o);
+    onProgress(1);
+    return out;
+  }
+
+  // ---------- findings and recommendations ----------
+  const pct = v => `${U.fmtNum(v * 100, v < 0.1 ? 1 : 0)}%`;
+  function verdict(f, pof, o) { return !(f === f) ? 'none' : f < 1 ? 'fail' : f < o.minFos || (pof === pof && pof * 100 > o.maxPoF) ? 'warn' : 'ok'; }
+  function findings(R, o) {
+    const out = [], name = { highwall: 'Highwall', lowwall: 'Low wall (spoil)' };
+    for (const kind of ['highwall', 'lowwall']) {
+      const s = R.walls[kind]; if (!s) { out.push({ level: 'info', text: `${name[kind]}: no ${kind === 'highwall' ? 'in-situ face' : 'spoil slope'} steep enough to analyse on this date.` }); continue; }
+      const f = s.methods[o.method], pof = s.mc ? s.mc.pof : NaN, v = verdict(f, pof, o), w = s.wall;
+      out.push({ level: v, kind, text: `${name[kind]} (${U.fmtNum(w.H, 0)} m high at ${U.fmtNum(w.angle, 0)}°): FoS ${U.fmtNum(f, 2)} (${METHODS[o.method]}), PoF ${pof === pof ? pct(pof) : '–'} against the criteria of FoS ≥ ${U.fmtNum(o.minFos, 2)} and PoF ≤ ${U.fmtNum(o.maxPoF, 0)}%: ${v === 'ok' ? 'acceptable' : v === 'warn' ? 'below the design criteria' : 'unstable (FoS below 1)'}.${s.d3 ? ` In 3D the FoS is ${U.fmtNum(s.d3.f, 2)}${s.mc3 ? `, PoF ${pct(s.mc3.pof)}` : ''} (a slide ${U.fmtNum(2 * s.d3.B, 0)} m wide).` : ''}` });
+    }
+    if (R.regrade && R.regrade.cells) out.push({ level: 'info', text: `The schedule places the spoil cell by cell, so against the open cut it stood steeper than its angle of repose in ${R.regrade.cells} cells (up to ${U.fmtNum(R.regrade.most, 0)} m too high): for the analysis the spoil is taken at its angle of repose of ${U.fmtNum(o.spoil.repose, 0)}° there (${U.fmtBig(R.regrade.vol, 'm³')} run down into the void).` });
+    const sc = R.scan; if (sc.length) {
+      for (const kind of ['highwall', 'lowwall']) {
+        const l = sc.filter(q => q.kind === kind); if (!l.length) continue;
+        const bad = l.filter(q => q.f < o.minFos), fail = l.filter(q => q.f < 1), worst = l.reduce((a, q) => (q.f < a.f ? q : a), l[0]);
+        out.push({ level: fail.length ? 'fail' : bad.length ? 'warn' : 'ok', kind, text: `${name[kind]} around the pit: ${l.length} sections, FoS ${U.fmtNum(Math.min(...l.map(q => q.f)), 2)} to ${U.fmtNum(Math.max(...l.map(q => q.f)), 2)}; ${bad.length ? `${bad.length} (${pct(bad.length / l.length)}) below FoS ${U.fmtNum(o.minFos, 2)}${fail.length ? `, ${fail.length} below 1` : ''}, the lowest ${U.fmtNum(worst.f, 2)} where the wall is ${U.fmtNum(worst.H, 0)} m high at ${U.fmtNum(worst.angle, 0)}°` : 'all of them meet the criterion'}.` });
+      }
+    }
+    // recommendations
+    const rec = [];
+    const hw = R.walls.highwall, lw = R.walls.lowwall, bad = s => s && verdict(s.methods[o.method], s.mc ? s.mc.pof : NaN, o) !== 'ok';
+    if (bad(hw)) {
+      rec.push(`Highwall: flatten the overall angle (now ${U.fmtNum(hw.wall.angle, 0)}°) or add a berm, and re-run until FoS ≥ ${U.fmtNum(o.minFos, 2)}; a lower bench height or a wider berm at the weakest layer (${o.mats[hw.crit.S.base[Math.floor(hw.crit.S.n / 2)]] ? o.mats[hw.crit.S.base[Math.floor(hw.crit.S.n / 2)]].name : 'at the base of the slip'}) helps most.`);
+      if (o.water.mode !== 'dry') rec.push('Highwall: depressurise the face (horizontal drains or pit dewatering ahead of the face): the pore pressure takes a large part of the strength.');
+    }
+    if (bad(lw)) {
+      rec.push(`Low wall: place the spoil flatter (now ${U.fmtNum(lw.wall.angle, 0)}°: the dump face angle and lift height in the Dumps tab), in lifts with berms, and keep the toe of the spoil buttressed by the next strip's backfill; keep water off the spoil floor (a free-draining base).`);
+    }
+    if ((hw && hw.mc && hw.mc.pof * 100 > o.maxPoF) || (lw && lw.mc && lw.mc.pof * 100 > o.maxPoF)) rec.push('Reduce the uncertainty: test the strengths (triaxial and direct shear tests of the weak layers and the spoil) and back-analyse any failures; the probability of failure falls as the spread of the strengths narrows.');
+    if ([hw, lw].some(s => s && s.methods[o.method] < o.minFos + 0.2)) rec.push('Monitor the walls close to the criterion (survey prisms or slope stability radar) and set trigger action response plans.');
+    if (o.mats.every(m => m.c === m.def.c && m.phi === m.def.phi)) rec.push('The strengths are the simulator’s typical values for each kind of layer: replace them with the tested values of the site before the results are relied on.');
+    if (!rec.length) rec.push('The walls meet the criteria on this date: keep the design, check them again on the other dates of the schedule (the highest highwall and the final void) and when the strengths are confirmed.');
+    return { items: out, rec };
+  }
+
+  // ---------- figures: a section and a histogram, as shapes for SVG and PDF ----------
+  /* The section of a wall in a box w × h (y down): the layers, the spoil, the water table, the slip surfaces near the
+     lowest (thin) and the critical one with its slices, the FoS. Shapes: {k: 'poly'|'line'|'text', …} */
+  function sectionShapes(sec, o, w, h) {
+    const P = sec.P, wall = sec.wall, H = wall.H, cr = sec.crit, sLo = Math.min(wall.sc, wall.st) - 1.2 * H, sHi = Math.max(wall.sc, wall.st) + 0.8 * H;
+    const s0 = Math.max(0, sLo), s1 = Math.min(P.len, sHi), zLo = wall.ztoe - 0.7 * H, zHi = Math.max(wall.zcr + 0.35 * H, cr ? Math.min(cr.zc + 0.1 * H, wall.zcr + 0.9 * H) : 0); // (a centre far above: off the figure)
+    const k = Math.min((w - 40) / (s1 - s0), (h - 30) / (zHi - zLo)), X = s => 30 + (s - s0) * k, Y = z => h - 18 - (z - zLo) * k, out = [], nS = P.S.length;
+    const ss = []; for (let s = s0; s <= s1 + 1e-9; s += Math.max(P.ds, (s1 - s0) / 160)) ss.push(s);
+    // below the base of the model, the layers in situ (to the in-situ surface), the spoil
+    out.push({ k: 'poly', pts: [...ss.map(s => [X(s), Y(Math.min(at(P, P.S[nS - 1], s), at(P, P.ins, s)))]), [X(s1), Y(zLo)], [X(s0), Y(zLo)]], fill: '#9a958c' });
+    for (let l = 0; l < nS - 1; l++) {
+      const top = ss.map(s => Math.min(at(P, P.S[l], s), at(P, P.ins, s))), bot = ss.map(s => Math.min(at(P, P.S[l + 1], s), at(P, P.ins, s)));
+      if (top.every((v, i) => v - bot[i] < 0.01)) continue;
+      out.push({ k: 'poly', pts: [...ss.map((s, i) => [X(s), Y(Math.max(top[i], zLo))]), ...ss.slice().reverse().map((s, i) => [X(s), Y(Math.max(bot[ss.length - 1 - i], zLo))])], fill: o.mats[l].color, stroke: '#ffffff', width: 0.3 });
+    }
+    const spoil = ss.map(s => at(P, P.g, s) - at(P, P.ins, s));
+    if (spoil.some(v => v > 0.1)) out.push({ k: 'poly', pts: [...ss.map(s => [X(s), Y(at(P, P.g, s))]), ...ss.slice().reverse().map(s => [X(s), Y(at(P, P.ins, s))])], fill: o.spoil.color, stroke: '#7a6a4a', width: 0.3 });
+    out.push({ k: 'line', pts: ss.map(s => [X(s), Y(at(P, P.g, s))]), stroke: '#1b1b1b', width: 1.2 });
+    if (o.water.mode === 'table' || o.water.mode === 'hydro') { const wl = ss.map(s => { const z = waterAt(P, s, at(P, P.g, s), wall, o); return z > zLo ? [X(s), Y(z)] : null; }).filter(Boolean); if (wl.length > 1) out.push({ k: 'line', pts: wl, stroke: '#1f77d0', width: 1, dash: [4, 2] }); }
+    if (cr) {
+      for (const e of cr.near.slice(1)) { const S = slices(P, e[1], e[2], e[3], wall, cr.lim, o, 24); if (S) out.push({ k: 'line', pts: [[X(S.s0), Y(at(P, P.g, S.s0))], ...Array.from(S.sm, (s, i) => [X(s), Y(S.zb[i])]), [X(S.s1), Y(at(P, P.g, S.s1))]], stroke: '#f0a030', width: 0.5 }); }
+      const S = cr.S; for (let i = 0; i <= S.n; i++) { const s = S.s0 + i * S.b, q = Math.max(0, S.R * S.R - (s - S.xc) ** 2); out.push({ k: 'line', pts: [[X(s), Y(at(P, P.g, s))], [X(s), Y(S.zc - Math.sqrt(q))]], stroke: '#c0392b', width: 0.3 }); }
+      out.push({ k: 'line', pts: [[X(S.s0), Y(at(P, P.g, S.s0))], ...Array.from(S.sm, (s, i) => [X(s), Y(S.zb[i])]), [X(S.s1), Y(at(P, P.g, S.s1))]], stroke: '#c0392b', width: 1.6 });
+      const v = verdict(sec.methods[o.method], sec.mc ? sec.mc.pof : NaN, o), inF = S.zc <= zHi && S.xc >= s0 && S.xc <= s1;
+      if (inF) out.push({ k: 'poly', pts: [[X(S.xc) - 3, Y(S.zc)], [X(S.xc) + 3, Y(S.zc)], [X(S.xc), Y(S.zc) - 5]], fill: '#c0392b' });
+      // (the label at the centre, or above the slide when the centre is off the figure)
+      const lx = inF ? X(S.xc) + 6 : Math.min(w - 70, X(S.s0 + (S.s1 - S.s0) * 0.5) + 8), ly = inF ? Y(S.zc) - 2 : Math.max(14, Y(Math.max(at(P, P.g, S.s0), at(P, P.g, S.s1))) - 8);
+      out.push({ k: 'text', x: lx, y: ly, text: `FoS ${U.fmtNum(sec.methods[o.method], 2)}`, size: 11, bold: true, color: v === 'ok' ? '#1e8449' : v === 'warn' ? '#b9770e' : '#c0392b' });
+    }
+    // the scale: metres along and up (no exaggeration)
+    const step = [5, 10, 20, 25, 50, 100, 200].find(v => v * k > 40) || 500;
+    for (let z = Math.ceil(zLo / step) * step; z <= zHi; z += step) { out.push({ k: 'line', pts: [[26, Y(z)], [30, Y(z)]], stroke: '#666666', width: 0.5 }); out.push({ k: 'text', x: 24, y: Y(z) + 3, text: U.fmtNum(z, 0), size: 7, color: '#666666', align: 'right' }); }
+    out.push({ k: 'line', pts: [[X(s0), h - 8], [X(s0) + step * k, h - 8]], stroke: '#333333', width: 1 }); out.push({ k: 'text', x: X(s0) + step * k + 4, y: h - 5, text: `${step} m (no vertical exaggeration)`, size: 7, color: '#333333' });
+    return out;
+  }
+  // the histogram of the FoS of the samples, the part below 1 in red
+  function histShapes(mc, w, h, title) {
+    const out = [], max = Math.max(...mc.hist) || 1, n = mc.hist.length, bw = (w - 40) / n, X = f => 30 + ((f - mc.lo) / (mc.hi - mc.lo)) * (w - 40);
+    mc.hist.forEach((v, i) => { const f0 = mc.lo + ((mc.hi - mc.lo) * i) / n, hh = (v / max) * (h - 44); out.push({ k: 'poly', pts: [[30 + i * bw, h - 16], [30 + (i + 1) * bw - 1, h - 16], [30 + (i + 1) * bw - 1, h - 16 - hh], [30 + i * bw, h - 16 - hh]], fill: f0 + (mc.hi - mc.lo) / n <= 1 ? '#c0392b' : '#5d7fa3' }); });
+    out.push({ k: 'line', pts: [[X(1), 24], [X(1), h - 14]], stroke: '#c0392b', width: 1, dash: [3, 2] });
+    for (let f = Math.ceil(mc.lo * 5) / 5; f <= mc.hi + 1e-9; f += 0.2) out.push({ k: 'text', x: X(f), y: h - 4, text: U.fmtNum(f, 1), size: 7, color: '#555555', align: 'center' });
+    out.push({ k: 'text', x: 30, y: 9, text: `${title}: ${mc.n} samples, PoF ${pct(mc.pof)}, PoS ${pct(mc.pos)}`, size: 8, bold: true, color: '#222222' });
+    out.push({ k: 'text', x: 30, y: 19, text: `mean FoS ${U.fmtNum(mc.mean, 2)}, σ ${U.fmtNum(mc.sd, 2)}, β ${mc.beta === Infinity ? '∞' : U.fmtNum(mc.beta, 2)}`, size: 7, color: '#444444' });
+    return out;
+  }
+  function toSvg(shapes, w, h) {
+    const e = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const body = shapes.map(q => q.k === 'poly' ? `<polygon points="${q.pts.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ')}" fill="${q.fill || 'none'}"${q.stroke ? ` stroke="${q.stroke}" stroke-width="${q.width || 0.5}"` : ''}/>`
+      : q.k === 'line' ? `<polyline points="${q.pts.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ')}" fill="none" stroke="${q.stroke}" stroke-width="${q.width || 1}"${q.dash ? ` stroke-dasharray="${q.dash.join(' ')}"` : ''}/>`
+        : `<text x="${q.x.toFixed(1)}" y="${q.y.toFixed(1)}" font-size="${q.size || 9}" fill="${q.color || '#000'}"${q.bold ? ' font-weight="700"' : ''}${q.align === 'right' ? ' text-anchor="end"' : q.align === 'center' ? ' text-anchor="middle"' : ''} font-family="Helvetica,Arial,sans-serif">${e(q.text)}</text>`).join('');
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="100%" style="background:#fff;border-radius:6px">${body}</svg>`;
+  }
+  // text for the PDF's fonts (WinAnsi: no Greek)
+  const pdfText = t => String(t).replace(/≥/g, '>=').replace(/≤/g, '<=').replace(/β/g, 'beta').replace(/σ/g, 'sd').replace(/γ/g, 'gamma').replace(/φ/g, 'phi').replace(/∞/g, 'inf').replace(/≈/g, '~');
+  // the shapes on a PDF page g, in a box at (x, y) from the lower left
+  function toPdf(g, shapes, x, y, w, h) {
+    const T = p => [x + p[0], y + h - p[1]];
+    for (const q of shapes) {
+      if (q.k === 'poly') g.poly(q.pts.map(T), { fill: q.fill || null, stroke: q.stroke || null, width: q.width, close: true });
+      else if (q.k === 'line') g.poly(q.pts.map(T), { stroke: q.stroke, width: q.width || 1, dash: q.dash });
+      else { const [tx, ty] = T([q.x, q.y]); g.text(tx, ty, pdfText(q.text), { size: q.size || 9, bold: q.bold, color: q.color, align: q.align }); }
+    }
+  }
+  // the colour of a FoS against the criterion
+  const fosColor = (f, o) => (!(f === f) ? '#888888' : f < 1 ? '#d62728' : f < o.minFos ? '#ff9f1c' : f < o.minFos + 0.3 ? '#c9d33a' : '#2ca02c');
+
+  // ---------- the report (PDF, A4 landscape): summary, findings, the walls, the walls in 3D, the inputs ----------
+  async function report(R, P, shot) {
+    const o = R.o, D = Pdf.create({ title: `${P.name} — highwall and low wall stability`, subject: `Geotechnical stability on ${R.label}`, creator: 'ISAMIQ' });
+    const W = 842, H = 595, M = 36, f2 = v => (v === v && v != null ? U.fmtNum(v, 2) : '–'), pc = v => (v === v && v != null ? pct(v) : '–');
+    const names = { highwall: 'Highwall', lowwall: 'Low wall (spoil)' }, verdictText = { ok: 'Acceptable', warn: 'Below criteria', fail: 'Unstable', none: '–' }, verdictCol = { ok: '#1e8449', warn: '#b9770e', fail: '#c0392b', none: '#777777' };
+    let n = 0;
+    const page = title => { const g0 = D.page(W, H), g = Object.assign({}, g0, { text: (x, y, t, o2) => g0.text(x, y, pdfText(t), o2) }); n++; g.rect(0, H - 46, W, 46, { fill: '#1d3557' }); g.text(M, H - 29, title, { size: 15, bold: true, color: '#ffffff' }); g.text(W - M, H - 24, P.name, { size: 10, bold: true, color: '#ffffff', align: 'right' }); g.text(W - M, H - 36, `Pit on ${R.label} · analysed ${U.fmtDate ? U.fmtDate(R.at) : R.at.toISOString().slice(0, 10)}`, { size: 8, color: '#dfe7f1', align: 'right' }); g.text(W - M, 16, `ISAMIQ geotechnical report · ${n}`, { size: 7, color: '#888888', align: 'right' }); g.text(M, 16, 'Limit equilibrium after Slide2 / Slide3 (Rocscience); acceptance after Read & Stacey (2009). Screening level: confirm with a geotechnical engineer.', { size: 7, color: '#888888' }); return g; };
+    const wrap = (g, x, y, w, text, size = 9, o2 = {}) => { const words = pdfText(text).split(/\s+/); let line = ''; for (const wd of words) { const t = line ? line + ' ' + wd : wd; if (Pdf.textWidth(t, size, o2.bold) > w && line) { g.text(x, y, line, Object.assign({ size }, o2)); y -= size * 1.35; line = wd; } else line = t; } if (line) { g.text(x, y, line, Object.assign({ size }, o2)); y -= size * 1.35; } return y; };
+    const table = (g, x, y, cols, rows, o2 = {}) => { const rh = o2.rh || 16; let cx = x; g.rect(x, y - rh + 4, cols.reduce((a, c) => a + c[1], 0), rh, { fill: '#e8edf3' }); for (const [t, w] of cols) { g.text(cx + 4, y - rh + 9, t, { size: 8, bold: true, color: '#1d3557' }); cx += w; } y -= rh; for (const r of rows) { cx = x; r.forEach((cell, i) => { const c = typeof cell === 'object' && cell ? cell : { t: cell }; if (c.fill) g.rect(cx + 1, y - rh + 5, cols[i][1] - 2, rh - 2, { fill: c.fill }); g.text(cx + 4, y - rh + 9, String(c.t == null ? '–' : c.t), { size: 8, color: c.color || '#222222', bold: c.bold }); cx += cols[i][1]; }); g.line(x, y - rh + 4, cx, y - rh + 4, { stroke: '#d5dbe3', width: 0.4 }); y -= rh; } return y; };
+    // 1: the summary
+    { const g = page('Highwall and low wall stability: summary'); let y = H - 72;
+      g.text(M, y, `The pit and the spoil of the schedule on ${R.label}; ${METHODS[o.method]}; ${o.samples} Monte Carlo samples; criteria FoS ≥ ${f2(o.minFos)}, PoF ≤ ${U.fmtNum(o.maxPoF, 0)}% (${o.scale === 'interramp' ? 'inter-ramp' : o.scale} slope, ${o.consequence} consequence).`, { size: 9, color: '#333333' }); y -= 20;
+      const rows = ['highwall', 'lowwall'].map(k => { const s = R.walls[k]; if (!s) return [names[k], 'not found on this date', '', '', '', '', '', '', '', '', '']; const v = verdict(s.methods[o.method], s.mc ? s.mc.pof : NaN, o); return [{ t: names[k], bold: true }, `${U.fmtNum(s.wall.H, 0)} m · ${U.fmtNum(s.wall.angle, 0)}°`, { t: f2(s.methods.bishop), bold: o.method === 'bishop' }, { t: f2(s.methods.janbu), bold: o.method === 'janbu' }, { t: f2(s.methods.ordinary), bold: o.method === 'ordinary' }, pc(s.mc && s.mc.pof), pc(s.mc && s.mc.pos), s.mc ? (s.mc.beta === Infinity ? '∞' : f2(s.mc.beta)) : '–', s.d3 ? f2(s.d3.f) : '–', s.mc3 ? pc(s.mc3.pos) : '–', { t: verdictText[v], color: '#ffffff', fill: verdictCol[v], bold: true }]; });
+      y = table(g, M, y, [['Wall', 92], ['Height, angle', 78], ['FoS Bishop', 64], ['FoS Janbu', 62], ['FoS Ordinary', 70], ['PoF (2D)', 56], ['PoS (2D)', 56], ['β', 40], ['FoS 3D', 52], ['PoS 3D', 52], ['Status', 92]], rows, { rh: 18 }) - 14;
+      g.text(M, y, 'Findings', { size: 12, bold: true, color: '#1d3557' }); y -= 16;
+      for (const f of R.findings.items) { g.rect(M, y - 2, 5, 9, { fill: verdictCol[f.level] || '#777777' }); y = wrap(g, M + 12, y, W - 2 * M - 12, f.text, 9) - 3; }
+      y -= 6; g.text(M, y, 'Recommendations', { size: 12, bold: true, color: '#1d3557' }); y -= 16;
+      for (const t of R.findings.rec) { g.text(M + 2, y, '•', { size: 9 }); y = wrap(g, M + 12, y, W - 2 * M - 12, t, 9) - 3; }
+    }
+    // 2, 3: each wall: its section, the histograms
+    for (const k of ['highwall', 'lowwall']) {
+      const s = R.walls[k]; if (!s || !s.crit) continue;
+      const g = page(`${names[k]}: 2D section and probability`), v = verdict(s.methods[o.method], s.mc ? s.mc.pof : NaN, o);
+      toPdf(g, sectionShapes(s, o, 520, 420), M, 70, 520, 420);
+      let y = H - 72, x = M + 540;
+      g.text(x, y, `${names[k]} · ${verdictText[v]}`, { size: 12, bold: true, color: verdictCol[v] }); y -= 16;
+      for (const [a, b] of [['Wall height', `${U.fmtNum(s.wall.H, 1)} m`], ['Overall angle', `${U.fmtNum(s.wall.angle, 1)}°`], ['FoS Bishop simplified', f2(s.methods.bishop)], ['FoS Janbu corrected', f2(s.methods.janbu)], ['FoS Ordinary', f2(s.methods.ordinary)], ['Slip circle radius', `${U.fmtNum(s.crit.R, 1)} m`], ['PoF / PoS (2D)', s.mc ? `${pc(s.mc.pof)} / ${pc(s.mc.pos)}` : '–'], ['Reliability index β', s.mc ? (s.mc.beta === Infinity ? '∞' : f2(s.mc.beta)) : '–'], ['FoS 3D (ellipsoid)', s.d3 ? `${f2(s.d3.f)}, ${U.fmtNum(2 * s.d3.B, 0)} m wide` : '–'], ['PoF / PoS (3D)', s.mc3 ? `${pc(s.mc3.pof)} / ${pc(s.mc3.pos)}` : '–']]) { g.text(x, y, a, { size: 8, color: '#555555' }); g.text(W - M, y, b, { size: 8, bold: true, color: '#222222', align: 'right' }); y -= 13; }
+      if (s.mc) toPdf(g, histShapes(s.mc, 230, 120, 'FoS in 2D'), x, 170, 230, 120);
+      if (s.mc3) toPdf(g, histShapes(s.mc3, 230, 110, 'FoS in 3D'), x, 50, 230, 110);
+      g.text(M, 56, 'Red: the critical slip surface and its slices; orange: the next lowest surfaces; blue dashed: the water table; the triangle: the centre of the critical circle (when it falls on the figure).', { size: 7, color: '#555555' });
+    }
+    // 4: the walls in 3D
+    { const g = page('The walls of the pit: FoS around the pit'); let y = H - 72;
+      if (shot && shot.data) { const iw = 470, ih = Math.min(400, (iw * shot.h) / shot.w); g.image(D.image(shot.w, shot.h, shot.data), M, H - 66 - ih, iw, ih); y = H - 66 - ih - 14; }
+      const leg = [['#d62728', 'FoS < 1'], ['#ff9f1c', `1 to ${f2(o.minFos)}`], ['#c9d33a', `${f2(o.minFos)} to ${f2(o.minFos + 0.3)}`], ['#2ca02c', `≥ ${f2(o.minFos + 0.3)}`]];
+      leg.forEach(([c, t], i) => { g.rect(M + i * 110, Math.max(30, y - 6), 10, 8, { fill: c }); g.text(M + 14 + i * 110, Math.max(30, y - 5), t, { size: 8 }); });
+      let ty = H - 72; const x = M + 490;
+      g.text(x, ty, `${R.scan.length} sections across the walls, every ${U.fmtNum(o.spacing, 0)} m`, { size: 10, bold: true, color: '#1d3557' }); ty -= 14;
+      for (const k of ['highwall', 'lowwall']) { const l = R.scan.filter(q => q.kind === k); if (!l.length) continue; const bad = l.filter(q => q.f < o.minFos).length; g.text(x, ty, `${names[k]}: ${l.length}, FoS ${f2(Math.min(...l.map(q => q.f)))}–${f2(Math.max(...l.map(q => q.f)))}, ${bad} below ${f2(o.minFos)}`, { size: 8 }); ty -= 12; }
+      ty -= 6;
+      const worst = R.scan.slice().sort((p, q) => p.f - q.f).slice(0, 18);
+      table(g, x, ty, [['Wall', 70], ['H m', 36], ['Angle', 38], ['FoS', 36], ['PoS', 40], ['Where (x, y)', 96]], worst.map(q => [q.kind === 'highwall' ? 'Highwall' : 'Low wall', U.fmtNum(q.H, 0), `${U.fmtNum(q.angle, 0)}°`, { t: f2(q.f), color: fosColor(q.f, o), bold: true }, pc(q.pos), `${U.fmtNum(q.x, 0)}, ${U.fmtNum(q.y, 0)}`]), { rh: 14 });
+      if (!shot) g.text(M, H - 90, 'The picture of the 3D view could not be taken here: see the Geotechnical tab.', { size: 9, color: '#777777' });
+    }
+    // 5: the inputs and the method
+    { const g = page('Inputs and method'); let y = H - 72;
+      y = table(g, M, y, [['Material', 170], ['γ kN/m³', 60], ['c kPa', 60], ['φ °', 50]], o.mats.concat([o.spoil]).map(m => [m.name, U.fmtNum(m.gamma, 1), U.fmtNum(m.c, 0), U.fmtNum(m.phi, 1)]), { rh: 13 });
+      let x = M + 370, ty = H - 72;
+      for (const [a, b] of [['Water', o.water.mode === 'dry' ? 'dry' : o.water.mode === 'ru' ? `pore pressure ratio Ru ${U.fmtNum(o.water.ru, 2)}` : o.water.mode === 'table' ? `water table at ${U.fmtNum(o.water.frac * 100, 0)}% of the wall height above the toe` : 'the water table of the Hydrogeological tab on the date'], ['Earthquake (pseudo-static)', `kh ${U.fmtNum(o.kh, 2)}`], ['Variability (coefficients of variation)', `c ${U.fmtNum(o.cov.c * 100, 0)}%, φ ${U.fmtNum(o.cov.phi * 100, 0)}%, γ ${U.fmtNum(o.cov.gamma * 100, 0)}%`], ['Monte Carlo samples', `${o.samples} (the scan: 200 a section)`], ['Method for the criteria', METHODS[o.method]], ['Acceptance', `FoS ≥ ${f2(o.minFos)}, PoF ≤ ${U.fmtNum(o.maxPoF, 0)}% (Read & Stacey 2009: ${o.scale === 'interramp' ? 'inter-ramp' : o.scale}, ${o.consequence} consequence: FoS ${f2(o.accept.fos)}, PoF ${o.accept.pof}%)`], ['Least slide depth', `${U.fmtNum(o.minDepth, 1)} m`]]) { g.text(x, ty, a, { size: 8, color: '#555555' }); ty = wrap(g, x + 150, ty, W - M - x - 150, b, 8, { bold: true }) - 2; }
+      ty -= 10;
+      const notes = ['Method: limit equilibrium of vertical slices on circular slip surfaces (Bishop simplified, Janbu simplified with the Janbu correction, Ordinary), found by a grid search of centres and radii refined around the lowest (the global minimum surface), as in Slide2. Probability: Monte Carlo sampling of each material’s c, φ and γ (independent normal distributions, ±3σ) on the global minimum surface; PoF is the share of samples with FoS below 1, β = (mean − 1) ÷ σ.',
+        '3D: the walls of the pit are cut by 2D sections across them, each with its own critical surface and PoS (the map); the critical highwall and low wall are then analysed on ellipsoidal slip surfaces built on the 2D critical circle, their width searched, by Bishop simplified on columns (Hungr 1987), as Slide3 does with its ellipsoid search. The 3D FoS includes the resistance of the ends of a slide.',
+        'Limitations: Mohr–Coulomb strengths of whole layers (no joints, bedding-plane or non-circular failures, and no Hoek–Brown rock mass criterion); the strengths are typical values unless the site’s tested ones are entered; the water table and the earthquake load are simplified. Use the results to screen the walls and to target detailed analysis (Slide2/Slide3) and testing.'];
+      for (const t of notes) ty = wrap(g, x, ty, W - M - x, t, 8) - 6;
+    }
+    return D.build();
+  }
+
+  return { ACCEPT, METHODS, settings, report, matArrays, profile, slices, fos, search, wallAt, monteCarlo, columns, fos3d, search3d, run, findings, verdict, sectionShapes, histShapes, toSvg, toPdf, fosColor, defMat };
+})();
+
 /* ===== Side panel tabs ===== */
 const Tabs = (() => {
   const { fld, num, txt, sel, chk, btn, sec, hint, msg } = UI;
@@ -12257,7 +13139,7 @@ const Tabs = (() => {
 
   function render(tab, body) {
     if (!App.P) { body.append(h('div', { class: 'empty' }, 'Loading…')); return; }
-    ({ project, data, layers: featureLayers, sequence, roads, dumps, production, blast: drillBlast, resource, reserve, rank, strip, hydro, rehab, finance, recon, results })[tab](body);
+    ({ project, data, layers: featureLayers, sequence, roads, dumps, production, blast: drillBlast, geotech, resource, reserve, rank, strip, hydro, rehab, finance, recon, results })[tab](body);
     if (!App.canEdit) body.querySelectorAll('input,select,textarea').forEach(i => { if (!i.closest('[data-viewer]')) i.disabled = true; });
   }
   function hud(title, sub, buttons) {
@@ -12509,6 +13391,8 @@ const Tabs = (() => {
     if (P.layers.length) strat.push(layersTable(), topsoilWaste());
     body.append(sec('Stratigraphy', P.grid ? h('span', { class: 'chip' }, `${P.grid.nx}×${P.grid.ny} @ ${P.grid.cell} m`) : null, ...strat));
     cutoffSection(body);
+    surveyDemSection(body);
+    demViewSection(body);
 
     // ---- blocks
     const bl = [];
@@ -12686,6 +13570,131 @@ const Tabs = (() => {
     } catch (e) { UI.toast(`${name} could not be read as washability curves: ${e.message}`, 8000); console.warn(e); }
   }
 
+  // =============== Survey DEM: the ground now, and its display ===============
+  /* A survey DEM of the ground as it is now (a GeoTIFF; the surveys are those of the Recon tab). The 3D model is cut down to
+     it (P.depletion, Model.setDepletion): what lies above it was mined before, the blocks keep what is still in the ground
+     and the schedule starts from that ground. */
+  function surveyDemSection(body) {
+    const P = App.P, ws = App.ws, list = Recon.byDate(P), DP = P.depletion || {}, ver = P.gridVersion || 0;
+    const parts = [hint('A survey DEM of the ground as it is now: a GeoTIFF (.tif or .tiff), with its world file (.tfw) chosen together with it when it has no GeoTIFF tags, in the coordinate system of the model. The 3D model is cut down to it: what lies above the survey was mined before it, so the blocks keep only what is still in the ground and the schedule starts from that ground. The surveys are shared with the Recon tab.')];
+    if (edit()) {
+      const fileIn = h('input', { type: 'file', accept: '.tif,.tiff,.gtif,.tfw,.tifw,.wld', multiple: true, hidden: true });
+      fileIn.setAttribute('aria-label', 'Survey DEM file');
+      fileIn.addEventListener('change', async () => { const fs = Array.from(fileIn.files); fileIn.value = ''; await addSurveys(fs, { use: true }); });
+      parts.push(h('div', { class: 'row' }, btn('Add survey DEM…', () => fileIn.click(), 'sm primary', 'Choose the GeoTIFF of the ground now, with its .tfw world file if it has no GeoTIFF tags'), fileIn));
+    }
+    if (!ws) { parts.push(msg('warn', 'Build the 3D model first: the survey is laid on its grid.')); body.append(sec('Survey DEM: the ground now', null, ...parts)); return; }
+    const setDP = patch => { const d = Object.assign({}, P.depletion || {}, patch); P.depletion = d.survey ? d : null; App.redeplete(); };
+    const usable = list.filter(s => (s.gridVersion || 0) === ver);
+    if (usable.length) {
+      const opts = [['', 'None: the model as built']].concat(usable.map(s => [s.id, `${s.name} (${s.date ? U.fmtDate(U.parseISO(s.date)) : 'no date'})`]));
+      parts.push(fld('Cut the 3D model down to the survey', edit() ? sel(opts, DP.survey || '', v => setDP({ survey: v || null })) : h('span', null, (opts.find(x => x[0] === (DP.survey || '')) || opts[0])[1])));
+      if (DP.survey && edit()) parts.push(chk('With the earlier surveys: the lowest ground of each cell, so a pit backfilled since an earlier survey is still seen as mined', DP.earlier !== false, v => setDP({ earlier: v })));
+    }
+    const s0 = DP.survey ? list.find(s => s.id === DP.survey) : null;
+    if (DP.survey && !s0) parts.push(msg('warn', 'The survey the model is cut down to was removed. Choose another, or None.'));
+    else if (s0 && (s0.gridVersion || 0) !== ver) parts.push(msg('warn', `“${s0.name}” was read for an earlier 3D model: add its file again to cut the model down to it.`));
+    const Q = ws.dep ? Model.depletionStats(ws) : null;
+    if (Q && s0) {
+      const L = P.layers, f0 = v => U.fmtNum(v, 0), th = (t, r) => h('th', r ? { class: 'r' } : null, t), td = (t, r) => h('td', r ? { class: 'r num' } : null, t);
+      const sum = (k, coal) => L.reduce((a, Ly, l) => a + ((Ly.type === 'coal') === coal ? Q.layers[l][k] : 0), 0);
+      parts.push(msg('info', `Above the survey, mined before ${s0.date ? U.fmtDate(U.parseISO(s0.date)) : 'it'}: ${f0(sum('bcm', false))} bcm of waste and ${f0(sum('t', true))} t of coal (as the schedule counts them, after the seam cut-offs), over ${U.fmtNum(Q.cut.area / 1e4, 1)} ha. ${Q.full} block${Q.full === 1 ? ' is' : 's are'} mined out and ${Q.part} partly mined; the blocks, the reports and the schedule hold only what lies below the survey.`));
+      const rows = L.map((Ly, l) => Q.layers[l].bcm > 0.5 ? h('tr', null, td(Ly.name), td(f0(Q.layers[l].bcm), 1), td(f0(Q.layers[l].t), 1)) : null).filter(Boolean);
+      for (const [nm, coal] of [['Total waste', false], ['Total coal', true]]) rows.push(h('tr', { class: 'tot' }, td(nm), td(f0(sum('bcm', coal)), 1), td(f0(sum('t', coal)), 1)));
+      parts.push(h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl recon-tbl' }, h('thead', null, h('tr', null, th('Mined before the survey'), th('bcm', 1), th('t', 1))), h('tbody', null, ...rows))));
+      if (Q.above.area > 0) parts.push(msg('warn', `Over ${U.fmtNum(Q.above.area / 1e4, 1)} ha the survey lies above the model (${f0(Q.above.bcm)} m³ in all): dumps, stockpiles or backfill. They are not in situ, so the layers there are left as they are, and the schedule does not see them as spoil.`));
+      if (s0.date && P.startDate && P.startDate < s0.date) parts.push(msg('warn', `The schedule starts on ${U.fmtDate(U.parseISO(P.startDate))}, before the survey: it mines from the surveyed ground from its first day.`),
+        edit() ? h('div', { class: 'row' }, btn(`Start the schedule on ${U.fmtDate(U.parseISO(s0.date))}`, () => { P.startDate = s0.date; App.changed('calendar'); if (App.res) { Timeline.setDay(App.day); Timeline.draw(); } else Timeline.setData(null, P); UI.renderTab(); }, 'sm')) : null);
+      parts.push(hint('Run the schedule (▶) to mine from the surveyed ground. Remove the survey, or choose None, to go back to the model as built.'));
+    }
+    body.append(sec('Survey DEM: the ground now', Q && s0 ? h('span', { class: 'chip' }, 'in use') : null, ...parts));
+  }
+  /* A band of a survey DEM shown on the 3D view as a singleband pseudocolour over a hillshade (computed from the DEM, or
+     imported), in a blending mode (Dem, P.demView) */
+  function demViewSection(body) {
+    const P = App.P, ws = App.ws, o = Dem.settings(P), list = Recon.byDate(P).filter(s => s.disp && (s.gridVersion || 0) === (P.gridVersion || 0));
+    const set = (patch, now) => { P.demView = Object.assign(Dem.settings(P), patch); App.changed('dem', { now }); UI.renderTab(); };
+    const parts = [hint('A band of a survey DEM on the 3D view as a singleband pseudocolour: a colour ramp stretched over its values, blended over a hillshade, as a DEM layer in Soft light over its hillshade in QGIS. It shows on the ground that is still as surveyed.')];
+    if (!ws || !list.length) {
+      parts.push(msg('info', ws ? 'Add a survey DEM as a GeoTIFF (above, or in the Recon tab) to show it here.' : 'Build the 3D model first.'));
+      body.append(sec('Survey DEM display', null, ...parts)); return;
+    }
+    const s = list.find(q => q.id === o.survey) || list[list.length - 1], band = o.band != null && +o.band < s.disp.bands ? +o.band : s.disp.band;
+    const pct = (v, f) => num(v, x => f(x == null ? null : U.clamp(x, 0, 100)), { min: 0, max: 100, step: 5 });
+    parts.push(chk('Show on the 3D view', !!o.on, v => set({ on: v, survey: s.id }, true)));
+    parts.push(h('div', { class: 'grid2' },
+      fld('Survey DEM', sel(list.map(q => [q.id, `${q.name} (${q.date ? U.fmtDate(U.parseISO(q.date)) : 'no date'})`]), s.id, v => set({ survey: v, band: null }))),
+      fld('Band', sel(Array.from({ length: s.disp.bands }, (_, b) => [String(b), `Band ${b + 1}${b === s.disp.band ? ' (elevations)' : ''}`]), String(band), v => set({ band: +v })))));
+    parts.push(h('div', { class: 'grid2' },
+      fld('Colour ramp', sel(Dem.RAMP_NAMES, o.ramp, v => set({ ramp: v }))),
+      fld('Blending mode', sel(Dem.BLENDS, o.blend, v => set({ blend: v })))));
+    parts.push(chk('Invert the colour ramp', !!o.invert, v => set({ invert: v })));
+    parts.push(h('div', { class: 'grid2' },
+      fld('Min / max', sel(Dem.RANGES, o.range, v => set({ range: v }))),
+      fld('Interpolation', sel([['linear', 'Linear (continuous)'], ['discrete', 'Discrete (classes)']], o.interp, v => set({ interp: v })))));
+    const I = App.dem && App.dem.info && App.dem.info.s === s && App.dem.info.band === band ? App.dem.info : null, st = I && I.st;
+    if (o.range === 'user') parts.push(h('div', { class: 'grid2' },
+      fld('Min', num(o.min, v => set({ min: v }), { step: 'any', allowEmpty: true, placeholder: st ? U.fmtNum(st.min, 1) : '' })),
+      fld('Max', num(o.max, v => set({ max: v }), { step: 'any', allowEmpty: true, placeholder: st ? U.fmtNum(st.max, 1) : '' }))));
+    if (o.interp === 'discrete') parts.push(h('div', { class: 'grid2' },
+      fld('Classes', num(o.classes, v => set({ classes: U.clamp(Math.round(v || 8), 2, 32) }), { min: 2, max: 32, step: 1 })),
+      fld('Mode', sel([['equal', 'Equal interval'], ['quantile', 'Quantile (equal count)']], o.mode, v => set({ mode: v })))));
+    parts.push(h('div', { class: 'grid2' },
+      fld('DEM opacity (%)', pct(o.opacity, v => set({ opacity: v == null ? 100 : v }))),
+      fld('Opacity on the 3D view (%)', pct(o.view, v => set({ view: v == null ? 90 : v })))));
+    // the hillshade under it
+    parts.push(fld('Hillshade under the DEM', sel([['dem', 'Computed from the DEM'], ['file', o.hsFile ? `Imported: ${o.hsFile.file}` : 'Imported hillshade (choose its file below)'], ['none', 'None']], o.hs, v => set({ hs: v }))));
+    if (o.hs === 'dem') parts.push(h('div', { class: 'grid3' },
+      fld('Azimuth (°)', num(o.az, v => set({ az: v == null ? 315 : ((v % 360) + 360) % 360 }), { min: 0, max: 360, step: 5 })),
+      fld('Altitude (°)', num(o.alt, v => set({ alt: v == null ? 45 : U.clamp(v, 1, 90) }), { min: 1, max: 90, step: 5 })),
+      fld('Z factor', num(o.zf, v => set({ zf: v > 0 ? v : 1 }), { min: 0.1, step: 0.5 }))));
+    if (edit()) {
+      const hsIn = h('input', { type: 'file', accept: '.tif,.tiff,.gtif,.tfw,.tifw,.wld', multiple: true, hidden: true });
+      hsIn.setAttribute('aria-label', 'Hillshade file');
+      hsIn.addEventListener('change', async () => { const fs = Array.from(hsIn.files); hsIn.value = ''; await importHillshade(fs); });
+      parts.push(h('div', { class: 'row' }, btn(o.hsFile ? 'Import another hillshade…' : 'Import a hillshade…', () => hsIn.click(), 'sm', 'A hillshade GeoTIFF (gdaldem or QGIS hillshade; with its .tfw if it has no GeoTIFF tags)'), hsIn,
+        o.hsFile ? btn('Remove it', () => removeHillshade(), 'sm ghost') : null));
+    }
+    if (o.hsFile) parts.push(h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `Hillshade: ${o.hsFile.file} · ${o.hsFile.raster || ''}${(o.hsFile.gridVersion || 0) !== (P.gridVersion || 0) ? ' · read for an earlier 3D model: import it again' : ''}`));
+    if (o.hs === 'file' && !o.hsFile) parts.push(msg('warn', 'Import a hillshade GeoTIFF to put under the DEM.'));
+    if (o.blend !== 'normal' && o.hs === 'none') parts.push(hint('A blending mode needs a layer under the DEM: choose a hillshade, or the DEM shows in plain colours.'));
+    // the legend and the band's values
+    if (I && I.legend) parts.push(h('div', { class: 'dem-leg' },
+      h('div', { class: 'dt' }, `Band ${band + 1}: ${U.fmtNum(st.min, 1)} to ${U.fmtNum(st.max, 1)}, mean ${U.fmtNum(st.mean, 1)}; the ramp from ${U.fmtNum(I.legend.lo, 1)} to ${U.fmtNum(I.legend.hi, 1)}`),
+      h('div', { style: { height: '10px', borderRadius: '2px', background: I.legend.css, margin: '4px 0 2px' } }),
+      h('div', { class: 'dt', style: { display: 'flex', justifyContent: 'space-between' } }, h('span', null, U.fmtNum(I.legend.lo, 1)), h('span', null, U.fmtNum(I.legend.hi, 1)))));
+    else if (o.on && App.dem && App.dem.info && App.dem.info.error) parts.push(msg('warn', App.dem.info.error));
+    body.append(sec('Survey DEM display', o.on ? h('span', { class: 'chip' }, 'on the 3D view') : null, ...parts));
+  }
+  async function importHillshade(files) {
+    const P = App.P, ws = App.ws;
+    if (!ws) { UI.toast('Build the 3D model first.'); return; }
+    const tif = files.find(f => TIF_EXT.test(ext(f.name)));
+    if (!tif) { UI.toast('Choose the hillshade GeoTIFF (.tif or .tiff), with its .tfw if it needs one.'); return; }
+    const wf = files.find(f => /^(tfw|tifw|tiffw|wld)$/.test(ext(f.name)) && stem(f.name).toLowerCase() === stem(tif.name).toLowerCase()) || null;
+    UI.busy(`Reading ${tif.name}…`, 0.05); await U.nextFrame();
+    try {
+      const r = await Dem.readHillshade(P, ws, tif, wf, fr => UI.busy(`Reading ${tif.name}… ${Math.round(fr * 100)}%`, 0.05 + fr * 0.8));
+      const o = Dem.settings(P), old = o.hsFile, id = U.uid('dtm');
+      UI.busy(`Saving ${tif.name}…`, 0.9);
+      await reconSaved();
+      await App.store.putBlob(P.id, id, U.encodeGrid(r.grid));
+      App.dem.cache.set(id, r.grid);
+      if (old && old.id) { App.dem.cache.delete(old.id); try { await App.store.delBlob(P.id, old.id); } catch (e) { console.warn(e); } }
+      P.demView = Object.assign(o, { hsFile: { id, file: tif.name, raster: r.raster, read: U.todayISO(), gridVersion: P.gridVersion || 0 }, hs: 'file' });
+      App.changed('dem', { now: true });
+      UI.toast(`${tif.name}: the hillshade is under the survey DEM${o.on ? '' : ' (tick Show on the 3D view to see it)'}.`);
+    } catch (e) { UI.toast(`${tif.name}: ${e.message || e}`, 8000); console.warn(e); }
+    finally { UI.busy(null); UI.renderTab(); }
+  }
+  async function removeHillshade() {
+    const P = App.P, o = Dem.settings(P), f = o.hsFile; if (!f) return;
+    P.demView = Object.assign(o, { hsFile: null, hs: o.hs === 'file' ? 'dem' : o.hs });
+    App.dem.cache.delete(f.id);
+    App.changed('dem', { now: true }); UI.renderTab();
+    try { await App.store.delBlob(P.id, f.id); } catch (e) { console.warn(e); }
+  }
+
   // =============== Coal quality rasters ===============
   /* GeoTIFF grids of a seam's coal quality (Qual): each block takes the average of the grid over its cells, weighted by the
      seam's thickness, written to the blocks as an attribute column that becomes the seam's quality. The files stay on the
@@ -12810,18 +13819,19 @@ const Tabs = (() => {
   // =============== KML overlays & keep-out zones ===============
   function overlaySection(body) {
     const P = App.P, list = P.overlays || (P.overlays = []);
-    const parts = [hint('Add other KML or KMZ files, such as power lines, wetlands, servitudes, graves or old workings. Each one is draped on the elevation surface you choose. Type a keep-away distance for a folder: a block that comes within that distance of it (or lies in its polygons) is still mined, down to the layer the overlay is draped on, and that layer and everything below it stay in the ground in the whole block.')];
+    const parts = [hint('Add KML, KMZ or DXF files, such as power lines, wetlands, servitudes, graves or old workings. A DXF must be in the coordinate system of the model; each of its layers becomes a folder. Each file is draped on the elevation surface you choose. Type a keep-away distance for a folder: a block that comes within that distance of it (or lies in its polygons) is still mined, down to the layer the overlay is draped on, and that layer and everything below it stay in the ground in the whole block.')];
     if (edit()) {
-      const fileIn = h('input', { type: 'file', accept: '.kml,.kmz', multiple: true, hidden: true });
-      fileIn.addEventListener('change', async () => { for (const f of Array.from(fileIn.files)) await addOverlay(f, f.name); fileIn.value = ''; });
-      const others = (D.dxfs || []).filter(n => /^km[lz]$/.test(ext(n)) && n !== D.dxfName && !list.some(o => o.file === n));
+      const fileIn = h('input', { type: 'file', accept: '.kml,.kmz,.dxf', multiple: true, hidden: true });
+      fileIn.setAttribute('aria-label', 'Overlay files');
+      fileIn.addEventListener('change', async () => { const fs = Array.from(fileIn.files); fileIn.value = ''; for (const f of fs) await addOverlay(f, f.name); });
+      const others = (D.dxfs || []).filter(n => n !== D.dxfName && !list.some(o => o.file === n));
       let pick = others[0];
-      parts.push(h('div', { class: 'row' }, btn('Add KML overlay…', () => fileIn.click(), 'sm primary'), fileIn, btn('Export shapes to KML…', () => kmlDialog(), 'sm', 'Save the polygons and lines drawn in the simulator to a KML file'),
+      parts.push(h('div', { class: 'row' }, btn('Add KML or DXF overlay…', () => fileIn.click(), 'sm primary', 'KML, KMZ or DXF files'), fileIn, btn('Export shapes to KML…', () => kmlDialog(), 'sm', 'Save the polygons and lines drawn in the simulator to a KML file'),
         others.length ? h('span', { class: 'dt' }, 'or from the folder:') : null,
         others.length ? h('div', { style: { minWidth: '0', flex: '1 1 120px' } }, sel(others, pick, v => (pick = v))) : null,
         others.length ? btn('Add', () => addOverlay(App.folder.files.get(pick), pick), 'sm') : null));
     }
-    if (list.length && !Geo.makeCRS(P.crs)) parts.push(msg('warn', 'KML is in latitude/longitude. Choose the project’s coordinate system in the Project tab (not “Local mine grid”) so the overlays can be placed.'));
+    if (list.some(o => !o.xy) && !Geo.makeCRS(P.crs)) parts.push(msg('warn', 'KML is in latitude/longitude. Choose the project’s coordinate system in the Project tab (not “Local mine grid”) so the KML overlays can be placed.'));
     const K = App.ws ? Keep.compute(App.ws) : null;
     for (const ov of list) parts.push(overlayCard(ov, K));
     if (K && K.any) {
@@ -12830,7 +13840,7 @@ const Tabs = (() => {
       const txtS = `Keep-out zones cover ${U.fmtNum(S.areaHa, 1)} ha of the model. ${nK ? `${nK} block${nK === 1 ? ' comes' : 's come'} within a keep-away distance${S.blocksPart.length ? `; ${S.blocksPart.length === nK ? (nK === 1 ? 'it is' : 'they are') : `${S.blocksPart.length} (${ids(S.blocksPart)}) ${S.blocksPart.length === 1 ? 'is' : 'are'}`} mined down to the layer the overlay is draped on` : ''}${S.blocksFull.length ? `; ${S.blocksFull.length === nK ? (nK === 1 ? 'it is' : 'they are') : `${S.blocksFull.length} (${ids(S.blocksFull)}) ${S.blocksFull.length === 1 ? 'is' : 'are'}`} not mined at all (draped on the topography or the current ground)` : ''}.` : 'No block comes within a keep-away distance.'} About ${U.fmtBig(S.coalT, 't')} of coal and ${U.fmtBig(S.wasteBcm, 'bcm')} of waste stay in the ground. The 3D view tints and outlines these blocks in red${App.res ? ', and shows in yellow where mining or a ramp digs within a distance as the simulation plays' : ''}.`;
       parts.push(msg(S.blocksFull.length || S.blocksPart.length ? 'warn' : 'info', txtS + (App.res && App.stale ? ' Run the simulation again to update the schedule.' : '')));
     } else if (list.length && App.ws) parts.push(hint('No keep-away distance is set yet, so the overlays are for display only.'));
-    body.append(sec('Overlays & keep-out zones (KML)', list.length ? h('span', { class: 'chip' }, String(list.length)) : null, ...parts));
+    body.append(sec('Overlays & keep-out zones (KML, DXF)', list.length ? h('span', { class: 'chip' }, String(list.length)) : null, ...parts));
   }
   function overlayCard(ov, K) {
     const P = App.P;
@@ -12851,7 +13861,7 @@ const Tabs = (() => {
       h('div', { class: 'ovl-h' }, col, name,
         chk('Show', ov.show !== false, v => { ov.show = v; App.changed('overlays'); UI.renderLegend(); }),
         edit() ? btn('Remove', () => { P.overlays = P.overlays.filter(o => o !== ov); App.changed('keepout'); App.changed('overlays'); UI.renderTab(); }, 'sm ghost') : null),
-      h('div', { class: 'dt', style: { marginBottom: '6px' } }, `${ov.file || 'KML'} · ${Keep.countText(Keep.counts(ov))}`),
+      h('div', { class: 'dt', style: { marginBottom: '6px' } }, `${ov.file || 'KML'} · ${Keep.countText(Keep.counts(ov))}${ov.xy ? ` · in the model’s coordinates${ov.fix ? ` (${fixText(ov.fix)})` : ''}` : ''}`),
       fld('Drape on', sel(surfOpts, ov.surface || (P.surfaces[0] || {}).id || 'current', v => { ov.surface = v; App.changed('overlays'); if (Keep.constrained(ov).length) App.changed('keepout'); UI.renderTab(); })),
       (() => { const k = Keep.firstLayer(P, ov), above = P.layers.slice(0, k).map(L => L.name), held = P.layers.slice(k).map(L => L.name);
         return h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, !Keep.constrained(ov).length ? `With a keep-away distance, a block within it would keep ${k ? held.join(', ') : 'every layer'}${k ? ` in the ground (the layer it is draped on and those below); ${above.join(', ')} above ${above.length === 1 ? 'is' : 'are'} still mined` : ': it would not be mined'}.`
@@ -12867,7 +13877,7 @@ const Tabs = (() => {
     if (App.ws) {
       const feats = Keep.features(P, ov), ws = App.ws, x1 = ws.x0 + ws.nx * ws.cell, y1 = ws.y0 + ws.ny * ws.cell;
       const on = feats.filter(F => F.pts.some(p => p[0] >= ws.x0 && p[0] <= x1 && p[1] >= ws.y0 && p[1] <= y1)).length;
-      if (feats.length && !on) card.append(msg('warn', 'None of these features fall on the elevation model. Check the project’s coordinate system in the Project tab.'));
+      if (feats.length && !on) card.append(msg('warn', ov.xy ? 'None of these features fall on the elevation model. Check that the DXF is in the coordinate system of the model.' : 'None of these features fall on the elevation model. Check the project’s coordinate system in the Project tab.'));
       const b = K && K.byOv.find(x => x.id === ov.id);
       if (b && b.cells) card.append(h('div', { class: 'dt' }, `Keep-out area from this overlay: ${U.fmtNum((b.cells * ws.A) / 1e4, 1)} ha inside the model.`));
     }
@@ -12875,6 +13885,7 @@ const Tabs = (() => {
   }
   async function addOverlay(file, name) {
     if (!file) return;
+    if (/\.dxf$/i.test(name)) return addDxfOverlay(file, name);
     try {
       UI.busy(`Reading ${name}…`, 0.3); await U.nextFrame();
       const u8 = new Uint8Array(await file.arrayBuffer());
@@ -12890,6 +13901,43 @@ const Tabs = (() => {
     } catch (e) { UI.busy(null); UI.toast(`${name} could not be read: ${e.message}`, 6500); console.error(e); }
   }
 
+  // the coordinate mix-up put right on a DXF overlay, in words
+  const fixText = id => ({ flip: 'signs flipped', swap: 'X and Y swapped', swapflip: 'X and Y swapped, signs flipped', mm: 'millimetres to metres', mmflip: 'millimetres to metres, signs flipped' })[id] || id;
+  /* A DXF as an overlay: choose its layers (each becomes a folder); the coordinates are the model's, put right when they
+     land on the model only with one of the usual mix-ups (Dxf.fixFor) */
+  async function addDxfOverlay(file, name) {
+    let d;
+    UI.busy(`Reading ${name}…`, 0.3); await U.nextFrame();
+    try { d = Dxf.parse(new Uint8Array(await file.arrayBuffer())); }
+    catch (e) { UI.busy(null); UI.toast(`${name} could not be read: ${e.message}`, 6500); console.error(e); return; }
+    UI.busy(null);
+    const cnt = Keep.dxfCounts(d), layers = d.layers.filter(L => cnt[L]);
+    if (!layers.length) { UI.toast(`${name}: no polylines, lines, hatches, circles or points in model space.`, 6500); return; }
+    const pick = new Set(layers), boxes = [];
+    const rows = layers.map(L => { const i = h('input', { type: 'checkbox', checked: true, id: 'dxl_' + boxes.length }); i.addEventListener('change', () => { if (i.checked) pick.add(L); else pick.delete(L); }); boxes.push([i, L]); return h('label', { class: 'check', for: i.id }, i, `${L}`, h('span', { class: 'dt', style: { marginLeft: '6px' } }, Keep.countText(cnt[L]))); });
+    const all = v => { for (const [i, L] of boxes) { i.checked = v; if (v) pick.add(L); else pick.delete(L); } };
+    const add = () => {
+      if (!pick.size) { UI.toast('Tick at least one layer.'); return; }
+      UI.closeModal();
+      try {
+        const P = App.P, sign = Geo.axisSign(P.crs), bb = gridBBox();
+        // (where the shapes land: their middles, against the model)
+        const mids = Keep.dxfShapes(d, L => pick.has(L)).map(F => { let x = 0, y = 0; for (const p of F.pts) { x += p[0]; y += p[1]; } return [(sign * x) / F.pts.length, (sign * y) / F.pts.length]; });
+        const fix = bb ? Dxf.fixFor(mids, bb) : null;
+        const ov = Keep.fromDxf(d, name, (P.overlays || []).length, { layers: pick, fix: fix ? fix.id : null });
+        ov.surface = P.surfaces[0] ? P.surfaces[0].id : 'current';
+        (P.overlays || (P.overlays = [])).push(ov);
+        App.changed('overlays', { now: true });
+        UI.renderTab(); UI.renderLegend();
+        UI.toast(`${name}: ${Keep.countText(Keep.counts(ov))} on ${ov.folders.length} layer${ov.folders.length === 1 ? '' : 's'} added.${fix ? ` They did not line up with the model, so ${fix.name}.` : ''} Type a keep-away distance for any layer the mining must avoid.`, 8000);
+      } catch (e) { UI.toast(`${name}: ${e.message}`, 6500); console.error(e); }
+    };
+    UI.modal(`Add ${name} as an overlay`, h('div', null,
+      hint('Each DXF layer you tick becomes a folder of the overlay, with its own keep-away distance. Closed polylines, hatches and circles are polygons; open polylines, lines and arcs are lines; points and symbols (block references under 20 m across) are points. The coordinates are read in the coordinate system of the model.'),
+      h('div', { class: 'row' }, btn('All', () => all(true), 'sm ghost'), btn('None', () => all(false), 'sm ghost')),
+      h('div', { class: 'dxf-ovl-layers', style: { maxHeight: '340px', overflowY: 'auto', display: 'grid', gap: '4px' } }, rows)),
+      [btn('Cancel', UI.closeModal, 'sm'), btn('Add', add, 'sm primary')]);
+  }
   async function filesFromDrop(dt) {
     const out = [];
     const items = Array.from(dt.items || []).map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
@@ -15457,6 +16505,142 @@ const Tabs = (() => {
         r('depr', 'Depreciation', true), r('pbt', 'Profit / (loss) before tax'), r('np', 'Net profit / (loss)'))));
   }
 
+  // =============== GEOTECHNICAL ===============
+  /* Highwall and low wall stability (Geotechnical): the inputs (P.geotech), the run on the pit of a date, the results
+     (App.geoRes, not saved), the walls coloured by their FoS in the 3D view, and the report (PDF) */
+  function geoLines() {
+    const R = App.geoRes; if (!R || !App.geoShow) return [];
+    const o = R.o, out = [];
+    for (const q of R.scan) out.push({ pts: [q.crest, q.toe], color: Geotech.fosColor(q.f, o) });
+    for (const k of ['highwall', 'lowwall']) {
+      const s = R.walls[k]; if (!s) continue;
+      out.push({ pts: [s.wall.crest, s.wall.toe], color: '#ffffff', bold: true });
+      if (s.d3) { // the outline of the 3D slip surface (its ellipse in plan)
+        const P = s.P, cx = P.a[0] + P.ux * s.d3.crit.xc, cy = P.a[1] + P.uy * s.d3.crit.xc, pts = [];
+        for (let k2 = 0; k2 <= 48; k2++) { const t = (k2 / 48) * 2 * Math.PI, ds = s.d3.R * Math.cos(t), dt = s.d3.B * Math.sin(t); pts.push([cx + P.ux * ds - P.uy * dt, cy + P.uy * ds + P.ux * dt]); }
+        out.push({ pts, color: '#ff4fd8', bold: true });
+      }
+    }
+    return out;
+  }
+  function showGeo() { View.setGeo(geoLines()); }
+  // a JPEG of the 3D view as RGB rows (for the report)
+  const rgbOf = url => new Promise(res => {
+    const im = new Image();
+    im.onload = () => { try { const w = Math.min(1600, im.width), hh = Math.round((im.height * w) / im.width), cv = document.createElement('canvas'); cv.width = w; cv.height = hh; const x = cv.getContext('2d'); x.drawImage(im, 0, 0, w, hh); const d = x.getImageData(0, 0, w, hh).data, out = new Uint8Array(w * hh * 3); for (let i = 0, j = 0; i < d.length; i += 4) { out[j++] = d[i]; out[j++] = d[i + 1]; out[j++] = d[i + 2]; } res({ w, h: hh, data: out }); } catch (e) { res(null); } };
+    im.onerror = () => res(null); im.src = url;
+  });
+  function geotech(body) {
+    const P = App.P, ws = App.ws;
+    if (!ws) { body.append(h('div', { class: 'empty' }, 'Build the 3D model first.')); return; }
+    const o = Geotech.settings(P), G0 = () => P.geotech || (P.geotech = {}), save = () => { App.changed('meta'); UI.renderTab(); };
+    const setG = (k, v) => { const G = G0(); if (v == null) delete G[k]; else G[k] = v; save(); };
+    const sub = (k, key, v) => { const G = G0(), q = Object.assign({}, G[k] || {}); if (v == null) delete q[key]; else q[key] = v; G[k] = q; save(); };
+    const R = App.geoRes, f2 = v => (v === v && v != null ? U.fmtNum(v, 2) : '–'), pc = v => (v === v && v != null ? `${U.fmtNum(v * 100, v < 0.1 ? 1 : 0)}%` : '–');
+    const kp = (k, v, cls) => h('div', { class: 'kpi' + (cls ? ' ' + cls : '') }, h('span', { class: 'k' }, k), h('span', { class: 'v' }, v));
+    // ---- the run
+    const runIt = async () => {
+      if (!App.res) { UI.toast('Run the simulation first: the walls are those of the pit and the spoil on a date of the schedule.'); return; }
+      const res = App.res, day = o.date === 'end' ? res.nDays - 1 : Math.max(0, App.day);
+      const pb = Sim.playback(ws, res); pb.seek(day);
+      let wt = null;
+      if (o.water.mode === 'hydro') { const HR = App.hydro && App.hydro(); if (HR) { const A = Hydro.at(HR, day); wt = (x, y) => Hydro.sampleAt(HR, A.h, x, y); } else UI.toast('The Hydrogeological tab has no water table for this schedule: the walls are taken dry.'); }
+      const ctx = { ws, ins: pb.insitu, fill: pb.fill, S: ws.surf, wt, day, label: U.fmtDay(P.startDate, day) };
+      UI.busy('Slope stability: the walls of the pit…', 0); await U.nextFrame();
+      try { App.geoRes = await Geotech.run(ctx, P, f => UI.busy(`Slope stability: ${Math.round(f * 100)}%`, Math.min(0.97, f))); App.geoRes.sig = JSON.stringify(P.geotech || {}); App.geoShow = true; showGeo(); }
+      catch (e) { console.error(e); UI.toast('The stability analysis failed: ' + (e.message || e)); }
+      UI.busy(null); UI.renderTab();
+    };
+    const drawLine = () => {
+      const hud = UI.$('hud'); hud.innerHTML = '';
+      hud.append(h('div', null, h('div', { class: 'ht' }, 'Draw the section line'), h('div', { class: 'hs' }, 'Click either side of the pit, across the walls · Esc cancels')), btn('Cancel', () => View.cancelDraw(), 'sm ghost'));
+      hud.hidden = false;
+      View.startDraw({ kind: 'segment', color: '#ffffff', onDone: pts => { hud.hidden = true; setG('line', { a: pts[0], b: pts[1] }); }, onCancel: () => { hud.hidden = true; }, onError: m => UI.toast(m) });
+    };
+    const exportIt = async () => {
+      if (!R) return;
+      UI.busy('Geotechnical report…', 0.3); await U.nextFrame();
+      let shot = null; try { App.geoShow = true; showGeo(); await U.nextFrame(); shot = await rgbOf(View.snapshot()); } catch (e) { shot = null; }
+      try { const bytes = await Geotech.report(R, P, shot); UI.busy(null); if (await App.saveFile(`${U.slug(P.name) || 'project'}_geotechnical_${R.label.replace(/[^0-9A-Za-z]+/g, '')}.pdf`, new Blob([bytes], { type: 'application/pdf' }))) UI.toast('The geotechnical report is saved.'); }
+      catch (e) { UI.busy(null); console.error(e); UI.toast('The report could not be made: ' + (e.message || e)); }
+    };
+    // ---- the analysis
+    { const ds = sel([['timeline', 'The timeline date'], ['end', 'The end of the schedule (final void)']], o.date, v => setG('date', v)); ds.setAttribute('aria-label', 'Date of the pit');
+      const ms = sel(Object.entries(Geotech.METHODS), o.method, v => setG('method', v)); ms.setAttribute('aria-label', 'Method');
+      const sp = num(o.spacing, v => setG('spacing', v > 0 ? v : null), { min: 20, step: 10 }); sp.setAttribute('aria-label', 'Sections every');
+      const ns = num(o.samples, v => setG('samples', v > 0 ? Math.round(v) : null), { min: 100, step: 100 }); ns.setAttribute('aria-label', 'Monte Carlo samples');
+      body.append(sec('Slope stability', h('span', { class: 'chip' }, 'FoS · PoS · 2D · 3D'),
+        h('div', { class: 'grid2' }, fld('The pit on', ds), fld('Method (for the criteria)', ms)),
+        h('div', { class: 'grid2' }, fld('Wall sections every (m)', sp), fld('Monte Carlo samples', ns)),
+        h('div', { class: 'dt', style: { whiteSpace: 'normal', margin: '4px 0' } }, o.line ? 'Section: the line drawn (both of its walls are analysed in full).' : 'Section: the critical highwall and low wall around the pit (the lowest FoS of each) are analysed in full.'),
+        h('div', { class: 'row' }, btn('Run the stability analysis', runIt, 'sm primary'), btn(o.line ? 'Draw another section line' : 'Draw a section line', drawLine, 'sm'), o.line ? btn('Use the highest walls', () => setG('line', null), 'sm ghost') : null),
+        !App.res ? msg('warn', 'Run the simulation first: the walls are those of the pit and the spoil on a date of the schedule.') : null,
+        hint('After Slide2 and Slide3 (Rocscience): limit equilibrium of slices on circular slip surfaces (Bishop simplified, Janbu corrected, Ordinary), the global minimum found by a grid search of centres and radii, and a Monte Carlo probabilistic analysis of it (PoF: the share of samples with FoS below 1; PoS = 1 − PoF). Every wall of the pit is cut by a section across it every so many metres (the walls in 3D, coloured by their FoS); the critical highwall and low wall are also analysed in 3D on ellipsoidal slip surfaces (Bishop simplified on columns, Hungr 1987).')));
+    }
+    // ---- the materials
+    { const row = (m, key) => {
+        const set = (k, v) => { if (key === 'spoil') sub('spoil', k, v); else { const G = G0(), mm = Object.assign({}, G.mat || {}), q = Object.assign({}, mm[key] || {}); if (v == null) delete q[k]; else q[k] = v; mm[key] = q; G.mat = mm; save(); } };
+        const cell = (k, step) => { const e = num(m[k] === m.def[k] ? null : m[k], v => set(k, v), { min: 0, step, allowEmpty: true, placeholder: U.fmtNum(m.def[k], step < 1 ? 1 : 0) }); e.setAttribute('aria-label', `${k} of ${m.name}`); e.disabled = !edit(); return h('td', null, e); };
+        return h('tr', null, h('td', null, h('span', { class: 'sw', style: { background: m.color, display: 'inline-block', width: '9px', height: '9px', marginRight: '5px', borderRadius: '2px' } }), m.name), cell('gamma', 0.5), cell('c', 5), cell('phi', 0.5));
+      };
+      const cov = (k, label) => { const e = num(Math.round(o.cov[k] * 100), v => sub('cov', k, v == null ? null : v), { min: 0, step: 1 }); e.setAttribute('aria-label', label); return fld(label, e); };
+      body.append(sec('Materials (Mohr–Coulomb)', null,
+        h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', null, 'Layer'), h('th', null, 'γ kN/m³'), h('th', null, 'c kPa'), h('th', null, 'φ °'))), h('tbody', null, ...o.mats.map(m => row(m, m.id)), row(o.spoil, 'spoil')))),
+        h('div', { class: 'grid2' }, cov('c', 'Spread of c (CoV %)'), cov('phi', 'Spread of φ (CoV %)')), h('div', { class: 'grid2' }, cov('gamma', 'Spread of γ (CoV %)'), fld('Spoil angle of repose (°)', (() => { const e = num(o.spoil.repose === 37 && !((P.geotech || {}).spoil || {}).repose ? null : o.spoil.repose, v => sub('spoil', 'repose', v), { min: 20, max: 60, step: 0.5, allowEmpty: true, placeholder: '37' }); e.setAttribute('aria-label', 'Spoil angle of repose'); return e; })())),
+        h('div', { class: 'grid2' }, fld('Least slide depth (m)', (() => { const e = num((P.geotech || {}).minDepth != null ? o.minDepth : null, v => setG('minDepth', v), { min: 0, step: 0.5, allowEmpty: true, placeholder: '2' }); e.setAttribute('aria-label', 'Least slide depth'); return e; })()), h('span')),
+        hint('Empty: a typical value for the kind of layer (shown greyed), from its type and name; the spoil is the backfill and dumps above the in-situ surface. Replace them with the site’s tested strengths (rock mass, Mohr–Coulomb). The spoil is taken no steeper than its angle of repose (the schedule can stack it steeper against the open cut on the grid). Slip surfaces shallower than the least depth (and than a tenth of the wall) are surficial ravelling and left out. The spreads are the coefficients of variation of the normal distributions the Monte Carlo samples each material’s c, φ and γ from.')));
+    }
+    // ---- water and earthquake
+    { const wm = sel([['dry', 'Dry'], ['ru', 'Pore pressure ratio Ru'], ['table', 'Water table: a share of the wall height'], ['hydro', 'The Hydrogeological tab’s water table']], o.water.mode, v => sub('water', 'mode', v)); wm.setAttribute('aria-label', 'Water');
+      const wv = o.water.mode === 'ru' ? num(o.water.ru, v => sub('water', 'ru', v), { min: 0, max: 0.9, step: 0.05 }) : o.water.mode === 'table' ? num(Math.round(o.water.frac * 100), v => sub('water', 'frac', v == null ? null : v / 100), { min: 0, max: 100, step: 5 }) : null;
+      if (wv) wv.setAttribute('aria-label', 'Water value');
+      const kh = num(o.kh, v => setG('kh', v), { min: 0, max: 0.5, step: 0.01 }); kh.setAttribute('aria-label', 'Seismic coefficient');
+      body.append(sec('Water and earthquake', null,
+        h('div', { class: 'grid2' }, fld('Water', wm), wv ? fld(o.water.mode === 'ru' ? 'Ru' : 'Water table under the crest (% of the wall height above the toe)', wv) : h('span')),
+        h('div', { class: 'grid2' }, fld('Seismic coefficient kh (pseudo-static)', kh), h('span')),
+        hint('Ru: the pore pressure at the base of a slice is Ru × the weight of the slice over its width. Water table: under the crest at the share of the wall height set, falling to the toe at the face (a drained toe). The Hydrogeological tab: its water table on the date. kh: a horizontal load of kh × the weight, out of the slope (0.05 to 0.1 for the Highveld).')));
+    }
+    // ---- the criteria
+    { const sc = sel([['bench', 'Bench'], ['interramp', 'Inter-ramp'], ['overall', 'Overall slope']], o.scale, v => { setG('scale', v); }); sc.setAttribute('aria-label', 'Slope scale');
+      const cs = sel([['low', 'Low'], ['moderate', 'Moderate'], ['high', 'High']], o.consequence, v => setG('consequence', v)); cs.setAttribute('aria-label', 'Consequence of a failure');
+      const mf = num((P.geotech || {}).minFos != null ? o.minFos : null, v => setG('minFos', v), { min: 0.5, step: 0.05, allowEmpty: true, placeholder: U.fmtNum(o.accept.fos, 2) }); mf.setAttribute('aria-label', 'Least FoS');
+      const mp = num((P.geotech || {}).maxPoF != null ? o.maxPoF : null, v => setG('maxPoF', v), { min: 0, max: 100, step: 1, allowEmpty: true, placeholder: String(o.accept.pof) }); mp.setAttribute('aria-label', 'Most PoF');
+      body.append(sec('Acceptance criteria', null,
+        h('div', { class: 'grid2' }, fld('Scale of the slope', sc), fld('Consequence of a failure', cs)),
+        h('div', { class: 'grid2' }, fld('Least FoS (static)', mf), fld('Most PoF (%)', mp)),
+        hint(`Read & Stacey (2009), Guidelines for Open Pit Slope Design, as commonly quoted: bench FoS 1.1, PoF 25–50%; inter-ramp FoS 1.15–1.3, PoF 10–25%; overall slope FoS 1.2–1.5, PoF 5–20%, by the consequence. Empty boxes take the value for the scale and consequence chosen (FoS ${U.fmtNum(o.accept.fos, 2)}, PoF ${o.accept.pof}%).`)));
+    }
+    // ---- the results
+    if (R) {
+      const ro = R.o, stale = R.sig !== JSON.stringify(P.geotech || {}), name = { highwall: 'Highwall', lowwall: 'Low wall (spoil)' }, vc = { ok: 'pos', warn: '', fail: 'neg' };
+      const parts = [];
+      if (stale) parts.push(msg('warn', 'The inputs changed since this analysis: run it again.'));
+      for (const k of ['highwall', 'lowwall']) {
+        const s = R.walls[k]; if (!s) { parts.push(h('div', { class: 'dt' }, `${name[k]}: none steep enough on this date.`)); continue; }
+        const v = Geotech.verdict(s.methods[ro.method], s.mc ? s.mc.pof : NaN, ro);
+        parts.push(h('div', { class: 'dt', style: { fontWeight: 600, margin: '8px 0 2px' } }, `${name[k]}: ${U.fmtNum(s.wall.H, 0)} m at ${U.fmtNum(s.wall.angle, 0)}°`));
+        parts.push(h('div', { class: 'kpis' }, kp(`FoS ${Geotech.METHODS[ro.method]}`, f2(s.methods[ro.method]), vc[v]), kp('PoS (2D)', pc(s.mc && s.mc.pos), vc[v]), kp('FoS 3D', s.d3 ? f2(s.d3.f) : '–'), kp('PoS 3D', s.mc3 ? pc(s.mc3.pos) : '–'),
+          kp('FoS Bishop · Janbu · Ordinary', `${f2(s.methods.bishop)} · ${f2(s.methods.janbu)} · ${f2(s.methods.ordinary)}`), kp('β (2D)', s.mc ? (s.mc.beta === Infinity ? '∞' : f2(s.mc.beta)) : '–')));
+        if (s.crit) { const sv = h('div'); sv.innerHTML = Geotech.toSvg(Geotech.sectionShapes(s, ro, 520, 380), 520, 380); parts.push(sv); }
+        if (s.mc) { const hv = h('div', { style: { marginTop: '4px' } }); hv.innerHTML = Geotech.toSvg(Geotech.histShapes(s.mc, 520, 120, 'FoS in 2D'), 520, 120); parts.push(hv); }
+      }
+      parts.push(h('div', { class: 'dt', style: { fontWeight: 600, margin: '10px 0 2px' } }, 'Findings'));
+      for (const f of R.findings.items) parts.push(msg(f.level === 'ok' ? 'info' : f.level === 'fail' ? 'error' : 'warn', f.text));
+      parts.push(h('div', { class: 'dt', style: { fontWeight: 600, margin: '10px 0 2px' } }, 'Recommendations'));
+      parts.push(h('ul', { style: { margin: '2px 0 6px 16px', padding: 0, fontSize: 'var(--fs-xs)' } }, R.findings.rec.map(t => h('li', null, t))));
+      if (R.scan.length) {
+        const worst = R.scan.slice().sort((p, q) => p.f - q.f).slice(0, 10);
+        parts.push(h('div', { class: 'dt', style: { fontWeight: 600, margin: '10px 0 2px' } }, `The walls around the pit: ${R.scan.length} sections (the lowest 10)`));
+        parts.push(h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', null, 'Wall'), h('th', { class: 'r' }, 'H m'), h('th', { class: 'r' }, 'Angle'), h('th', { class: 'r' }, 'FoS'), h('th', { class: 'r' }, 'PoS'), h('th', null, ''))),
+          h('tbody', null, worst.map(q => h('tr', null, h('td', null, q.kind === 'highwall' ? 'Highwall' : 'Low wall'), h('td', { class: 'r num' }, U.fmtNum(q.H, 0)), h('td', { class: 'r num' }, `${U.fmtNum(q.angle, 0)}°`), h('td', { class: 'r num', style: { color: Geotech.fosColor(q.f, ro), fontWeight: 600 } }, f2(q.f)), h('td', { class: 'r num' }, pc(q.pos)), h('td', null, btn('Show', () => View.focusOn(q.x, q.y), 'sm ghost'))))))));
+      }
+      parts.push(h('div', { class: 'legend-row', style: { margin: '6px 0' } }, [['#d62728', 'FoS < 1'], ['#ff9f1c', `1 – ${f2(ro.minFos)}`], ['#c9d33a', `${f2(ro.minFos)} – ${f2(ro.minFos + 0.3)}`], ['#2ca02c', `≥ ${f2(ro.minFos + 0.3)}`], ['#ffffff', 'Critical walls'], ['#ff4fd8', '3D slip']].map(([c, t]) => h('span', null, h('span', { class: 'sw line', style: { background: c, outline: c === '#ffffff' ? '1px solid #888' : '' } }), t))));
+      parts.push(chk('Show the walls on the 3D view (coloured by their FoS)', !!App.geoShow, v => { App.geoShow = v; showGeo(); }));
+      parts.push(h('div', { class: 'row' }, btn('Export the report (PDF)', exportIt, 'sm primary'), btn('Clear the results', () => { App.geoRes = null; App.geoShow = false; showGeo(); UI.renderTab(); }, 'sm ghost')));
+      body.append(sec('Results', h('span', { class: 'chip' }, R.label), ...parts));
+    }
+  }
+
   // =============== RECON ===============
   /* Survey DTMs (point files) against the geological model or one another: the bcm and tons taken out of each layer
      between two dates, beside what the schedule mines then, and the Excel report of it (Recon). The surveys' grids are
@@ -15476,20 +16660,33 @@ const Tabs = (() => {
   }
   // the project is in the store before a survey's grid is put there
   async function reconSaved() { while (App.saving) await U.sleep(100); clearTimeout(App.saveTimer); await App.saveNow(); }
-  async function addSurveys(files) {
+  async function addSurveys(files, opts = {}) {
     const P = App.P, ws = App.ws;
     if (!ws || !P.grid) { UI.toast('Build the 3D model in the Geological Data tab first: the surveys are compared with it, cell by cell.'); return; }
     const R = P.recon || (P.recon = {}), G = reconFor(P), done = [], bad = [];
     if (!Array.isArray(R.surveys)) R.surveys = [];
+    // (a world file places the GeoTIFF of the same name; it is not a survey itself)
+    const isWorld = f => /^(tfw|tifw|tiffw|wld)$/.test(ext(f.name)), worlds = new Map(files.filter(isWorld).map(f => [stem(f.name).toLowerCase(), f]));
+    files = files.filter(f => !isWorld(f));
+    if (!files.length) { UI.toast('Choose the GeoTIFF with its world file (.tfw), or point files.'); return; }
     for (let k = 0; k < files.length; k++) {
-      const f = files[k], nm = f.name, lead = `Reading ${nm} (${k + 1} of ${files.length})…`;
+      const f = files[k], nm = f.name, lead = `Reading ${nm} (${k + 1} of ${files.length})…`, prog = fr => UI.busy(`${lead} ${Math.round(fr * 100)}%`, (k + fr * 0.9) / files.length);
       UI.busy(lead, k / files.length); await U.nextFrame();
       try {
-        const out = await Recon.readPoints(P, ws, f, fr => UI.busy(`${lead} ${Math.round(fr * 100)}%`, (k + fr * 0.9) / files.length));
+        const out = TIF_EXT.test(ext(nm)) ? await Recon.readRaster(P, ws, f, worlds.get(stem(nm).toLowerCase()), prog, Dem.grid(ws)) : await Recon.readPoints(P, ws, f, prog);
         const s = Object.assign({ id: U.uid('dtm'), name: stem(nm), date: Recon.dateFromName(nm) || U.todayISO(), file: nm, read: U.todayISO(), gridVersion: P.gridVersion || 0 }, out.info);
         UI.busy(`Saving ${nm}…`, (k + 0.95) / files.length);
         await reconSaved();
         await App.store.putBlob(P.id, Recon.key(s), U.encodeGrid(out.grid));
+        // (a GeoTIFF's bands on the grid of the DEM display, to the centimetre)
+        if (out.disp) {
+          const DG = Dem.grid(ws);
+          for (let b = 0; b < out.disp.length; b++) {
+            const g = out.disp[b]; for (let i = 0; i < g.length; i++) if (g[i] === g[i]) g[i] = Math.round(g[i] * 100) / 100;
+            await App.store.putBlob(P.id, Recon.dispKey(s, b), U.encodeGrid(g)); App.dem.cache.set(Recon.dispKey(s, b), g);
+          }
+          s.disp = { nx: DG.nx, ny: DG.ny, cell: DG.cell, bands: out.disp.length, band: out.band || 0 };
+        }
         R.surveys.push(s); G.set(s.id, out.grid); done.push(s);
       } catch (e) { bad.push(`${nm}: ${e.message || e}`); console.warn(nm, e); }
     }
@@ -15500,18 +16697,30 @@ const Tabs = (() => {
       R.to = last.id; R.from = list.length > 1 ? list[list.length - 2].id : 'model';
       App.changed('recon', { now: true });
     }
+    // (added in the Geological Data tab: the model is cut down to the newest GeoTIFF, which is shown on the 3D view)
+    const newest = done.filter(s => s.disp).sort((a, b) => (a.date || '').localeCompare(b.date || '')).pop();
+    if (opts.use && newest) {
+      P.depletion = { survey: newest.id, earlier: !P.depletion || P.depletion.earlier !== false };
+      P.demView = Object.assign(Dem.settings(P), { on: true, survey: newest.id, band: null });
+      App.changed('dem');
+      await App.redeplete();
+    }
     UI.renderTab();
     if (bad.length) UI.toast(`${done.length ? `${done.length} survey${done.length === 1 ? '' : 's'} added. ` : ''}Not read: ${bad.join(' · ')}`);
-    else if (done.length) UI.toast(`${done.length} survey${done.length === 1 ? '' : 's'} added: ${done.map(s => `${s.name} (${U.fmtNum(s.points)} points)`).join(', ')}. Check each survey date.`);
+    else if (done.length) UI.toast(`${done.length} survey${done.length === 1 ? '' : 's'} added: ${done.map(s => `${s.name} (${s.raster ? `raster, ${U.fmtNum((s.cells * P.grid.cell * P.grid.cell) / 1e4, 1)} ha` : `${U.fmtNum(s.points)} points`})`).join(', ')}. Check each survey date.${done.filter(s => s.crs).map(s => ` ${s.name}: ${s.crs}`).join('')}`);
   }
   async function removeSurvey(s) {
     const P = App.P, R = P.recon;
-    if (!(await UI.confirmBox('Remove the survey', `Remove “${s.name}” and its surface from the project?`, 'Remove', true))) return;
+    if (!(await UI.confirmBox('Remove the survey', `Remove “${s.name}” and its surface from the project?${P.depletion && P.depletion.survey === s.id ? ' The 3D model is cut down to it: it goes back to the model as built.' : ''}`, 'Remove', true))) return;
     R.surveys = R.surveys.filter(q => q !== s);
     if (R.to === s.id) R.to = ''; if (R.from === s.id) R.from = 'model';
     reconFor(P).delete(s.id);
+    // (the model cut down to it, or its picture on the 3D view: not any more)
+    if (P.depletion && P.depletion.survey === s.id) P.depletion = null;
+    if (P.demView && P.demView.survey === s.id) { P.demView = Object.assign(Dem.settings(P), { on: false, survey: '' }); App.changed('dem'); }
     App.changed('recon', { now: true });
-    try { await App.store.delBlob(P.id, Recon.key(s)); } catch (e) { console.warn(e); }
+    if (P.depletion || (App.ws && App.ws.dep)) App.redeplete();
+    for (const k of Recon.keysOf(s)) { App.dem.cache.delete(k); try { await App.store.delBlob(P.id, k); } catch (e) { console.warn(e); } }
     UI.renderTab();
   }
   function surveyCard(s, G) {
@@ -15522,12 +16731,14 @@ const Tabs = (() => {
       h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, [s.file, s.read ? `read ${U.fmtDate(U.parseISO(s.read))}` : null].filter(Boolean).join(' · ')),
       edit() ? h('div', { class: 'grid2' },
         fld('Name', txt(s.name, v => { s.name = v.trim() || s.file; App.changed('recon'); })),
-        fld('Survey date', txt(s.date, v => { if (!U.parseISO(v)) return; s.date = v; App.changed('recon'); UI.renderTab(); }, { type: 'date' }))) : null,
+        fld('Survey date', txt(s.date, v => { if (!U.parseISO(v)) return; s.date = v; App.changed('recon'); if (P.depletion) App.redeplete(); UI.renderTab(); }, { type: 'date' }))) : null,
       h('div', { class: 'kv' },
-        ...kv('Points on the model', `${U.fmtNum(s.points)}${s.outside ? ` · ${U.fmtNum(s.outside)} outside it` : ''}`),
+        ...(s.raster ? kv('GeoTIFF', s.raster) : kv('Points on the model', `${U.fmtNum(s.points)}${s.outside ? ` · ${U.fmtNum(s.outside)} outside it` : ''}`)),
         ...kv('Area covered', ha != null ? `${U.fmtNum(ha, 2)} ha${s.filled ? ` (${U.fmtNum((s.filled / s.cells) * 100, 0)}% interpolated)` : ''}` : '–'),
         ...kv('Elevations', `${U.fmtNum(s.zMin, 1)} to ${U.fmtNum(s.zMax, 1)} m`),
-        ...kv('Columns used (X, Y, Z)', s.columns || '–')),
+        ...(s.raster ? [] : kv('Columns used (X, Y, Z)', s.columns || '–'))),
+      s.crs ? msg('warn', `${s.crs} Check that it lines up with the model.`) : null,
+      P.depletion && P.depletion.survey === s.id ? msg('info', 'The 3D model is cut down to this survey (Geological Data tab).') : null,
       g === undefined ? h('div', { class: 'dt' }, 'Reading the surface…') : null,
       g === null ? msg('warn', 'Its surface is not in the store. Add the file again.') : null,
       g && !ok ? msg('warn', 'It was read for an earlier 3D model. Add the file again to compare it with the model as it is now.') : null);
@@ -15535,12 +16746,12 @@ const Tabs = (() => {
   function recon(body) {
     const P = App.P, ws = App.ws, st = Recon.settings(P), list = Recon.byDate(P), G = reconFor(P), R = () => P.recon || (P.recon = {});
     reconGrids();
-    const parts = [hint('Survey DTMs as point files: XYZ, CSV or TXT with X, Y and Z columns, in the coordinate system of the model (a header line is optional; point numbers and codes are skipped). Which columns are X, Y and Z is worked out from the points. The points are averaged onto the grid of the 3D model and the gaps between them interpolated; each survey is saved with the project.')];
+    const parts = [hint('Survey DTMs as point files (XYZ, CSV or TXT with X, Y and Z columns; a header line is optional, point numbers and codes are skipped, and which columns are X, Y and Z is worked out from the points) or as GeoTIFF rasters (.tif or .tiff: one band of elevations, with its world file .tfw chosen together with it when it has no GeoTIFF tags), in the coordinate system of the model. They are averaged onto the grid of the 3D model and the gaps interpolated; each survey is saved with the project.')];
     if (edit()) {
-      const fileIn = h('input', { type: 'file', accept: '.xyz,.csv,.txt,.pts', multiple: true, hidden: true });
-      fileIn.setAttribute('aria-label', 'Survey point files');
+      const fileIn = h('input', { type: 'file', accept: '.xyz,.csv,.txt,.pts,.tif,.tiff,.gtif,.tfw,.tifw,.wld', multiple: true, hidden: true });
+      fileIn.setAttribute('aria-label', 'Survey DTM files');
       fileIn.addEventListener('change', async () => { const fs = Array.from(fileIn.files); fileIn.value = ''; await addSurveys(fs); });
-      parts.push(h('div', { class: 'row' }, btn('Add survey DTMs…', () => fileIn.click(), 'sm primary', 'Choose one or more point files (.xyz, .csv, .txt)'), fileIn));
+      parts.push(h('div', { class: 'row' }, btn('Add survey DTMs…', () => fileIn.click(), 'sm primary', 'Choose one or more point files (.xyz, .csv, .txt) or GeoTIFF DTMs (.tif, .tiff, with a .tfw if needed)'), fileIn));
     }
     if (!ws || !P.grid) parts.push(msg('warn', 'Build the 3D model in the Geological Data tab first: the surveys are compared with it, cell by cell.'));
     for (const s of list) parts.push(surveyCard(s, G));
@@ -19138,6 +20349,7 @@ const App = {
   },
   async openProject(id, opts = {}) {
     UI.busy('Opening project…', 0.1);
+    this.geoRes = null; this.geoShow = false; // (the geotechnical results are of the project they were run on)
     try {
       const P = await this.store.load(id);
       if (!P) throw new Error('Project not found.');
@@ -19147,21 +20359,26 @@ const App = {
         const u8 = await this.store.getBlob(id, 'grid');
         if (u8) surf = Store.unpackSurfaces(u8, P.surfaces.length, P.grid.nx * P.grid.ny);
       }
+      // (the survey of the ground now the model is cut down to, Geological Data tab)
+      let dep = null;
+      if (surf && P.depletion) try { dep = await this.depletionGrid(P); } catch (e) { console.warn(e); }
       UI.busy(null);
-      await this.setProject(P, surf, opts);
+      await this.setProject(P, surf, Object.assign({}, opts, { dep }));
       try { localStorage.setItem('rollover.lastProject', id); } catch (e) {}
     } catch (e) { UI.busy(null); UI.toast('Could not open the project: ' + e.message); }
   },
   async setProject(P, surf, opts = {}) {
     View.cancelDraw(true);
     this.P = P; this.surf = surf; this.res = null; this.pb = null; this.day = -1; this.stale = false; this.qgrid = new Map();
+    this.dep = opts.dep || null; this.dem = { tok: 0, cache: new Map(), canvas: null, info: null };
     Model.syncActColors(P); // the activities in the colours of their layers
     this.persisted = opts.persisted !== false;
     this.selBlock = -1; this.roadId = null; this.dumpId = null; this.drainId = null; this.rhId = null; this.fillId = null; this.raiseId = null;
     this.actId = P.activities[0] ? P.activities[0].id : null;
     this.sat = { on: false, canvas: null, sig: '', attribution: '' };
-    View.setSatTexture(null); View.setSatVisible(false);
+    View.setSatTexture(null); View.setSatVisible(false); View.setRasTexture(null); View.setRasVisible(false);
     this.buildWs({ keepCamera: false });
+    if (Dem.settings(P).on) this.refreshDem();
     Section.reset(); Measure.reset();
     UI.setProjectName(P.name, P.isDemo);
     UI.renderTab(); UI.renderInspector(); UI.renderLegend(); UI.renderColorBy();
@@ -19172,7 +20389,7 @@ const App = {
   },
   buildWs(opts = {}) {
     if (this.surf && this.P.grid) {
-      this.ws = Model.buildWorkspace(this.P, this.surf);
+      this.ws = Model.buildWorkspace(this.P, this.surf, this.dep && this.dep.ver === (this.P.gridVersion || 0) ? this.dep.grid : null);
       if (this.P.wash) Wash.assign(this.P, this.ws); // the washed product of the blocks, as they are now (washability, Geological Data tab)
       View.setWorkspace(this.ws, { vex: (this.P.view && this.P.view.vex) || 3, keepCamera: opts.keepCamera });
       UI.setVex((this.P.view && this.P.view.vex) || 3);
@@ -19200,6 +20417,7 @@ const App = {
     if (kind !== 'view' && this.selBlock < 0) UI.renderInspectorThrottled(); // (the pit overview shows the coal tons and qualities) // the coal inventory and the block margins are worked out again
     if (kind === 'view' && !this.persisted) return;
     if (kind === 'cutoff') { this.recut(); UI.renderInspector(); }
+    if (kind === 'dem') this.refreshDem();
     // the quality columns feed the quality cut-offs: work the cut-off out again when there are any
     if (kind === 'margin' && this.P && this.P.layers.some(L => L.qcut)) { this.recut(); if (this.res) { this.stale = true; Timeline.setStale(true); } }
     if ((kind === 'blocks' || kind === 'layers') && this.ws && (this.P.pits || []).length) this.syncPits();
@@ -19846,6 +21064,65 @@ const App = {
       for (const U2 of res.rampUse || []) if ((U2.from > 0 && d < U2.from) || (U2.to >= 0 && d >= U2.to)) hide.push(U2.id);
     }
     View.setRoadHidden(hide);
+  },
+
+  // ---------- the survey DEM: the model cut down to it, and its picture ----------
+  /* The survey the model is cut down to (P.depletion, Geological Data tab), on the model grid; with the earlier surveys,
+     the lowest ground of each cell (a pit backfilled since an earlier survey is still seen as mined). → {grid, ver, ids}
+     or null */
+  async depletionGrid(P) {
+    const DP = P && P.depletion; if (!DP || !DP.survey || !P.grid) return null;
+    const list = Recon.byDate(P), s0 = list.find(s => s.id === DP.survey), ver = P.gridVersion || 0, n = P.grid.nx * P.grid.ny;
+    if (!s0 || (s0.gridVersion || 0) !== ver) return null;
+    const use = DP.earlier === false ? [s0] : list.filter(s => s === s0 || (s.date && s0.date && s.date <= s0.date && (s.gridVersion || 0) === ver));
+    let dep = null; const ids = [];
+    for (const s of use) {
+      const u8 = await this.store.getBlob(P.id, Recon.key(s)); if (!u8) continue;
+      const g = U.decodeGrid(u8); if (g.length !== n) continue;
+      if (!dep) dep = Float32Array.from(g); else for (let c = 0; c < n; c++) if (g[c] === g[c] && !(dep[c] <= g[c])) dep[c] = g[c];
+      ids.push(s.id);
+    }
+    return dep && ids.includes(s0.id) ? { grid: dep, ver, ids } : null;
+  },
+  // the model cut down to the survey again (or back to the model as built): a run from the ground before no longer applies
+  async redeplete() {
+    const P = this.P; if (!P || !this.ws) return;
+    if (P.depletion) UI.busy('Cutting the 3D model down to the survey…', 0.3);
+    try { this.dep = await this.depletionGrid(P); } catch (e) { this.dep = null; UI.toast('The survey could not be read: ' + (e.message || e)); }
+    finally { UI.busy(null); }
+    if (this.P !== P || !this.ws) return;
+    Model.setDepletion(this.ws, this.dep ? this.dep.grid : null);
+    if (P.wash) Wash.assign(P, this.ws);
+    this.res = null; this.pb = null; this.day = -1; this.stale = false; Timeline.setData(null, P);
+    this.changed('cutoff', { now: true });
+    UI.renderTab(); UI.renderLegend();
+  },
+  /* The survey DEM on the 3D view (P.demView, Dem): its band and the hillshade read from the store once, the picture made
+     again when a setting changes */
+  async refreshDem() {
+    const P = this.P, ws = this.ws; if (!P || !this.dem) return;
+    const o = Dem.settings(P), tok = ++this.dem.tok, s = o.on && ws ? Recon.settings(P).surveys.find(q => q.id === o.survey && q.disp) : null;
+    const off = info => { this.dem.info = info; View.setRasVisible(false); UI.renderLegend(); };
+    if (!s) return off(null);
+    const G = Dem.grid(ws);
+    if (s.disp.nx !== G.nx || s.disp.ny !== G.ny || (s.gridVersion || 0) !== (P.gridVersion || 0)) return off({ error: `“${s.name}” was read for an earlier 3D model: add its file again to show it.` });
+    const get = async k => { if (!this.dem.cache.has(k)) { const u8 = await this.store.getBlob(P.id, k); this.dem.cache.set(k, u8 ? U.decodeGrid(u8) : null); } return this.dem.cache.get(k); };
+    try {
+      const band = o.band != null && +o.band < s.disp.bands ? +o.band : s.disp.band, dem = await get(Recon.dispKey(s, band));
+      if (tok !== this.dem.tok) return;
+      if (!dem || dem.length !== G.nx * G.ny) return off({ error: `The display copy of “${s.name}” is not in the store: add its file again.` });
+      let hs = null;
+      if (o.hs === 'file' && o.hsFile && (o.hsFile.gridVersion || 0) === (P.gridVersion || 0)) { const g = await get(o.hsFile.id); if (g && g.length === dem.length) hs = Dem.normHs(g); }
+      else if (o.hs === 'dem') { const el = band === s.disp.band ? dem : await get(Recon.dispKey(s, s.disp.band)); hs = Dem.hillshade(el && el.length === dem.length ? el : dem, G.nx, G.ny, G.cell, o.az, o.alt, o.zf); }
+      if (tok !== this.dem.tok) return;
+      const st = Dem.stats(dem);
+      if (!st) return off({ error: `Band ${band + 1} of “${s.name}” has no values on the model.` });
+      this.dem.info = { s, band, st, legend: Dem.legend(o, st) };
+      this.dem.canvas = Dem.toCanvas(Dem.compose(dem, hs, G.nx, G.ny, o, st), G.nx, G.ny);
+      View.setRasTexture(this.dem.canvas); View.setRasVisible(true, U.clamp(+o.view, 0, 100) / 100);
+      UI.renderLegend();
+      if (this.tab === 'data') UI.renderTab();
+    } catch (e) { console.warn(e); off({ error: 'The survey DEM could not be shown: ' + (e.message || e) }); }
   },
 
   // ---------- satellite ----------
