@@ -1738,30 +1738,32 @@ const Dxf = (() => {
     }
 
     // explode into world geometry
-    const out = { polylines: [], hatches: [], texts: [], inserts: [], points: [], layers: [], units, stats: {}, blockNames: [] };
+    const out = { polylines: [], hatches: [], circles: [], texts: [], inserts: [], points: [], layers: [], units, stats: {}, blockNames: [] };
     const stat = (layer, type) => { const s = out.stats[layer] || (out.stats[layer] = {}); s[type] = (s[type] || 0) + 1; };
     const I = [1, 0, 0, 1, 0, 0];
     const mul = (A, B) => [A[0] * B[0] + A[2] * B[1], A[1] * B[0] + A[3] * B[1], A[0] * B[2] + A[2] * B[3], A[1] * B[2] + A[3] * B[3], A[0] * B[4] + A[2] * B[5] + A[4], A[1] * B[4] + A[3] * B[5] + A[5]];
     const ap = (M, p) => [M[0] * p[0] + M[2] * p[1] + M[4], M[1] * p[0] + M[3] * p[1] + M[5]];
     const FLIP = [-1, 0, 0, 1, 0, 0];
     const usedBlocks = new Set();
-    function emit(e, M, layerFrom, depth) {
+    function emit(e, M, layerFrom, depth, from) {
       if (e.space === 1 && depth === 0) return; // paper space
       const layer = e.layer === '0' && layerFrom ? layerFrom : e.layer;
+      const tag = o => { if (from != null) o.ins = from; return o; }; // (drawn by a block reference: ins, the index of the outermost one)
       const Mx = e.flipX ? mul(M, FLIP) : M;
       stat(layer, e.type);
       switch (e.type) {
         case 'LWPOLYLINE': case 'POLYLINE': case 'SPLINE': {
           if (e.mesh || !e.pts || e.pts.length < 2) return;
           const pts = withBulges(e.pts, e.bul || [], e.closed).map(p => ap(Mx, p));
-          out.polylines.push({ layer, pts, closed: !!e.closed, src: e.type });
+          out.polylines.push(tag({ layer, pts, closed: !!e.closed, src: e.type }));
           return;
         }
-        case 'LINE': out.polylines.push({ layer, pts: e.pts.map(p => ap(Mx, p)), closed: false, src: 'LINE' }); return;
-        case 'ARC': out.polylines.push({ layer, pts: arcPoints(e.c, e.r, e.a0, e.a1).map(p => ap(Mx, p)), closed: false, src: 'ARC' }); return;
-        case 'HATCH': for (const L of e.loops) if (L.length > 2) out.hatches.push({ layer, pts: L.map(p => ap(Mx, p)) }); return;
+        case 'LINE': out.polylines.push(tag({ layer, pts: e.pts.map(p => ap(Mx, p)), closed: false, src: 'LINE' })); return;
+        case 'ARC': out.polylines.push(tag({ layer, pts: arcPoints(e.c, e.r, e.a0, e.a1).map(p => ap(Mx, p)), closed: false, src: 'ARC' })); return;
+        case 'HATCH': for (const L of e.loops) if (L.length > 2) out.hatches.push(tag({ layer, pts: L.map(p => ap(Mx, p)) })); return;
         case 'TEXT': case 'MTEXT': { if (!e.text) return; const p = ap(Mx, [e.x, e.y]); out.texts.push({ layer, x: p[0], y: p[1], text: e.text }); return; }
-        case 'POINT': { const p = ap(Mx, [e.x, e.y]); out.points.push({ layer, x: p[0], y: p[1] }); return; }
+        case 'POINT': { const p = ap(Mx, [e.x, e.y]); out.points.push(tag({ layer, x: p[0], y: p[1] })); return; }
+        case 'CIRCLE': { if (!(e.r > 0)) return; out.circles.push(tag({ layer, c: ap(Mx, e.c), r: e.r * Math.hypot(Mx[0], Mx[1]) })); return; }
         case 'INSERT': {
           const blk = blocks.get(e.name);
           const attribs = {};
@@ -1769,8 +1771,8 @@ const Dxf = (() => {
             if (a.tag) attribs[a.tag] = a.text;
             if (a.text) { const p = ap(a.flipX ? mul(M, FLIP) : M, [a.x, a.y]); out.texts.push({ layer: a.layer === '0' ? layer : a.layer, x: p[0], y: p[1], text: a.text, attrib: a.tag }); }
           }
-          const ins = ap(Mx, [e.x, e.y]);
-          out.inserts.push({ layer, name: e.name, x: ins[0], y: ins[1], attribs });
+          const ins = ap(Mx, [e.x, e.y]), k = out.inserts.length;
+          out.inserts.push(tag({ layer, name: e.name, x: ins[0], y: ins[1], attribs }));
           if (!blk || depth > 8) return;
           usedBlocks.add(e.name);
           const r = (e.rot * Math.PI) / 180, cr = Math.cos(r), sr = Math.sin(r);
@@ -1781,7 +1783,7 @@ const Dxf = (() => {
             const L = [cr * e.sx, sr * e.sx, -sr * e.sy, cr * e.sy, tx, ty];
             const B = [1, 0, 0, 1, -blk.base[0], -blk.base[1]];
             const Mi = mul(Mx, mul(L, B));
-            for (const be of blk.ents) if (be.type !== 'ATTDEF') emit(be, Mi, layer, depth + 1);
+            for (const be of blk.ents) if (be.type !== 'ATTDEF') emit(be, Mi, layer, depth + 1, from != null ? from : k);
           }
           return;
         }
@@ -2016,24 +2018,26 @@ const Dxf = (() => {
   }
 
   /* If the layout does not line up with the elevation model, try the usual convention mix-ups.
-     blocks: in display coords; grid bbox in display coords. Returns {name, fn} or null. */
-  function detectFix(blocks, bbox) {
-    if (!blocks.length) return null;
-    const cen = blocks.map(b => Geo.centroid(b.pts));
+     blocks: in display coords; grid bbox in display coords. Returns {id, name, fn, share} or null. */
+  const FIXES = [
+    ['flip', 'the signs of both coordinates were flipped (positive Westing/Southing versus negative CAD style)', p => [-p[0], -p[1]]],
+    ['swap', 'X and Y were swapped', p => [p[1], p[0]]],
+    ['swapflip', 'X and Y were swapped and their signs flipped', p => [-p[1], -p[0]]],
+    ['mm', 'millimetres were converted to metres', p => [p[0] / 1000, p[1] / 1000]],
+    ['mmflip', 'millimetres were converted to metres and the signs flipped', p => [-p[0] / 1000, -p[1] / 1000]]
+  ];
+  const fixFn = id => (FIXES.find(f => f[0] === id) || [null, null, p => p])[2];
+  // (on points: the share of them on the grid as they are, and with each mix-up put right)
+  function fixFor(cen, bbox) {
+    if (!cen.length) return null;
     const inside = f => cen.filter(c => { const p = f(c); return p[0] >= bbox[0] && p[0] <= bbox[2] && p[1] >= bbox[1] && p[1] <= bbox[3]; }).length / cen.length;
     const base = inside(p => p);
     if (base >= 0.5) return null;
-    const cands = [
-      ['the signs of both coordinates were flipped (positive Westing/Southing versus negative CAD style)', p => [-p[0], -p[1]]],
-      ['X and Y were swapped', p => [p[1], p[0]]],
-      ['X and Y were swapped and their signs flipped', p => [-p[1], -p[0]]],
-      ['millimetres were converted to metres', p => [p[0] / 1000, p[1] / 1000]],
-      ['millimetres were converted to metres and the signs flipped', p => [-p[0] / 1000, -p[1] / 1000]]
-    ];
     let best = null, bs = base;
-    for (const [name, fn] of cands) { const s = inside(fn); if (s > bs + 0.2 && s >= 0.6) { bs = s; best = { name, fn, share: s }; } }
+    for (const [id, name, fn] of FIXES) { const s = inside(fn); if (s > bs + 0.2 && s >= 0.6) { bs = s; best = { id, name, fn, share: s }; } }
     return best;
   }
+  function detectFix(blocks, bbox) { return blocks.length ? fixFor(blocks.map(b => Geo.centroid(b.pts)), bbox) : null; }
 
   // Minimal R12 writer: polylines (closed or open) + texts
   /* items: {kind: 'poly', layer, pts: [[x, y, z?]…], closed, d3} · {kind: 'line', layer, a, b} · {kind: 'text', layer, x, y, z?, text, h, align}
@@ -2066,7 +2070,7 @@ const Dxf = (() => {
     return L.join('\r\n');
   }
 
-  return { parse, summarize, buildBlocks, detectFix, polygonize, write, cleanMText, nearClosed };
+  return { parse, summarize, buildBlocks, detectFix, fixFor, fixFn, polygonize, write, cleanMText, nearClosed };
 })();
 
 /* ===== Minimal PDF writer (DOM-free): vector pages, the standard Helvetica fonts, RGB images, layers (optional content
@@ -3251,6 +3255,57 @@ const Keep = (() => {
     const name = String(fileName || 'Overlay').replace(/\.[^.]+$/, '');
     return { id: U.uid('ovl'), name, file: fileName || '', color: OVL_COLORS[(index || 0) % OVL_COLORS.length], show: true, surface: '', angle: 90, dumps: true, folders: outF, features };
   }
+  /* A DXF (Dxf.parse) as an overlay: each of its layers (o.layers: the ones chosen) is a folder; closed polylines, hatches
+     and circles are polygons, open polylines, lines and arcs are lines, points and block references are points. A
+     polygon is named by the text inside it. The coordinates stay as in the file, in the model's coordinate system
+     (ov.xy), with o.fix (a Dxf mix-up id) when they needed one to land on the model. */
+  function dxfShapes(d, want = () => true) {
+    const r3 = v => Math.round(v * 1000) / 1000, out = [];
+    // (a block reference under 20 m across is a symbol — a tree, a beacon, a grave — and comes in as its point; a larger one
+    // keeps its lines and shapes)
+    const ext = new Map(), grow = (k, pts) => { if (k == null) return; let b = ext.get(k); if (!b) ext.set(k, (b = [Infinity, Infinity, -Infinity, -Infinity])); for (const p of pts) { if (p[0] < b[0]) b[0] = p[0]; if (p[1] < b[1]) b[1] = p[1]; if (p[0] > b[2]) b[2] = p[0]; if (p[1] > b[3]) b[3] = p[1]; } };
+    for (const p of d.polylines) grow(p.ins, p.pts);
+    for (const q of d.hatches) grow(q.ins, q.pts);
+    for (const q of d.circles || []) grow(q.ins, [[q.c[0] - q.r, q.c[1] - q.r], [q.c[0] + q.r, q.c[1] + q.r]]);
+    for (const q of d.points) grow(q.ins, [[q.x, q.y]]);
+    const symbol = k => { const b = ext.get(k); return !b || Math.max(b[2] - b[0], b[3] - b[1]) <= 20; }, part = q => q.ins != null && symbol(q.ins);
+    for (const p of d.polylines) {
+      if (!want(p.layer) || part(p)) continue;
+      const cl = p.closed || Dxf.nearClosed(p.pts);
+      let pts = p.pts.map(q => [q[0], q[1]]);
+      if (cl && pts.length > 3 && Math.hypot(pts[0][0] - pts[pts.length - 1][0], pts[0][1] - pts[pts.length - 1][1]) < 1e-6) pts = pts.slice(0, -1);
+      pts = Geo.simplify(pts, 0.05);
+      if (cl && pts.length >= 3) out.push({ layer: p.layer, k: 'poly', pts }); else if (pts.length >= 2) out.push({ layer: p.layer, k: 'line', pts });
+    }
+    for (const q of d.hatches) if (want(q.layer) && !part(q) && q.pts.length >= 3) out.push({ layer: q.layer, k: 'poly', pts: Geo.simplify(q.pts.map(p => [p[0], p[1]]), 0.05) });
+    for (const q of d.circles || []) if (want(q.layer) && !part(q)) { const n = q.r < 2 ? 12 : 24; out.push({ layer: q.layer, k: 'poly', pts: Array.from({ length: n }, (_, i) => [q.c[0] + q.r * Math.cos((2 * Math.PI * i) / n), q.c[1] + q.r * Math.sin((2 * Math.PI * i) / n)]) }); }
+    for (const q of d.points) if (want(q.layer) && !part(q)) out.push({ layer: q.layer, k: 'point', pts: [[q.x, q.y]] });
+    d.inserts.forEach((q, k) => { if (want(q.layer) && q.ins == null && symbol(k)) out.push({ layer: q.layer, k: 'point', pts: [[q.x, q.y]], n: Object.values(q.attribs || {}).find(v => v) || q.name }); });
+    for (const F of out) F.pts = F.pts.map(p => [r3(p[0]), r3(p[1])]);
+    return out;
+  }
+  // what each layer of a DXF holds: {layer: {poly, line, point}}
+  function dxfCounts(d) {
+    const c = {};
+    for (const F of dxfShapes(d)) { const q = c[F.layer] || (c[F.layer] = { poly: 0, line: 0, point: 0 }); q[F.k]++; }
+    return c;
+  }
+  function fromDxf(d, fileName, index, o = {}) {
+    const shapes = dxfShapes(d, L => !o.layers || o.layers.has(L));
+    if (!shapes.length) throw new Error('The DXF has no polylines, lines, hatches, circles or points on the layers chosen.');
+    const names = Array.from(new Set(shapes.map(F => F.layer))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })), fi = new Map(names.map((L, i) => [L, i]));
+    // (a polygon's name: a text inside it, on its own layer first; over a box around it first)
+    const byLayer = new Map(); for (const t of d.texts) { if (!byLayer.has(t.layer)) byLayer.set(t.layer, []); byLayer.get(t.layer).push(t); }
+    const polys = shapes.filter(F => F.k === 'poly'), cheap = polys.length * d.texts.length < 4e6;
+    const nameIn = F => {
+      const bb = Geo.bbox(F.pts), hit = t => t.x >= bb[0] && t.x <= bb[2] && t.y >= bb[1] && t.y <= bb[3] && Geo.pip(t.x, t.y, F.pts);
+      const t = (byLayer.get(F.layer) || []).find(hit) || (cheap ? d.texts.find(hit) : null);
+      return t ? String(t.text).slice(0, 80) : '';
+    };
+    const features = shapes.map(F => ({ f: fi.get(F.layer), n: F.n || (F.k === 'poly' ? nameIn(F) : ''), k: F.k, c: F.pts.flat() }));
+    const name = String(fileName || 'Overlay').replace(/\.[^.]+$/, '');
+    return { id: U.uid('ovl'), name, file: fileName || '', color: OVL_COLORS[(index || 0) % OVL_COLORS.length], show: true, surface: '', angle: 90, dumps: true, folders: names.map(L => ({ name: L, show: true, dist: null })), features, xy: true, fix: o.fix || null };
+  }
   function counts(ov, f) {
     const c = { poly: 0, line: 0, point: 0 };
     for (const F of ov.features) if (f == null || F.f === f) c[F.k]++;
@@ -3270,11 +3325,12 @@ const Keep = (() => {
     const sig = JSON.stringify(P.crs);
     const hit = cache.get(ov.id);
     if (hit && hit.sig === sig && hit.src === ov.features) return hit.feats;
-    const crs = Geo.makeCRS(P.crs);
-    if (!crs) return [];
+    // (a KML is in latitude and longitude; a DXF in the model's coordinate system, as in the file: ov.xy)
+    const crs = ov.xy ? null : Geo.makeCRS(P.crs), sign = Geo.axisSign(P.crs), fix = ov.xy ? Dxf.fixFn(ov.fix) : null;
+    if (!ov.xy && !crs) return [];
     const feats = ov.features.map(F => {
       const pts = [];
-      for (let i = 0; i + 1 < F.c.length; i += 2) pts.push(crs.fromLonLat(F.c[i], F.c[i + 1]));
+      for (let i = 0; i + 1 < F.c.length; i += 2) pts.push(ov.xy ? fix([sign * F.c[i], sign * F.c[i + 1]]) : crs.fromLonLat(F.c[i], F.c[i + 1]));
       return { f: F.f, n: F.n, k: F.k, pts };
     });
     cache.set(ov.id, { sig, src: ov.features, feats });
@@ -3504,7 +3560,7 @@ const Keep = (() => {
     return { first: f, src: s, near, text: `The block lies ${where}, so it is ${left}.`, left: f > 0 ? L.slice(f).map(x => x.name) : L.map(x => x.name), mined: L.slice(0, f).map(x => x.name) };
   }
 
-  return { OVL_COLORS, KEEP_COLOR, DUG_COLOR: '#ffd23f', fromKml, counts, countText, features, featureField, contour, compute, stats, blockInfo, inZone, isNum, constrained, drapeIndex, firstLayer };
+  return { OVL_COLORS, KEEP_COLOR, DUG_COLOR: '#ffd23f', fromKml, fromDxf, dxfShapes, dxfCounts, counts, countText, features, featureField, contour, compute, stats, blockInfo, inZone, isNum, constrained, drapeIndex, firstLayer };
 })();
 
 /* ===== Synthetic demo colliery (DOM-free). Clearly marked as example data. ===== */
@@ -12049,7 +12105,7 @@ const UI = (() => {
   function renderLayersPop() {
     const p = $('layersPop'); p.innerHTML = '';
     const sepL = App.rv ? App.rv().sep : false;
-    const items = [['outlines', sepL ? 'Reserve blocks (the schedule)' : 'Block outlines'], ...(sepL ? [['resOut', 'Resource blocks']] : []), ['labels', 'Block labels'], ['paths', 'Mining path'], ['roads', 'Haul roads & ramps'], ['dumps', 'Dumps'], ['ovl', 'KML overlays'], ['keep', 'Keep-out zones'], ['limits', 'Depth limits & reserve boundary'], ['pits', 'Pit outlines & box cuts'], ['drains', 'Surface-water flow paths'], ['fills', 'Depression fills'], ['contours', 'Contours on natural ground']];
+    const items = [['outlines', sepL ? 'Reserve blocks (the schedule)' : 'Block outlines'], ...(sepL ? [['resOut', 'Resource blocks']] : []), ['labels', 'Block labels'], ['paths', 'Mining path'], ['roads', 'Haul roads & ramps'], ['dumps', 'Dumps'], ['ovl', 'Overlays (KML, DXF)'], ['keep', 'Keep-out zones'], ['limits', 'Depth limits & reserve boundary'], ['pits', 'Pit outlines & box cuts'], ['drains', 'Surface-water flow paths'], ['fills', 'Depression fills'], ['contours', 'Contours on natural ground']];
     p.append(h('div', { class: 'pop-h' }, 'Show in the 3D view'));
     for (const [k, label] of items) p.append(chk(label, App.show[k], v => { App.show[k] = v; View.setShow(k, v); if (k === 'paths') App.refreshOverlays(); }));
     // the survey DEM's picture (Geological Data tab), when there is a GeoTIFF survey
@@ -13763,18 +13819,19 @@ const Tabs = (() => {
   // =============== KML overlays & keep-out zones ===============
   function overlaySection(body) {
     const P = App.P, list = P.overlays || (P.overlays = []);
-    const parts = [hint('Add other KML or KMZ files, such as power lines, wetlands, servitudes, graves or old workings. Each one is draped on the elevation surface you choose. Type a keep-away distance for a folder: a block that comes within that distance of it (or lies in its polygons) is still mined, down to the layer the overlay is draped on, and that layer and everything below it stay in the ground in the whole block.')];
+    const parts = [hint('Add KML, KMZ or DXF files, such as power lines, wetlands, servitudes, graves or old workings. A DXF must be in the coordinate system of the model; each of its layers becomes a folder. Each file is draped on the elevation surface you choose. Type a keep-away distance for a folder: a block that comes within that distance of it (or lies in its polygons) is still mined, down to the layer the overlay is draped on, and that layer and everything below it stay in the ground in the whole block.')];
     if (edit()) {
-      const fileIn = h('input', { type: 'file', accept: '.kml,.kmz', multiple: true, hidden: true });
-      fileIn.addEventListener('change', async () => { for (const f of Array.from(fileIn.files)) await addOverlay(f, f.name); fileIn.value = ''; });
-      const others = (D.dxfs || []).filter(n => /^km[lz]$/.test(ext(n)) && n !== D.dxfName && !list.some(o => o.file === n));
+      const fileIn = h('input', { type: 'file', accept: '.kml,.kmz,.dxf', multiple: true, hidden: true });
+      fileIn.setAttribute('aria-label', 'Overlay files');
+      fileIn.addEventListener('change', async () => { const fs = Array.from(fileIn.files); fileIn.value = ''; for (const f of fs) await addOverlay(f, f.name); });
+      const others = (D.dxfs || []).filter(n => n !== D.dxfName && !list.some(o => o.file === n));
       let pick = others[0];
-      parts.push(h('div', { class: 'row' }, btn('Add KML overlay…', () => fileIn.click(), 'sm primary'), fileIn, btn('Export shapes to KML…', () => kmlDialog(), 'sm', 'Save the polygons and lines drawn in the simulator to a KML file'),
+      parts.push(h('div', { class: 'row' }, btn('Add KML or DXF overlay…', () => fileIn.click(), 'sm primary', 'KML, KMZ or DXF files'), fileIn, btn('Export shapes to KML…', () => kmlDialog(), 'sm', 'Save the polygons and lines drawn in the simulator to a KML file'),
         others.length ? h('span', { class: 'dt' }, 'or from the folder:') : null,
         others.length ? h('div', { style: { minWidth: '0', flex: '1 1 120px' } }, sel(others, pick, v => (pick = v))) : null,
         others.length ? btn('Add', () => addOverlay(App.folder.files.get(pick), pick), 'sm') : null));
     }
-    if (list.length && !Geo.makeCRS(P.crs)) parts.push(msg('warn', 'KML is in latitude/longitude. Choose the project’s coordinate system in the Project tab (not “Local mine grid”) so the overlays can be placed.'));
+    if (list.some(o => !o.xy) && !Geo.makeCRS(P.crs)) parts.push(msg('warn', 'KML is in latitude/longitude. Choose the project’s coordinate system in the Project tab (not “Local mine grid”) so the KML overlays can be placed.'));
     const K = App.ws ? Keep.compute(App.ws) : null;
     for (const ov of list) parts.push(overlayCard(ov, K));
     if (K && K.any) {
@@ -13783,7 +13840,7 @@ const Tabs = (() => {
       const txtS = `Keep-out zones cover ${U.fmtNum(S.areaHa, 1)} ha of the model. ${nK ? `${nK} block${nK === 1 ? ' comes' : 's come'} within a keep-away distance${S.blocksPart.length ? `; ${S.blocksPart.length === nK ? (nK === 1 ? 'it is' : 'they are') : `${S.blocksPart.length} (${ids(S.blocksPart)}) ${S.blocksPart.length === 1 ? 'is' : 'are'}`} mined down to the layer the overlay is draped on` : ''}${S.blocksFull.length ? `; ${S.blocksFull.length === nK ? (nK === 1 ? 'it is' : 'they are') : `${S.blocksFull.length} (${ids(S.blocksFull)}) ${S.blocksFull.length === 1 ? 'is' : 'are'}`} not mined at all (draped on the topography or the current ground)` : ''}.` : 'No block comes within a keep-away distance.'} About ${U.fmtBig(S.coalT, 't')} of coal and ${U.fmtBig(S.wasteBcm, 'bcm')} of waste stay in the ground. The 3D view tints and outlines these blocks in red${App.res ? ', and shows in yellow where mining or a ramp digs within a distance as the simulation plays' : ''}.`;
       parts.push(msg(S.blocksFull.length || S.blocksPart.length ? 'warn' : 'info', txtS + (App.res && App.stale ? ' Run the simulation again to update the schedule.' : '')));
     } else if (list.length && App.ws) parts.push(hint('No keep-away distance is set yet, so the overlays are for display only.'));
-    body.append(sec('Overlays & keep-out zones (KML)', list.length ? h('span', { class: 'chip' }, String(list.length)) : null, ...parts));
+    body.append(sec('Overlays & keep-out zones (KML, DXF)', list.length ? h('span', { class: 'chip' }, String(list.length)) : null, ...parts));
   }
   function overlayCard(ov, K) {
     const P = App.P;
@@ -13804,7 +13861,7 @@ const Tabs = (() => {
       h('div', { class: 'ovl-h' }, col, name,
         chk('Show', ov.show !== false, v => { ov.show = v; App.changed('overlays'); UI.renderLegend(); }),
         edit() ? btn('Remove', () => { P.overlays = P.overlays.filter(o => o !== ov); App.changed('keepout'); App.changed('overlays'); UI.renderTab(); }, 'sm ghost') : null),
-      h('div', { class: 'dt', style: { marginBottom: '6px' } }, `${ov.file || 'KML'} · ${Keep.countText(Keep.counts(ov))}`),
+      h('div', { class: 'dt', style: { marginBottom: '6px' } }, `${ov.file || 'KML'} · ${Keep.countText(Keep.counts(ov))}${ov.xy ? ` · in the model’s coordinates${ov.fix ? ` (${fixText(ov.fix)})` : ''}` : ''}`),
       fld('Drape on', sel(surfOpts, ov.surface || (P.surfaces[0] || {}).id || 'current', v => { ov.surface = v; App.changed('overlays'); if (Keep.constrained(ov).length) App.changed('keepout'); UI.renderTab(); })),
       (() => { const k = Keep.firstLayer(P, ov), above = P.layers.slice(0, k).map(L => L.name), held = P.layers.slice(k).map(L => L.name);
         return h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, !Keep.constrained(ov).length ? `With a keep-away distance, a block within it would keep ${k ? held.join(', ') : 'every layer'}${k ? ` in the ground (the layer it is draped on and those below); ${above.join(', ')} above ${above.length === 1 ? 'is' : 'are'} still mined` : ': it would not be mined'}.`
@@ -13820,7 +13877,7 @@ const Tabs = (() => {
     if (App.ws) {
       const feats = Keep.features(P, ov), ws = App.ws, x1 = ws.x0 + ws.nx * ws.cell, y1 = ws.y0 + ws.ny * ws.cell;
       const on = feats.filter(F => F.pts.some(p => p[0] >= ws.x0 && p[0] <= x1 && p[1] >= ws.y0 && p[1] <= y1)).length;
-      if (feats.length && !on) card.append(msg('warn', 'None of these features fall on the elevation model. Check the project’s coordinate system in the Project tab.'));
+      if (feats.length && !on) card.append(msg('warn', ov.xy ? 'None of these features fall on the elevation model. Check that the DXF is in the coordinate system of the model.' : 'None of these features fall on the elevation model. Check the project’s coordinate system in the Project tab.'));
       const b = K && K.byOv.find(x => x.id === ov.id);
       if (b && b.cells) card.append(h('div', { class: 'dt' }, `Keep-out area from this overlay: ${U.fmtNum((b.cells * ws.A) / 1e4, 1)} ha inside the model.`));
     }
@@ -13828,6 +13885,7 @@ const Tabs = (() => {
   }
   async function addOverlay(file, name) {
     if (!file) return;
+    if (/\.dxf$/i.test(name)) return addDxfOverlay(file, name);
     try {
       UI.busy(`Reading ${name}…`, 0.3); await U.nextFrame();
       const u8 = new Uint8Array(await file.arrayBuffer());
@@ -13843,6 +13901,43 @@ const Tabs = (() => {
     } catch (e) { UI.busy(null); UI.toast(`${name} could not be read: ${e.message}`, 6500); console.error(e); }
   }
 
+  // the coordinate mix-up put right on a DXF overlay, in words
+  const fixText = id => ({ flip: 'signs flipped', swap: 'X and Y swapped', swapflip: 'X and Y swapped, signs flipped', mm: 'millimetres to metres', mmflip: 'millimetres to metres, signs flipped' })[id] || id;
+  /* A DXF as an overlay: choose its layers (each becomes a folder); the coordinates are the model's, put right when they
+     land on the model only with one of the usual mix-ups (Dxf.fixFor) */
+  async function addDxfOverlay(file, name) {
+    let d;
+    UI.busy(`Reading ${name}…`, 0.3); await U.nextFrame();
+    try { d = Dxf.parse(new Uint8Array(await file.arrayBuffer())); }
+    catch (e) { UI.busy(null); UI.toast(`${name} could not be read: ${e.message}`, 6500); console.error(e); return; }
+    UI.busy(null);
+    const cnt = Keep.dxfCounts(d), layers = d.layers.filter(L => cnt[L]);
+    if (!layers.length) { UI.toast(`${name}: no polylines, lines, hatches, circles or points in model space.`, 6500); return; }
+    const pick = new Set(layers), boxes = [];
+    const rows = layers.map(L => { const i = h('input', { type: 'checkbox', checked: true, id: 'dxl_' + boxes.length }); i.addEventListener('change', () => { if (i.checked) pick.add(L); else pick.delete(L); }); boxes.push([i, L]); return h('label', { class: 'check', for: i.id }, i, `${L}`, h('span', { class: 'dt', style: { marginLeft: '6px' } }, Keep.countText(cnt[L]))); });
+    const all = v => { for (const [i, L] of boxes) { i.checked = v; if (v) pick.add(L); else pick.delete(L); } };
+    const add = () => {
+      if (!pick.size) { UI.toast('Tick at least one layer.'); return; }
+      UI.closeModal();
+      try {
+        const P = App.P, sign = Geo.axisSign(P.crs), bb = gridBBox();
+        // (where the shapes land: their middles, against the model)
+        const mids = Keep.dxfShapes(d, L => pick.has(L)).map(F => { let x = 0, y = 0; for (const p of F.pts) { x += p[0]; y += p[1]; } return [(sign * x) / F.pts.length, (sign * y) / F.pts.length]; });
+        const fix = bb ? Dxf.fixFor(mids, bb) : null;
+        const ov = Keep.fromDxf(d, name, (P.overlays || []).length, { layers: pick, fix: fix ? fix.id : null });
+        ov.surface = P.surfaces[0] ? P.surfaces[0].id : 'current';
+        (P.overlays || (P.overlays = [])).push(ov);
+        App.changed('overlays', { now: true });
+        UI.renderTab(); UI.renderLegend();
+        UI.toast(`${name}: ${Keep.countText(Keep.counts(ov))} on ${ov.folders.length} layer${ov.folders.length === 1 ? '' : 's'} added.${fix ? ` They did not line up with the model, so ${fix.name}.` : ''} Type a keep-away distance for any layer the mining must avoid.`, 8000);
+      } catch (e) { UI.toast(`${name}: ${e.message}`, 6500); console.error(e); }
+    };
+    UI.modal(`Add ${name} as an overlay`, h('div', null,
+      hint('Each DXF layer you tick becomes a folder of the overlay, with its own keep-away distance. Closed polylines, hatches and circles are polygons; open polylines, lines and arcs are lines; points and symbols (block references under 20 m across) are points. The coordinates are read in the coordinate system of the model.'),
+      h('div', { class: 'row' }, btn('All', () => all(true), 'sm ghost'), btn('None', () => all(false), 'sm ghost')),
+      h('div', { class: 'dxf-ovl-layers', style: { maxHeight: '340px', overflowY: 'auto', display: 'grid', gap: '4px' } }, rows)),
+      [btn('Cancel', UI.closeModal, 'sm'), btn('Add', add, 'sm primary')]);
+  }
   async function filesFromDrop(dt) {
     const out = [];
     const items = Array.from(dt.items || []).map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
