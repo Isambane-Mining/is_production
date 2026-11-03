@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const {renderAnalysis, renderHourDetails, renderMobileAnalysis, renderProductivityTabs} = require('./hourly_productivity_analysis.js');
+const {renderAnalysis, renderHourDetails, renderMobileAnalysis, renderProductivityTabs,renderMachineMatrix} = require('./hourly_productivity_analysis.js');
 
 function fixture() {
   const cells = Array.from({length: 24}, (_, i) => ({label: `${(i+6)%24}:00`, category: 'bright_red',
@@ -145,12 +145,38 @@ test('mobile preview escapes dates and empty data returns no selectable hours', 
   assert.ok(!renderMobileAnalysis({...data,rows:[]}).includes('hpa-mobile-cell'));
 });
 
-test('combined page presents Analysis first and Summary second with separate labelled panels', () => {
+test('combined page presents Current, Historical and Machines in order with separate labelled panels', () => {
   const html=renderProductivityTabs();
-  assert.ok(html.indexOf('Hourly Productivity Analysis')<html.indexOf('Hourly Productivity Summary'));
-  assert.equal((html.match(/role="tab"/g)||[]).length,2);
-  assert.equal((html.match(/role="tabpanel"/g)||[]).length,2);
+  assert.ok(html.indexOf('Current Productivity Analysis') < html.indexOf('Hourly Productivity Analysis'));
+  assert.ok(html.indexOf('Hourly Productivity Analysis') < html.indexOf('Machine Available vs Utilised'));
+  assert.match(html, /hpt-machines-panel/);
+  assert.equal((html.match(/role="tab"/g)||[]).length,3);
+  assert.equal((html.match(/role="tabpanel"/g)||[]).length,3);
   assert.ok(html.includes('aria-selected="true"'));
   assert.ok(html.includes('class="hpt-summary-panel"'));
   assert.ok(html.includes('class="hpt-analysis-panel"'));
+});
+
+test('machine matrix displays source ADT availability and distinct utilisation without performance categories', () => {
+  const data=fixture();
+  Object.assign(data.rows[0].cells[0],{completed:true,has_record:true,available:2.5,utilised:2});
+  const before=JSON.stringify(data);
+  const html=renderMachineMatrix(data);
+  assert.ok(html.includes('class="hm-avail">2.5</span>'));
+  assert.ok(html.includes('class="hm-used">2</span>'));
+  assert.ok(!html.includes('hpa-green'));
+  assert.ok(!html.includes('style="background:'));
+  assert.equal(JSON.stringify(data),before);
+});
+
+test('machine matrix preserves unknown counts and suppresses pending and missing records', () => {
+  const data=fixture();
+  Object.assign(data.rows[0].cells[0],{completed:false,has_record:true,available:999,utilised:998});
+  Object.assign(data.rows[0].cells[1],{completed:true,has_record:false,available:997,utilised:996});
+  Object.assign(data.rows[0].cells[2],{completed:true,has_record:true,available:null,utilised:null});
+  const html=renderMachineMatrix(data);
+  assert.ok(!html.includes('999'));
+  assert.ok(!html.includes('997'));
+  assert.ok(html.includes('Unknown, missing or pending'));
+  assert.ok(html.includes('—'));
 });

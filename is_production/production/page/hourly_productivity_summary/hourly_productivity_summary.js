@@ -15,7 +15,7 @@
     if (!frappe.hourlySummaryViewLoading) {
       frappe.hourlySummaryViewLoading = new Promise((resolve,reject) => {
         const script = document.createElement('script');
-        script.src = '/assets/is_production/js/hourly_productivity_summary_view.js?v=20261016-full-day';
+        script.src = '/assets/is_production/js/hourly_productivity_summary_view.js?v=20261103-three-tabs';
         script.onload = () => frappe.hourlyProductivitySummaryView ? resolve() : reject(new Error('Summary view unavailable'));
         script.onerror = () => {script.remove();reject(new Error('Summary view could not be loaded'));};
         document.head.appendChild(script);
