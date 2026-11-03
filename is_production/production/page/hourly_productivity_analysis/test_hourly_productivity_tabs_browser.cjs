@@ -118,7 +118,7 @@ for(const eventName of events.split(' '))for(const node of list)node.addEventLis
     await page.route('**/assets/is_production/js/hourly_productivity_summary_view.js*',route=>{
       assetLoads++;return route.fulfill({contentType:'application/javascript',body:fs.readFileSync(path.resolve(__dirname,'../../../public/js/hourly_productivity_summary_view.js'),'utf8')});
     });
-    await page.addStyleTag({path:path.join(__dirname,'hourly_productivity_analysis.css')});
+    await page.addStyleTag({path:path.join(__dirname,'../../../public/css/dashboards.css')});
     await page.addScriptTag({path:path.join(__dirname,'hourly_productivity_analysis.js')});
     await page.evaluate(()=>frappe.pages['hourly-productivity-analysis'].on_page_load(wrapper));
     await page.waitForFunction(()=>!wrapper.hourlyProductivityAnalysis.initializing);
