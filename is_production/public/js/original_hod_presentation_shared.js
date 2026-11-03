@@ -455,14 +455,31 @@ async function downloadHodPresentation(report) {
                                     continue;
                                 }
 
-                                const graph =
-                                    svg.closest(".frappe-card") || svg;
+                                // Capture the complete Hours Based category:
+                                // KPI cards, legend and graph together.
+                                const section = svg.closest(
+                                    'div[style*="margin-bottom:28px"]'
+                                );
+
+                                if (
+                                    !section ||
+                                    !section.textContent.includes(
+                                        "Average Working Hours"
+                                    ) ||
+                                    !section.textContent.includes(
+                                        "Required Hours"
+                                    )
+                                ) {
+                                    throw new Error(
+                                        `Complete Hours Based section missing for ${siteName} - ${category}.`
+                                    );
+                                }
 
                                 capturedSlides.push({
                                     title:
                                         `${siteName} - ${category} Hours Based`,
                                     image_data:
-                                        await captureHodSection(graph)
+                                        await captureHodSection(section)
                                 });
                             }
                         }
@@ -1260,43 +1277,11 @@ function hodRenderSiteCard(row) {
                         )
                     )}
 
-                    ${hodMetricRow(
-                        "Excavator hours (From Pre-Use)",
-                        "HRS",
-                        hodFormatNumber(
-                            row.total_excavator_hours,
-                            1
-                        )
-                    )}
+
+
 
                     ${hodMetricRow(
-                        "Non-production hours",
-                        "HRS",
-                        hodFormatNumber(
-                            row.non_production_excavator_hours,
-                            1
-                        ),
-                        nonProductionHoursClass
-                    )}
-
-                    ${hodMetricRow(
-                        "Excavator hours (Production Hours)",
-                        "HRS",
-                        hodFormatNumber(
-                            row.production_excavator_hours,
-                            1
-                        ),
-                        productionHoursClass
-                    )}
-
-                    ${hodMetricRow(
-                        `Average BCM/H (${hodFormatNumber(
-                            row.actual_bcm,
-                            0
-                        )} BCM / ${hodFormatNumber(
-                            row.production_excavator_hours,
-                            1
-                        )} HRS)`,
+                        "Average BCM/H",
                         "",
                         hodFormatNumber(
                             row.average_bcm_h,
@@ -1310,10 +1295,10 @@ function hodRenderSiteCard(row) {
                         "",
                         `${hodFormatNumber(
                             row.days_worked,
-                            0
+                            1
                         )} / ${hodFormatNumber(
                             row.days_left,
-                            0
+                            1
                         )}`
                     )}
 
