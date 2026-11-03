@@ -8,6 +8,7 @@ import base64
 import importlib
 import re
 
+from is_production.production.report.hod_presentation import hod_presentation as current_hod
 import frappe
 from frappe import _
 from frappe.utils import (
@@ -453,7 +454,7 @@ def get_report_payload(
     # Use the selected site's saved production planning period.
     production_start_date = plan_start
 
-    production = build_filtered_production_row(
+    production = current_hod.build_filtered_production_row(
         site=site,
         start_date=production_start_date,
         end_date=end_date,
@@ -497,26 +498,34 @@ def get_report_payload(
         production_hours
     )
 
-    actual_bcm = flt(
-        production.get("actual_bcm")
+    truck_shovel_bcm = flt(
+        production.get("truck_shovel_bcm")
     )
 
     average_bcm_h = (
         round(
-            actual_bcm / production_hours,
+            truck_shovel_bcm / total_hours,
             1,
         )
-        if production_hours
+        if total_hours
         else 0
     )
 
-    availability = get_availability_summary(
+    availability = current_hod.get_availability_summary(
         start_date=start_date,
         end_date=end_date,
         site=site,
         summary_type=summary_type,
         machine_scope=machine_scope,
         au_target_filter=au_target_filter,
+        asset_ownership=(
+            filters.get("asset_ownership")
+            or getattr(
+                current_hod,
+                "DEFAULT_ASSET_OWNERSHIP",
+                "Isambane & Excavo Assets",
+            )
+        ),
         include_detail=include_au_detail,
     )
 
@@ -2296,6 +2305,89 @@ def build_hod_downtime_html(
     )
 
 
+
+def _format_original_hod_hours_dates(html):
+    """Improve date labels only in Original HOD Hours Based SVGs."""
+    import re
+
+    def update_svg(match):
+        svg = match.group(0)
+
+        pattern = (
+            r'(<text x="[^"]+" y="[^"]+" '
+            r'text-anchor="middle" font-size=")10'
+            r'(" fill="#4b5563">)'
+            r'(\d{2})-(\d{2})(</text>)'
+        )
+
+        return re.sub(
+            pattern,
+            lambda m: (
+                m.group(1) + "13" + m.group(2)
+                + m.group(4) + "-" + m.group(3)
+                + m.group(5)
+            ),
+            svg,
+        )
+
+    return re.sub(
+        r'<svg\b[^>]*aria-label="Daily average hours per machine'
+        r'[^"]*"[^>]*>.*?</svg>',
+        update_svg,
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+
+
+def _filter_original_hod_hours_categories(html):
+    """Keep only ADT, Dozer and Excavator Hours Based charts."""
+    import re
+
+    allowed = {"ADT", "Dozer", "Excavator"}
+
+    pattern = (
+        r'<div style="margin-bottom:28px;">'
+        r'\s*<div style="font-size:14px;font-weight:900;'
+        r'margin-bottom:10px;">'
+        r'([^<]+) — Daily Average per Machine</div>'
+        r'.*?</svg>\s*</div>\s*</div>'
+    )
+
+    def filter_section(match):
+        category = match.group(1).strip().upper()
+
+        if category in {name.upper() for name in allowed}:
+            return match.group(0)
+
+        return ""
+
+    hours_panel = re.search(
+        r'(<div class="daily-dashboard-tab-panel" '
+        r'data-panel="hours">)(.*?)'
+        r'(?=<div class="daily-dashboard-tab-panel" '
+        r'data-panel="au")',
+        html,
+        flags=re.DOTALL,
+    )
+
+    if not hours_panel:
+        return html
+
+    filtered = re.sub(
+        pattern,
+        filter_section,
+        hours_panel.group(2),
+        flags=re.DOTALL,
+    )
+
+    return (
+        html[:hours_panel.start(2)]
+        + filtered
+        + html[hours_panel.end(2):]
+    )
+
+
 @frappe.whitelist()
 def get_availability_dashboard_html(
     start_date=None,
@@ -2447,7 +2539,7 @@ def get_availability_dashboard_html(
 
     return {
         "site": site,
-        "html": dashboard_html + downtime_html,
+        "html": _format_original_hod_hours_dates(_filter_original_hod_hours_categories(dashboard_html)) + downtime_html,
     }
 
 
