@@ -13824,7 +13824,7 @@ const Tabs = (() => {
       const fileIn = h('input', { type: 'file', accept: '.kml,.kmz,.dxf', multiple: true, hidden: true });
       fileIn.setAttribute('aria-label', 'Overlay files');
       fileIn.addEventListener('change', async () => { const fs = Array.from(fileIn.files); fileIn.value = ''; for (const f of fs) await addOverlay(f, f.name); });
-      const others = (D.dxfs || []).filter(n => n !== D.dxfName && !list.some(o => o.file === n));
+      const lay = new Set(layoutFiles(P).map(f => f.file)), others = (D.dxfs || []).filter(n => n !== D.dxfName && !lay.has(n) && !list.some(o => o.file === n));
       let pick = others[0];
       parts.push(h('div', { class: 'row' }, btn('Add KML or DXF overlay…', () => fileIn.click(), 'sm primary', 'KML, KMZ or DXF files'), fileIn, btn('Export shapes to KML…', () => kmlDialog(), 'sm', 'Save the polygons and lines drawn in the simulator to a KML file'),
         others.length ? h('span', { class: 'dt' }, 'or from the folder:') : null,
@@ -14114,7 +14114,7 @@ const Tabs = (() => {
       UI.busy(`Reading ${name}…`, 0.3); await U.nextFrame();
       D.dxf = Dxf.parse(new Uint8Array(await f.arrayBuffer())); D.dxfName = name;
       UI.busy(null);
-      const sum = Dxf.summarize(D.dxf), prev = App.P.source.dxf;
+      const sum = Dxf.summarize(D.dxf), prev = layoutEntry(App.P, name);
       const shapeScore = L => sum[L].closed * 3 + sum[L].hatches * 2 + sum[L].lines + sum[L].open;
       const shapeLayers = D.dxf.layers.filter(L => shapeScore(L) > 0);
       const named = shapeLayers.filter(L => /BLOCK|BLK|CUT|PANEL|MINING|STRIP/i.test(L) && !/DUMP|ROAD|RAMP|TEXT|LABEL|ID$/i.test(L));
@@ -14122,14 +14122,120 @@ const Tabs = (() => {
       const tags = Array.from(new Set(D.dxf.texts.filter(t => t.attrib).map(t => t.attrib)));
       const hasText = D.dxf.texts.some(t => !t.attrib);
       D.dxfOpts = prev && prev.file === name && prev.blockLayers
-        ? { blockLayers: prev.blockLayers.filter(L => D.dxf.layers.includes(L)), idSource: prev.idSource || 'text', textLayers: (prev.textLayers || []).filter(L => D.dxf.layers.includes(L)), attribTag: prev.attribTag || tags[0] || '', joinLines: prev.joinLines !== false, dropContainers: prev.dropContainers !== false }
+        ? { blockLayers: prev.blockLayers.filter(L => D.dxf.layers.includes(L)), idSource: prev.idSource || 'text', textLayers: (prev.textLayers || []).filter(L => D.dxf.layers.includes(L)), attribTag: prev.attribTag || tags[0] || '', joinLines: prev.joinLines !== false, dropContainers: prev.dropContainers !== false, prefix: prev.prefix || '' }
         : { blockLayers: blockGuess ? [blockGuess] : [], idSource: tags.length ? 'attrib' : hasText ? 'text' : 'auto', textLayers: [], attribTag: tags.find(t => /ID|BLOCK|NAME|NO/i.test(t)) || tags[0] || '', joinLines: true, dropContainers: true };
       if (!shapeLayers.length) D.dxfError = 'This DXF has no polylines, lines, hatches or block references in model space, so there is nothing to make blocks from.';
     } catch (e) { UI.busy(null); D.dxf = null; D.dxfName = name; D.dxfError = e.message; console.error(e); }
     if (!quiet) UI.renderTab();
   }
+  /* ---------- a block layout of several files ----------
+     The blocks may come from several KML, KMZ or DXF files, each for its own blocks (another pit, a later area). Each block
+     keeps the file it came from (srcFile); P.source.layouts holds the options each file was read with, P.source.dxf those of
+     the file read last. Adding a file to the layout replaces only the blocks it gave before; a block ID another file of the
+     layout already has gets _2, _3… (or each file's IDs take a prefix of their own). Replacing the layout keeps only the
+     blocks of the file. Blocks loaded before the layout knew its files belong to the file of P.source.dxf (or to none: a
+     grid of the Resource tab). The reserve layout's copies do not keep the file: the resource layout (P.resBlocks) does. */
+  function layoutOf(P) { const G = P.gridDef && P.gridDef.made, f = P.source && P.source.dxf && P.source.dxf.file; return b => (b.srcFile != null ? b.srcFile : G ? '' : f || ''); }
+  function layoutFiles(P) {
+    const of = layoutOf(P), n = new Map();
+    for (const b of P.resBlocks || P.blocks) { const f = of(b); n.set(f, (n.get(f) || 0) + 1); }
+    return Array.from(n, ([file, count]) => ({ file, count }));
+  }
+  function layoutEntry(P, file) { const S = P.source || {}; return (S.layouts || []).find(e => e.file === file) || (S.dxf && S.dxf.file === file ? S.dxf : null); }
+  const layoutName = f => f || 'the blocks from before';
+  /* The blocks of a file into the layout: entry = {file, kind, options}; add keeps the blocks of the other files. Each
+     block keeps the attributes of the block of the same ID it replaces. Returns the new blocks and notes for the report. */
+  function placeBlocks(blocks, entry, add) {
+    App.dropReserve(); // (a new resource layout: the reserve layout is copied from it again)
+    const P = App.P, file = entry.file, of = layoutOf(P), notes = [];
+    const keep = add ? P.blocks.filter(b => of(b) !== file) : [];
+    for (const b of keep) if (b.srcFile == null) b.srcFile = of(b);
+    const prev = new Map(P.blocks.filter(b => !add || of(b) === file).map(b => [b.id, b]));
+    const pre = String(entry.prefix || '').trim(), taken = new Set(keep.map(b => b.id));
+    let renamed = 0, ex = '';
+    const fresh = blocks.map(b => {
+      let id = pre + b.id;
+      if (taken.has(id)) { let m = 2; while (taken.has(id + '_' + m)) m++; if (!renamed++) ex = `${id} → ${id}_${m}`; id += '_' + m; }
+      taken.add(id);
+      return { id, pts: b.pts, attrs: Object.assign({}, (prev.get(id) || {}).attrs || {}, b.attrs || {}), srcFile: file };
+    });
+    if (renamed) notes.push(['warn', `${U.fmtNum(renamed)} block ID${renamed === 1 ? '' : 's'} of ${file} ${renamed === 1 ? 'was' : 'were'} already used by another file of the layout, so ${renamed === 1 ? 'it was' : 'they were'} renamed (${ex}${renamed > 1 ? ', …' : ''}). To keep each file’s blocks apart, type a prefix for its block IDs (such as “N-”) and add it again.`]);
+    // a block of this file on a block of another: a cell of the 3D model belongs to the first block only
+    if (keep.length) {
+      const boxes = keep.map(b => { let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; for (const [x, y] of b.pts) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; } return [b, x0, y0, x1, y1]; });
+      let over = 0; const on = new Set();
+      for (const b of fresh) {
+        const [x, y] = Geo.centroid(b.pts), q = boxes.find(B => x >= B[1] && x <= B[3] && y >= B[2] && y <= B[4] && Geo.pip(x, y, B[0].pts));
+        if (q) { over++; on.add(q[0].srcFile); }
+      }
+      if (over) notes.push(['warn', `${over === fresh.length ? `All ${U.fmtNum(over)}` : `${U.fmtNum(over)} of the ${U.fmtNum(fresh.length)}`} blocks of ${file} lie on blocks of ${Array.from(on, layoutName).join(', ')}. A cell of the 3D model belongs to one block only (the one loaded first), so check that the files hold different blocks.`]);
+    }
+    P.blocks = keep.concat(fresh);
+    const S = P.source, kept = new Set(keep.map(b => b.srcFile)), list = add ? (S.layouts || []).filter(e => e.file !== file && kept.has(e.file)) : [];
+    if (add && S.dxf && S.dxf.file && S.dxf.file !== file && kept.has(S.dxf.file) && !list.some(e => e.file === S.dxf.file)) list.unshift(Object.assign({}, S.dxf));
+    list.push(entry);
+    S.layouts = list; S.dxf = Object.assign({}, entry);
+    if (P.gridDef) delete P.gridDef.made; // (a grid of the Resource tab is no longer the layout)
+    const ids = new Set(P.blocks.map(b => b.id));
+    P.activities.forEach(a => (a.path = a.path.filter(id => ids.has(id))));
+    if (add) {
+      const inPath = new Set(P.activities.flatMap(a => a.path)), none = fresh.filter(b => !inPath.has(b.id)).length;
+      if (none) notes.push(['warn', `${none === fresh.length ? `The ${U.fmtNum(none)}` : `${U.fmtNum(none)} of the ${U.fmtNum(fresh.length)}`} blocks of ${file} are in no mining path yet, so the schedule does not mine them: add them to the activities’ paths in the Sequence tab (Auto order…, or draw them with “A drawn line adds to the end”).`]);
+    }
+    return { fresh, notes };
+  }
+  const layoutNow = fresh => { const F = layoutFiles(App.P); return `${U.fmtNum(fresh.length)} blocks of ${D.dxfName} added to the block layout: it now has ${U.fmtNum(App.P.blocks.length)} blocks from ${F.length} files (${F.map(f => `${layoutName(f.file)}: ${U.fmtNum(f.count)}`).join(', ')}).`; };
+  // the blocks of a list that fall on no cell of the 3D model
+  const offModel = list => list.filter(b => { const k = App.ws.blockIndex.get(b.id); return k === undefined || !App.ws.blockCells[k].length; }).length;
+  async function removeLayoutFile(file) {
+    const P = App.P, of = layoutOf(P), n = (P.resBlocks || P.blocks).filter(b => of(b) === file).length, name = layoutName(file);
+    if (!n) return;
+    if (!(await UI.confirmBox('Remove from the block layout', `Remove the ${U.fmtNum(n)} blocks of ${name} from the block layout? They are taken out of the mining paths too; the blocks of the other files stay.`, 'Remove', true))) return;
+    App.dropReserve();
+    for (const b of P.blocks) if (b.srcFile == null) b.srcFile = of(b);
+    P.blocks = P.blocks.filter(b => b.srcFile !== file);
+    const S = P.source; S.layouts = (S.layouts || []).filter(e => e.file !== file);
+    if (S.dxf && S.dxf.file === file) S.dxf = S.layouts.length ? Object.assign({}, S.layouts[S.layouts.length - 1]) : null;
+    const ids = new Set(P.blocks.map(b => b.id));
+    P.activities.forEach(a => (a.path = a.path.filter(id => ids.has(id))));
+    if (D.dxfName === file) D.dxfReport = null;
+    App.res = null; App.pb = null; App.day = -1; App.selBlock = -1;
+    if (App.ws) { App.rasterize(); Timeline.setData(null, P); }
+    App.changed('blocks', { now: true });
+    UI.renderTab(); UI.renderInspector(); UI.renderColorBy();
+    UI.toast(`${U.fmtNum(n)} blocks of ${name} removed: the block layout has ${U.fmtNum(P.blocks.length)} blocks.`);
+  }
+  // the files of the layout, when there are several: their blocks, and Remove
+  function layoutList(bl) {
+    const P = App.P, files = layoutFiles(P);
+    if (files.length < 2) return;
+    bl.push(h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' },
+      h('thead', null, h('tr', null, h('th', null, `The block layout: ${files.length} files`), h('th', { class: 'r' }, 'Blocks'), h('th', null, ''))),
+      h('tbody', null, files.map(f => {
+        const e = layoutEntry(P, f.file);
+        return h('tr', null,
+          h('td', { title: f.file, style: { whiteSpace: 'nowrap', maxWidth: '210px', overflow: 'hidden', textOverflow: 'ellipsis' } }, f.file || 'Blocks from before (an earlier layout or a grid)', e && e.prefix ? h('span', { class: 'dt' }, ` · IDs ${e.prefix}…`) : null),
+          h('td', { class: 'r num' }, U.fmtNum(f.count)),
+          h('td', { class: 'r' }, edit() ? btn('Remove', () => removeLayoutFile(f.file), 'sm ghost', `Remove the blocks of ${layoutName(f.file)} from the layout`) : null));
+      })))));
+  }
+  /* Load blocks: with blocks of other files in the layout, add this file's blocks to them (Add to the layout) or keep only
+     this file's (Replace the layout); and a prefix for the file's block IDs. */
+  function loadButtons(apply, o) {
+    const P = App.P, files = layoutFiles(P), others = files.filter(f => f.file !== D.dxfName);
+    const prefix = others.length || o.prefix ? h('div', { class: 'grid2' }, fld('Prefix for the block IDs (optional)', (() => { const i = txt(o.prefix || '', v => (o.prefix = v.trim()), { placeholder: 'such as N-' }); i.setAttribute('aria-label', 'Prefix for the block IDs'); return i; })()), h('span')) : null;
+    if (!others.length) return { prefix, btns: [btn('Load blocks', () => apply(false), 'primary sm')], note: null };
+    const n = others.reduce((t, f) => t + f.count, 0), names = others.map(f => layoutName(f.file)).join(', '), again = files.some(f => f.file === D.dxfName);
+    return {
+      prefix,
+      btns: [btn('Add to the layout', () => apply(true), 'primary sm', `Keep the ${U.fmtNum(n)} blocks of ${names} and add the blocks of ${D.dxfName}`),
+        btn('Replace the layout', async () => { if (await UI.confirmBox('Replace the block layout', `Make the block layout only the blocks of ${D.dxfName}? The ${U.fmtNum(n)} blocks of ${names} are removed, and taken out of the mining paths.`, 'Replace', true)) apply(false); }, 'sm', `Keep only the blocks of ${D.dxfName}`)],
+      note: hint(`The block layout already has ${U.fmtNum(n)} block${n === 1 ? '' : 's'} from ${names}. “Add to the layout” keeps ${n === 1 ? 'it' : 'them'} and adds the blocks of this file, such as another pit or area${again ? ' (the blocks it gave before are read again)' : ''}; “Replace the layout” keeps only this file’s blocks. If the files number their blocks the same way (1, 2, 3…), give each file a prefix for its block IDs, such as “N-” and “S-”.`)
+    };
+  }
   function blockLayoutSection(bl) {
     const P = App.P;
+    layoutList(bl);
     const dwg = (D.all || []).filter(n => ext(n) === 'dwg');
     if (!D.dxfs.length) {
       bl.push(hint(App.folder.files.size ? 'No KML, KMZ or DXF file in this folder.' : 'Choose the folder to pick the block layout (KML, KMZ or DXF).'));
@@ -14161,13 +14267,16 @@ const Tabs = (() => {
     bl.push(chk('Join separate lines into block outlines', o.joinLines !== false, v => (o.joinLines = v)));
     bl.push(chk('Ignore outlines that enclose other blocks (pit or strip boundaries)', o.dropContainers !== false, v => (o.dropContainers = v)));
     const closedAny = D.dxf.polylines.some(p => p.closed || Dxf.nearClosed(p.pts)) || D.dxf.hatches.length;
-    bl.push(h('div', { class: 'row' }, btn('Load blocks', () => applyBlocks(), 'primary sm'),
+    const LB = loadButtons(applyBlocks, o);
+    if (LB.prefix) bl.push(LB.prefix);
+    bl.push(h('div', { class: 'row' }, ...LB.btns,
       closedAny ? btn('Add closed shapes as dumps…', () => importShapes('dumps'), 'sm') : null,
       D.dxf.polylines.some(p => !p.closed) ? btn('Add lines as haul roads…', () => importShapes('roads'), 'sm') : null));
+    if (LB.note) bl.push(LB.note);
     if (D.dxfReport) for (const m of D.dxfReport) bl.push(msg(m[0], m[1]));
   }
   function gridBBox() { const g = App.P.grid; return g ? [g.x0, g.y0, g.x0 + g.nx * g.cell, g.y0 + g.ny * g.cell] : null; }
-  function applyBlocks() {
+  function applyBlocks(add) {
     const P = App.P, o = D.dxfOpts;
     if (!o.blockLayers.length) { UI.toast('Tick at least one layer that holds the block outlines.'); return; }
     UI.busy('Finding the block outlines…', 0.4);
@@ -14201,27 +14310,23 @@ const Tabs = (() => {
       else report.push(['info', `Every block got its ID from ${o.idSource === 'attrib' ? 'attribute ' + (o.attribTag || '') : 'text on layer ' + (r.textLayer || '(any)')}.`]);
     }
     if (fixNote) report.push(['warn', fixNote]);
-    App.dropReserve(); // (a new resource layout: the reserve layout is copied from it again)
-    const old = new Map(P.blocks.map(b => [b.id, b]));
-    P.blocks = blocks.map(b => ({ id: b.id, pts: b.pts, attrs: (old.get(b.id) || {}).attrs || {} }));
-    P.source.dxf = Object.assign({ file: D.dxfName, fix: D.dxfFix ? D.dxfFix.name : null }, o);
-    if (P.gridDef) delete P.gridDef.made; // (a grid of the Resource tab is no longer the layout)
-    const ids = new Set(P.blocks.map(b => b.id));
-    P.activities.forEach(a => (a.path = a.path.filter(id => ids.has(id))));
+    const { fresh, notes } = placeBlocks(blocks.map(b => ({ id: b.id, pts: b.pts })), Object.assign({ file: D.dxfName, fix: D.dxfFix ? D.dxfFix.name : null }, o), add);
+    if (add) report.splice(1, 0, ['info', layoutNow(fresh)]);
+    report.push(...notes);
     P.isDemo = false;
     if (D.wb && D.idCol) linkAttributes(true);
     App.res = null; App.pb = null; App.day = -1; App.selBlock = -1;
     if (App.ws) {
       App.rasterize(); Timeline.setData(null, P);
-      const outside = App.ws.blockCells.filter(c => !c.length).length;
-      if (outside === blocks.length) report.push(['error', 'None of the blocks fall on the elevation model. The DXF and the TIFFs seem to use different coordinate systems — check the Coordinates setting in the Project tab.']);
+      const outside = offModel(fresh);
+      if (outside === fresh.length) report.push(['error', 'None of the blocks fall on the elevation model. The DXF and the TIFFs seem to use different coordinate systems — check the Coordinates setting in the Project tab.']);
       else if (outside) report.push(['warn', `${outside} block(s) fall outside the elevation model.`]);
       View.fit();
     } else report.push(['warn', 'Build the 3D model from the elevation TIFFs to see the blocks.']);
     D.dxfReport = report;
     App.changed('blocks', { now: true });
     UI.renderTab(); UI.renderInspector(); UI.renderColorBy();
-    UI.toast(report[0][1]);
+    UI.toast(report[add ? 1 : 0][1]);
   }
   function importShapes(kind) {
     if (D.kml) return importKmlShapes(kind);
@@ -14259,7 +14364,7 @@ const Tabs = (() => {
       const text = ext(name) === 'kmz' || (u8[0] === 0x50 && u8[1] === 0x4b) ? await Kml.unzipKml(u8) : new TextDecoder().decode(u8);
       D.kml = Kml.parse(text); D.dxfName = name;
       UI.busy(null);
-      const prev = App.P.source.dxf;
+      const prev = layoutEntry(App.P, name);
       const polyFolders = D.kml.folders.filter(f => f.polygons || f.lines);
       const named = polyFolders.filter(f => /BLOCK|BLK|CUT|PANEL|MINING|STRIP/i.test(f.name) && !/DUMP|ROAD|RAMP/i.test(f.name));
       const guess = (named.length ? named : polyFolders).slice().sort((a, b) => b.polygons - a.polygons)[0];
@@ -14290,9 +14395,12 @@ const Tabs = (() => {
     if (k.fields.length) bl.push(chk(`Use the KML data fields as block attributes (${k.fields.length}: ${k.fields.slice(0, 4).join(', ')}${k.fields.length > 4 ? '…' : ''})`, o.useData, v => (o.useData = v)));
     bl.push(chk('Also use closed lines as block outlines', o.closedLines !== false, v => (o.closedLines = v)));
     const anyPoly = k.placemarks.some(p => p.polys.length), anyLine = k.placemarks.some(p => p.lines.length);
-    bl.push(h('div', { class: 'row' }, btn('Load blocks', () => applyKmlBlocks(), 'primary sm'),
+    const LB = loadButtons(applyKmlBlocks, o);
+    if (LB.prefix) bl.push(LB.prefix);
+    bl.push(h('div', { class: 'row' }, ...LB.btns,
       anyPoly ? btn('Add polygons as dumps…', () => importShapes('dumps'), 'sm') : null,
       anyLine ? btn('Add lines as haul roads…', () => importShapes('roads'), 'sm') : null));
+    if (LB.note) bl.push(LB.note);
     if (D.dxfReport) for (const m of D.dxfReport) {
       const el = msg(m[0], m[1]);
       if (m[2]) { el.classList.add('has-acts'); el.append(h('div', { class: 'msg-acts' }, ...[].concat(m[2]).map(a => btn(a.label, a.fn, 'sm')))); }
@@ -14337,7 +14445,7 @@ const Tabs = (() => {
     }
     applyKmlBlocks();
   }
-  function applyKmlBlocks() {
+  function applyKmlBlocks(add) {
     const P = App.P, o = D.kmlOpts, k = D.kml;
     if (!o.folders.length) { UI.toast('Tick at least one folder that holds the block polygons.'); return; }
     let res;
@@ -14349,19 +14457,17 @@ const Tabs = (() => {
     if (r.multi) report.push(['warn', `${r.multi} placemark(s) hold more than one polygon; their parts were numbered _1, _2…`]);
     if (r.autoNumbered) report.push(['warn', `${r.autoNumbered} block(s) had no ${o.idSource === 'field' ? 'value in ' + o.idField : 'name'} and were numbered B0001, B0002…`]);
     if (o.useData && r.withData) report.push(['info', `Attributes taken from the KML for ${r.withData} block(s).`]);
-    const old = new Map(P.blocks.map(b => [b.id, b]));
-    P.blocks = blocks.map(b => ({ id: b.id, pts: b.pts, attrs: Object.assign({}, (old.get(b.id) || {}).attrs || {}, b.attrs) }));
+    const { fresh, notes } = placeBlocks(blocks, Object.assign({ file: D.dxfName, kind: 'kml' }, o), add);
+    if (add) report.splice(1, 0, ['info', layoutNow(fresh)]);
+    report.push(...notes);
     if (o.useData && k.fields.length) { P.attrColumns = Array.from(new Set(k.fields.concat(P.attrColumns || []))); if (!P.idColumn && o.idSource === 'field') P.idColumn = o.idField; }
-    P.source.dxf = Object.assign({ file: D.dxfName, kind: 'kml' }, o);
-    const ids = new Set(P.blocks.map(b => b.id));
-    P.activities.forEach(a => (a.path = a.path.filter(id => ids.has(id))));
     P.isDemo = false;
     if (D.wb && D.idCol) linkAttributes(true);
     App.res = null; App.pb = null; App.day = -1; App.selBlock = -1;
     if (App.ws) {
       App.rasterize(); Timeline.setData(null, P);
-      const outside = App.ws.blockCells.filter(c => !c.length).length;
-      if (outside > blocks.length * 0.5) {
+      const outside = offModel(fresh);
+      if (outside > fresh.length * 0.5) {
         const sug = suggestCrs(k, o);
         if (sug && !sug.alts.length) report.push(['error', `The blocks do not fall on the elevation model with the current coordinate system. They line up with “${sug.preset.name}”${sug.flip ? ' (the model will be rebuilt from the TIFFs)' : ''}.`, { label: 'Switch and reload', fn: () => switchCrsAndReload(sug.preset, sug.flip) }]);
         else if (sug) {
@@ -14369,14 +14475,14 @@ const Tabs = (() => {
           report.push(['error', `The blocks do not fall on the elevation model with the current coordinate system. They fit with ${all.map(c => `“${c.preset.name}”${c.flip ? ' (rebuilds the model)' : ''}`).join(' or ')}. These place the blocks up to ${Math.round(far)} m apart, so choose the one your survey data is in.`,
             all.map(c => ({ label: 'Use ' + c.preset.name.split(' — ')[0] + (c.preset.name.includes('CAD') ? ' CAD' : ''), fn: () => switchCrsAndReload(c.preset, c.flip) }))]);
         }
-        else report.push(['error', `${outside} of ${blocks.length} blocks do not fall on the elevation model. KML is in latitude/longitude, so the project’s coordinate system (Project tab) must match the one the TIFFs are in.`]);
+        else report.push(['error', `${outside} of ${fresh.length} blocks do not fall on the elevation model. KML is in latitude/longitude, so the project’s coordinate system (Project tab) must match the one the TIFFs are in.`]);
       } else if (outside) report.push(['warn', `${outside} block(s) fall outside the elevation model.`]);
       View.fit();
     } else report.push(['warn', 'Build the 3D model from the elevation TIFFs to see the blocks.']);
     D.dxfReport = report;
     App.changed('blocks', { now: true });
     UI.renderTab(); UI.renderInspector(); UI.renderColorBy();
-    UI.toast(report[0][1]);
+    UI.toast(report[add ? 1 : 0][1]);
   }
   function importKmlShapes(kind) {
     const P = App.P;
@@ -15802,7 +15908,7 @@ const Tabs = (() => {
     // the layout of the project now
     const made = GD.made && GD.used, U_ = GD.used || {};
     parts.push(made ? msg('info', `The project’s block layout is this grid: ${U.fmtNum(GD.n)} blocks of ${U.fmtNum(U_.width, 0)} × ${U.fmtNum(U_.length, 0)} m, strips at ${U.fmtNum(U_.angle, 0)}°, made ${U.fmtDate(U.parseISO(GD.made))}.`)
-      : msg('info', (P.resBlocks || P.blocks).length ? `The project’s block layout is the one loaded in the Geological Data tab (${U.fmtNum((P.resBlocks || P.blocks).length)} blocks${P.source && P.source.dxf && P.source.dxf.file ? `, ${P.source.dxf.file}` : ''}). Creating the grid replaces it.` : 'The project has no block layout yet.'));
+      : msg('info', (P.resBlocks || P.blocks).length ? `The project’s block layout is the one loaded in the Geological Data tab (${U.fmtNum((P.resBlocks || P.blocks).length)} blocks${(() => { const F = layoutFiles(P).map(f => f.file).filter(Boolean); return F.length ? `, ${F.join(', ')}` : ''; })()}). Creating the grid replaces it.` : 'The project has no block layout yet.'));
     if (made && !B.error && (U_.width !== o.width || U_.length !== o.length || U_.angle !== o.angle || U_.minCover !== o.minCover || (o.x0 != null && Math.abs(o.x0 - U_.x0) > 1e-6) || (o.y0 != null && Math.abs(o.y0 - U_.y0) > 1e-6)))
       parts.push(msg('warn', 'The settings above differ from the layout in use: make it again to use them.'));
     if (made && (GD.missing || []).length) parts.push(msg('warn', `These quality rasters were not read for the grid, as they were not loaded in this session: ${GD.missing.join(', ')}. Add the files again in the Geological Data tab (Coal quality rasters) to give the blocks their qualities.`));
