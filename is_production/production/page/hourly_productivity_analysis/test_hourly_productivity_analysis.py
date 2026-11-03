@@ -28,6 +28,28 @@ class TestHourlyProductivityAnalysis(TestCase):
         self.assertEqual(sum(c["actual_bcm"] for c in cells), 50)
         self.assertEqual([cells[i]["target_bcm"] for i in (0, 11, 12, 23)], [110, 330, 110, 330])
 
+    def test_koppie_night_shift_stored_production_date(self):
+        values = {
+            "02:00-03:00": 432,
+            "03:00-04:00": 432,
+            "04:00-05:00": 444,
+            "05:00-06:00": 192,
+        }
+        docs = []
+        for slot, bcm in values.items():
+            doc = self.f.doc(slot, "2026-10-22", [self.f.row(bcm=bcm)])
+            doc["shift"] = "Night"
+            docs.append(doc)
+
+        data = self.build(docs, start="2026-10-22", end="2026-10-22")
+        cells = data["rows"][0]["cells"]
+
+        for index, bcm in zip(range(20, 24), values.values()):
+            self.assertEqual(cells[index]["actual_bcm"], bcm)
+            self.assertTrue(cells[index]["has_record"])
+
+        self.assertEqual(sum(c["actual_bcm"] for c in cells), 1500)
+
     def test_colour_thresholds_bright_red_precedence_and_missing_status(self):
         docs = [self.f.doc("06:00-07:00", rows=[self.f.row(bcm=110)]),
                 self.f.doc("07:00-08:00", rows=[self.f.row(bcm=374)]),

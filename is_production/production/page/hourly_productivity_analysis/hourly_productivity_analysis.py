@@ -111,7 +111,10 @@ def build_analysis(from_date, to_date, site, plans, assets, breakdowns, document
             continue
         seen.add(doc["name"])
         try:
-            operational_date = (source_hour(doc["prod_date"], doc["hour_slot"]) - timedelta(hours=6)).date()
+            dt = source_hour(doc["prod_date"], doc["hour_slot"])
+            if doc.get("shift") == "Night" and dt.hour < 6:
+                dt += timedelta(days=1)
+            operational_date = (dt - timedelta(hours=6)).date()
         except (ValueError, TypeError):
             warnings.append("An invalid source hour was excluded.")
             continue
@@ -193,3 +196,25 @@ def get_analysis(site, from_date, to_date):
             "message": "You need read access to Startup and Fatigue Specification and its scheduling fields "
                        "to classify fatigue periods. Please ask your administrator for access."}}
     return build_analysis(first, last, site, plans, assets, breakdowns, documents, fatigue=fatigue)
+
+
+@frappe.whitelist()
+def export_excel(site, from_date, to_date):
+    """Download the same permission-checked data shown on the dashboard."""
+    from frappe.utils import cint
+    from is_production.production.page.hourly_productivity_analysis.hourly_productivity_excel import make_workbook
+
+    data = get_analysis(site, from_date, to_date)
+    if not data.get("rows"):
+        frappe.throw("No exportable analysis. Check planning and configuration access.")
+
+    safe_site = "".join(
+        character if character.isalnum() or character in "-_" else "_"
+        for character in site
+    )[:60]
+
+    frappe.response["filename"] = (
+        f"{safe_site}_Hourly_Productivity_{from_date}_to_{to_date}.xlsx"
+    )
+    frappe.response["filecontent"] = make_workbook(data)
+    frappe.response["type"] = "download"

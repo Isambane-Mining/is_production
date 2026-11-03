@@ -121,7 +121,7 @@
 
   const styles = `<style>
     .hpa-shell{--date-width:94px;--day-width:42px;--month-width:100px;max-width:100%;padding:12px 0;color:var(--text-color,#243447)}
-    .hpa-filters{display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:12px;align-items:end;margin-bottom:12px}
+    .hpa-filters{display:grid;grid-template-columns:2fr 1fr 1fr auto auto;gap:12px;align-items:end;margin-bottom:12px}
     .hpa-filters .form-group{margin-bottom:0}.hpa-filters button{margin-bottom:4px}.hpa-note{font-size:12px;line-height:1.5;margin:10px 0;color:var(--text-muted,#667582)}
     .hpa-warning{font-size:12px;background:#fff2cf;color:#714900;padding:8px 10px;border-radius:6px;margin:6px 0}
     .hpa-scroll{overflow:auto;max-height:65vh;border:1px solid #b7c2cc;border-radius:6px;position:relative}
@@ -186,7 +186,7 @@
       this.requestToken = 0;
       this.initializing = true;
       this.page.main.html(`${styles}<div class="hpa-shell"><div class="hpa-filters"><div class="hpa-site"></div>
-        <div class="hpa-from_date"></div><div class="hpa-to_date"></div><button class="btn btn-primary hpa-refresh">Refresh</button></div>
+        <div class="hpa-from_date"></div><div class="hpa-to_date"></div><button class="btn btn-primary hpa-refresh">Refresh</button><button type="button" class="btn btn-default hpa-export">Export Excel</button></div>
         <div class="hpa-content" aria-live="polite"></div>
         <div id="${this.cardId}" class="hpa-hour-card" role="dialog" aria-label="Hourly production details" hidden>
           <button type="button" class="hpa-card-close" aria-label="Close hourly details">×</button><div class="hpa-card-body"></div>
@@ -197,6 +197,19 @@
           df:{fieldname:name,label,fieldtype:type,options,reqd:1,onchange:()=>this.load()}});
       }
       this.page.main.on('click','.hpa-refresh',()=>this.load());
+      this.page.main.on('click','.hpa-export', () => {
+        const site = this.site.get_value();
+        const from_date = this.from_date.get_value();
+        const to_date = this.to_date.get_value();
+        if (!site || !from_date || !to_date || from_date > to_date) {
+          frappe.msgprint('Select a valid Site, From Date and To Date.');
+          return;
+        }
+        const params = new URLSearchParams({site, from_date, to_date});
+        const endpoint = this.method + 'export_excel';
+        window.location.href =
+          '/api/method/' + endpoint + '?' + params.toString();
+      });
       this.message('Select a site and date range.');
       this.initialize();
     }
