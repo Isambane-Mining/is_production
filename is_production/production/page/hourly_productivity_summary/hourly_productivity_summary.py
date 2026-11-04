@@ -123,6 +123,8 @@ def build_summary(date, shift, site, plan, assets, breakdowns, documents, *, now
             continue
         try:
             dt = source_hour(doc.get("prod_date"), doc.get("hour_slot"))
+            if doc.get("shift") == "Night" and dt.hour < 6:
+                dt += timedelta(days=1)
         except (ValueError, TypeError):
             warnings.append("An invalid source hour was excluded.")
             continue
