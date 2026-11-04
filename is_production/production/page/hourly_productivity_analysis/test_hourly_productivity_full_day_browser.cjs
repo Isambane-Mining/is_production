@@ -121,13 +121,15 @@ const contrast=(foreground,background)=>{
     await page.route('**/assets/is_production/js/hourly_productivity_summary_view.js*',route=>{
       assetLoads++;return route.fulfill({contentType:'application/javascript',body:fs.readFileSync(path.resolve(__dirname,'../../../public/js/hourly_productivity_summary_view.js'),'utf8')});
     });
+    await page.addStyleTag({path:path.join(__dirname,'hourly_productivity_analysis.css')});
     await page.addScriptTag({path:path.join(__dirname,'hourly_productivity_analysis.js')});
     await page.evaluate(()=>frappe.pages['hourly-productivity-analysis'].on_page_load(wrapper));
     await page.waitForFunction(()=>!wrapper.hourlyProductivityAnalysis.initializing);
     await page.evaluate(()=>wrapper.hourlyProductivityAnalysis.site.set_value('Synthetic Koppie'));
     assert.equal(await page.evaluate(()=>appPages),1);
-    assert.equal(assetLoads,0);
-    assert.equal(await page.locator('[role=tab][aria-selected=true]').innerText(),'Hourly Productivity Analysis');
+    await page.waitForFunction(()=>wrapper.hourlyProductivitySummary && !wrapper.hourlyProductivitySummary.initializing);
+    assert.equal(assetLoads,1);
+    assert.equal(await page.locator('[role=tab][aria-selected=true]').innerText(),'Current Productivity Analysis');
     await page.locator('#hpt-summary-tab').click();
     await page.waitForFunction(()=>wrapper.hourlyProductivitySummary && !wrapper.hourlyProductivitySummary.initializing);
     assert.equal(assetLoads,1);

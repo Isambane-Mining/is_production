@@ -119,63 +119,6 @@
         </div></section>`;
   }
 
-  const styles = `<style>
-    .hpa-shell{--date-width:94px;--day-width:42px;--month-width:100px;max-width:100%;padding:12px 0;color:var(--text-color,#243447)}
-    .hpa-filters{display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:12px;align-items:end;margin-bottom:12px}
-    .hpa-filters .form-group{margin-bottom:0}.hpa-filters button{margin-bottom:4px}.hpa-note{font-size:12px;line-height:1.5;margin:10px 0;color:var(--text-muted,#667582)}
-    .hpa-warning{font-size:12px;background:#fff2cf;color:#714900;padding:8px 10px;border-radius:6px;margin:6px 0}
-    .hpa-scroll{overflow:auto;max-height:65vh;border:1px solid #b7c2cc;border-radius:6px;position:relative}
-    .hpa-table{border-collapse:separate;border-spacing:0;table-layout:fixed;min-width:1772px;width:100%;font-size:11px;text-align:center}
-    .hpa-table caption{caption-side:top;text-align:left;padding:8px;color:inherit;font-weight:600}
-    .hpa-table th,.hpa-table td{box-sizing:border-box;height:29px;padding:4px;border-right:1px solid #a9b7c3;border-bottom:1px solid #a9b7c3;white-space:nowrap}
-    .hpa-table thead th{position:sticky;top:0;background:#e7edf3;z-index:5;height:30px;color:#263b4d}
-    .hpa-table thead .hpa-hour{top:30px;font-size:10px;width:64px}.hpa-table .hpa-shift-day{background:#d8ead2}.hpa-table .hpa-shift-night{background:#d5e2f3}
-    .hpa-sticky-date,.hpa-sticky-day,.hpa-sticky-month{position:sticky;z-index:3;background:var(--card-bg,#fff);color:var(--text-color,#243447);font-weight:500}
-    .hpa-sticky-date{left:0;width:var(--date-width);min-width:var(--date-width);max-width:var(--date-width)}
-    .hpa-sticky-day{left:var(--date-width);width:var(--day-width);min-width:var(--day-width);max-width:var(--day-width)}
-    .hpa-sticky-month{left:calc(var(--date-width) + var(--day-width));width:var(--month-width);min-width:var(--month-width);max-width:var(--month-width)}
-    .hpa-table thead .hpa-sticky-date,.hpa-table thead .hpa-sticky-day,.hpa-table thead .hpa-sticky-month{z-index:8}
-    .hpa-cell{font-weight:600;width:64px;min-width:64px;color:#172a1a}.hpa-cell sup{font-size:9px;margin-left:2px}
-    .hpa-table .hpa-night-start{border-left:3px solid #354f75}.hpa-green{background:${colours.green}}.hpa-amber{background:${colours.amber}}
-    .hpa-red{background:${colours.red}}.hpa-bright_red{background:${colours.bright_red};color:#fff}.hpa-partial{color:#172a1a}.hpa-grey{background:${colours.grey};color:#333}
-    .hpa-mixed-text,.hpa-mobile-mixed .hpa-mobile-text{display:inline-block;background:#fff;color:#172a1a;padding:2px 4px;border-radius:3px}
-    .hpa-month-divider th{text-align:left;background:#d9e5ef;color:#203f58;height:27px}.hpa-month-divider span{position:sticky;left:8px}
-    .hpa-chart{display:flex;align-items:center;gap:24px;margin-top:16px;padding:12px;border:1px solid var(--border-color,#e1e6eb);border-radius:8px}
-    .hpa-pie{width:150px;height:150px;border-radius:50%;flex-shrink:0}.hpa-legend{font-size:12px;display:grid;gap:8px}
-    .hpa-legend>div{display:grid;grid-template-columns:12px minmax(0,1fr) auto auto;gap:8px;align-items:center}.hpa-legend i{width:10px;height:10px;border:1px solid #71808c}
-    .hpa-cell[tabindex]{cursor:pointer}.hpa-cell:focus-visible{outline:3px solid var(--primary,#2490ef);outline-offset:-3px}
-    .hpa-hour-card{position:fixed;z-index:1060;width:340px;max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);
-      box-sizing:border-box;overflow:auto;padding:16px;border:1px solid var(--border-color,#d1d8dd);border-radius:8px;
-      background:var(--popover-bg,var(--card-bg,#fff));color:var(--text-color,#243447);box-shadow:0 6px 24px #0003;font-size:13px;line-height:1.5}
-    .hpa-hour-card[hidden]{display:none}.hpa-hour-card h3{font-size:14px;font-weight:600;margin:0 24px 12px 0}
-    .hpa-hour-card h4{font-size:12px;font-weight:600;margin:12px 0 6px}.hpa-hour-card dl{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px 12px;margin:0}
-    .hpa-hour-card dt{font-weight:400;color:var(--text-muted,#667582)}.hpa-hour-card dd{margin:0;font-weight:600;overflow-wrap:anywhere}
-    .hpa-card-close{position:absolute;right:5px;top:5px;width:32px;height:32px;border:0;border-radius:4px;background:transparent;color:inherit;font-size:20px;cursor:pointer}
-    .hpa-load-times{display:flex;flex-wrap:wrap;gap:4px 12px;padding:6px 0;border-top:1px solid var(--border-color,#e1e6eb)}
-    .hpa-load-times strong{width:100%;overflow-wrap:anywhere}.hpa-load-times b{margin-left:4px;font-weight:500}
-    .hpa-message{padding:20px;font-size:14px}.hpa-shell[aria-busy=true]{opacity:.7}
-    .hpa-mobile{display:none}
-    @media(max-width:600px){.hpa-shell{--date-width:82px;--day-width:38px;--month-width:90px}.hpa-filters{grid-template-columns:1fr 1fr;gap:8px}
-      .hpa-shift-day span,.hpa-shift-night span{position:sticky;left:calc(var(--date-width) + var(--day-width) + var(--month-width) + 8px);display:block;width:max-content;text-align:left}
-      .hpa-filters>div:first-child,.hpa-filters button{grid-column:1/-1}.hpa-chart{gap:12px;flex-wrap:wrap}.hpa-pie{width:110px;height:110px}
-      .hpa-legend{font-size:11px;width:100%}.hpa-table{min-width:1746px;font-size:10px}.hpa-table th,.hpa-table td{padding:3px}
-      .hpa-filters :is(input,select,button){font-size:16px;min-height:44px}
-      .hpa-content{display:flex;flex-direction:column}.hpa-scroll{display:none}.hpa-mobile{display:block}
-      .hpa-chart{order:-1;margin:0 0 14px;flex-wrap:nowrap;padding:12px;gap:12px}.hpa-pie{width:80px;height:80px}
-      .hpa-legend{width:auto;min-width:0;font-size:13px}.hpa-legend>div{display:none}
-      .hpa-mobile-key{display:flex;flex-wrap:wrap;gap:7px 12px;margin-bottom:16px;font-size:11px}
-      .hpa-key-item{display:inline-flex;align-items:center;gap:5px}.hpa-key-item i{width:9px;height:9px;border-radius:50%;flex-shrink:0}
-      .hpa-mobile-date-label{display:block;font-size:13px}.hpa-mobile-date{display:block;width:100%;min-height:48px;font:inherit;font-size:16px;margin-top:6px;padding:10px;border:1px solid var(--border-color,#d1d8dd);border-radius:8px;background:var(--card-bg,#fff);color:var(--text-color,#243447)}
-      .hpa-mobile h3{font-size:16px;margin:18px 0 10px}.hpa-mobile-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
-      .hpa-mobile-cell{box-sizing:border-box;min-width:0;min-height:60px;border:0;border-radius:8px;padding:7px 3px;font:inherit;color:#172a1a;cursor:pointer;font-variant-numeric:tabular-nums}
-      .hpa-mobile-cell.hpa-bright_red{color:#fff}.hpa-mobile-cell.hpa-grey{color:#333}
-      .hpa-mobile-cell[aria-pressed=true]{outline:3px solid var(--text-color,#243447);outline-offset:2px}
-      .hpa-mobile-cell small{display:block;font-size:11px}.hpa-mobile-cell strong{display:block;font-size:18px;font-weight:600;overflow-wrap:anywhere}.hpa-mobile-cell sup{font-size:10px}
-      .hpa-mobile-note{font-size:11px;margin:12px 0}.hpa-mobile-detail{padding:14px;border:1px solid var(--border-color,#d1d8dd);border-radius:10px;margin:14px 0;background:var(--card-bg,#fff)}
-      .hpa-mobile-detail h3{font-size:14px;margin:0 0 12px}.hpa-mobile-detail h4{font-size:13px;margin:14px 0 8px}
-      .hpa-mobile-detail dl{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;font-size:13px;margin:0}.hpa-mobile-detail dt{font-weight:400}.hpa-mobile-detail dd{margin:0;font-weight:600;overflow-wrap:anywhere}}
-    @media(max-width:350px){.hpa-mobile-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
-  </style>`;
 
   let cardSequence = 0;
   class HourlyProductivityAnalysisPage {
@@ -185,8 +128,15 @@
       this.cardId = `hpa-hour-card-${++cardSequence}`;
       this.requestToken = 0;
       this.initializing = true;
-      this.page.main.html(`${styles}<div class="hpa-shell"><div class="hpa-filters"><div class="hpa-site"></div>
-        <div class="hpa-from_date"></div><div class="hpa-to_date"></div><button class="btn btn-primary hpa-refresh">Refresh</button></div>
+      this.page.main.html(`<div class="hpa-shell"><div class="hpa-filters"><div class="hpa-site"></div>
+        <div class="hpa-from_date"></div><div class="hpa-to_date"></div><div class="hpa-scope-control">
+          <label for="hpa-scope-select">Machines</label>
+          <select id="hpa-scope-select" class="form-control hpa-scope">
+            <option value="all">All</option>
+            <option value="production">Production Machines</option>
+            <option value="spare">Spare Machines</option>
+          </select>
+        </div><button class="btn btn-primary hpa-refresh">Refresh</button><button type="button" class="btn btn-default hpa-export">Export Excel</button></div>
         <div class="hpa-content" aria-live="polite"></div>
         <div id="${this.cardId}" class="hpa-hour-card" role="dialog" aria-label="Hourly production details" hidden>
           <button type="button" class="hpa-card-close" aria-label="Close hourly details">×</button><div class="hpa-card-body"></div>
@@ -194,9 +144,39 @@
       this.bindHourCard();
       for (const [name,label,type,options] of [['site','Site','Link','Location'],['from_date','From Date','Date'],['to_date','To Date','Date']]) {
         this[name] = frappe.ui.form.make_control({parent:this.page.main.find('.hpa-' + name),render_input:true,
-          df:{fieldname:name,label,fieldtype:type,options,reqd:1,onchange:()=>this.load()}});
+          df:{fieldname:name,label,fieldtype:type,options,reqd:1,onchange:()=>{
+            if (!this.initializing) {
+              const tabs = wrapper.hourlyProductivityTabs;
+              if (name === 'site') tabs?.markSite('analysis');
+              else tabs?.markDates('analysis');
+            }
+            this.load();
+          }}});
       }
+      this.page.main.on('change','.hpa-scope', () => {
+        wrapper.hourlyProductivityTabs?.recordScope(
+          'analysis', this.page.main.find('.hpa-scope').val()
+        );
+        this.load();
+      });
       this.page.main.on('click','.hpa-refresh',()=>this.load());
+      this.page.main.on('click','.hpa-export', () => {
+        const site = this.site.get_value();
+        const from_date = this.from_date.get_value();
+        const to_date = this.to_date.get_value();
+        if (!site || !from_date || !to_date || from_date > to_date) {
+          frappe.msgprint('Select a valid Site, From Date and To Date.');
+          return;
+        }
+        if (this.page.main.find('.hpa-scope').val() !== 'all') {
+          frappe.msgprint('Production/Spare Excel export is not yet available.');
+          return;
+        }
+        const params = new URLSearchParams({site, from_date, to_date});
+        const endpoint = this.method + 'export_excel';
+        window.location.href =
+          '/api/method/' + endpoint + '?' + params.toString();
+      });
       this.message('Select a site and date range.');
       this.initialize();
     }
@@ -309,6 +289,11 @@
       if (this.initializing) return;
       const token = ++this.requestToken;
       const args = {site:this.site.get_value(),from_date:this.from_date.get_value(),to_date:this.to_date.get_value()};
+      if (this.page.main.find('.hpa-scope').val() !== 'all') {
+        ++this.requestToken;
+        this.message('Production/Spare classification is not yet verified.');
+        return;
+      }
       this.page.main.find('.hpa-shell').attr('aria-busy','false');
       if (!args.site || !args.from_date || !args.to_date) {this.message('Select a site and date range.');return;}
       if (args.from_date > args.to_date) {this.message('From Date must be on or before To Date.');return;}
@@ -325,20 +310,126 @@
       } finally {if (token === this.requestToken) this.page.main.find('.hpa-shell').attr('aria-busy','false');}
     }
   }
-  function renderProductivityTabs() {
-    return `<style>
-      .hpt-tabs{display:flex;gap:24px;border-bottom:1px solid var(--border-color,#dce4e9);margin-bottom:12px}
-      .hpt-tabs button{font:inherit;font-size:14px;font-weight:600;min-height:48px;padding:14px 2px;border:0;border-bottom:3px solid transparent;background:transparent;color:var(--text-muted,#667582)}
-      .hpt-tabs button[aria-selected=true]{color:var(--text-color,#243447);border-bottom-color:currentColor}
-      .hpt-shell>[hidden]{display:none!important}.hpt-message{padding:20px;font-size:14px}
-      @media(max-width:600px){.hpt-tabs{gap:8px}.hpt-tabs button{flex:1;min-width:0;font-size:0;line-height:1.4;padding:12px 2px;border-radius:8px}.hpt-tabs button::after{content:attr(data-mobile-label);font-size:14px}.hpt-tabs button[aria-selected=true]{background:var(--control-bg,#f3f6f8)}}
-    </style><div class="hpt-shell">
-      <div class="hpt-tabs" role="tablist" aria-label="Hourly productivity reports">
-        <button type="button" role="tab" id="hpt-analysis-tab" aria-controls="hpt-analysis-panel" aria-selected="true" data-report-tab="analysis" data-mobile-label="Analysis">Hourly Productivity Analysis</button>
-        <button type="button" role="tab" id="hpt-summary-tab" aria-controls="hpt-summary-panel" aria-selected="false" tabindex="-1" data-report-tab="summary" data-mobile-label="Summary">Hourly Productivity Summary</button>
+
+  function machineColour(available, utilised, verified) {
+    if (!verified || !Number.isFinite(Number(available)) ||
+        !Number.isFinite(Number(utilised)) ||
+        available == null || utilised == null ||
+        Number(available) <= 0 || Number(utilised) < 0)
+      return 'neutral';
+
+    const ratio = Number(utilised) / Number(available);
+
+    if (ratio >= 0.80) return 'green';
+    if (ratio >= 0.50) return 'yellow';
+    if (ratio >= 0.20) return 'orange';
+    return 'red';
+  }
+
+  function renderMachineMatrix(data) {
+    let lastMonth = '';
+
+    const metric = (value, cls, digits) =>
+      Number.isFinite(Number(value)) && value != null && Number(value) >= 0
+        ? `<span class="${cls}">${Number(value).toLocaleString('en-US',{maximumFractionDigits:digits})}</span>`
+        : '—';
+
+    const rows = data.rows.map(row => {
+      const divider = row.month_key !== lastMonth
+        ? `<tr class="hpa-month-divider">
+             <th colspan="27"><span>${escape(row.month)}</span></th>
+           </tr>`
+        : '';
+
+      lastMonth = row.month_key;
+
+      const cells = row.cells.map((cell, index) => {
+        const verified = cell.completed && cell.has_record;
+        const available = verified
+          ? metric(cell.available,'hm-avail',2) : '—';
+        const utilised = verified
+          ? metric(cell.utilised,'hm-used',0) : '—';
+
+        const value = available === '—' && utilised === '—'
+          ? '—' : `${available} / ${utilised}`;
+
+        const colour = machineColour(
+          cell.available, cell.utilised, verified
+        );
+
+        return `<td class="hpa-cell hm-cell hm-${colour} ${
+          index === 12 ? 'hpa-night-start' : ''
+        }" title="${verified
+          ? 'Available / Utilised ADTs'
+          : 'Unknown, missing or pending'}">${value}</td>`;
+      }).join('');
+
+      return `${divider}<tr>
+        <th scope="row" class="hpa-sticky-date">${escape(row.date)}</th>
+        <td class="hpa-sticky-day">${escape(row.day)}</td>
+        <td class="hpa-sticky-month">${escape(row.month)}</td>
+        ${cells}
+      </tr>`;
+    }).join('');
+
+    return `<div class="hpa-scroll" tabindex="0" role="region"
+      aria-label="Machine available versus utilised hourly table; scroll horizontally and vertically">
+      <table class="hpa-table hm-matrix">
+        <caption>Available / Utilised ADTs · ${escape(data.site)}</caption>
+        <thead>
+          <tr>
+            <th rowspan="2" class="hpa-sticky-date">Date</th>
+            <th rowspan="2" class="hpa-sticky-day">Day</th>
+            <th rowspan="2" class="hpa-sticky-month">Month</th>
+            <th colspan="12" class="hpa-shift-day">
+              DAY SHIFT · 06:00–18:00
+            </th>
+            <th colspan="12" class="hpa-shift-night">
+              NIGHT SHIFT · 18:00–06:00
+            </th>
+          </tr>
+          <tr>
+            ${data.hours.map((hour,index) =>
+              `<th class="hpa-hour ${
+                index === 12 ? 'hpa-night-start' : ''
+              }">${escape(hour.replaceAll(':00',''))}</th>`
+            ).join('')}
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <section class="hpa-chart hm-chart" aria-label="Machine count legend">
+      <div class="hm-legend">
+        <strong>Machine Available vs Utilised</strong>
+        <div><i class="hm-available-key"></i>
+          <span>Available ADTs</span><b class="hm-avail">Blue</b></div>
+        <div><i class="hm-utilised-key"></i>
+          <span>Utilised ADTs</span><b class="hm-used">Purple</b></div>
+        <div><i class="hm-green-key"></i>
+          <span>Green · 80–100% utilisation</span></div>
+        <div><i class="hm-yellow-key"></i>
+          <span>Yellow · 50–79%</span></div>
+        <div><i class="hm-orange-key"></i>
+          <span>Orange · 20–49%</span></div>
+        <div><i class="hm-red-key"></i>
+          <span>Red · below 20%</span></div>
+        <div><i class="hm-unknown-key"></i>
+          <span>White · Unknown / missing / pending</span></div>
       </div>
-      <div class="hpt-analysis-panel" id="hpt-analysis-panel" role="tabpanel" aria-labelledby="hpt-analysis-tab"></div>
-      <div class="hpt-summary-panel" id="hpt-summary-panel" role="tabpanel" aria-labelledby="hpt-summary-tab" hidden></div>
+    </section>`;
+  }
+
+  function renderProductivityTabs() {
+    return `<div class="hpt-shell">
+      <div class="hpt-tabs" role="tablist" aria-label="Hourly productivity reports">
+        <button type="button" role="tab" id="hpt-summary-tab" aria-controls="hpt-summary-panel" aria-selected="true" data-report-tab="summary" data-mobile-label="Current">Current Productivity Analysis</button>
+        <button type="button" role="tab" id="hpt-analysis-tab" aria-controls="hpt-analysis-panel" aria-selected="false" tabindex="-1" data-report-tab="analysis" data-mobile-label="Historical">Hourly Productivity Analysis</button>
+        <button type="button" role="tab" id="hpt-machines-tab" aria-controls="hpt-machines-panel" aria-selected="false" tabindex="-1" data-report-tab="machines" data-mobile-label="Machines">Machine Available vs Utilised</button>
+      </div>
+      <div class="hpt-summary-panel" id="hpt-summary-panel" role="tabpanel" aria-labelledby="hpt-summary-tab"></div>
+      <div class="hpt-analysis-panel" id="hpt-analysis-panel" role="tabpanel" aria-labelledby="hpt-analysis-tab" hidden></div>
+      <div class="hpt-machines-panel" id="hpt-machines-panel" role="tabpanel" aria-labelledby="hpt-machines-tab" hidden></div>
     </div>`;
   }
 
@@ -352,12 +443,12 @@
       if (wrapper.hourlyProductivitySummary) return Promise.resolve(wrapper.hourlyProductivitySummary);
       if (summaryLoading) return summaryLoading;
       const summaryPage = {main:page.main.find('.hpt-summary-panel')};
-      summaryPage.main.html('<div class="hpt-message">Loading Hourly Productivity Summary…</div>');
+      summaryPage.main.html('<div class="hpt-message">Loading Current Productivity Analysis…</div>');
       const ready = frappe.hourlyProductivitySummaryView ? Promise.resolve() : (() => {
         if (!frappe.hourlySummaryViewLoading) {
           frappe.hourlySummaryViewLoading = new Promise((resolve,reject) => {
             const script = document.createElement('script');
-            script.src = '/assets/is_production/js/hourly_productivity_summary_view.js?v=20261016-full-day';
+            script.src = '/assets/is_production/js/hourly_productivity_summary_view.js?v=20261103-three-tabs';
             script.onload = () => frappe.hourlyProductivitySummaryView ? resolve() : reject(new Error('Summary view unavailable'));
             script.onerror = () => {script.remove();reject(new Error('Summary view could not be loaded'));};
             document.head.appendChild(script);
@@ -375,9 +466,284 @@
       });
       return summaryLoading;
     };
+
+
+    let machineLoading = null;
+    const loadMachines = () => {
+      if (machineLoading) return machineLoading;
+
+      const panel = page.main.find('.hpt-machines-panel');
+
+      panel.html(`
+        <div class="hpa-shell hm-shell">
+          <div class="hpa-filters hm-filters">
+            <div class="hm-site"></div>
+            <div class="hm-from_date"></div>
+            <div class="hm-to_date"></div>
+            <div class="hm-scope-control">
+              <label for="hm-scope-select">Machines</label>
+              <select id="hm-scope-select" class="form-control hm-scope">
+                <option value="all">All</option>
+                <option value="production">Production Machines</option>
+                <option value="spare">Spare Machines</option>
+              </select>
+            </div>
+            <button type="button" class="btn btn-primary hm-refresh">
+              Refresh
+            </button>
+          </div>
+          <div class="hm-status" role="status" aria-live="polite">
+            Select a site and date range.
+          </div>
+          <div class="hm-content"></div>
+        </div>`);
+
+      let initializing = true;
+      let requestToken = 0;
+
+      const controls = {};
+
+      const refresh = async () => {
+        if (initializing) return;
+
+        const token = ++requestToken;
+        const site = controls.site.get_value();
+        const from_date = controls.from_date.get_value();
+        const to_date = controls.to_date.get_value();
+        const scope = panel.find('.hm-scope').val();
+
+        const status = panel.find('.hm-status');
+        const content = panel.find('.hm-content');
+
+        content.empty();
+
+        if (scope !== 'all') {
+          status.text(
+            'Production/Spare classification is not yet verified.'
+          );
+          return;
+        }
+
+        if (!site || !from_date || !to_date ||
+            from_date > to_date) {
+          status.text('Select a valid site and date range.');
+          return;
+        }
+
+        status.text('Loading machine counts…');
+
+        try {
+          const response = await frappe.call({
+            method:
+              'is_production.production.page.hourly_productivity_analysis.hourly_productivity_analysis.get_analysis',
+            args: {site,from_date,to_date}
+          });
+
+          if (token !== requestToken) return;
+
+          const data = response.message;
+
+          if (data?.planning_error || data?.configuration_error) {
+            const error = data.planning_error ||
+              data.configuration_error;
+            status.text(error.title || 'Configuration unavailable.');
+            return;
+          }
+
+          if (!data?.rows?.length) {
+            status.text('No data available for this period.');
+            return;
+          }
+
+          content.html(renderMachineMatrix(data));
+          status.empty();
+
+        } catch (error) {
+          if (token === requestToken) {
+            status.text(
+              'Unable to load machine data. Check permissions and MPP.'
+            );
+          }
+        }
+      };
+
+      for (const [name,label,type,options] of [
+        ['site','Site','Link','Location'],
+        ['from_date','From Date','Date'],
+        ['to_date','To Date','Date']
+      ]) {
+        controls[name] = frappe.ui.form.make_control({
+          parent: panel.find('.hm-' + name),
+          render_input: true,
+          df: {
+            fieldname: 'hm_' + name,
+            label,
+            fieldtype: type,
+            options,
+            reqd: 1,
+            onchange: () => {
+              if (!initializing) {
+                const tabs = wrapper.hourlyProductivityTabs;
+                if (name === 'site') tabs?.markSite('machines');
+                else tabs?.markDates('machines');
+              }
+              refresh();
+            }
+          }
+        });
+      }
+
+      panel.find('.hm-refresh').on('click',refresh);
+      panel.find('.hm-scope').on('change', () => {
+        wrapper.hourlyProductivityTabs?.recordScope(
+          'machines', panel.find('.hm-scope').val()
+        );
+        refresh();
+      });
+
+      const initialize = async () => {
+        try {
+          const analysis = wrapper.hourlyProductivityAnalysis;
+          let from_date = analysis.from_date.get_value();
+          let to_date = analysis.to_date.get_value();
+
+          if (!from_date || !to_date) {
+            const response = await frappe.call({
+              method:
+                'is_production.production.page.hourly_productivity_analysis.hourly_productivity_analysis.get_defaults'
+            });
+            from_date = response.message.from_date;
+            to_date = response.message.to_date;
+          }
+
+          await controls.from_date.set_value(from_date);
+          await controls.to_date.set_value(to_date);
+
+          const site = analysis.site.get_value();
+          if (site) await controls.site.set_value(site);
+
+          initializing = false;
+          if (site) await refresh();
+        } catch (error) {
+          initializing = false;
+          panel.find('.hm-status').text(
+            'Select a site and date range.'
+          );
+        }
+      };
+
+      wrapper.hourlyProductivityMachines = {
+        refresh,
+        site: controls.site,
+        from_date: controls.from_date,
+        to_date: controls.to_date
+      };
+
+      machineLoading = Promise.resolve(initialize());
+      return machineLoading;
+    };
+
+    // Machine scope defaults are shared, but each tab remains independent.
+    let lastMachineScope = 'all';
+    const editedMachineScopes = new Set();
+
+    const scopeSelector = {
+      summary: '.hps-scope',
+      analysis: '.hpa-scope',
+      machines: '.hm-scope'
+    };
+
+    const scopePanel = {
+      summary: '.hpt-summary-panel',
+      analysis: '.hpt-analysis-panel',
+      machines: '.hpt-machines-panel'
+    };
+
+    const recordScope = (name, value) => {
+      if (!['all','production','spare'].includes(value)) return;
+      editedMachineScopes.add(name);
+      lastMachineScope = value;
+    };
+
+    const applyScope = name => {
+      if (editedMachineScopes.has(name)) return;
+
+      const panel = page.main.find(scopePanel[name]);
+      const select = panel.find(scopeSelector[name]);
+      if (!select.length) return;
+
+      if (select.val() === lastMachineScope) return;
+
+      select.val(lastMachineScope);
+
+      if (name === 'summary') {
+        wrapper.hourlyProductivitySummary?.load();
+      } else if (name === 'analysis') {
+        wrapper.hourlyProductivityAnalysis?.load();
+      } else {
+        wrapper.hourlyProductivityMachines?.refresh();
+      }
+    };
+
+    // Share defaults without linking independently edited filters.
+    const tabFilterState = {
+      active: 'summary',
+      syncing: false,
+      editedSites: new Set(),
+      editedDates: new Set()
+    };
+
+    const markSite = name => {
+      if (!tabFilterState.syncing) tabFilterState.editedSites.add(name);
+    };
+    const markDates = name => {
+      if (!tabFilterState.syncing) tabFilterState.editedDates.add(name);
+    };
+
+    const syncFilters = async (from, to) => {
+      const analysis = wrapper.hourlyProductivityAnalysis;
+      const summary = wrapper.hourlyProductivitySummary;
+      const machines = wrapper.hourlyProductivityMachines;
+
+      const source = from === 'summary' ? summary :
+        from === 'analysis' ? analysis : machines;
+      const target = to === 'summary' ? summary :
+        to === 'analysis' ? analysis : machines;
+
+      if (!source || !target) return;
+
+      tabFilterState.syncing = true;
+      try {
+        // Current Productivity Analysis is the default site source.
+        if (to !== 'summary' && summary?.site &&
+            !tabFilterState.editedSites.has(to)) {
+          const site = summary.site.get_value();
+          if (site && target.site.get_value() !== site) {
+            await target.site.set_value(site);
+          }
+        }
+
+        // Historical tabs exchange date defaults only.
+        if (from !== 'summary' && to !== 'summary' &&
+            !tabFilterState.editedDates.has(to)) {
+          for (const field of ['from_date','to_date']) {
+            if (!source[field] || !target[field]) continue;
+            const value = source[field].get_value();
+            if (value && target[field].get_value() !== value) {
+              await target[field].set_value(value);
+            }
+          }
+        }
+      } finally {
+        tabFilterState.syncing = false;
+      }
+    };
+
     const tabs = Array.from(root.querySelectorAll('[role=tab]'));
     const activate = name => {
-      if (!['analysis','summary'].includes(name)) return;
+      if (!['analysis','summary','machines'].includes(name)) return;
+      const previous = tabFilterState.active;
+      tabFilterState.active = name;
       wrapper.hourlyProductivityAnalysis.hideHourCard();
       for (const tab of tabs) {
         const active = tab.dataset.reportTab === name;
@@ -385,7 +751,22 @@
         tab.tabIndex = active ? 0 : -1;
         root.querySelector('#'+tab.getAttribute('aria-controls')).hidden = !active;
       }
-      if (name === 'summary') loadSummary();
+      if (name === 'summary') {
+        loadSummary().then(() => {
+          if (tabFilterState.active === 'summary') applyScope('summary');
+        });
+      }
+      if (name === 'machines') {
+        loadMachines().then(async () => {
+          if (tabFilterState.active !== 'machines') return;
+          await syncFilters(previous,name);
+          if (tabFilterState.active === 'machines') applyScope('machines');
+        });
+      } else if (name === 'analysis') {
+        syncFilters(previous,name).then(() => {
+          if (tabFilterState.active === 'analysis') applyScope('analysis');
+        });
+      }
     };
     for (const tab of tabs) {
       tab.addEventListener('click',() => activate(tab.dataset.reportTab));
@@ -398,10 +779,14 @@
         tabs[next].focus();
       });
     }
-    wrapper.hourlyProductivityTabs = {activate};
+    activate('summary');
+    wrapper.hourlyProductivityTabs = {
+      activate, markSite, markDates, recordScope,
+      get syncing() { return tabFilterState.syncing; }
+    };
     return wrapper.hourlyProductivityTabs;
   }
 
   if (typeof frappe !== 'undefined') frappe.pages['hourly-productivity-analysis'].on_page_load = mountProductivityTabs;
-  if (typeof module !== 'undefined' && module.exports) module.exports = {renderAnalysis,renderHourDetails,renderMobileAnalysis,styles,HourlyProductivityAnalysisPage,renderProductivityTabs,mountProductivityTabs};
+  if (typeof module !== 'undefined' && module.exports) module.exports = {renderAnalysis,renderHourDetails,renderMobileAnalysis,HourlyProductivityAnalysisPage,renderProductivityTabs,mountProductivityTabs,renderMachineMatrix};
 })();

@@ -13,7 +13,7 @@ const rows=['2026-09-30','2026-10-01'].map((date,rowIndex)=>{
     const actual={green:240,amber:200,red:150,bright_red:0,grey:0}[category];
     return {start:start.toISOString().slice(0,19).replace('T',' '),end:end.toISOString().slice(0,19).replace('T',' '),
       label:start.toISOString().slice(11,16)+'–'+end.toISOString().slice(11,16),category,
-      actual_bcm:actual,target_bcm:220,achievement:actual/220*100,excavator_available:index===18?null:1.5,
+      available:index===18?null:2.5,utilised:index===18?null:2,actual_bcm:actual,target_bcm:220,achievement:actual/220*100,excavator_available:index===18?null:1.5,
       completed:true,has_record:index!==3,record_status:index===3?'missing':'recorded',non_working_minutes:category==='grey'?60:0};
   });
   Object.assign(cells[0],{category:'bright_red',actual_bcm:0,achievement:0,non_working_minutes:30,
@@ -50,6 +50,8 @@ Object.assign(hours[6], {fatigue_minutes:60,presentation_colour:'blue',
   presentation_segments:[{start_percent:0,end_percent:100,category:'blue'}]});
 Object.assign(hours[7], {fatigue_minutes:30,non_working_minutes:30,presentation_colour:'blue',presentation_segments:[
   {start_percent:0,end_percent:50,category:'blue'}, {start_percent:50,end_percent:100,category:'grey'}]});
+Object.assign(hours[10], {record_status:'pending',presentation_colour:'red',
+  presentation_segments:[{start_percent:0,end_percent:100,category:'red'}]});
 const target = hours.reduce((total,hour)=>total + hour.target_bcm,0);
 const actual = hours.reduce((total,hour)=>total + hour.actual_bcm,0);
 const summaryFixture = {plan_name:'Synthetic LAB preview',production_excavator_count:2,warnings:[
@@ -88,8 +90,14 @@ const contrast=(foreground,background)=>{
         api.html=value=>{if(value===undefined)return list[0]?.innerHTML;list.forEach(node=>{node.innerHTML=value;});return api;};
         api.attr=(name,value)=>{if(value===undefined)return list[0]?.getAttribute(name);list.forEach(node=>node.setAttribute(name,value));return api;};
         api.replaceWith=html=>{list.forEach(node=>{node.insertAdjacentHTML('beforebegin',html);node.remove();});return api;};
-        api.on=(events,selector,callback)=>{for(const eventName of events.split(' '))for(const node of list)node.addEventListener(eventName,event=>{
-          const target=event.target.closest(selector);if(!target||!node.contains(target))return;
+        api.empty=()=>api.html('');
+        api.text=value=>{if(value===undefined)return list[0]?.textContent;list.forEach(node=>{node.textContent=value;});return api;};
+        api.val=value=>{if(value===undefined)return list[0]?.value;list.forEach(node=>{node.value=value;});return api;};
+        api.removeAttr=name=>{list.forEach(node=>node.removeAttribute(name));return api;};
+        api.on=(events,selector,callback)=>{
+          if(typeof selector==='function'){callback=selector;selector=null;}
+for(const eventName of events.split(' '))for(const node of list)node.addEventListener(eventName,event=>{
+          const target=selector?event.target.closest(selector):node;if(!target||!node.contains(target))return;
           callback({type:event.type,currentTarget:target,relatedTarget:event.relatedTarget,originalEvent:event,key:event.key,preventDefault:()=>event.preventDefault()});
         });return api;};
         return api;
@@ -110,13 +118,15 @@ const contrast=(foreground,background)=>{
     await page.route('**/assets/is_production/js/hourly_productivity_summary_view.js*',route=>{
       assetLoads++;return route.fulfill({contentType:'application/javascript',body:fs.readFileSync(path.resolve(__dirname,'../../../public/js/hourly_productivity_summary_view.js'),'utf8')});
     });
+    await page.addStyleTag({path:path.join(__dirname,'../../../public/css/dashboards.css')});
     await page.addScriptTag({path:path.join(__dirname,'hourly_productivity_analysis.js')});
     await page.evaluate(()=>frappe.pages['hourly-productivity-analysis'].on_page_load(wrapper));
     await page.waitForFunction(()=>!wrapper.hourlyProductivityAnalysis.initializing);
     await page.evaluate(()=>wrapper.hourlyProductivityAnalysis.site.set_value('Synthetic Koppie'));
     assert.equal(await page.evaluate(()=>appPages),1);
-    assert.equal(assetLoads,0);
-    assert.equal(await page.locator('[role=tab][aria-selected=true]').innerText(),'Hourly Productivity Analysis');
+    await page.waitForFunction(()=>wrapper.hourlyProductivitySummary && !wrapper.hourlyProductivitySummary.initializing);
+    assert.equal(assetLoads,1);
+    assert.equal(await page.locator('[role=tab][aria-selected=true]').innerText(),'Current Productivity Analysis');
     await page.locator('#hpt-summary-tab').click();
     await page.waitForFunction(()=>wrapper.hourlyProductivitySummary && !wrapper.hourlyProductivitySummary.initializing);
     assert.equal(assetLoads,1);
@@ -125,6 +135,7 @@ const contrast=(foreground,background)=>{
       await wrapper.hourlyProductivitySummary.shift.set_value('Night');
     });
     assert.equal(await page.locator('.hps-kpi').count(),4);
+    assert.equal(await page.locator('.hps-desktop-hours tbody tr').nth(10).evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(255, 255, 255)');
     assert.equal(await page.evaluate(()=>appPages),1);
     let callsBefore=await page.evaluate(()=>calls.length);
     await page.locator('#hpt-analysis-tab').click();
@@ -136,27 +147,84 @@ const contrast=(foreground,background)=>{
     await page.locator('#hpt-summary-tab').click();
     assert.ok(await page.locator('.hps-mobile-hours').isVisible());
     await page.waitForFunction(()=>document.querySelectorAll('.hps-day-hour').length===24);
+    assert.equal(await page.locator('.hps-day-hour[data-hps-shift=Day][data-hps-hour="10"]').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(255, 255, 255)');
     callsBefore=await page.evaluate(()=>calls.length);
     await page.locator('.hps-day-hour[data-hps-shift=Night]').last().click();
     const summaryDetail=await page.locator('.hps-day-detail').innerText();
-    await page.locator('#hpt-summary-tab').press('ArrowLeft');
+    await page.locator('#hpt-summary-tab').press('ArrowRight');
     assert.equal(await page.locator('.hpa-mobile-date').inputValue(),'1');
     assert.equal(await page.locator('.hpa-mobile-detail').innerText(),detail);
-    await page.locator('#hpt-analysis-tab').press('End');
+    await page.locator('#hpt-analysis-tab').press('Home');
     assert.equal(await page.locator('.hps-day-detail').innerText(),summaryDetail);
     assert.deepEqual(await page.evaluate(()=>({site:wrapper.hourlyProductivitySummary.site.get_value(),shift:wrapper.hourlyProductivitySummary.shift.get_value()})),{site:'Summary Site',shift:'Night'});
     assert.equal(await page.evaluate(()=>wrapper.hourlyProductivityAnalysis.site.get_value()),'Synthetic Koppie');
     assert.equal(await page.evaluate(()=>calls.length),callsBefore);
     assert.equal(assetLoads,1);
     assert.equal(await page.evaluate(()=>appPages),1);
+    assert.deepEqual(await page.locator('[role=tab]').allTextContents(),
+      ['Current Productivity Analysis','Hourly Productivity Analysis','Machine Available vs Utilised']);
+    await page.locator('#hpt-summary-tab').press('End');
+    assert.equal(await page.locator('[role=tab][aria-selected=true]').innerText(),'Machine Available vs Utilised');
+    await page.evaluate(()=>wrapper.hourlyProductivityMachines.site.set_value('Synthetic Koppie'));
+    await page.waitForSelector('.hm-matrix td');
+    assert.equal(await page.locator('.hm-matrix td.hm-cell').count(),48);
+    assert.equal(await page.locator('.hm-matrix td.hm-cell').first().innerText(),'2.5 / 2');
+    assert.equal(await page.locator('.hm-avail').first().evaluate(el=>getComputedStyle(el).color),'rgb(37, 99, 235)');
+    assert.equal(await page.locator('.hm-used').first().evaluate(el=>getComputedStyle(el).color),'rgb(147, 51, 234)');
+    assert.equal(await page.locator('.hm-matrix td.hm-cell').nth(3).innerText(),'—');
+    assert.equal(await page.locator('.hm-matrix td.hm-cell').nth(18).innerText(),'—');
+    assert.equal(await page.locator('.hm-note').count(), 0);
+    assert.equal(await page.locator('.hpa-month-divider').last().count(), 1);
+    assert.equal(await page.locator('.hm-chart .hm-legend').count(), 1);
+    assert.equal(await page.locator('.hm-matrix').count(), 1);
+    const machineCalls=await page.evaluate(()=>calls.length);
+    await page.locator('.hm-scope').selectOption('production');
+    assert.equal(await page.locator('.hm-matrix td.hm-cell').count(),0);
+    assert.match(await page.locator('.hm-status').innerText(), /unverified|not yet verified/i);
+    assert.equal(await page.evaluate(()=>calls.length),machineCalls);
+    await page.locator('.hm-scope').selectOption('spare');
+    assert.equal(await page.locator('.hm-matrix td.hm-cell').count(),0);
+    await page.locator('.hm-scope').selectOption('all');
+    await page.waitForSelector('.hm-matrix td');
+    await page.evaluate(async()=>{
+      const original=frappe.call;
+      let resolveOld;
+      frappe.call=()=>new Promise(resolve=>{resolveOld=resolve;});
+      const old=wrapper.hourlyProductivityMachines.refresh();
+      const select=document.querySelector('.hm-scope');
+      select.value='spare';select.dispatchEvent(new Event('change'));
+      resolveOld({message:fixture});await old;
+      frappe.call=original;
+    });
+    assert.equal(await page.locator('.hm-matrix td.hm-cell').count(),0);
+    assert.match(await page.locator('.hm-status').innerText(), /unverified|not yet verified/i);
+    await page.locator('.hm-scope').selectOption('all');
+    await page.waitForSelector('.hm-matrix td');
+    await page.evaluate(async()=>{
+      const original=frappe.call;
+      frappe.call=async()=>{throw new Error('Denied source');};
+      await wrapper.hourlyProductivityMachines.refresh();
+      frappe.call=original;
+    });
+    assert.equal(await page.locator('.hm-matrix td.hm-cell').count(),0);
+    assert.ok((await page.locator('.hm-status').innerText()).includes('permissions'));
+    await page.locator('#hpt-machines-tab').press('ArrowLeft');
+    assert.equal(await page.locator('[role=tab][aria-selected=true]').innerText(),'Hourly Productivity Analysis');
+    await page.locator('#hpt-analysis-tab').press('Home');
+    await page.evaluate(()=>wrapper.hourlyProductivityMachines.refresh());
     for(const width of [320,390,768,1440]){
       await page.setViewportSize({width,height:1000});
-      assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+      for(const name of ['summary','analysis','machines']) {
+        await page.evaluate(name=>wrapper.hourlyProductivityTabs.activate(name),name);
+        assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),`${name} at ${width}px`);
+      }
     }
+    await page.screenshot({path:'/tmp/tabs-machines-check.png',fullPage:true});
+    await page.locator('#hpt-summary-tab').click();
     await page.setViewportSize({width:1440,height:1000});
-    await page.screenshot({path:path.resolve(__dirname,'../../../../../tabs-summary-check.png'),fullPage:true});
+    await page.screenshot({path:'/tmp/tabs-summary-check.png',fullPage:true});
     await page.locator('#hpt-analysis-tab').click();
-    await page.screenshot({path:path.resolve(__dirname,'../../../../../tabs-analysis-check.png'),fullPage:true});
+    await page.screenshot({path:'/tmp/tabs-analysis-check.png',fullPage:true});
     // Existing standalone Summary still builds only one Frappe page.
     await page.addScriptTag({path:path.resolve(__dirname,'../hourly_productivity_summary/hourly_productivity_summary.js')});
     await page.evaluate(()=>{window.standalone={};frappe.pages['hourly-productivity-summary'].on_page_load(standalone);});
@@ -165,6 +233,6 @@ const contrast=(foreground,background)=>{
     assert.equal(assetLoads,1);
     assert.equal(await page.locator('.hps-filters').count(),1);
     assert.deepEqual(errors,[]);
-    console.log('PASS: lazy tabs, independent filters, retained results/disclosures, keyboard navigation, responsive layouts and standalone Summary');
+    console.log('PASS: three ordered tabs/current default, pending white, source ADT counts/blue/purple, unknown/pending suppressed, classified scopes blocked, stale/errors cleared, independent filters/results, keyboard navigation, all tabs responsive, standalone Summary');
   }finally{await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});
