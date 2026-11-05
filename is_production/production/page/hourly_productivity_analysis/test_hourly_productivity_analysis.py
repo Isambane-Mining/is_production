@@ -311,6 +311,65 @@ class TestHourlyProductivityAnalysis(TestCase):
         self.assertEqual([i["month"] for i in data["planning_error"]["issues"]], ["October 2026"])
         self.assertNotIn("PRIVATE", str(data))
 
+
+    def test_historical_mpp_scope_site_transfer_and_pbm(self):
+        assets = self.f.assets + [{
+            "name": "T4", "asset_name": "T4",
+            "asset_category": "ADT", "location": "Plot 22"
+        }]
+        plan = dict(
+            self.plan,
+            excavator_truck_assignments=[
+                {"excavator": "EX1", "truck": "T1"},
+                {"excavator": "EX1", "truck": "T2"},
+                {"excavator": "EX2", "truck": "T3"},
+                {"excavator": None, "truck": "T4"},
+            ],
+        )
+        changed = dict(
+            plan,
+            name="CHANGED",
+            prod_month_start_date="2026-10-13",
+            prod_month_end_date="2026-10-31",
+            excavator_truck_assignments=[
+                {"excavator": "EX1", "truck": "T1"},
+                {"excavator": "EX1", "truck": "T2"},
+                {"excavator": None, "truck": "T3"},
+                {"excavator": None, "truck": "T4"},
+            ],
+        )
+        plan["prod_month_end_date"] = "2026-10-12"
+
+        docs = [
+            self.f.doc(date="2026-10-12", rows=[
+                self.f.row(truck="T1"),
+                self.f.row(truck="T4"),
+            ]),
+            self.f.doc(date="2026-10-13", rows=[
+                self.f.row(truck="T3"),
+            ]),
+        ]
+        pbm = [{
+            "asset_name": "T4",
+            "breakdown_start_datetime": "2026-10-12 06:00:00",
+            "resolved_datetime": "2026-10-12 06:30:00",
+        }]
+
+        for scope, expected in (
+            ("production", [(3, 1), (2, 0)]),
+            ("spare", [(0.5, 1), (2, 1)]),
+        ):
+            data = report.build_analysis(
+                "2026-10-12", "2026-10-13", "Koppie",
+                [plan, changed], assets, pbm, docs,
+                now=datetime(2026, 11, 2),
+                machine_scope=scope,
+            )
+            for day, (available, utilised) in enumerate(expected):
+                cell = data["rows"][day]["cells"][0]
+                self.assertAlmostEqual(cell["available"], available)
+                self.assertEqual(cell["utilised"], utilised)
+
     def test_machine_counts_use_asset_fleet_pbm_overlap_and_distinct_recorded_adts(self):
         docs = [self.f.doc(rows=[self.f.row(truck="T1", loads=1),
                                  self.f.row(truck="T1", loads=2),

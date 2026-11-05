@@ -2,12 +2,6 @@
 from collections import defaultdict
 from datetime import datetime, time, timedelta
 
-from collections import OrderedDict
-from io import BytesIO
-import re
-
-import xlsxwriter
-
 import frappe
 from frappe.utils import getdate, now_datetime
 
@@ -103,7 +97,37 @@ def non_working_windows(plan, date, shift, site, fatigue, warnings):
     return shift_windows(plan, date, shift, site, fatigue, warnings)[0]
 
 
-def build_analysis(from_date, to_date, site, plans, assets, breakdowns, documents, *, now=None, fatigue=()):
+
+def mpp_adt_scope(plan, machine_scope):
+    """Resolve saved MPP ADT assignments for one operational date."""
+    if machine_scope == "all":
+        return None
+
+    if machine_scope not in ("production", "spare"):
+        raise ValueError("Invalid machine scope")
+
+    production = set()
+    spare = set()
+
+    for row in plan.get("excavator_truck_assignments", []):
+        truck = row.get("truck")
+        if not truck:
+            continue
+
+        if row.get("excavator"):
+            production.add(truck)
+        else:
+            spare.add(truck)
+
+    # Conflicting assignments cannot safely be classified.
+    ambiguous = production & spare
+    production -= ambiguous
+    spare -= ambiguous
+
+    return production if machine_scope == "production" else spare
+
+
+def build_analysis(from_date, to_date, site, plans, assets, breakdowns, documents, *, now=None, fatigue=(), machine_scope="all"):
     first, last = validate_range(from_date, to_date)
     error = planning_error(first, last, site, plans)
     if error:
@@ -132,11 +156,12 @@ def build_analysis(from_date, to_date, site, plans, assets, breakdowns, document
     for offset in range((last - first).days + 1):
         date = first + timedelta(days=offset)
         plan = summary.select_plan(plans, site, date)
+        adt_scope = mpp_adt_scope(plan, machine_scope)
         cells = []
         load_times = {}
         for shift in ("Day", "Night"):
             shift_data = summary.build_summary(date, shift, site, plan, assets, breakdowns, by_date[date],
-                                               now=now, estimate_availability=False)
+                                               now=now, estimate_availability=False, adt_scope=adt_scope)
             warnings.extend(shift_data["warnings"])
             load_times[shift] = shift_data["excavators"]
             windows = non_working_windows(plan, date, shift, site, fatigue, warnings)
@@ -176,7 +201,9 @@ def get_defaults():
 
 
 @frappe.whitelist()
-def get_analysis(site, from_date, to_date):
+def get_analysis(site, from_date, to_date, machine_scope="all"):
+    if machine_scope not in ("all", "production", "spare"):
+        raise ValueError("Invalid machine scope")
     if frappe.session.user == "Guest":
         raise frappe.PermissionError("Login required")
     if not site or not from_date or not to_date:
@@ -201,13 +228,17 @@ def get_analysis(site, from_date, to_date):
             "title": "Fatigue Configuration Access Required",
             "message": "You need read access to Startup and Fatigue Specification and its scheduling fields "
                        "to classify fatigue periods. Please ask your administrator for access."}}
-    return build_analysis(first, last, site, plans, assets, breakdowns, documents, fatigue=fatigue)
+    return build_analysis(
+        first, last, site, plans, assets, breakdowns, documents,
+        fatigue=fatigue, machine_scope=machine_scope
+    )
 
 
 @frappe.whitelist()
 def export_excel(site, from_date, to_date):
     """Download the same permission-checked data shown on the dashboard."""
     from frappe.utils import cint
+    from is_production.production.page.hourly_productivity_analysis.hourly_productivity_excel import make_workbook
 
     data = get_analysis(site, from_date, to_date)
     if not data.get("rows"):
@@ -225,250 +256,154 @@ def export_excel(site, from_date, to_date):
     frappe.response["type"] = "download"
 
 
-COLOURS = {
-    "green": "#00B050",
-    "amber": "#FF9F1C",
-    "red": "#FFE066",
-    "bright_red": "#D63C4B",
-    "grey": "#E8EDF2",
-}
 
-LABELS = {
-    "green": "Target achieved >=100%",
-    "amber": "85-99.9% achieved",
-    "red": "Below 85%",
-    "bright_red": "Zero production, machines available",
-    "grey": "Fatigue / Non-working",
-}
+@frappe.whitelist()
+def export_machine_excel(site, from_date, to_date, machine_scope="all"):
+    """Download the historically classified hourly ADT matrix."""
+    from io import BytesIO
+    from collections import OrderedDict
+    import xlsxwriter
 
+    data = get_analysis(site, from_date, to_date, machine_scope=machine_scope)
+    if not data.get("rows"):
+        frappe.throw("No exportable machine data.")
 
-def make_workbook(data):
-    output = BytesIO()
-    workbook = xlsxwriter.Workbook(output, {"in_memory": True})
+    out = BytesIO()
+    book = xlsxwriter.Workbook(out, {"in_memory": True})
 
-    workbook.set_properties({
-        "title": "Hourly Productivity Analysis",
-        "subject": "Production performance by operational day",
-        "comments": "Generated from permission-checked ERPNext report data",
+    navy = book.add_format({
+        "bold": True, "font_size": 17,
+        "font_color": "#FFFFFF", "bg_color": "#183153"
     })
-
-    title = workbook.add_format({
-        "bold": True, "font_size": 18, "font_color": "#FFFFFF",
-        "bg_color": "#183153", "valign": "vcenter",
-    })
-    section = workbook.add_format({
-        "bold": True, "font_color": "#FFFFFF",
-        "bg_color": "#315574", "border": 1,
-        "border_color": "#CAD5E0",
-    })
-    head = workbook.add_format({
+    heading = book.add_format({
         "bold": True, "bg_color": "#DFE8F1",
-        "border": 1, "border_color": "#B8C8D5",
-        "align": "center",
+        "align": "center", "border": 1
     })
-    text = workbook.add_format({"font_color": "#253647"})
-    integer = workbook.add_format({"num_format": "#,##0"})
-    decimal = workbook.add_format({"num_format": "#,##0.0"})
-    percentage = workbook.add_format({"num_format": "0.0%"})
+    shift = book.add_format({
+        "bold": True, "font_color": "#FFFFFF",
+        "bg_color": "#315574", "align": "center"
+    })
+    normal = book.add_format({"border": 1})
+    blue = book.add_format({"bold": True, "font_color": "#1769AA"})
+    purple = book.add_format({"bold": True, "font_color": "#7030A0"})
 
-    fills = {
-        key: workbook.add_format({
-            "bg_color": colour,
-            "font_color": "#FFFFFF" if key == "bright_red" else "#17212B",
-            "border": 1,
-            "border_color": "#C7D2DD",
-            "align": "center",
-            "num_format": "#,##0.0#",
-        })
-        for key, colour in COLOURS.items()
+    backgrounds = {
+        "green": "#D9EEDB",
+        "yellow": "#FFF1BE",
+        "orange": "#FAD9B5",
+        "red": "#F5C3C8",
+        "unknown": "#FFFFFF",
     }
-
-    missing_fills = {
-        key: workbook.add_format({
-            "bg_color": colour,
-            "font_color": "#FFFFFF" if key == "bright_red" else "#17212B",
-            "border": 1,
-            "border_color": "#C7D2DD",
-            "align": "center",
-            "bold": True,
+    formats = {
+        key: book.add_format({
+            "bg_color": colour, "border": 1,
+            "align": "center", "valign": "vcenter"
         })
-        for key, colour in COLOURS.items()
+        for key, colour in backgrounds.items()
     }
 
     months = OrderedDict()
     for row in data["rows"]:
         months.setdefault(row["month_key"], []).append(row)
 
-    overview = workbook.add_worksheet("Summary")
+    overview = book.add_worksheet("Summary")
     overview.hide_gridlines(2)
-    overview.set_tab_color("#183153")
-    overview.set_column("A:A", 22)
-    overview.set_column("B:B", 18)
-    overview.set_column("C:J", 19)
+    overview.set_column("A:A", 24)
+    overview.set_column("B:B", 28)
+    overview.merge_range("A1:H2", "MACHINE AVAILABLE VS UTILISED", navy)
 
-    overview.merge_range("A1:J2", "HOURLY PRODUCTIVITY | MANAGEMENT SUMMARY", title)
-    overview.write("A4", "Site", section)
-    overview.write("B4", data["site"], text)
-    overview.write("A5", "From date", section)
-    overview.write("B5", data["from_date"], text)
-    overview.write("A6", "To date", section)
-    overview.write("B6", data["to_date"], text)
-
-    headers = [
-        "Month", "Days", "Actual BCM", "Target BCM",
-        "Achievement", ">=100% hrs", "85-99.9% hrs",
-        "Below 85% hrs", "Zero-production hrs", "Non-working hrs",
+    details = [
+        ("Site", site),
+        ("From Date", from_date),
+        ("To Date", to_date),
+        ("Machine Scope", machine_scope.title()),
+        ("Measurement", "Available / Utilised ADTs"),
     ]
 
-    for col, label in enumerate(headers):
-        overview.write(8, col, label, head)
+    for index, (label, value) in enumerate(details, 3):
+        overview.write(index, 0, label, heading)
+        overview.write_string(index, 1, str(value), normal)
 
-    for month_index, (month_key, rows) in enumerate(months.items()):
-        month_name = rows[0]["month"]
-        sheet = workbook.add_worksheet(month_name[:31])
-        sheet.set_tab_color("#00B050")
+    overview.write("A10", "Available", blue)
+    overview.write("B10", "PBM-adjusted ADT count", normal)
+    overview.write("A11", "Utilised", purple)
+    overview.write("B11", "ADTs with recorded loads", normal)
+    overview.write("A13", "80%+", formats["green"])
+    overview.write("A14", "50-79%", formats["yellow"])
+    overview.write("A15", "20-49%", formats["orange"])
+    overview.write("A16", "Below 20%", formats["red"])
+
+    for month, rows in months.items():
+        sheet = book.add_worksheet(rows[0]["month"][:31])
         sheet.hide_gridlines(2)
         sheet.set_landscape()
-        sheet.fit_to_pages(1, 1)
-        sheet.set_paper(8)
-        sheet.set_margins(0.25, 0.25, 0.4, 0.4)
-        sheet.repeat_rows(0, 5)
+        sheet.fit_to_pages(1, 0)
         sheet.freeze_panes(6, 3)
-        sheet.set_column("A:A", 13)
-        sheet.set_column("B:B", 9)
-        sheet.set_column("C:C", 14)
-        sheet.set_column(3, 26, 11)
+        sheet.set_column("A:A", 14)
+        sheet.set_column("B:B", 10)
+        sheet.set_column("C:C", 18)
+        sheet.set_column(3, 26, 13)
 
-        sheet.merge_range("A1:AA2", f"{data['site']} | {month_name} | HOURLY PRODUCTIVITY", title)
-        sheet.merge_range("A4:C4", "OPERATIONAL DAY 06:00-06:00", section)
-        sheet.merge_range("D4:O4", "DAY SHIFT | 06:00-18:00", section)
-        sheet.merge_range("P4:AA4", "NIGHT SHIFT | 18:00-06:00", section)
+        sheet.merge_range(
+            "A1:AA2",
+            f"{site} | {rows[0]['month']} | AVAILABLE VS UTILISED",
+            navy
+        )
+        sheet.write("A3", "Machines", heading)
+        sheet.write_string("B3", machine_scope.title())
+        sheet.write("D3", "Value", heading)
+        sheet.write_string("E3", "Available / Utilised")
 
-        for col, label in enumerate(["Date", "Day", "Month"]):
-            sheet.write(5, col, label, head)
+        sheet.merge_range("A5:C5", "OPERATIONAL DAY", shift)
+        sheet.merge_range("D5:O5", "DAY SHIFT 06:00-18:00", shift)
+        sheet.merge_range("P5:AA5", "NIGHT SHIFT 18:00-06:00", shift)
 
-        hours = [cell["label"] for cell in rows[0]["cells"]]
-        for col, label in enumerate(hours, 3):
-            sheet.write(5, col, label, head)
+        for col, label in enumerate(("Date", "Day", "Month")):
+            sheet.write(5, col, label, heading)
 
-        totals = {
-            "actual": 0.0, "target": 0.0,
-            **{key: 0.0 for key in COLOURS},
-        }
+        for col, label in enumerate(data["hours"], 3):
+            sheet.write(5, col, label, heading)
 
-        for day_index, row in enumerate(rows):
-            excel_row = day_index + 6
-            sheet.write(excel_row, 0, row["date"], text)
-            sheet.write(excel_row, 1, row["day"], text)
-            sheet.write(excel_row, 2, row["month"], text)
+        for row_index, row in enumerate(rows, 6):
+            for col, key in enumerate(("date", "day", "month")):
+                sheet.write_string(row_index, col, str(row[key]), normal)
 
             for hour_index, cell in enumerate(row["cells"]):
-                col = hour_index + 3
-                category = cell["category"]
-                if category not in COLOURS:
-                    category = "red"
+                available = cell.get("available")
+                utilised = cell.get("utilised")
+                verified = cell.get("completed") and cell.get("has_record")
 
-                actual = float(cell["actual_bcm"] or 0)
-                target = float(cell["target_bcm"] or 0)
-                totals["actual"] += actual
-                totals["target"] += target
-
-                segments = cell.get("segments") or []
-                if segments:
-                    for segment in segments:
-                        key = segment["category"]
-                        if key in totals:
-                            totals[key] += (
-                                float(segment["end_percent"])
-                                - float(segment["start_percent"])
-                            ) / 100
+                if not verified or available is None or utilised is None:
+                    value = "-"
+                    colour = "unknown"
                 else:
-                    totals[category] += 1
+                    available = float(available)
+                    utilised = int(utilised)
+                    value = f"{available:g} / {utilised}"
+                    ratio = utilised / available if available > 0 else None
 
-                if not cell["has_record"]:
-                    sheet.write(excel_row, col, f"{actual:g}*", missing_fills[category])
-                    sheet.write_comment(
-                        excel_row, col,
-                        "No hourly production record. Zero is unverified."
-                    )
-                elif not cell["completed"]:
-                    sheet.write(excel_row, col, f"{actual:g}†", missing_fills[category])
-                    sheet.write_comment(
-                        excel_row, col, "Current or unfinished hour."
-                    )
-                else:
-                    sheet.write_number(excel_row, col, actual, fills[category])
-
-                if len(segments) > 1:
-                    sheet.write_comment(
-                        excel_row, col,
-                        "Mixed classification within this hour: "
-                        + ", ".join(
-                            f"{s['category']}: "
-                            f"{float(s['end_percent'])-float(s['start_percent']):.0f}%"
-                            for s in segments
-                        )
+                    colour = (
+                        "unknown" if ratio is None else
+                        "green" if ratio >= 0.80 else
+                        "yellow" if ratio >= 0.50 else
+                        "orange" if ratio >= 0.20 else "red"
                     )
 
-        end_row = 6 + len(rows)
-        sheet.autofilter(5, 0, end_row - 1, 26)
-        sheet.print_area(0, 0, end_row + 10, 26)
+                sheet.write_string(
+                    row_index, hour_index + 3,
+                    value, formats[colour]
+                )
 
-        note_row = end_row + 2
-        sheet.merge_range(
-            note_row, 0, note_row, 12,
-            "* Missing record (unverified zero)  |  † Unfinished hour",
-            text,
-        )
+    book.close()
 
-        sheet.write(note_row + 2, 0, "Performance category", head)
-        sheet.write(note_row + 2, 1, "Hours", head)
-        for ix, key in enumerate(COLOURS):
-            sheet.write(note_row + 3 + ix, 0, LABELS[key], fills[key])
-            sheet.write_number(note_row + 3 + ix, 1, totals[key], decimal)
-        sheet.set_column("A:A", 35)
+    safe_site = "".join(
+        c if c.isalnum() or c in "-_" else "_"
+        for c in str(site)
+    )[:60]
 
-        summary_row = 9 + month_index
-        values = [
-            month_name, len(rows), totals["actual"], totals["target"],
-            totals["actual"] / totals["target"] if totals["target"] else 0,
-            totals["green"], totals["amber"], totals["red"],
-            totals["bright_red"], totals["grey"],
-        ]
-        for col, value in enumerate(values):
-            fmt = percentage if col == 4 else decimal if col >= 5 else integer if col in (1, 2, 3) else text
-            if isinstance(value, str):
-                overview.write(summary_row, col, value, fmt)
-            else:
-                overview.write_number(summary_row, col, value, fmt)
-
-    last = 9 + len(months)
-    overview.autofilter(8, 0, last - 1, 9)
-    overview.freeze_panes(9, 1)
-
-    chart = workbook.add_chart({"type": "column"})
-    chart.add_series({
-        "name": "Actual BCM",
-        "categories": ["Summary", 9, 0, last - 1, 0],
-        "values": ["Summary", 9, 2, last - 1, 2],
-    })
-    chart.add_series({
-        "name": "Target BCM",
-        "categories": ["Summary", 9, 0, last - 1, 0],
-        "values": ["Summary", 9, 3, last - 1, 3],
-    })
-    chart.set_title({"name": "Monthly Actual vs Target BCM"})
-    chart.set_y_axis({"name": "BCM"})
-    chart.set_legend({"position": "bottom"})
-    chart.set_style(10)
-    overview.insert_chart(last + 3, 0, chart, {"x_scale": 1.6, "y_scale": 1.4})
-
-    overview.write(
-        last + 27, 0,
-        "Performance categories are hour-weighted. "
-        "Mixed fatigue hours contribute fractionally.",
-        text,
+    frappe.response["filename"] = (
+        f"{safe_site}_Machine_Available_vs_Utilised_"
+        f"{from_date}_to_{to_date}.xlsx"
     )
-
-    workbook.close()
-    return output.getvalue()
+    frappe.response["filecontent"] = out.getvalue()
+    frappe.response["type"] = "download"

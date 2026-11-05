@@ -491,6 +491,9 @@
             <button type="button" class="btn btn-primary hm-refresh">
               Refresh
             </button>
+            <button type="button" class="btn btn-default hm-export">
+              Export Excel
+            </button>
           </div>
           <div class="hm-status" role="status" aria-live="polite">
             Select a site and date range.
@@ -517,13 +520,6 @@
 
         content.empty();
 
-        if (scope !== 'all') {
-          status.text(
-            'Production/Spare classification is not yet verified.'
-          );
-          return;
-        }
-
         if (!site || !from_date || !to_date ||
             from_date > to_date) {
           status.text('Select a valid site and date range.');
@@ -536,7 +532,7 @@
           const response = await frappe.call({
             method:
               'is_production.production.page.hourly_productivity_analysis.hourly_productivity_analysis.get_analysis',
-            args: {site,from_date,to_date}
+            args: {site,from_date,to_date,machine_scope:scope}
           });
 
           if (token !== requestToken) return;
@@ -592,6 +588,27 @@
           }
         });
       }
+
+
+      panel.find('.hm-export').on('click', () => {
+        const site = controls.site.get_value();
+        const from_date = controls.from_date.get_value();
+        const to_date = controls.to_date.get_value();
+        const machine_scope = panel.find('.hm-scope').val();
+
+        if (!site || !from_date || !to_date || from_date > to_date) {
+          frappe.msgprint('Select valid site and dates.');
+          return;
+        }
+
+        const params = new URLSearchParams({
+          site, from_date, to_date, machine_scope
+        });
+
+        window.location.href =
+          '/api/method/is_production.production.page.hourly_productivity_analysis.hourly_productivity_analysis.export_machine_excel?' +
+          params.toString();
+      });
 
       panel.find('.hm-refresh').on('click',refresh);
       panel.find('.hm-scope').on('change', () => {

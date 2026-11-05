@@ -104,7 +104,7 @@ def _captured_load_events(production, start, hours):
 
 
 def build_summary(date, shift, site, plan, assets, breakdowns, documents, *, now=None,
-                  green_threshold=100, orange_threshold=80, estimate_availability=True):
+                  green_threshold=100, orange_threshold=80, estimate_availability=True, adt_scope=None):
     """Inputs must already be permission-checked; never modifies source rows."""
     if shift not in ("Day", "Night"):
         raise ValueError("Shift must be Day or Night")
@@ -163,8 +163,24 @@ def build_summary(date, shift, site, plan, assets, breakdowns, documents, *, now
                         "assignments in browser localStorage, not on these rows. They are not labelled as confirmed spares.")
     if not trucks_unique:
         warnings.append("An ADT is assigned to multiple MPP teams; availability attribution is disabled.")
-    site_assets = [row for row in assets if row.get("location") == site or row["name"] in teams]
-    adt_assets = [row for row in site_assets if row.get("asset_category") == "ADT"]
+    site_assets = [
+        row for row in assets
+        if row.get("location") == site
+        or row["name"] in teams
+        or (adt_scope is not None and row["name"] in adt_scope)
+    ]
+    adt_assets = [
+        row for row in site_assets
+        if row.get("asset_category") == "ADT"
+        and (adt_scope is None or row["name"] in adt_scope)
+    ]
+    if adt_scope is not None:
+        # MPP proves historical site membership. Override location only
+        # in temporary calculation records; never alter stored Assets.
+        adt_assets = [
+            dict(row, location=site)
+            for row in adt_assets
+        ]
     data = adt.build_report(date, shift, site, adt_assets, breakdowns, production)
     data["excavators"] = _captured_load_events(production, start, data["hours"])
     intervals = _intervals(breakdowns, assets, start, end)
