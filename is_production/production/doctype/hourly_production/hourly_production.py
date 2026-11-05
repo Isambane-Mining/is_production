@@ -309,12 +309,194 @@ class HourlyProduction(Document):
 
         # v16 migration safety: ensure Link fields store Asset.name (primary key)
         self.normalize_asset_links()
+        self.validate_hourly_machine_exclusions()
         self.populate_truck_material_types()
         self.apply_planning_tub_factors()
         self.validate_truck_loads()
         # self.validate_and_apply_tub_factors()
         self.before_save_logic()  # <-- NOW RUNS AUTOMATICALLY
         self.validate_dozer_production()
+
+    def _hourly_excluded_machine_keys(self):
+        """Resolve excluded Asset IDs for this planning record.
+
+        Return both Asset.name and Asset.asset_name identifiers.
+        No historical documents or Asset records are modified.
+        """
+        if not self.month_prod_planning:
+            return set()
+
+        plan = frappe.get_doc(
+            "Monthly Production Planning",
+            self.month_prod_planning,
+        )
+
+        if plan.location != self.location:
+            frappe.throw(
+                _("Hourly Production location does not match "
+                  "Monthly Production Planning.")
+            )
+
+        if self.prod_date:
+            production_date = getdate(self.prod_date)
+            if not (
+                getdate(plan.prod_month_start_date)
+                <= production_date
+                <= getdate(plan.prod_month_end_date)
+            ):
+                frappe.throw(
+                    _("Hourly Production date falls outside "
+                      "the linked Monthly Production Planning period.")
+                )
+
+        excluded_ids = {
+            str(row.asset).strip().upper()
+            for row in (
+                plan.get("excluded_production_machines") or []
+            )
+            if row.asset
+        }
+
+        if not excluded_ids:
+            return set()
+
+        keys = set(excluded_ids)
+
+        assets = frappe.get_all(
+            "Asset",
+            filters=[
+                ["location", "=", self.location],
+                ["asset_category", "in",
+                 ["Excavator", "Dozer", "ADT", "RIGID"]],
+                ["docstatus", "=", 1],
+            ],
+            fields=["name", "asset_name"],
+            limit_page_length=1000,
+        )
+
+        for asset in assets:
+            identifiers = {
+                str(value).strip().upper()
+                for value in (
+                    asset.name,
+                    asset.asset_name,
+                )
+                if value
+            }
+
+            if identifiers & excluded_ids:
+                keys.update(identifiers)
+
+        return keys
+
+    def validate_hourly_machine_exclusions(self):
+        """Prevent new capture against excluded machines.
+
+        Unchanged historical child rows are preserved.
+        """
+        excluded = self._hourly_excluded_machine_keys()
+        if not excluded:
+            return
+
+        previous = None
+        if not self.is_new():
+            previous = frappe.get_doc("Hourly Production", self.name)
+
+        def normal(value):
+            return str(value or "").strip().upper()
+
+        def excluded_row(row, fields):
+            return any(
+                normal(row.get(field)) in excluded
+                for field in fields
+                if row.get(field)
+            )
+
+        def check_table(table, machine_fields, capture_fields):
+            old_rows = {
+                row.name: row
+                for row in (previous.get(table) or [])
+            } if previous else {}
+
+            for row in self.get(table) or []:
+                old = old_rows.get(row.name)
+
+                current_excluded = excluded_row(row, machine_fields)
+                previous_excluded = (
+                    excluded_row(old, machine_fields)
+                    if old else False
+                )
+
+                if not (current_excluded or previous_excluded):
+                    continue
+
+                if old is None:
+                    frappe.throw(
+                        _("Row {0}: An excluded machine cannot be "
+                          "added to {1}.").format(row.idx, table)
+                    )
+
+                for field in capture_fields:
+                    current_value = row.get(field)
+                    previous_value = old.get(field)
+
+                    if field in ("loads", "bcms", "bcm_hour"):
+                        from frappe.utils import flt
+                        changed = (
+                            flt(current_value) != flt(previous_value)
+                        )
+                    else:
+                        changed = (
+                            normal(current_value) !=
+                            normal(previous_value)
+                        )
+
+                    if changed:
+                        frappe.throw(
+                            _("Row {0}: Cannot change {1} for an "
+                              "excluded machine in {2}.")
+                            .format(row.idx, field, table)
+                        )
+
+        check_table(
+            "truck_loads",
+            (
+                "asset_name_truck",
+                "truck_plant_no",
+                "asset_name_shoval",
+                "excavator_plant_no",
+            ),
+            (
+                "asset_name_truck",
+                "truck_plant_no",
+                "asset_name_shoval",
+                "excavator_plant_no",
+                "loads",
+                "bcms",
+                "mining_areas_trucks",
+                "geo_mat_layer_truck",
+                "mat_type",
+                "exc_to_area",
+                "exc_hauling_distance_meter",
+                "exc_start_load_time",
+                "exc_end_load_time",
+            ),
+        )
+
+        check_table(
+            "dozer_production",
+            ("asset_name", "dozer_plant_no"),
+            (
+                "asset_name",
+                "dozer_plant_no",
+                "dozer_service",
+                "bcm_hour",
+                "mining_areas_dozer_child",
+                "dozer_geo_mat_layer",
+                "area_to",
+                "dozer_hauling_distance_meter",
+            ),
+        )
 
     def populate_truck_loads_if_blank(self):
         """Populate truck_loads from Asset if the form only has blank/default rows."""
@@ -347,8 +529,16 @@ class HourlyProduction(Document):
             limit_page_length=500,
         )
 
+        excluded = self._hourly_excluded_machine_keys()
+
         for asset in trucks:
             if not asset.name or not asset.item_name:
+                continue
+
+            if any(
+                str(value or "").strip().upper() in excluded
+                for value in (asset.name, asset.asset_name)
+            ):
                 continue
 
             self.append("truck_loads", {
