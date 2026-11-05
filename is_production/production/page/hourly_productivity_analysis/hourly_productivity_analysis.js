@@ -168,11 +168,10 @@
           frappe.msgprint('Select a valid Site, From Date and To Date.');
           return;
         }
-        if (this.page.main.find('.hpa-scope').val() !== 'all') {
-          frappe.msgprint('Production/Spare Excel export is not yet available.');
-          return;
-        }
-        const params = new URLSearchParams({site, from_date, to_date});
+        const machine_scope = this.page.main.find('.hpa-scope').val();
+        const params = new URLSearchParams({
+          site, from_date, to_date, machine_scope
+        });
         const endpoint = this.method + 'export_excel';
         window.location.href =
           '/api/method/' + endpoint + '?' + params.toString();
@@ -288,12 +287,12 @@
     async load() {
       if (this.initializing) return;
       const token = ++this.requestToken;
-      const args = {site:this.site.get_value(),from_date:this.from_date.get_value(),to_date:this.to_date.get_value()};
-      if (this.page.main.find('.hpa-scope').val() !== 'all') {
-        ++this.requestToken;
-        this.message('Production/Spare classification is not yet verified.');
-        return;
-      }
+      const args = {
+        site:this.site.get_value(),
+        from_date:this.from_date.get_value(),
+        to_date:this.to_date.get_value(),
+        machine_scope:this.page.main.find('.hpa-scope').val()
+      };
       this.page.main.find('.hpa-shell').attr('aria-busy','false');
       if (!args.site || !args.from_date || !args.to_date) {this.message('Select a site and date range.');return;}
       if (args.from_date > args.to_date) {this.message('From Date must be on or before To Date.');return;}
@@ -303,7 +302,13 @@
         const response = await frappe.call({method:this.method + 'get_analysis',args});
         if (token !== this.requestToken) return;
         this.analysisData = response.message;
-        this.page.main.find('.hpa-content').html(renderAnalysis(response.message, this.cardId));
+        const scoped = args.machine_scope !== 'all';
+        const scopeNotice = scoped
+          ? '<p class="hpa-message">Machine availability/utilisation is filtered by historical MPP. BCM, targets and productivity remain site-wide.</p>'
+          : '';
+        this.page.main.find('.hpa-content').html(
+          scopeNotice + renderAnalysis(response.message, this.cardId)
+        );
       } catch (error) {
         if (token !== this.requestToken) return;
         this.message('Unable to load. Every date needs a covering MPP, and read access is required for Site, MPP, production, Assets and PBM. Select at most 366 days.');
@@ -326,7 +331,23 @@
     return 'red';
   }
 
-  function renderMachineMatrix(data) {
+  function matchesUnavailableRange(total, available, selected) {
+    if (selected == null || available == null) return false;
+    if (!Number.isFinite(Number(total)) ||
+        !Number.isFinite(Number(available)) ||
+        !Number.isInteger(selected) || selected < 0 ||
+        Number(total) <= 0) return false;
+
+    const missing = Number(total) - Number(available);
+    const epsilon = 1e-9;
+
+    if (selected === 0) return Math.abs(missing) <= epsilon;
+
+    return missing > selected - 1 + epsilon &&
+           missing <= selected + epsilon;
+  }
+
+  function renderMachineMatrix(data, unavailableNumber = null) {
     let lastMonth = '';
 
     const metric = (value, cls, digits) =>
@@ -345,6 +366,9 @@
 
       const cells = row.cells.map((cell, index) => {
         const verified = cell.completed && cell.has_record;
+        const total = Number(row.fleet_total);
+        const highlighted = verified &&
+          matchesUnavailableRange(total, cell.available, unavailableNumber);
         const available = verified
           ? metric(cell.available,'hm-avail',2) : '—';
         const utilised = verified
@@ -359,7 +383,7 @@
 
         return `<td class="hpa-cell hm-cell hm-${colour} ${
           index === 12 ? 'hpa-night-start' : ''
-        }" title="${verified
+        } ${highlighted ? 'hm-unavailable-match' : ''}" title="${verified
           ? 'Available / Utilised ADTs'
           : 'Unknown, missing or pending'}">${value}</td>`;
       }).join('');
@@ -403,9 +427,9 @@
       <div class="hm-legend">
         <strong>Machine Available vs Utilised</strong>
         <div><i class="hm-available-key"></i>
-          <span>Available ADTs</span><b class="hm-avail">Blue</b></div>
+          <span>Available ADTs</span></div>
         <div><i class="hm-utilised-key"></i>
-          <span>Utilised ADTs</span><b class="hm-used">Purple</b></div>
+          <span>Utilised ADTs</span></div>
         <div><i class="hm-green-key"></i>
           <span>Green · 80–100% utilisation</span></div>
         <div><i class="hm-yellow-key"></i>
@@ -488,6 +512,12 @@
                 <option value="spare">Spare Machines</option>
               </select>
             </div>
+            <div class="hm-unavailable-control">
+              <label for="hm-unavailable-select">Machine Number Unavailable</label>
+              <select id="hm-unavailable-select" class="form-control hm-unavailable">
+                <option value="">No highlight</option>
+              </select>
+            </div>
             <button type="button" class="btn btn-primary hm-refresh">
               Refresh
             </button>
@@ -503,8 +533,16 @@
 
       let initializing = true;
       let requestToken = 0;
+      let machineData = null;
 
       const controls = {};
+
+      const drawMachineData = () => {
+        if (!machineData) return;
+        const value = panel.find('.hm-unavailable').val();
+        const number = value === '' ? null : Number(value);
+        panel.find('.hm-content').html(renderMachineMatrix(machineData, number));
+      };
 
       const refresh = async () => {
         if (initializing) return;
@@ -551,7 +589,25 @@
             return;
           }
 
-          content.html(renderMachineMatrix(data));
+          machineData = data;
+          const selector = panel.find('.hm-unavailable');
+          const previous = selector.val();
+          const maximum = Math.max(0, ...data.rows.map(
+            row => Number(row.fleet_total) || 0
+          ));
+          selector.empty().append(
+            $('<option>').val('').text('No highlight')
+          );
+          if (maximum > 0) {
+            selector.append($('<option>').val('0').text('0 · Fully available'));
+          }
+          for (let n = 1; n <= maximum; n++) {
+            selector.append(
+              $('<option>').val(String(n)).text(`${n - 1}–${n}`)
+            );
+          }
+          selector.val(previous && Number(previous) <= maximum ? previous : '');
+          drawMachineData();
           status.empty();
 
         } catch (error) {
@@ -601,8 +657,9 @@
           return;
         }
 
+        const unavailable_number = panel.find('.hm-unavailable').val();
         const params = new URLSearchParams({
-          site, from_date, to_date, machine_scope
+          site, from_date, to_date, machine_scope, unavailable_number
         });
 
         window.location.href =
@@ -610,6 +667,7 @@
           params.toString();
       });
 
+      panel.find('.hm-unavailable').on('change',drawMachineData);
       panel.find('.hm-refresh').on('click',refresh);
       panel.find('.hm-scope').on('change', () => {
         wrapper.hourlyProductivityTabs?.recordScope(
@@ -805,5 +863,5 @@
   }
 
   if (typeof frappe !== 'undefined') frappe.pages['hourly-productivity-analysis'].on_page_load = mountProductivityTabs;
-  if (typeof module !== 'undefined' && module.exports) module.exports = {renderAnalysis,renderHourDetails,renderMobileAnalysis,HourlyProductivityAnalysisPage,renderProductivityTabs,mountProductivityTabs,renderMachineMatrix};
+  if (typeof module !== 'undefined' && module.exports) module.exports = {renderAnalysis,renderHourDetails,renderMobileAnalysis,HourlyProductivityAnalysisPage,renderProductivityTabs,mountProductivityTabs,renderMachineMatrix,matchesUnavailableRange};
 })();

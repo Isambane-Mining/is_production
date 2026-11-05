@@ -1605,11 +1605,81 @@ function populate_truck_loads_and_lookup(frm) {
                 }
             ) || [];
 
-            const truckMaps = build_asset_maps(trucks);
-            const excavMaps = build_asset_maps(excavators);
+            // Exclusions apply to new Hourly Production records only.
+            // Saved historical documents are not changed.
+            const excludedMachineIds = new Set();
+
+            if (frm.is_new()) {
+                if (!frm.doc.month_prod_planning) {
+                    throw new Error(
+                        'Monthly Production Planning is required ' +
+                        'before populating Truck Loads'
+                    );
+                }
+
+                const plan = await frappe.db.get_doc(
+                    'Monthly Production Planning',
+                    frm.doc.month_prod_planning
+                );
+
+                (plan.excluded_production_machines || [])
+                    .forEach(row => {
+                        const value = String(row.asset || '')
+                            .trim()
+                            .toUpperCase();
+
+                        if (value) excludedMachineIds.add(value);
+                    });
+            }
+
+            const isExcluded = asset => {
+                if (!asset) return false;
+
+                return [asset.name, asset.asset_name].some(value =>
+                    excludedMachineIds.has(
+                        String(value || '').trim().toUpperCase()
+                    )
+                );
+            };
+
+            // Resolve exclusions using both Asset IDs and plant numbers.
+            // This also handles Asset.name != Asset.asset_name.
+            const excludedAssets = [
+                ...trucks,
+                ...excavators
+            ].filter(isExcluded);
+
+            excludedAssets.forEach(asset => {
+                [asset.name, asset.asset_name].forEach(value => {
+                    const key = String(value || '')
+                        .trim()
+                        .toUpperCase();
+
+                    if (key) excludedMachineIds.add(key);
+                });
+            });
+
+            const eligibleTrucks = trucks.filter(
+                asset => !isExcluded(asset)
+            );
+
+            const eligibleExcavators = excavators.filter(
+                asset => !isExcluded(asset)
+            );
+
+            const truckMaps = build_asset_maps(eligibleTrucks);
+            const excavMaps = build_asset_maps(eligibleExcavators);
 
             const normalizeExcavator = value => {
                 if (!value) {
+                    return '';
+                }
+
+                if (
+                    excludedMachineIds.has(
+                        String(value || '').trim().toUpperCase()
+                    )
+                ) {
                     return '';
                 }
 
@@ -1663,7 +1733,7 @@ function populate_truck_loads_and_lookup(frm) {
                 );
             };
 
-            trucks.forEach(asset => {
+            eligibleTrucks.forEach(asset => {
 
                 const row = frm.add_child('truck_loads');
 
@@ -1910,6 +1980,57 @@ async function populate_dozer_production_table(frm) {
         }) : null;
         // Discard a late response if the user selected another site/date/hour.
         if (contextKey() !== key) return;
+
+        // Exclude machines from NEW Hourly Production capture.
+        // Existing saved child rows are not removed.
+        const excludedDozers = new Set();
+
+        if (frm.is_new()) {
+            if (!frm.doc.month_prod_planning) {
+                throw new Error(
+                    'Monthly Production Planning is required ' +
+                    'before populating Dozer Production'
+                );
+            }
+
+            const plan = await frappe.db.get_doc(
+                'Monthly Production Planning',
+                frm.doc.month_prod_planning
+            );
+
+            if (contextKey() !== key) return;
+
+            if (
+                String(plan.location || '').trim() !==
+                String(location || '').trim()
+            ) {
+                throw new Error(
+                    'Monthly Production Planning location mismatch'
+                );
+            }
+
+            const excludedIds = new Set(
+                (plan.excluded_production_machines || [])
+                    .map(row =>
+                        String(row.asset || '').trim().toUpperCase()
+                    )
+                    .filter(Boolean)
+            );
+
+            // Compare both Asset.name and Asset.asset_name.
+            (assets || []).forEach(asset => {
+                const id = String(asset.name || '')
+                    .trim().toUpperCase();
+                const code = String(asset.asset_name || '')
+                    .trim().toUpperCase();
+
+                if (excludedIds.has(id) || excludedIds.has(code)) {
+                    excludedDozers.add(id);
+                    excludedDozers.add(code);
+                }
+            });
+        }
+
         const defaults = new Map();
         for (const row of previousDoc?.dozer_production || []) {
             if (row.asset_name) defaults.set(row.asset_name, row);
@@ -1917,6 +2038,15 @@ async function populate_dozer_production_table(frm) {
         }
         frm.clear_table('dozer_production');
         for (const asset of assets || []) {
+            const id = String(asset.name || '')
+                .trim().toUpperCase();
+            const code = String(asset.asset_name || '')
+                .trim().toUpperCase();
+
+            if (excludedDozers.has(id) || excludedDozers.has(code)) {
+                continue;
+            }
+
             const prior = defaults.get(asset.name) || defaults.get(asset.asset_name);
             const row = frm.add_child('dozer_production');
             row.asset_name = asset.name;
@@ -2770,3 +2900,142 @@ frappe.ui.form.on('Dozer Production', {
         }
     }
 });
+
+// === HOURLY SAVED DOZER EXCLUSION DISPLAY START ===
+(function () {
+    const normalize = value =>
+        String(value || '').trim().toUpperCase();
+
+    const isUnusedDozer = row => {
+        if (!row) return false;
+
+        return (
+            normalize(row.dozer_service) === 'NO DOZING' &&
+            Number(row.bcm_hour || 0) === 0 &&
+            !normalize(row.mining_areas_dozer_child) &&
+            !normalize(row.dozer_geo_mat_layer) &&
+            !normalize(row.area_to) &&
+            !normalize(row.dozer_hauling_distance_meter)
+        );
+    };
+
+    async function applySavedDozerExclusions(frm) {
+        if (frm.is_new() || !frm.doc.month_prod_planning) {
+            return;
+        }
+
+        const planName = frm.doc.month_prod_planning;
+        const docName = frm.doc.name;
+
+        const plan = await frappe.db.get_doc(
+            'Monthly Production Planning',
+            planName
+        );
+
+        if (
+            frm.doc.name !== docName ||
+            frm.doc.month_prod_planning !== planName ||
+            normalize(plan.location) !== normalize(frm.doc.location)
+        ) {
+            return;
+        }
+
+        const start = String(plan.prod_month_start_date || '');
+        const end = String(plan.prod_month_end_date || '');
+        const date = String(frm.doc.prod_date || '');
+
+        if (!date || date < start || date > end) return;
+
+        const excluded = new Set(
+            (plan.excluded_production_machines || [])
+                .map(row => normalize(row.asset))
+                .filter(Boolean)
+        );
+
+        if (!excluded.size) return;
+
+        // Resolve Asset.name and Asset.asset_name.
+        const assets = await frappe.db.get_list('Asset', {
+            fields: ['name', 'asset_name'],
+            filters: {
+                location: frm.doc.location,
+                asset_category: 'Dozer'
+            },
+            limit_page_length: 500
+        });
+
+        (assets || []).forEach(asset => {
+            const id = normalize(asset.name);
+            const code = normalize(asset.asset_name);
+
+            if (excluded.has(id) || excluded.has(code)) {
+                excluded.add(id);
+                excluded.add(code);
+            }
+        });
+
+        if (
+            frm.doc.name !== docName ||
+            frm.doc.month_prod_planning !== planName
+        ) return;
+
+        const grid = frm.fields_dict.dozer_production?.grid;
+        if (!grid) return;
+
+        // Install once per grid instance.
+        if (!grid.__savedExclusionRefreshInstalled) {
+            grid.__savedExclusionRefreshInstalled = true;
+
+            const originalRefresh = grid.refresh;
+
+            grid.refresh = function (...args) {
+                const result = originalRefresh.apply(this, args);
+
+                Promise.resolve().then(() => {
+                    if (frm.__applySavedDozerVisibility) {
+                        frm.__applySavedDozerVisibility();
+                    }
+                });
+
+                return result;
+            };
+        }
+
+        frm.__applySavedDozerVisibility = () => {
+            (grid.grid_rows || []).forEach(gridRow => {
+                const row = gridRow.doc;
+                if (!row || !gridRow.wrapper) return;
+
+                const isExcluded = [
+                    row.asset_name,
+                    row.dozer_plant_no
+                ].some(value => excluded.has(normalize(value)));
+
+                if (isExcluded && isUnusedDozer(row)) {
+                    gridRow.wrapper.hide();
+                } else {
+                    gridRow.wrapper.show();
+                }
+            });
+        };
+
+        frm.__applySavedDozerVisibility();
+
+        console.log(
+            'Saved Hourly Production dozer exclusions applied:',
+            [...excluded]
+        );
+    }
+
+    frappe.ui.form.on('Hourly Production', {
+        refresh(frm) {
+            applySavedDozerExclusions(frm).catch(error => {
+                console.error(
+                    'Could not apply saved dozer exclusions:',
+                    error
+                );
+            });
+        }
+    });
+})();
+// === HOURLY SAVED DOZER EXCLUSION DISPLAY END ===

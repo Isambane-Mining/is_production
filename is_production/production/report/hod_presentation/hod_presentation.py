@@ -2975,6 +2975,53 @@ def percentage_band(metric, value):
     return 'red' if value < low else 'amber' if value < high else 'green'
 
 
+
+# HOD_MPP_GAUGE_EXCLUSIONS_V1
+def _hod_gauge_excluded_machine_keys(site, start_date, end_date):
+    """Resolve exclusions for the HOD reporting period."""
+    plan = get_latest_hod_monthly_plan(site, end_date)
+
+    if not plan:
+        return set()
+
+    excluded_rows = plan.get("excluded_production_machines") or []
+
+    asset_ids = sorted({
+        str(row.asset or "").strip()
+        for row in excluded_rows
+        if row.asset
+    })
+
+    if not asset_ids:
+        return set()
+
+    # Do not apply one month's exclusions to another month.
+    if (
+        getdate(start_date) < getdate(plan.prod_month_start_date)
+        or getdate(end_date) > getdate(plan.prod_month_end_date)
+    ):
+        frappe.throw(
+            "HOD A&U exclusions require a reporting range within "
+            "the selected Monthly Production Planning period."
+        )
+
+    keys = {value.casefold() for value in asset_ids}
+
+    assets = frappe.get_all(
+        "Asset",
+        filters={"name": ["in", asset_ids]},
+        fields=["name", "asset_name"],
+        limit_page_length=0,
+    )
+
+    for asset in assets:
+        for value in (asset.name, asset.asset_name):
+            if value:
+                keys.add(str(value).strip().casefold())
+
+    return keys
+
+
 def build_grid_data(module, *, site, start_date, end_date, machine_scope,
                     au_target_filter, asset_ownership) -> FleetSummary:
     """Fetch once, retain Engine machine results and aggregate the same shift rows.
@@ -3001,6 +3048,16 @@ def build_grid_data(module, *, site, start_date, end_date, machine_scope,
         row for row in source_rows
         if int(row.get('indent') or 0) == 3 and not row.get('is_formula_row')
         and (module.get_category(row), module.get_machine(row)) in included
+    ]
+
+    excluded_keys = _hod_gauge_excluded_machine_keys(
+        site, start_date, end_date
+    )
+
+    eligible_shifts = [
+        row for row in shifts
+        if str(module.get_machine(row) or "").strip().casefold()
+        not in excluded_keys
     ]
 
     def averages(rows):
@@ -3032,12 +3089,12 @@ def build_grid_data(module, *, site, start_date, end_date, machine_scope,
         return output
 
     production_avgs, swing_avgs = (
-        module.build_scope_averages_from_source_rows(source_rows)
+        module.build_scope_averages_from_source_rows(eligible_shifts)
     )
 
     category_averages = {
         category: averages([
-            row for row in shifts
+            row for row in eligible_shifts
             if module.get_category(row) == category
         ])
         for category, rows in period_series.items()
@@ -3084,7 +3141,7 @@ def build_grid_data(module, *, site, start_date, end_date, machine_scope,
             )
             for category in CATEGORY_LABELS
         },
-        'averages': averages(shifts),
+        'averages': averages(eligible_shifts),
         'category_averages': category_averages,
         'start_date': str(start_date), 'end_date': str(end_date),
     }
@@ -3434,6 +3491,45 @@ def build_hod_presentation(
         if isinstance(item, dict) and item.get("image_data")
     ]
 
+
+    # HOD_ONE_PAGE_ASPECT_RATIO_V1
+    # Match slide proportions to the tallest dashboard.
+    # One dashboard remains one PowerPoint slide.
+    from PIL import Image as _HodExportImage
+
+    dashboard_ratios = []
+
+    for captured in captured_slides:
+        if captured.get("heading_style") != "dashboard":
+            continue
+
+        decoded = _decode_image_data(
+            captured.get("image_data")
+        )
+
+        if not decoded:
+            continue
+
+        with _HodExportImage.open(BytesIO(decoded)) as image:
+            if image.width and image.height:
+                dashboard_ratios.append(
+                    image.height / image.width
+                )
+
+    if dashboard_ratios:
+        slide_height_inches = (
+            SLIDE_WIDTH * max(dashboard_ratios)
+        )
+
+        if slide_height_inches > 30:
+            raise ValueError(
+                "Dashboard is too tall for one slide."
+            )
+
+        prs.slide_height = Inches(
+            slide_height_inches
+        )
+
     if not captured_slides:
         _add_error_slide(
             prs,
@@ -3466,11 +3562,52 @@ def build_hod_presentation(
 
             # Dashboard captures already include the complete branded heading.
             if heading_style == "dashboard":
+                # Preserve original proportions across sites.
+                # Pad shorter images instead of distorting them.
+                with _HodExportImage.open(
+                    BytesIO(image_bytes)
+                ) as source_image:
+                    dashboard_image = (
+                        source_image.convert("RGB")
+                    )
+
+                target_height = round(
+                    dashboard_image.width
+                    * prs.slide_height
+                    / prs.slide_width
+                )
+
+                if dashboard_image.height < target_height:
+                    padded = _HodExportImage.new(
+                        "RGB",
+                        (
+                            dashboard_image.width,
+                            target_height,
+                        ),
+                        "white",
+                    )
+
+                    padded.paste(
+                        dashboard_image,
+                        (0, 0),
+                    )
+
+                    padded_output = BytesIO()
+                    padded.save(
+                        padded_output,
+                        format="JPEG",
+                        quality=92,
+                    )
+
+                    image_bytes = padded_output.getvalue()
+
                 _add_image_fitted(
                     slide,
                     image_bytes,
                     top_inches=0,
-                    height_inches=SLIDE_HEIGHT,
+                    height_inches=(
+                        prs.slide_height / Inches(1)
+                    ),
                     top_align=True,
                     side_margin_inches=0,
                     stretch_to_fill=True,

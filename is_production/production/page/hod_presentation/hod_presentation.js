@@ -333,7 +333,7 @@ function hodPercent(value) { return hodValue(value) === null ? '—' : `${hodNum
 function hodBand(metric, value) {
     value = hodValue(value);
     if (value === null) return 'neutral';
-    const [low, high] = metric === 'avail' ? [75,85] : [70,80];
+    const [low, high] = metric === 'avail' ? [75,85] : [70,85];
     return value < low ? 'red' : value < high ? 'amber' : 'green';
 }
 function hodAveragePair(averages, metric) {
@@ -344,7 +344,16 @@ function hodAveragePair(averages, metric) {
     }).join(' / ');
 }
 function hodGauge(category, metric, averages) {
-    const value = hodValue(averages?.including?.[metric]);
+    // HOD_GAUGE_MAX_SCOPE_V1
+    // Display the higher Production or Swing percentage.
+    // Keep underlying A&U calculations unchanged.
+    const productionValue = hodValue(averages?.excluding?.[metric]);
+    const swingValue = hodValue(averages?.swing?.[metric]);
+    const availableValues = [productionValue, swingValue]
+        .filter(value => value !== null);
+    const value = availableValues.length
+        ? Math.max(...availableValues)
+        : null;
     const progress = Math.min(100, Math.max(0, value ?? 0));
     const band = hodBand(metric, value);
     const stroke = {red:'#e02f43',amber:'#f1a900',green:'#19a557',neutral:'#a0a8b2'}[band];
@@ -370,7 +379,7 @@ function hodGauge(category, metric, averages) {
     </div>`;
 }
 function hodMetricLegend(metric) {
-    const ranges = metric === 'avail' ? ['<75%', '75–<85%', '≥85%'] : ['<70%', '70–<80%', '≥80%'];
+    const ranges = metric === 'avail' ? ['<75%', '75–<85%', '≥85%'] : ['<70%', '70–<85%', '≥85%'];
     return `<span class="hod-thresholds">${ranges.map((range,i)=>`<span><i class="hod-dot hod-dot-${['red','amber','green'][i]}"></i>${hodEscape(range)}</span>`).join('')}</span>`;
 }
 function hodRankTable(rows, category, metric, bottom = false) {
@@ -393,6 +402,18 @@ function hodRankTable(rows, category, metric, bottom = false) {
 function hodRankings(engineering, metric) {
     return hodRankTable(engineering.bottom[metric], null, metric, true);
 }
+// Average BCM/H original HOD orange threshold.
+if (typeof document !== "undefined" &&
+    !document.getElementById("hod-average-bcm-amber-style")) {
+    const style = document.createElement("style");
+    style.id = "hod-average-bcm-amber-style";
+    style.textContent =
+        ".hod-performance-dashboard " +
+        ".hod-production-table td.hod-average-bcm-amber {" +
+        "color:#a66a00 !important;}";
+    document.head.appendChild(style);
+}
+
 function hodProduction(row) {
     const metrics = [
         ['Monthly target','monthly_target_bcm','BCM'], ['Forecast','forecast_bcm','BCM'],
@@ -400,14 +421,28 @@ function hodProduction(row) {
         ['Actual BCMs','actual_bcm','BCM'], ['Actual coal','actual_coal_tons',"TON's"],
         ['Daily required','daily_required_bcm','BCM/D',1], ['Daily achieved','daily_achieved_bcm','BCM/D',1],
         ['Average BCM/hour','average_bcm_h','BCM/H',1], ['Days worked / left',null,'Days',1],
-        ['Strip ratio','strip_ratio','BCM/T',1], ['Forecast delivery','forecast_delivery_percent','%',1]
+        ['Strip ratio','strip_ratio','BCM/T',1], ['Forecast delivery','forecast_delivery_percent','%',1],
+        // HOD_BCM_PER_MAN_V1
+        ['BCM/Man','bcm_per_man','BCM',1]
     ];
     const variance = hodValue(row.forecast_variance_bcm);
     return `<div class="hod-site-strip">${hodEscape(row.site)}</div>
         <div class="hod-forecast ${variance === null ? '' : variance >= 0 ? 'hod-positive' : 'hod-negative'}"><span>Forecast variance</span><strong>${hodNumber(variance,0,true)} BCM</strong></div>
         <table class="hod-production-table"><tbody>${metrics.map(([label,field,unit,decimals=0,signed=false]) => {
             const value = field ? row[field] : null;
-            const colour = signed && hodValue(value) !== null ? (Number(value) >= 0 ? 'hod-positive' : 'hod-negative') : '';
+            // HOD_AVERAGE_BCM_COLOUR_V1
+            // Original HOD thresholds: Green >=220, Orange >=200, Red <200.
+            let colour = signed && hodValue(value) !== null
+                ? (Number(value) >= 0 ? 'hod-positive' : 'hod-negative')
+                : '';
+
+            if (field === 'average_bcm_h' && hodValue(value) !== null) {
+                colour = Number(value) >= 220
+                    ? 'hod-positive'
+                    : Number(value) >= 200
+                        ? 'hod-average-bcm-amber'
+                        : 'hod-negative';
+            }
             return `<tr data-production-field="${field || 'days_worked_left'}"><th scope="row">${label}</th><td>${unit}</td><td class="${colour}">${field ? hodNumber(value,decimals,signed)+(unit==='%' && hodValue(value)!==null ? '%' : '') : `${hodNumber(row.days_worked,1)} / ${hodNumber(row.days_left,1)}`}</td></tr>`;
         }).join('')}</tbody></table>`;
 }
@@ -435,63 +470,695 @@ function hodBreakdownBarChart(classifications) {
     if (!classifications.length) {
         return `<div class="hod-breakdown-chart-empty">
             <span class="hod-breakdown-chart-message">
-                No classified downtime records for this period
+                No downtime records for this period
             </span>
         </div>`;
     }
 
     const maximum = Math.max(
-        ...classifications.map(item => Number(item.hours) || 0),
-        0
+        ...classifications.map(item => Number(item.hours) || 0), 0
     );
 
     const totalHours = classifications.reduce(
-        (sum, item) => sum + (Number(item.hours) || 0),
-        0
+        (sum, item) => sum + (Number(item.hours) || 0), 0
     );
 
     return `<div class="hod-breakdown-bars">
-        ${classifications.map(item => {
+        ${classifications.map((item, index) => {
             const hours = Number(item.hours) || 0;
-            const width = maximum > 0 ? hours / maximum * 100 : 0;
-            const percentage = totalHours > 0
-                ? hours / totalHours * 100
-                : 0;
+            const width = totalHours > 0 ? hours / totalHours * 100 : 0;
 
-            return `<div class="hod-breakdown-bar-row">
-                <div class="hod-breakdown-bar-label"
-                    title="${hodEscape(item.classification)}">
+            // HOD_CLASSIFICATION_BAR_COLOURS_V1
+            const colours = [
+                "#1688e8", "#fa8b22", "#17ad61",
+                "#e54868", "#8e55d8", "#e7a600",
+                "#1c9ed5", "#21a58b", "#db5e2b",
+                "#7666d8", "#c44b8a", "#3478c5",
+                "#d59b17", "#299d64", "#ad62d6",
+                "#0e9ca8", "#d64c64", "#7c8f28"
+            ];
+
+            const colour = colours[index % colours.length];
+
+            const percentage = totalHours > 0
+                ? hours / totalHours * 100 : 0;
+
+            return `<button type="button"
+                class="hod-breakdown-bar-row hod-downtime-bar-button"
+                data-hod-class-index="${index}"
+                aria-expanded="false"
+                title="Show ${hodEscape(item.classification)} details">
+                <span class="hod-breakdown-bar-label">
                     <span class="hod-breakdown-class-icon">
                         ${hodClassificationIcon(item.classification)}
                     </span>
                     <span class="hod-breakdown-class-text">
                         ${hodEscape(item.classification)}
                     </span>
-                </div>
-                <div class="hod-breakdown-bar-track">
-                    <div class="hod-breakdown-bar-fill"
-                        style="width:${width.toFixed(2)}%">
-                    </div>
-                </div>
+                </span>
+                <span class="hod-breakdown-bar-track"
+                    style="position:relative;
+                           display:block;
+                           overflow:hidden;
+                           background:#e5ebf2;
+                           min-height:12px;">
+                    <span class="hod-breakdown-bar-fill"
+                        style="width:${width.toFixed(2)}%;
+                            background-color:${colour} !important;
+                            background-image:none !important;
+                            display:block;
+                            height:100%;
+                            min-height:9px;
+                            opacity:1 !important">
+                    </span>
+                </span>
                 <strong>${percentage.toFixed(1)}%</strong>
-            </div>`;
+            </button>`;
         }).join('')}
     </div>`;
+}
+
+
+// HOD_POPUP_EXPORT_BUTTONS_V1
+// Export the actual rendered popup table, without recalculating downtime.
+
+function hodPopupExportRows(table) {
+    const clean = value =>
+        String(value || "").replace(/\s+/g, " ").trim();
+
+    const rows = [];
+
+    const headers = Array.from(
+        table.querySelectorAll("thead th")
+    ).map(cell => clean(cell.textContent));
+
+    rows.push(headers);
+
+    table.querySelectorAll("tbody tr").forEach(tr => {
+        const values = [];
+
+        Array.from(tr.children).forEach(cell => {
+            values.push(clean(cell.textContent));
+
+            for (let n = 1; n < (cell.colSpan || 1); n++) {
+                values.push("");
+            }
+        });
+
+        rows.push(values);
+    });
+
+    return rows;
+}
+
+function hodPopupMakeXlsx(rows) {
+    const encode = value =>
+        new TextEncoder().encode(String(value));
+
+    const xmlEscape = value =>
+        String(value ?? "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&apos;");
+
+    const columnName = index => {
+        let result = "";
+        let number = index + 1;
+
+        while (number > 0) {
+            number--;
+            result = String.fromCharCode(
+                65 + number % 26
+            ) + result;
+            number = Math.floor(number / 26);
+        }
+
+        return result;
+    };
+
+    const sheetRows = rows.map((cells, rowIndex) => {
+        const xmlCells = cells.map((value, colIndex) => {
+            const address =
+                columnName(colIndex) + (rowIndex + 1);
+
+            return `<c r="${address}" t="inlineStr">` +
+                `<is><t xml:space="preserve">` +
+                `${xmlEscape(value)}</t></is></c>`;
+        }).join("");
+
+        return `<row r="${rowIndex + 1}">` +
+            xmlCells + `</row>`;
+    }).join("");
+
+    const sheetXml =
+        '<?xml version="1.0" encoding="UTF-8"?>' +
+        '<worksheet xmlns="http://schemas.openxmlformats.org/' +
+        'spreadsheetml/2006/main">' +
+        '<sheetViews><sheetView workbookViewId="0"/></sheetViews>' +
+        '<sheetData>' + sheetRows + '</sheetData>' +
+        '</worksheet>';
+
+    const files = [
+        [
+            "[Content_Types].xml",
+            '<?xml version="1.0" encoding="UTF-8"?>' +
+            '<Types xmlns="http://schemas.openxmlformats.org/' +
+            'package/2006/content-types">' +
+            '<Default Extension="rels" ContentType="' +
+            'application/vnd.openxmlformats-package.relationships+xml"/>' +
+            '<Default Extension="xml" ContentType="application/xml"/>' +
+            '<Override PartName="/xl/workbook.xml" ContentType="' +
+            'application/vnd.openxmlformats-officedocument.' +
+            'spreadsheetml.sheet.main+xml"/>' +
+            '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="' +
+            'application/vnd.openxmlformats-officedocument.' +
+            'spreadsheetml.worksheet+xml"/>' +
+            '</Types>'
+        ],
+        [
+            "_rels/.rels",
+            '<?xml version="1.0" encoding="UTF-8"?>' +
+            '<Relationships xmlns="http://schemas.openxmlformats.org/' +
+            'package/2006/relationships">' +
+            '<Relationship Id="rId1" Type="' +
+            'http://schemas.openxmlformats.org/officeDocument/' +
+            '2006/relationships/officeDocument" ' +
+            'Target="xl/workbook.xml"/></Relationships>'
+        ],
+        [
+            "xl/workbook.xml",
+            '<?xml version="1.0" encoding="UTF-8"?>' +
+            '<workbook xmlns="http://schemas.openxmlformats.org/' +
+            'spreadsheetml/2006/main" ' +
+            'xmlns:r="http://schemas.openxmlformats.org/' +
+            'officeDocument/2006/relationships">' +
+            '<sheets><sheet name="Breakdowns" sheetId="1" ' +
+            'r:id="rId1"/></sheets></workbook>'
+        ],
+        [
+            "xl/_rels/workbook.xml.rels",
+            '<?xml version="1.0" encoding="UTF-8"?>' +
+            '<Relationships xmlns="http://schemas.openxmlformats.org/' +
+            'package/2006/relationships">' +
+            '<Relationship Id="rId1" Type="' +
+            'http://schemas.openxmlformats.org/officeDocument/' +
+            '2006/relationships/worksheet" ' +
+            'Target="worksheets/sheet1.xml"/></Relationships>'
+        ],
+        ["xl/worksheets/sheet1.xml", sheetXml]
+    ];
+
+    // Create a valid uncompressed ZIP container for XLSX.
+    // No external libraries or network requests required.
+    const crcTable = Array.from({length: 256}, (_, n) => {
+        let c = n;
+
+        for (let k = 0; k < 8; k++) {
+            c = c & 1
+                ? 0xedb88320 ^ (c >>> 1)
+                : c >>> 1;
+        }
+
+        return c >>> 0;
+    });
+
+    const crc32 = bytes => {
+        let crc = 0xffffffff;
+
+        for (const byte of bytes) {
+            crc = crcTable[(crc ^ byte) & 255] ^
+                (crc >>> 8);
+        }
+
+        return (crc ^ 0xffffffff) >>> 0;
+    };
+
+    const localParts = [];
+    const centralParts = [];
+    let offset = 0;
+
+    for (const [filename, content] of files) {
+        const name = encode(filename);
+        const data = encode(content);
+        const crc = crc32(data);
+
+        const local = new Uint8Array(30 + name.length);
+        const l = new DataView(local.buffer);
+
+        l.setUint32(0, 0x04034b50, true);
+        l.setUint16(4, 20, true);
+        l.setUint16(8, 0, true);
+        l.setUint32(14, crc, true);
+        l.setUint32(18, data.length, true);
+        l.setUint32(22, data.length, true);
+        l.setUint16(26, name.length, true);
+        local.set(name, 30);
+
+        const central = new Uint8Array(46 + name.length);
+        const c = new DataView(central.buffer);
+
+        c.setUint32(0, 0x02014b50, true);
+        c.setUint16(4, 20, true);
+        c.setUint16(6, 20, true);
+        c.setUint32(16, crc, true);
+        c.setUint32(20, data.length, true);
+        c.setUint32(24, data.length, true);
+        c.setUint16(28, name.length, true);
+        c.setUint32(42, offset, true);
+        central.set(name, 46);
+
+        localParts.push(local, data);
+        centralParts.push(central);
+
+        offset += local.length + data.length;
+    }
+
+    const centralLength = centralParts.reduce(
+        (sum, part) => sum + part.length, 0
+    );
+
+    const footer = new Uint8Array(22);
+    const f = new DataView(footer.buffer);
+
+    f.setUint32(0, 0x06054b50, true);
+    f.setUint16(8, files.length, true);
+    f.setUint16(10, files.length, true);
+    f.setUint32(12, centralLength, true);
+    f.setUint32(16, offset, true);
+
+    return new Blob(
+        [...localParts, ...centralParts, footer],
+        {
+            type: "application/vnd.openxmlformats-officedocument." +
+                "spreadsheetml.sheet"
+        }
+    );
+}
+
+function hodPopupDownloadExcel(dialog, classification) {
+    const table = dialog.$body.find("table").get(0);
+
+    if (!table) {
+        frappe.msgprint("Breakdown table not found.");
+        return;
+    }
+
+    const rows = hodPopupExportRows(table);
+    const workbook = hodPopupMakeXlsx(rows);
+
+    const safeName = classification
+        .replace(/[^a-zA-Z0-9_-]+/g, "_")
+        .replace(/^_+|_+$/g, "");
+
+    const filename =
+        `HOD_Breakdowns_${safeName || "Report"}.xlsx`;
+
+    const url = URL.createObjectURL(workbook);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function hodPopupPrintReport(dialog, classification) {
+    const table = dialog.$body.find("table").get(0);
+
+    if (!table) {
+        frappe.msgprint("Breakdown table not found.");
+        return;
+    }
+
+    const printWindow = window.open("", "_blank");
+
+    if (!printWindow) {
+        frappe.msgprint(
+            "Please allow popups to print this report."
+        );
+        return;
+    }
+
+    const title = hodEscape(
+        `Breakdown Reasons - ${classification}`
+    );
+
+    const documentHtml = `
+        <!doctype html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <title>${title}</title>
+            <style>
+                @page {
+                    size: A4 landscape;
+                    margin: 10mm;
+                }
+                body {
+                    font-family: Arial, sans-serif;
+                    color: #111;
+                    margin: 0;
+                    font-size: 10px;
+                }
+                h2 {
+                    margin: 0 0 14px;
+                    font-size: 17px;
+                    color: #111;
+                }
+                table {
+                    border-collapse: collapse !important;
+                    width: 100% !important;
+                    min-width: 0 !important;
+                    font-size: 9px !important;
+                }
+                th, td {
+                    padding: 6px !important;
+                    border: 1px solid #aaa !important;
+                    color: #111 !important;
+                    background: #fff !important;
+                    vertical-align: top;
+                }
+                thead th {
+                    background: #ddd !important;
+                    font-weight: bold !important;
+                }
+                tbody tr:last-child td {
+                    background: #ddd !important;
+                    font-weight: bold !important;
+                }
+                thead {
+                    display: table-header-group;
+                }
+                tr {
+                    break-inside: avoid;
+                }
+            </style>
+        </head>
+        <body>
+            <h2>${title}</h2>
+            ${table.outerHTML}
+        </body>
+        </html>
+    `;
+
+    printWindow.document.open();
+    printWindow.document.write(documentHtml);
+    printWindow.document.close();
+
+    printWindow.onload = function() {
+        printWindow.focus();
+        printWindow.print();
+    };
+}
+
+function hodOpenDowntimePopup(button) {
+    const panel = button.closest(".hod-downtime-contributors");
+    const index = button.getAttribute("data-hod-class-index");
+    const detail = Array.from(
+        panel.querySelectorAll(".hod-downtime-class-detail")
+    ).find(item =>
+        item.getAttribute("data-hod-class-index") === index
+    );
+
+    if (!detail) {
+        return;
+    }
+
+    const classification = button.querySelector(
+        ".hod-breakdown-class-text"
+    )?.textContent?.trim() || "Downtime";
+
+    const dialog = new frappe.ui.Dialog({
+        title: `Breakdown Reasons - ${classification}`,
+        size: "extra-large"
+    });
+
+    dialog.$body.html(detail.innerHTML);
+
+    // HOD_POPUP_COLUMN_FILTERS_V1
+    // Filter popup rows in the browser. No recalculation.
+
+    const hodTable = dialog.$body.find("table").first();
+    const hodHead = hodTable.find("thead");
+
+    if (hodHead.length) {
+        const columns = hodHead.find("tr").first()
+            .children("th");
+
+        const filterRow = $("<tr>").addClass(
+            "hod-popup-column-filters"
+        );
+
+        columns.each(function(index) {
+            const th = $("<th>").css({
+                background: "#252c35",
+                padding: "7px 5px",
+                border: "1px solid #46505c"
+            });
+
+            const input = $("<input>", {
+                type: "text",
+                placeholder: "Filter...",
+                "aria-label": "Filter " +
+                    $(this).text().trim()
+            }).addClass(
+                "hod-popup-column-filter"
+            ).attr(
+                "data-column-index", index
+            ).css({
+                width: "100%",
+                minWidth: "65px",
+                boxSizing: "border-box",
+                padding: "6px",
+                border: "1px solid #596574",
+                borderRadius: "4px",
+                background: "#111820",
+                color: "#ffffff",
+                fontSize: "11px"
+            });
+
+            th.append(input);
+            filterRow.append(th);
+        });
+
+        hodHead.append(filterRow);
+
+        const dataRows = hodTable.find("tbody tr")
+            .filter(function() {
+                return $(this).children("td").length ===
+                    columns.length;
+            });
+
+        const filterInfo = $("<div>")
+            .addClass("hod-popup-filter-info")
+            .css({
+                color: "#dce6ef",
+                background: "#252c35",
+                padding: "8px 12px",
+                fontSize: "12px",
+                borderRadius: "4px",
+                marginBottom: "8px"
+            });
+
+        hodTable.before(filterInfo);
+
+
+        // HOD_POPUP_FILTERED_TOTALS_V1
+        // Change popup totals to match the visible filtered rows.
+        // No backend or A&U calculation changes.
+
+        const totalRow = hodTable.find("tbody tr")
+            .filter(function() {
+                return $(this).children("td[colspan]").length > 0;
+            }).last();
+
+        const totalCells = totalRow.children("td");
+
+        const originalTotals = totalCells
+            .slice(1, 5)
+            .map(function() {
+                return $(this).text().trim();
+            }).get();
+
+        const parseMinutes = function(value) {
+            const text = String(value || "").trim();
+            const match = text.match(
+                /(\d+)\s*h\s*(\d+)\s*m/i
+            );
+
+            if (match) {
+                return Number(match[1]) * 60 +
+                    Number(match[2]);
+            }
+
+            return 0;
+        };
+
+        const formatMinutes = function(minutes) {
+            const amount = Math.max(
+                0, Math.round(minutes)
+            );
+
+            const hours = Math.floor(amount / 60);
+            const remainder = amount % 60;
+
+            return hours + "h " +
+                String(remainder).padStart(2, "0") + "m";
+        };
+
+        const updateFilters = function() {
+            const filters = [];
+
+            filterRow.find("input").each(function() {
+                filters.push(
+                    String($(this).val() || "")
+                        .trim()
+                        .toLowerCase()
+                );
+            });
+
+            const hasFilters = filters.some(Boolean);
+            const totals = [0, 0, 0, 0];
+
+            let visible = 0;
+
+            dataRows.each(function() {
+                const row = $(this);
+                const cells = row.children("td");
+
+                const matches = filters.every(
+                    (value, index) => {
+                        if (!value) return true;
+
+                        const text = String(
+                            cells.eq(index).text() || ""
+                        ).toLowerCase();
+
+                        return text.includes(value);
+                    }
+                );
+
+                row.toggle(matches);
+
+                if (matches) {
+                    visible++;
+
+                    // Column indices:
+                    // 3 = Total Time
+                    // 4 = Start-up + Fatigue
+                    // 5 = Sunday Hours
+                    // 6 = A&U Time
+                    for (let i = 0; i < 4; i++) {
+                        totals[i] += parseMinutes(
+                            cells.eq(i + 3).text()
+                        );
+                    }
+                }
+            });
+
+            // Footer starts with the TOTAL cell spanning
+            // Plant No., Start and Resolved.
+            if (totalCells.length >= 5) {
+                for (let i = 0; i < 4; i++) {
+                    const text = hasFilters
+                        ? formatMinutes(totals[i])
+                        : originalTotals[i];
+
+                    totalCells.eq(i + 1).text(text);
+                }
+            }
+
+            filterInfo.text(
+                "Showing " + visible + " of " +
+                dataRows.length + " breakdown records. " +
+                (hasFilters
+                    ? "Totals reflect the filtered records."
+                    : "Totals reflect the full classification.")
+            );
+        };
+
+        filterRow.on(
+            "input",
+            ".hod-popup-column-filter",
+            updateFilters
+        );
+
+        updateFilters();
+    }
+
+
+    // Print / PDF and Excel export actions for this classification.
+    dialog.$body.prepend(`
+        <div class="hod-popup-export-actions"
+             style="display:flex;gap:10px;justify-content:flex-end;
+                    padding:10px 12px;background:#1d242c;
+                    border:1px solid #3b4652;
+                    border-radius:6px;margin-bottom:10px">
+            <button type="button"
+                class="btn btn-default btn-sm hod-popup-print"
+                style="background:#303943;color:#fff;
+                       border:1px solid #66717d">
+                Print / PDF
+            </button>
+            <button type="button"
+                class="btn btn-primary btn-sm hod-popup-excel"
+                style="background:#137344;color:#fff;
+                       border:1px solid #258c57">
+                Export Excel
+            </button>
+        </div>
+    `);
+
+    dialog.$body.on("click", ".hod-popup-print", function() {
+        hodPopupPrintReport(dialog, classification);
+    });
+
+    dialog.$body.on("click", ".hod-popup-excel", function() {
+        hodPopupDownloadExcel(dialog, classification);
+    });
+
+    dialog.show();
+
+    // HOD_DOWNTIME_DARK_THEME_V1
+    dialog.$wrapper.addClass("hod-downtime-dark-theme");
+
+    // Close when clicking the modal backdrop.
+    dialog.$wrapper.on("click.hodDowntimePopup", function(event) {
+        if (event.target === this ||
+            event.target.classList.contains("modal")) {
+            dialog.hide();
+        }
+    });
+}
+
+if (typeof document !== "undefined") {
+    document.addEventListener("click", function(event) {
+        const button = event.target.closest(
+            ".hod-downtime-bar-button"
+        );
+        if (button) {
+            event.preventDefault();
+            hodOpenDowntimePopup(button);
+        }
+    });
 }
 
 function hodProblemMachinesPanel(engineering) {
     const breakdown = engineering?.breakdown_summary || {};
     const machines = breakdown.top_machines || [];
-    const classifications = breakdown.classifications || [];
-
     return `
         <section class="hod-new-summary hod-problem-machines">
             <div class="hod-new-summary-title"
                 style="background:#0b5a8c;">
-                BREAKDOWN CLASSIFICATION (Hours & Percentage)
+                DOWNTIME LOST HOURS
             </div>
 
-            <div class="hod-breakdown-layout">
+            <div class="hod-breakdown-layout" style="display:block">
                 <div class="hod-breakdown-table-section">
                     <h4>Bottom 10 Availability</h4>
 
@@ -502,22 +1169,22 @@ function hodProblemMachinesPanel(engineering) {
                                 <th>Fleet</th>
                                 <th>Category</th>
                                 <th>Breakdown cause</th>
-                                <th>Hours</th>
+                                <th style="text-align:left !important;">Hours</th>
                             </tr>
                         </thead>
                         <tbody>
                             ${machines.length ? machines.map((item, index) => `
                                 <tr>
                                     <td>${index + 1}</td>
-                                    <td>${hodEscape(item.fleet)}</td>
-                                    <td>${hodEscape(item.category)}</td>
+                                    <td style="${item.is_spare ? 'background:#e9d5ff !important;' : ''}">${hodEscape(item.fleet)}</td>
+                                    <td style="${item.is_spare ? 'background:#e9d5ff !important;' : ''}">${hodEscape(item.category)}</td>
                                     <td title="${hodEscape(item.reason)}">
                                         ${hodEscape(item.classification)}
-                                        <small class="hod-breakdown-reason">
+                                        <small class="hod-breakdown-reason" style="color:#000000 !important;font-size:11px !important;line-height:1.4 !important;">
                                             ${hodEscape(item.reason)}
                                         </small>
                                     </td>
-                                    <td>${Number(item.hours).toFixed(1)}</td>
+                                    <td style="text-align:left !important;">${Number(item.hours).toFixed(1)}</td>
                                 </tr>
                             `).join('') : `
                                 <tr>
@@ -531,10 +1198,148 @@ function hodProblemMachinesPanel(engineering) {
 
                 </div>
 
-                <div class="hod-breakdown-chart-section">
-                    <h4>BREAKDOWN CLASSIFICATION BAR GRAPH</h4>
-                    ${hodBreakdownBarChart(classifications)}
-                </div>
+
+            </div>
+        </section>
+    `;
+}
+
+
+function hodDowntimeContributorsPanel(engineering) {
+    const classifications =
+        engineering?.downtime_contributors?.classifications || [];
+
+    // HOD_CLASSIFICATION_HEADING_PERCENT_V1
+    const hodClassTotalHours = classifications.reduce(
+        (sum, item) => sum + (Number(item.hours) || 0),
+        0
+    );
+
+
+    const fmt = minutes => {
+        const value = Math.max(0, Math.round(Number(minutes) || 0));
+        return `${Math.floor(value / 60)}h ${String(value % 60).padStart(2, "0")}m`;
+    };
+
+    const cell = "padding:8px 10px;border-bottom:1px solid #dbeafe;vertical-align:top";
+    const head = "padding:9px 10px;background:#eff6ff;color:#1d4ed8;text-align:left";
+
+    return `
+        <section class="hod-new-summary hod-downtime-contributors">
+            <div class="hod-new-summary-title"
+                style="background:#00643b">
+                DOWNTIME CONTRIBUTORS BAR GRAPH
+            </div>
+            <div class="hod-breakdown-chart-section"
+                style="border-left:0;padding:10px 12px;min-width:0">
+
+                ${hodBreakdownBarChart(classifications)}
+
+                ${classifications.map((item, index) => `
+                    <div class="hod-downtime-class-detail"
+                        data-hod-class-index="${index}" hidden>
+
+                        <div style="border:1px solid #2563eb;
+                                    border-radius:10px;overflow:hidden">
+
+                            <div style="background:#dbeafe;color:#1d4ed8;
+                                        padding:10px 12px;font-weight:900">
+                                Breakdown Reasons for
+                                ${hodEscape(item.classification)}
+                                (${hodClassTotalHours > 0
+                                    ? (
+                                        (Number(item.hours) || 0)
+                                        / hodClassTotalHours * 100
+                                      ).toFixed(1)
+                                    : "0.0"}%)
+
+                                <!-- HOD_CLASSIFICATION_CALCULATION_V1 -->
+                                <div style="font-size:11px;
+                                            margin-top:5px;
+                                            font-weight:600;
+                                            color:#164db8">
+                                    Calculation:
+                                    ${Number(item.hours || 0).toFixed(2)} hrs
+                                    &divide;
+                                    ${hodClassTotalHours.toFixed(2)} hrs
+                                    &times; 100 =
+                                    ${hodClassTotalHours > 0
+                                        ? (
+                                            (Number(item.hours) || 0)
+                                            / hodClassTotalHours * 100
+                                          ).toFixed(1)
+                                        : "0.0"}%
+                                </div>
+                            </div>
+
+                            <div style="overflow:auto;max-height:65vh">
+                                <table style="width:100%;min-width:1150px;
+                                              border-collapse:collapse;font-size:12px">
+                                    <thead>
+                                        <tr>
+                                            ${[
+                                                "Plant No.", "Start", "Resolved",
+                                                "Total Time", "Start-up + Fatigue",
+                                                "Sunday Hours", "A&U Time", "Reason"
+                                            ].map(label =>
+                                                `<th style="${head}">${label}</th>`
+                                            ).join("")}
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${(item.details || []).map(detail => `
+                                            <tr>
+                                                <td style="${cell};font-weight:700">
+                                                    ${hodEscape(detail.plant_no || "")}
+                                                </td>
+                                                <td style="${cell};white-space:nowrap">
+                                                    ${hodEscape(detail.start_datetime || "")}
+                                                </td>
+                                                <td style="${cell};white-space:nowrap">
+                                                    ${hodEscape(detail.resolved_datetime || "")}
+                                                </td>
+                                                <td style="${cell}">
+                                                    ${fmt(detail.total_minutes)}
+                                                </td>
+                                                <td style="${cell};color:#b45309">
+                                                    ${fmt(detail.startup_fatigue_minutes)}
+                                                </td>
+                                                <td style="${cell};color:#7c3aed">
+                                                    ${fmt(detail.sunday_minutes)}
+                                                </td>
+                                                <td style="${cell};color:#166534;font-weight:700">
+                                                    ${fmt(detail.au_minutes)}
+                                                </td>
+                                                <td style="${cell};min-width:210px">
+                                                    ${hodEscape(detail.reason || "")}
+                                                </td>
+                                            </tr>
+                                        `).join("")}
+                                        <tr style="background:#dbeafe;font-weight:900">
+                                            <td colspan="3"
+                                                style="${cell};text-align:right">
+                                                TOTAL
+                                            </td>
+                                            <td style="${cell}">
+                                                ${fmt(item.total_minutes)}
+                                            </td>
+                                            <td style="${cell};color:#b45309">
+                                                ${fmt(item.startup_fatigue_minutes)}
+                                            </td>
+                                            <td style="${cell};color:#7c3aed">
+                                                ${fmt(item.sunday_minutes)}
+                                            </td>
+                                            <td style="${cell};color:#166534">
+                                                ${fmt(item.au_minutes)}
+                                            </td>
+                                            <td style="${cell}"></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                `).join("")}
             </div>
         </section>
     `;
@@ -708,19 +1513,27 @@ function hodDashboard(row) {
         <div class="hod-columns">
             <section class="hod-domain-panel hod-engineering-panel">
 
-                <div class="hod-domain-heading" style="margin-top:8px;display:block;height:auto;min-height:85px;padding:10px 12px;overflow:visible">
-                        <div style="display:flex;align-items:center;justify-content:space-between">
-                            <h3>Total Site Fleet</h3>
-                        </div>
-                        <div style="color:white;font-size:10px;font-weight:500;text-transform:uppercase">
-                            Production and Swing Machines
-                        </div>
-                        <div style="display:flex;justify-content:flex-start;align-items:center;flex-wrap:wrap;gap:24px;margin-top:5px;color:white;font-weight:600;font-size:12px;text-align:left">
-                            <span>Excavator = ${engineering.fleet_counts?.Excavator ?? 0}</span>
-                            <span>Dozer = ${engineering.fleet_counts?.Dozer ?? 0}</span>
-                            <span>ADT = ${engineering.fleet_counts?.ADT ?? 0}</span>
-                        </div>
+                <div class="hod-domain-heading"
+                    style="margin-top:8px;display:block;height:auto;min-height:43px;padding:7px 10px;overflow:visible">
+                    <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;color:white">
+                        ${[
+                            {label:'TOTAL MACHINES', counts:engineering.fleet_counts},
+                            {label:'PRODUCTION MACHINES', counts:engineering.fleet_scope_counts?.production},
+                            {label:'SWING MACHINES', counts:engineering.fleet_scope_counts?.swing}
+                        ].map(group => `
+                            <div style="min-width:0">
+                                <div style="font-size:12px;font-weight:700;line-height:16px;margin-bottom:4px">
+                                    ${group.label}
+                                </div>
+                                <div style="display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;font-weight:600;line-height:16px">
+                                    <span>Excavator = ${group.counts?.Excavator ?? 0}</span>
+                                    <span>Dozer = ${group.counts?.Dozer ?? 0}</span>
+                                    <span>ADT = ${group.counts?.ADT ?? 0}</span>
+                                </div>
+                            </div>
+                        `).join('')}
                     </div>
+                </div>
 
                 <div class="hod-domain-heading"><div><h3>Engineering</h3><span>Availability &amp; utilisation</span></div><div class="hod-header-legend"><span>Availability ${hodMetricLegend('avail')}</span><span>Utilisation ${hodMetricLegend('util')}</span></div></div>
                 <div class="hod-domain-main hod-engineering-main"><h4 style="display:flex;align-items:center;justify-content:space-between">
@@ -733,7 +1546,8 @@ ${hodProblemMachinesPanel(engineering)}
             </section>
             <section class="hod-domain-panel hod-production-panel">
                 <div class="hod-domain-heading"><div><h3>Production</h3><span>Production performance</span></div></div>
-                <div class="hod-domain-main">${hodProduction(row)}</div>${hodReliabilityPanel(engineering)}
+                <div class="hod-domain-main" style="height:auto;min-height:360px;overflow:visible;box-sizing:border-box;padding-bottom:10px">${hodProduction(row)}</div>
+                ${hodDowntimeContributorsPanel(engineering)}
             </section>
         </div>
 
@@ -765,6 +1579,48 @@ function alignHodDomainHeadings(root) {
 
         productionPanel.style.paddingTop =
             Math.max(0, difference) + 'px';
+    });
+}
+
+
+// HOD_DOWNTIME_SECTION_ALIGNMENT_V1
+// Align Engineering and Production downtime section headings.
+function alignHodDowntimeSections(root) {
+    const dashboards = root.find(".hod-performance-dashboard");
+
+    dashboards.each(function () {
+        const board = this;
+
+        const engineering = board.querySelector(
+            ".hod-engineering-panel .hod-problem-machines"
+        );
+
+        const production = board.querySelector(
+            ".hod-production-panel .hod-downtime-contributors"
+        );
+
+        if (!engineering || !production) {
+            return;
+        }
+
+        // Reset previous offsets before measuring.
+        engineering.style.marginTop = "0px";
+        production.style.marginTop = "0px";
+
+        const engineeringTop =
+            engineering.getBoundingClientRect().top;
+
+        const productionTop =
+            production.getBoundingClientRect().top;
+
+        const difference = productionTop - engineeringTop;
+
+        if (difference > 0.5) {
+            engineering.style.marginTop = difference + "px";
+        } else if (difference < -0.5) {
+            production.style.marginTop =
+                Math.abs(difference) + "px";
+        }
     });
 }
 
@@ -908,6 +1764,7 @@ async function renderHodPresentationLayout(view) {
     view.page.main.html(view.data.map(hodDashboard).join(''));
     bindHodDetailButtons(view);
     alignHodDomainHeadings(view.page.main);
+    alignHodDowntimeSections(view.page.main);
 }
 async function downloadHodPresentation(view) {
     const boards = view.page.main.find('.hod-performance-dashboard').toArray();
@@ -922,6 +1779,21 @@ async function downloadHodPresentation(view) {
             const clone = board.cloneNode(true);
             clone.style.width = '1600px';
             clone.classList.add('hod-export-dashboard');
+
+            // HOD_EXPORT_REMOVE_HIDDEN_DETAILS_V1
+            // These large drill-down tables are not visible
+            // on the dashboard and are not needed in the PPTX.
+            // Modify only the export clone, never the live page.
+            clone.querySelectorAll(
+                '.hod-downtime-class-detail'
+            ).forEach(element => element.remove());
+
+            // Remove hidden HTML that is not part of the
+            // visible dashboard presentation.
+            clone.querySelectorAll('[hidden]').forEach(
+                element => element.remove()
+            );
+
 
             // Export-only cropped logo; preserve live dashboard logo.
             const exportHeader = clone.querySelector('.hod-brand');
@@ -973,7 +1845,7 @@ async function downloadHodPresentation(view) {
                     start_date:siteRow?.start_date || '',
                     end_date:siteRow?.end_date || '',
 
-                    image_data:await captureHodSection(clone,{width:1600,pixelRatio:1.5,quality:0.96})});
+                    image_data:await captureHodSection(clone,{width:1600,pixelRatio:1.0,quality:0.85})});
             } finally { root.remove(); }
         }
         const response = await frappe.call({
