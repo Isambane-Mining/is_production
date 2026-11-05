@@ -100,10 +100,7 @@ def non_working_windows(plan, date, shift, site, fatigue, warnings):
 
 def mpp_adt_scope(plan, machine_scope):
     """Resolve saved MPP ADT assignments for one operational date."""
-    if machine_scope == "all":
-        return None
-
-    if machine_scope not in ("production", "spare"):
+    if machine_scope not in ("all", "production", "spare"):
         raise ValueError("Invalid machine scope")
 
     production = set()
@@ -124,6 +121,8 @@ def mpp_adt_scope(plan, machine_scope):
     production -= ambiguous
     spare -= ambiguous
 
+    if machine_scope == "all":
+        return production | spare
     return production if machine_scope == "production" else spare
 
 
@@ -157,6 +156,7 @@ def build_analysis(from_date, to_date, site, plans, assets, breakdowns, document
         date = first + timedelta(days=offset)
         plan = summary.select_plan(plans, site, date)
         adt_scope = mpp_adt_scope(plan, machine_scope)
+        fleet_total = len(adt_scope)
         cells = []
         load_times = {}
         for shift in ("Day", "Night"):
@@ -177,7 +177,8 @@ def build_analysis(from_date, to_date, site, plans, assets, breakdowns, document
                               "excavator_utilised", "excavator_unavailable", "completed", "available", "utilised")} | {"category": "grey" if minutes == 60 else colour,
                               "non_working_minutes": minutes, "segments": segments})
         rows.append({"date": date.isoformat(), "day": date.strftime("%a"), "month": date.strftime("%B %Y"),
-                     "month_key": date.strftime("%Y-%m"), "plan_name": plan["name"], "cells": cells, "load_times": load_times})
+                     "month_key": date.strftime("%Y-%m"), "plan_name": plan["name"],
+                     "fleet_total": fleet_total, "cells": cells, "load_times": load_times})
     total = len(rows) * 24
     if missing:
         warnings.append(f"{missing} completed hourly cells have no production record. Displayed zero is unverified; missing cells remain in the pie denominator.")
@@ -235,12 +236,12 @@ def get_analysis(site, from_date, to_date, machine_scope="all"):
 
 
 @frappe.whitelist()
-def export_excel(site, from_date, to_date):
+def export_excel(site, from_date, to_date, machine_scope="all"):
     """Download the same permission-checked data shown on the dashboard."""
     from frappe.utils import cint
     from is_production.production.page.hourly_productivity_analysis.hourly_productivity_excel import make_workbook
 
-    data = get_analysis(site, from_date, to_date)
+    data = get_analysis(site, from_date, to_date, machine_scope=machine_scope)
     if not data.get("rows"):
         frappe.throw("No exportable analysis. Check planning and configuration access.")
 
@@ -258,11 +259,19 @@ def export_excel(site, from_date, to_date):
 
 
 @frappe.whitelist()
-def export_machine_excel(site, from_date, to_date, machine_scope="all"):
+def export_machine_excel(site, from_date, to_date, machine_scope="all", unavailable_number=""):
     """Download the historically classified hourly ADT matrix."""
     from io import BytesIO
     from collections import OrderedDict
     import xlsxwriter
+    from math import isfinite
+
+    if unavailable_number is None or str(unavailable_number) == "":
+        selected_range = None
+    else:
+        selected_range = int(unavailable_number)
+        if selected_range < 0 or selected_range > 10000:
+            raise ValueError("Invalid unavailable-machine range")
 
     data = get_analysis(site, from_date, to_date, machine_scope=machine_scope)
     if not data.get("rows"):
@@ -302,6 +311,17 @@ def export_machine_excel(site, from_date, to_date, machine_scope="all"):
         for key, colour in backgrounds.items()
     }
 
+    highlighted_formats = {
+        key: book.add_format({
+            "bg_color": colour,
+            "border": 2,
+            "border_color": "#DC2626",
+            "align": "center",
+            "valign": "vcenter"
+        })
+        for key, colour in backgrounds.items()
+    }
+
     months = OrderedDict()
     for row in data["rows"]:
         months.setdefault(row["month_key"], []).append(row)
@@ -318,6 +338,10 @@ def export_machine_excel(site, from_date, to_date, machine_scope="all"):
         ("To Date", to_date),
         ("Machine Scope", machine_scope.title()),
         ("Measurement", "Available / Utilised ADTs"),
+        ("Unavailable Filter",
+         "No highlight" if selected_range is None else
+         "0 - Fully available" if selected_range == 0 else
+         f"{selected_range - 1}-{selected_range} unavailable"),
     ]
 
     for index, (label, value) in enumerate(details, 3):
@@ -389,9 +413,32 @@ def export_machine_excel(site, from_date, to_date, machine_scope="all"):
                         "orange" if ratio >= 0.20 else "red"
                     )
 
+                highlighted = False
+                total = row.get("fleet_total")
+                if (
+                    selected_range is not None
+                    and verified
+                    and available is not None
+                    and total is not None
+                ):
+                    total = float(total)
+                    available_count = float(available)
+                    if isfinite(total) and isfinite(available_count) and total > 0:
+                        deficit = total - available_count
+                        epsilon = 1e-9
+                        if selected_range == 0:
+                            highlighted = abs(deficit) <= epsilon
+                        else:
+                            highlighted = (
+                                deficit > selected_range - 1 + epsilon
+                                and deficit <= selected_range + epsilon
+                            )
+
                 sheet.write_string(
                     row_index, hour_index + 3,
-                    value, formats[colour]
+                    value,
+                    highlighted_formats[colour] if highlighted
+                    else formats[colour]
                 )
 
     book.close()
