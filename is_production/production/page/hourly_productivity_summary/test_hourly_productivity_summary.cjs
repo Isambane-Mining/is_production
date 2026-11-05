@@ -271,3 +271,14 @@ test('phone list preserves unknown targets, fatigue, missing status and escapes 
   assert.ok(mobile.includes('<dd>—</dd>'));
   assert.ok(!mobile.includes('null%'));
 });
+
+test('pending hours stay white across desktop and mobile despite saved performance segments', () => {
+  const data=fixture();
+  Object.assign(data.hours[0],{record_status:'pending',presentation_colour:'red',
+    presentation_segments:[{start_percent:0,end_percent:100,category:'red'}]});
+  const html=renderSummary(data);
+  assert.ok(!html.includes('linear-gradient(to right,)'));
+  assert.ok(html.includes('style="background:#fff;color:#243447"'));
+  assert.ok(html.includes('Pending'));
+  assert.equal(data.hours[0].target_bcm,110);
+});

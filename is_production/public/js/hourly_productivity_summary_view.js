@@ -10,11 +10,14 @@
   };
   const colour = value => value == null ? 'neutral' : value >= 100 ? 'green' : 'red';
   const hourColour = hour => hour.target_bcm == null ? 'neutral' : hour.actual_bcm >= hour.target_bcm ? 'green' : 'red';
-  const hourCategory = hour => ['green','red','blue','grey'].includes(hour.presentation_colour) ? hour.presentation_colour : hourColour(hour);
+  const hourCategory = hour => hour.record_status === 'pending' ? 'neutral' : (['green','red','blue','grey'].includes(hour.presentation_colour) ? hour.presentation_colour : hourColour(hour));
   const scheduleColours = {green:'var(--hps-hour-green)',red:'var(--hps-hour-red)',blue:'var(--hps-hour-blue)',grey:'var(--hps-hour-grey)',neutral:'var(--hps-hour-neutral)'};
-  const hourBackground = hour => (hour.presentation_segments || []).map(segment =>
+  const hourBackground = hour => hour.record_status === 'pending' ? '' : (hour.presentation_segments || []).map(segment =>
     `${scheduleColours[segment.category] || scheduleColours.neutral} ${Number(segment.start_percent)}% ${Number(segment.end_percent)}%`).join(',');
+  const hourStyle = hour => hour.record_status === 'pending' ? 'style="background:#fff;color:#243447"' :
+    hourBackground(hour) ? `style="background:linear-gradient(to right,${escape(hourBackground(hour))})"` : '';
   const needsTextBacking = hour => {
+    if (hour.record_status === 'pending') return false;
     const categories = new Set((hour.presentation_segments || []).map(segment => segment.category));
     return ['green','red','blue'].some(category => categories.has(category)) &&
       ['grey','neutral'].some(category => categories.has(category));
@@ -42,7 +45,7 @@
     ];
     return `<details class="hps-mobile-hour"><summary class="hps-mobile-summary hps-${category} ${needsTextBacking(hour) ? 'hps-mobile-mixed' : ''}"
       aria-label="${escape(`${hour.label}; ${label}; ${note ? note + '; ' : ''}Actual ${number(hour.actual_bcm,1)} BCM; achievement ${hour.achievement == null ? 'unknown' : number(hour.achievement,2) + '%'}. Expand for target and availability.`)}"
-      ${hour.presentation_segments?.length ? `style="background:linear-gradient(to right,${escape(hourBackground(hour))})"` : ''}>
+      ${hourStyle(hour)}>
       <span><span class="hps-mobile-text">${escape(hour.label)}<small>${escape(label)}</small>${note ? `<small>${escape(note)}</small>` : ''}</span></span>
       <span><span class="hps-mobile-text">${number(hour.actual_bcm,1)}</span></span>
       <span><span class="hps-mobile-text">${hour.achievement == null ? '—' : `${number(hour.achievement,2)}%`}<small class="hps-mobile-toggle" aria-hidden="true">＋</small></span></span>
@@ -80,7 +83,7 @@
             return `<button type="button" class="hps-day-hour hps-${hourCategory(hour)} ${needsTextBacking(hour) ? 'hps-mobile-mixed' : ''}"
               data-hps-shift="${shift}" data-hps-hour="${index}" aria-pressed="${shift === selectedShift && index === selectedHour}"
               aria-controls="${escape(state.detailId || 'hps-day-detail')}" aria-label="${escape(`${shift} · ${hourDate(shift,index,hour)} · ${hour.label}; ${note}; Actual ${number(hour.actual_bcm,1)} BCM; ${hour.achievement == null ? 'target unknown' : number(hour.achievement,2)+'%'}; view details`)}"
-              ${hour.presentation_segments?.length ? `style="background:linear-gradient(to right,${escape(hourBackground(hour))})"` : ''}>
+              ${hourStyle(hour)}>
               <span class="hps-mobile-text"><small>${escape(shortLabel)}</small><strong>${number(hour.actual_bcm,1)}</strong>
                 <span>${hour.achievement == null ? '—' : number(hour.achievement,1)+'%'}</span>${note ? `<em>${escape(note)}</em>` : ''}</span></button>`;
           }).join('')}</div>
@@ -144,7 +147,7 @@
           <th scope="col">Achievement %</th><th scope="col">ADTs Available</th><th scope="col">ADTs Utilised</th>
           <th scope="col">Excavators Available</th><th scope="col">Excavators Utilised</th><th scope="col">Excavators PBM</th></tr></thead>
         <tbody>${data.hours.map(h => readableMixedHour(h, `<tr class="hps-${hourCategory(h)}"
-          ${h.presentation_segments?.length ? `style="background:linear-gradient(to right,${escape(hourBackground(h))})"` : ''}>
+          ${hourStyle(h)}>
           <th scope="row">${escape(h.label)}${h.record_status !== 'recorded' ? `<small>${escape(status[h.record_status] || h.record_status)}</small>` : ''}
             ${h.non_working_minutes > 0 ? `<small>${number(h.non_working_minutes, 2)} minutes confirmed non-working</small>` : ''}</th>
           <td>${number(h.actual_bcm, 1)}</td><td>${number(h.target_bcm)}</td>
@@ -166,7 +169,7 @@
 
   const styles = `<style>
     .hps-shell{--hps-green:#00803c;--hps-red:#d63c4b;--hps-blue:#245f9e;--hps-grey:#f5f5f5;--hps-hour-green:var(--hps-green);--hps-hour-red:var(--hps-red);--hps-hour-blue:var(--hps-blue);--hps-hour-grey:var(--hps-grey);--hps-hour-neutral:#fff;width:100%;max-width:none;margin:0;padding:16px 0;font-size:16px;color:var(--text-color,#243447)}
-    .hps-filters{display:grid;grid-template-columns:2fr 1.3fr 1fr auto;gap:12px;align-items:end;margin-bottom:14px}
+    .hps-filters{display:grid;grid-template-columns:2fr 1.3fr 1fr minmax(150px,auto) auto;gap:12px;align-items:end;margin-bottom:14px}
     .hps-filters .form-group{margin-bottom:0}.hps-filters button{margin-bottom:4px}
     .hps-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
     .hps-kpi{border:1px solid var(--border-color,#e1e6eb);border-top:4px solid #4799bd;border-radius:12px;padding:16px;background:var(--card-bg,#fff)}
@@ -266,7 +269,16 @@
       this.requestToken = 0;
       this.initializing = true;
       this.page.main.html(`${styles}<div class="hps-shell"><div class="hps-filters"><div class="hps-site"></div>
-        <div class="hps-date"></div><div class="hps-shift"></div><button class="btn btn-primary hps-refresh">Refresh</button></div>
+        <div class="hps-date"></div><div class="hps-shift"></div>
+        <div class="hps-scope-control">
+          <label for="hps-scope-select">Machines</label>
+          <select id="hps-scope-select" class="form-control hps-scope">
+            <option value="all">All</option>
+            <option value="production">Production Machines</option>
+            <option value="spare">Spare Machines</option>
+          </select>
+        </div>
+        <button class="btn btn-primary hps-refresh">Refresh</button></div>
         <div class="hps-content" aria-live="polite"></div></div>`);
       this.updateOverview = setupResponsiveOverview(this.page.main[0]);
       for (const [name, type, options] of [['site', 'Link', 'Location'], ['date', 'Date'], ['shift', 'Select', 'Day\nNight']]) {
@@ -274,6 +286,12 @@
           df: {fieldname: name, fieldtype: type, label: name === 'date' ? 'Shift start date' : name[0].toUpperCase() + name.slice(1),
             options, reqd: 1, onchange: () => this.load()}});
       }
+      this.page.main.on('change', '.hps-scope', () => {
+        wrapper.hourlyProductivityTabs?.recordScope(
+          'summary', this.page.main.find('.hps-scope').val()
+        );
+        this.load();
+      });
       this.page.main.on('click', '.hps-refresh', () => this.load());
       this.phoneMedia = window.matchMedia('(max-width:600px)');
       this.phoneMedia.addEventListener('change',() => {if (this.phoneMedia.matches) this.loadFullDay();});
@@ -315,6 +333,11 @@
       const token = ++this.requestToken;
       this.fullDay = null;
       const args = {site: this.site.get_value(), date: this.date.get_value(), shift: this.shift.get_value()};
+      if (this.page.main.find('.hps-scope').val() !== 'all') {
+        this.page.main.find('.hps-shell').attr('aria-busy','false');
+        this.message('Production/Spare classification is not yet verified.');
+        return;
+      }
       if (!args.site || !args.date || !args.shift) {
         this.page.main.find('.hps-shell').attr('aria-busy', 'false');
         this.message('Select a site, date and shift.');

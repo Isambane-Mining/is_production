@@ -69,8 +69,10 @@ const contrast=(foreground,background)=>{
         }}},call:async request=>{calls.push(request);return {message:request.method.endsWith('get_defaults')?
           {from_date:data.from_date,to_date:data.to_date}:data};}};
     },fixture);
+    await page.addStyleTag({path:path.join(__dirname,'hourly_productivity_analysis.css')});
+    await page.evaluate(()=>{window.module={exports:{}};});
     await page.addScriptTag({path:path.join(__dirname,'hourly_productivity_analysis.js')});
-    await page.evaluate(()=>frappe.pages['hourly-productivity-analysis'].on_page_load(wrapper));
+    await page.evaluate(()=>{wrapper.hourlyProductivityAnalysis=new module.exports.HourlyProductivityAnalysisPage(wrapper);delete window.module;});
     await page.waitForFunction(()=>!wrapper.hourlyProductivityAnalysis.initializing);
     await page.evaluate(()=>wrapper.hourlyProductivityAnalysis.site.set_value('Synthetic Koppie'));
     assert.equal(await page.locator('.hpa-cell').count(),48);
