@@ -220,6 +220,11 @@ table.tbl { border-collapse: collapse; width: 100%; font-size: var(--fs-s); }
 .tbl.attr-rep tr.off td:first-child { color: var(--muted); }
 .tbl input, .tbl select { border: 1px solid var(--line); background: var(--field); border-radius: 4px; padding: 3px 5px; font-size: var(--fs-s); width: 100%; min-width: 0; }
 .tbl input[type="color"] { width: 30px; height: 24px; padding: 0 1px; }
+.tbl.ttest tbody tr { cursor: pointer; }
+.tbl.ttest tbody tr:hover td { background: var(--line-2); }
+.tbl.ttest tbody tr.on td { background: var(--accent-soft); }
+.tt-bar { height: 6px; background: var(--line-2); border-radius: 3px; overflow: hidden; }
+.tt-bar > span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
 .drop { border: 1.5px dashed var(--line); border-radius: var(--r); padding: 16px; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; background: var(--field); }
 .drop.over { border-color: var(--accent); background: var(--accent-soft); }
 .files { display: flex; flex-direction: column; gap: 3px; font-size: var(--fs-s); }
@@ -7192,6 +7197,164 @@ const Monthly = (() => {
   return { rampMonths, rampFactor, startMonths, wasteTarget, period, build, attrPlan, numericColumns, autoMode, autoLayer, layerLabel, daysPerMonth, workDaysPerMonth, running, wasteGroup, adcLabel, AVG_MONTH };
 })();
 
+/* ===== Target test (Production tab): trial schedules for the monthly coal and waste targets of a smooth profile =====
+   Each trial is the whole schedule run again (Sim.run) on a copy of the project with one pair of monthly targets — coal (t,
+   on the basis of the coal target) and waste (bcm or t, the unit of the waste target) — and teams enough that they never
+   hold the mining back (six times what the targets need, or the project's teams if more); if chosen, the activities'
+   maximum daily rates are lifted too. The project itself is not changed. The other target settings stay as they are.
+   A trial is judged on its steady months: from the first coal, after the coal ramp-up and the start-up waste, to the month
+   before the coal ends. Per average month (each month × the days of an average month ÷ its days, or its working days): how
+   smooth the coal and the waste are (1 − the coefficient of variation of each), and how much of its targets it mines (the
+   average ÷ the target). It mines the whole plan unless the schedule says blocks were not mined, or that mining stopped;
+   as some plans are never mined out (the dumps or the voids run short whatever the targets), a trial that mines as much coal
+   as any run of the test (or the schedule now) within 1% counts as mining the plan too.
+   The plan: what the schedule now mines (its coal and waste, when it mines it all), else the volumes it schedules (after
+   keep-out zones and depth limits), else the blocks in the mining paths; once a trial mines the whole plan, its coal and
+   waste. The search: the coal levels between the two typed, each with the waste at the plan's strip ratio × the coal;
+   then, at the best of them, the waste 15% lower and 20% higher (and once more in the better direction); then a coal
+   level between the best and its better neighbour. The sweet spot is the smoothest trial that mines the whole plan and
+   reaches 95% of each target on average; between trials within 1% of each other in smoothness, the one with more coal.
+   When no trial mines the whole plan, the one that mines the most coal ranks first (a short run is smooth to no purpose). */
+const TargetTest = (() => {
+  const OK = 0.95, TIE = 0.01;
+  // a number to three significant figures (the targets tested)
+  const sig3 = v => { if (!(v > 0)) return 0; const q = Math.pow(10, Math.floor(Math.log10(v)) - 2); return Math.round(v / q) * q; };
+  /* The coal (t, on the basis of the coal target) and the waste (in the unit of the waste target) of the plan; sr: the
+     waste for a ton of coal; from: 'run' (what a schedule mined), 'scheduled' (the volumes a schedule set out to mine) or
+     'paths' (the blocks in the mining paths, each layer by the activity that mines it). res, J: a schedule and its judge. */
+  function plan(P, ws, res, J) {
+    if (J && J.complete && J.coalTot > 0) return { coal: J.coalTot, waste: J.wasteTot, sr: J.wasteTot / J.coalTot, from: 'run' };
+    const T = P.targets || {}, PRD = T.coalBasis === 'product' && typeof Wash !== 'undefined' ? Wash.product(P) : null;
+    const ar = T.coalBasis === 'ar' || !!PRD, inT = T.wasteUnit === 't', nL = P.layers.length;
+    const vol = res ? res.vol0 : Model.blockVolumes(ws), on = res && res.scheduled ? (b, l) => res.scheduled[b * nL + l] : null;
+    let coal = 0, waste = 0;
+    const add = (b, l) => {
+      const L = P.layers[l], isC = L.type === 'coal', d = +L.density || (isC ? 1.5 : 2.4), v = (vol[b] && vol[b][l]) || 0, S = PRD && isC ? PRD.seams.get(l) : null;
+      if (isC) coal += v * d * (ar ? Model.arFactor(P, L) : 1) * (S ? S.y[b] : 1); else waste += inT ? v * d : v;
+    };
+    if (on) { for (let b = 0; b < P.blocks.length; b++) for (let l = 0; l < nL; l++) if (on(b, l)) add(b, l); }
+    else for (const a of P.activities) { const l = Model.layerIndex(P, a.layerId); if (l >= 0) for (const id of a.path) { const b = ws.blockIndex.get(id); if (b !== undefined) add(b, l); } }
+    return { coal, waste, sr: coal > 0 ? waste / coal : 0, from: on ? 'scheduled' : 'paths' };
+  }
+  // what the monthly targets ask of the teams (as the Production tab works it out): coal t → bcm → loose m³, waste → loose m³
+  // (startUp: the start-up waste counts, when it is more than the waste target)
+  function teamsFor(P, coal, waste, startUp = true) {
+    const T = P.targets || {}, coalL = P.layers.filter(L => L.type === 'coal'), wasteL = P.layers.filter(L => L.type !== 'coal');
+    const avg = (list, k, d) => (list.length ? list.reduce((x, L) => x + (+L[k] || d), 0) / list.length : d);
+    const cD = avg(coalL, 'density', 1.5), cS = avg(coalL, 'swell', 1.3), wD = avg(wasteL, 'density', 2.4), wS = avg(wasteL, 'swell', 1.3);
+    const arF = coalL.length ? coalL.reduce((x, L) => x + Model.arFactor(P, L), 0) / coalL.length : 1;
+    const w = Math.max(+waste || 0, startUp && Monthly.startMonths(P) ? +T.wasteStart || 0 : 0);
+    const loose = ((+coal || 0) / (cD * (T.coalBasis === 'ar' || T.coalBasis === 'product' ? arF : 1))) * cS + (T.wasteUnit === 't' ? w / wD : w) * wS;
+    return loose / Model.teams(P).perTeam;
+  }
+  // a copy of the project for one trial: its targets, teams enough, and (lift) no maximum daily rates
+  function trialProject(P, coal, waste, lift) {
+    const TM = Model.teams(P), targets = Object.assign({}, P.targets || {}, { coal, waste: waste > 0 ? waste : null, mode: 'limit' });
+    const Q = Object.assign({}, P, { targets });
+    Q.teams = { count: Math.max(TM.count, Math.ceil(6 * teamsFor(Q, coal, waste)) + 1), perTeam: TM.perTeam };
+    if (lift) Q.activities = P.activities.map(a => (+a.maxRate > 0 ? Object.assign({}, a, { maxRate: null }) : a));
+    return Q;
+  }
+  // did the schedule mine the whole plan? (it says so when blocks were not mined, or mining stopped); else what it was waiting for
+  function stuckWhy(res) {
+    const left = res.events.some(e => (e.type === 'error' && /stopped/i.test(e.msg)) || /block\(s\) not mined/.test(e.msg));
+    if (!left) return '';
+    const why = res.events.filter(e => e.type === 'warn' && /waiting/.test(e.msg)).map(e => (/waiting[^—]*—\s*([^(]+?)\s*(?:\(|\.?$)/.exec(e.msg) || [])[1]).filter(Boolean);
+    return why.length ? why[why.length - 1] : 'blocks were left waiting on precedence or a void';
+  }
+  /* A schedule month by month on the targets' bases, and how it does over its steady months. P: the project it ran with. */
+  function judge(P, ws, res) {
+    const mo = Monthly.build(P, ws, res), T = P.targets || {}, nM = mo.nM;
+    const coal = T.coalBasis === 'product' && mo.prod ? mo.prod.T : T.coalBasis === 'ar' ? mo.coalAR : mo.coalT;
+    const waste = T.wasteUnit === 't' ? mo.wasteT : mo.wasteB;
+    const base = T.basis === 'working' ? mo.work : mo.days, per = Monthly.daysPerMonth(P);
+    const norm = (a, m) => (base[m] > 0 ? (a[m] * per) / base[m] : NaN);
+    // the teams each month keeps busy with the mining, the ramps and the batters (rehandling left out)
+    const TM = Model.teams(P), teamsM = Array.from({ length: nM }, (_, m) => { const cap = (TM.perTeam * base[m]) / per; return cap > 0 ? (mo.looseMine[m] + mo.looseRamp[m] + mo.looseBatter[m]) / cap : 0; });
+    let first = -1, firstCoal = -1, lastCoal = -1;
+    for (let m = 0; m < nM; m++) { if (first < 0 && (coal[m] > 0 || waste[m] > 0)) first = m; if (coal[m] > 0) { if (firstCoal < 0) firstCoal = m; lastCoal = m; } }
+    let m0 = Math.max(firstCoal, Monthly.rampMonths(P), first + Monthly.startMonths(P)), m1 = lastCoal - 1;
+    if (m1 - m0 < 2) { m0 = firstCoal; m1 = lastCoal; }
+    const cN = [], wN = [], tN = [];
+    if (firstCoal >= 0) for (let m = m0; m <= m1; m++) { const c = norm(coal, m), w = norm(waste, m); if (c === c && w === w) { cN.push(c); wN.push(w); tN.push(teamsM[m]); } }
+    const mean = a => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0);
+    const cv = a => { const u = mean(a); return u > 0 ? Math.sqrt(mean(a.map(v => (v - u) * (v - u)))) / u : 1; };
+    let peak = 0; for (let m = Math.max(0, first); m <= lastCoal; m++) peak = Math.max(peak, teamsM[m]);
+    const sum = a => { let s = 0; for (const v of a) s += v; return s; }, stuck = stuckWhy(res);
+    return {
+      coalAvg: mean(cN), wasteAvg: mean(wN), cvC: cv(cN), cvW: cv(wN), steady: cN.length, teamsAvg: mean(tN), teamsPeak: peak,
+      months: firstCoal >= 0 ? lastCoal - Math.max(0, first) + 1 : 0, end: lastCoal >= 0 ? mo.label(lastCoal) : '', coalTot: sum(coal), wasteTot: sum(waste),
+      allMined: !stuck, complete: !stuck, stuck, held: res.acts.reduce((s, A) => s + (A.teamDays || 0), 0),
+      // for the chart: the months, what was mined and the targets
+      k0: mo.k0, m0, m1, coalM: Array.from(coal), wasteM: Array.from(waste), coalTgtM: mo.target.coal ? Array.from(mo.target.coal) : null, wasteTgtM: mo.target.waste ? Array.from(mo.target.waste) : null
+    };
+  }
+  // a trial's row: its targets, how it did, and its score (lower is smoother)
+  function row(coal, waste, J, extra) {
+    const achC = coal > 0 ? J.coalAvg / coal : null, achW = waste > 0 ? J.wasteAvg / waste : null;
+    return Object.assign({ coal, waste, achC, achW, score: (Math.min(1, J.cvC) + Math.min(1, J.cvW)) / 2, ok: J.complete && (achC == null || achC >= OK) && (achW == null || achW >= OK) }, J, extra || {});
+  }
+  // does trial a rank before trial b? (the whole plan mined, the targets reached, smoother; about as smooth: more coal;
+  // neither mining the whole plan: the one that mines more)
+  function better(a, b) {
+    if (!b) return true;
+    if (a.complete !== b.complete) return a.complete;
+    if (!a.complete && Math.abs(a.coalTot - b.coalTot) > 0.01 * Math.max(a.coalTot, b.coalTot)) return a.coalTot > b.coalTot;
+    if (a.ok !== b.ok) return a.ok;
+    if (Math.abs(a.score - b.score) > TIE) return a.score < b.score;
+    if (a.coal !== b.coal) return a.coal > b.coal;
+    return a.waste < b.waste;
+  }
+  const best = rows => rows.filter(r => !r.ref && !r.error).reduce((x, r) => (better(r, x) ? r : x), null);
+  // the trials that mine as much coal as any run (ref: the schedule now) count as mining the plan; what that makes of their targets
+  function rank(rows, ref) {
+    const full = Math.max(ref ? ref.coalTot : 0, ...rows.map(r => r.coalTot));
+    for (const r of rows) { r.complete = r.allMined || r.coalTot >= 0.99 * full; r.ok = r.complete && (r.achC == null || r.achC >= OK) && (r.achW == null || r.achW >= OK); }
+  }
+  /* The search. o: {from, to, levels, refine, lift, plan, ref (the schedule now, judged), signal, onRun(i, n, coal, waste), onDay(day), onRow(row),
+     onPlan(plan)}. Returns {rows, plan, stopped} ({error} when no trial could run). */
+  async function search(ws, o) {
+    const P = ws.project, rows = [], tried = new Map();
+    let pl = o.plan || plan(P, ws);
+    if (!(pl.coal > 0)) return { error: 'There is no coal in the mining paths: set the activities’ paths in the Sequence tab first.' };
+    Keep.compute(ws); // (worked out once: every trial's copy of the workspace keeps it)
+    const n = Math.max(1, Math.round(o.levels) || 1), levels = [];
+    for (let i = 0; i < n; i++) levels.push(sig3(n === 1 ? o.from : o.from + ((o.to - o.from) * i) / (n - 1)));
+    const plannedN = new Set(levels).size + (o.refine ? 4 : 0);
+    let stop = null;
+    async function trial(coal, k, stage) {
+      const waste = sig3(pl.sr * k * coal), key = coal + '|' + waste;
+      if (stop || !(coal > 0) || tried.has(key)) return tried.get(key) || null;
+      o.onRun && o.onRun(rows.length, Math.max(plannedN, rows.length + 1), coal, waste);
+      const Q = trialProject(P, coal, waste, o.lift), wq = Object.assign({}, ws, { project: Q }), t0 = Date.now();
+      const res = await Sim.run(wq, { onProgress: d => o.onDay && o.onDay(d), signal: o.signal });
+      if (res.error) { stop = res.error; return null; }
+      const J = judge(Q, wq, res), r = row(coal, waste, J, { stage, teams: Q.teams.count, ms: Date.now() - t0, days: res.nDays });
+      // the first trial that mines the whole plan gives its coal and waste (the plan before was worked out from volumes)
+      if (pl.from !== 'run' && J.complete) { pl = plan(Q, wq, res, J); o.onPlan && o.onPlan(pl); }
+      rows.push(r); tried.set(key, r); rank(rows, o.ref);
+      for (const x of rows) x.k = x.coal > 0 && pl.sr > 0 ? x.waste / (pl.sr * x.coal) : 1; // the waste for the coal, ÷ the plan's strip ratio
+      o.onRow && o.onRow(r);
+      return r;
+    }
+    for (const c of new Set(levels)) await trial(c, 1, 1);
+    if (o.refine && !stop) {
+      const b1 = best(rows);
+      if (b1) {
+        const k1 = b1.k;
+        await trial(b1.coal, k1 * 0.85, 2); await trial(b1.coal, k1 * 1.2, 2);
+        const b2 = best(rows);
+        if (b2 && b2.coal === b1.coal && Math.abs(b2.k - k1) > 0.02) await trial(b2.coal, b2.k * (b2.k > k1 ? 1.2 : 0.85), 2);
+        const b3 = best(rows), lv = Array.from(new Set(levels)).sort((x, y) => x - y), i = lv.indexOf(b3.coal);
+        const nb = [lv[i - 1], lv[i + 1]].filter(v => v != null).map(c => rows.filter(r => r.coal === c && r.stage === 1)[0]).filter(Boolean).reduce((x, r) => (better(r, x) ? r : x), null);
+        if (nb) await trial(sig3((b3.coal + nb.coal) / 2), b3.k, 3);
+      }
+    }
+    return stop && !rows.length ? { error: stop } : { rows, plan: pl, stopped: stop };
+  }
+  return { plan, teamsFor, trialProject, judge, row, better, best, search, sig3, OK };
+})();
+
 /* ===== Cross-sections as DXF: the geology, the ground on a date and the placed spoil along a section line ===== */
 const SecDxf = (() => {
   const PLAIN = { 'ø': 'o', 'Ø': 'O', 'æ': 'ae', 'Æ': 'AE', 'œ': 'oe', 'Œ': 'OE', 'ß': 'ss', 'đ': 'd', 'Đ': 'D', 'ł': 'l', 'Ł': 'L' };
@@ -12480,8 +12643,8 @@ const UI = (() => {
   function tip(x, y, html) { const el = $('tip'); if (x == null) { el.hidden = true; return; } el.innerHTML = html; el.hidden = false; const w = el.offsetWidth; el.style.left = U.clamp(x - w / 2, 8, window.innerWidth - w - 8) + 'px'; el.style.top = Math.max(8, y) + 'px'; }
 
   // ---------- modal ----------
-  function modal(title, body, buttons = []) {
-    const d = $('dialog'); d.innerHTML = '';
+  function modal(title, body, buttons = [], opts = {}) {
+    const d = $('dialog'); d.innerHTML = ''; d.style.width = opts.wide ? 'min(1040px, 100%)' : '';
     d.append(h('header', null, h('h2', null, title), btn('Close', closeModal, 'sm ghost')), h('div', { class: 'body' }, body), buttons.length ? h('footer', null, buttons) : null);
     $('modal').hidden = false;
     setTimeout(() => { const f = d.querySelector('input,select,textarea'); if (f) f.focus(); }, 30);
@@ -13824,7 +13987,7 @@ const Tabs = (() => {
       const fileIn = h('input', { type: 'file', accept: '.kml,.kmz,.dxf', multiple: true, hidden: true });
       fileIn.setAttribute('aria-label', 'Overlay files');
       fileIn.addEventListener('change', async () => { const fs = Array.from(fileIn.files); fileIn.value = ''; for (const f of fs) await addOverlay(f, f.name); });
-      const others = (D.dxfs || []).filter(n => n !== D.dxfName && !list.some(o => o.file === n));
+      const lay = new Set(layoutFiles(P).map(f => f.file)), others = (D.dxfs || []).filter(n => n !== D.dxfName && !lay.has(n) && !list.some(o => o.file === n));
       let pick = others[0];
       parts.push(h('div', { class: 'row' }, btn('Add KML or DXF overlay…', () => fileIn.click(), 'sm primary', 'KML, KMZ or DXF files'), fileIn, btn('Export shapes to KML…', () => kmlDialog(), 'sm', 'Save the polygons and lines drawn in the simulator to a KML file'),
         others.length ? h('span', { class: 'dt' }, 'or from the folder:') : null,
@@ -14114,7 +14277,7 @@ const Tabs = (() => {
       UI.busy(`Reading ${name}…`, 0.3); await U.nextFrame();
       D.dxf = Dxf.parse(new Uint8Array(await f.arrayBuffer())); D.dxfName = name;
       UI.busy(null);
-      const sum = Dxf.summarize(D.dxf), prev = App.P.source.dxf;
+      const sum = Dxf.summarize(D.dxf), prev = layoutEntry(App.P, name);
       const shapeScore = L => sum[L].closed * 3 + sum[L].hatches * 2 + sum[L].lines + sum[L].open;
       const shapeLayers = D.dxf.layers.filter(L => shapeScore(L) > 0);
       const named = shapeLayers.filter(L => /BLOCK|BLK|CUT|PANEL|MINING|STRIP/i.test(L) && !/DUMP|ROAD|RAMP|TEXT|LABEL|ID$/i.test(L));
@@ -14122,14 +14285,120 @@ const Tabs = (() => {
       const tags = Array.from(new Set(D.dxf.texts.filter(t => t.attrib).map(t => t.attrib)));
       const hasText = D.dxf.texts.some(t => !t.attrib);
       D.dxfOpts = prev && prev.file === name && prev.blockLayers
-        ? { blockLayers: prev.blockLayers.filter(L => D.dxf.layers.includes(L)), idSource: prev.idSource || 'text', textLayers: (prev.textLayers || []).filter(L => D.dxf.layers.includes(L)), attribTag: prev.attribTag || tags[0] || '', joinLines: prev.joinLines !== false, dropContainers: prev.dropContainers !== false }
+        ? { blockLayers: prev.blockLayers.filter(L => D.dxf.layers.includes(L)), idSource: prev.idSource || 'text', textLayers: (prev.textLayers || []).filter(L => D.dxf.layers.includes(L)), attribTag: prev.attribTag || tags[0] || '', joinLines: prev.joinLines !== false, dropContainers: prev.dropContainers !== false, prefix: prev.prefix || '' }
         : { blockLayers: blockGuess ? [blockGuess] : [], idSource: tags.length ? 'attrib' : hasText ? 'text' : 'auto', textLayers: [], attribTag: tags.find(t => /ID|BLOCK|NAME|NO/i.test(t)) || tags[0] || '', joinLines: true, dropContainers: true };
       if (!shapeLayers.length) D.dxfError = 'This DXF has no polylines, lines, hatches or block references in model space, so there is nothing to make blocks from.';
     } catch (e) { UI.busy(null); D.dxf = null; D.dxfName = name; D.dxfError = e.message; console.error(e); }
     if (!quiet) UI.renderTab();
   }
+  /* ---------- a block layout of several files ----------
+     The blocks may come from several KML, KMZ or DXF files, each for its own blocks (another pit, a later area). Each block
+     keeps the file it came from (srcFile); P.source.layouts holds the options each file was read with, P.source.dxf those of
+     the file read last. Adding a file to the layout replaces only the blocks it gave before; a block ID another file of the
+     layout already has gets _2, _3… (or each file's IDs take a prefix of their own). Replacing the layout keeps only the
+     blocks of the file. Blocks loaded before the layout knew its files belong to the file of P.source.dxf (or to none: a
+     grid of the Resource tab). The reserve layout's copies do not keep the file: the resource layout (P.resBlocks) does. */
+  function layoutOf(P) { const G = P.gridDef && P.gridDef.made, f = P.source && P.source.dxf && P.source.dxf.file; return b => (b.srcFile != null ? b.srcFile : G ? '' : f || ''); }
+  function layoutFiles(P) {
+    const of = layoutOf(P), n = new Map();
+    for (const b of P.resBlocks || P.blocks) { const f = of(b); n.set(f, (n.get(f) || 0) + 1); }
+    return Array.from(n, ([file, count]) => ({ file, count }));
+  }
+  function layoutEntry(P, file) { const S = P.source || {}; return (S.layouts || []).find(e => e.file === file) || (S.dxf && S.dxf.file === file ? S.dxf : null); }
+  const layoutName = f => f || 'the blocks from before';
+  /* The blocks of a file into the layout: entry = {file, kind, options}; add keeps the blocks of the other files. Each
+     block keeps the attributes of the block of the same ID it replaces. Returns the new blocks and notes for the report. */
+  function placeBlocks(blocks, entry, add) {
+    App.dropReserve(); // (a new resource layout: the reserve layout is copied from it again)
+    const P = App.P, file = entry.file, of = layoutOf(P), notes = [];
+    const keep = add ? P.blocks.filter(b => of(b) !== file) : [];
+    for (const b of keep) if (b.srcFile == null) b.srcFile = of(b);
+    const prev = new Map(P.blocks.filter(b => !add || of(b) === file).map(b => [b.id, b]));
+    const pre = String(entry.prefix || '').trim(), taken = new Set(keep.map(b => b.id));
+    let renamed = 0, ex = '';
+    const fresh = blocks.map(b => {
+      let id = pre + b.id;
+      if (taken.has(id)) { let m = 2; while (taken.has(id + '_' + m)) m++; if (!renamed++) ex = `${id} → ${id}_${m}`; id += '_' + m; }
+      taken.add(id);
+      return { id, pts: b.pts, attrs: Object.assign({}, (prev.get(id) || {}).attrs || {}, b.attrs || {}), srcFile: file };
+    });
+    if (renamed) notes.push(['warn', `${U.fmtNum(renamed)} block ID${renamed === 1 ? '' : 's'} of ${file} ${renamed === 1 ? 'was' : 'were'} already used by another file of the layout, so ${renamed === 1 ? 'it was' : 'they were'} renamed (${ex}${renamed > 1 ? ', …' : ''}). To keep each file’s blocks apart, type a prefix for its block IDs (such as “N-”) and add it again.`]);
+    // a block of this file on a block of another: a cell of the 3D model belongs to the first block only
+    if (keep.length) {
+      const boxes = keep.map(b => { let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; for (const [x, y] of b.pts) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; } return [b, x0, y0, x1, y1]; });
+      let over = 0; const on = new Set();
+      for (const b of fresh) {
+        const [x, y] = Geo.centroid(b.pts), q = boxes.find(B => x >= B[1] && x <= B[3] && y >= B[2] && y <= B[4] && Geo.pip(x, y, B[0].pts));
+        if (q) { over++; on.add(q[0].srcFile); }
+      }
+      if (over) notes.push(['warn', `${over === fresh.length ? `All ${U.fmtNum(over)}` : `${U.fmtNum(over)} of the ${U.fmtNum(fresh.length)}`} blocks of ${file} lie on blocks of ${Array.from(on, layoutName).join(', ')}. A cell of the 3D model belongs to one block only (the one loaded first), so check that the files hold different blocks.`]);
+    }
+    P.blocks = keep.concat(fresh);
+    const S = P.source, kept = new Set(keep.map(b => b.srcFile)), list = add ? (S.layouts || []).filter(e => e.file !== file && kept.has(e.file)) : [];
+    if (add && S.dxf && S.dxf.file && S.dxf.file !== file && kept.has(S.dxf.file) && !list.some(e => e.file === S.dxf.file)) list.unshift(Object.assign({}, S.dxf));
+    list.push(entry);
+    S.layouts = list; S.dxf = Object.assign({}, entry);
+    if (P.gridDef) delete P.gridDef.made; // (a grid of the Resource tab is no longer the layout)
+    const ids = new Set(P.blocks.map(b => b.id));
+    P.activities.forEach(a => (a.path = a.path.filter(id => ids.has(id))));
+    if (add) {
+      const inPath = new Set(P.activities.flatMap(a => a.path)), none = fresh.filter(b => !inPath.has(b.id)).length;
+      if (none) notes.push(['warn', `${none === fresh.length ? `The ${U.fmtNum(none)}` : `${U.fmtNum(none)} of the ${U.fmtNum(fresh.length)}`} blocks of ${file} are in no mining path yet, so the schedule does not mine them: add them to the activities’ paths in the Sequence tab (Auto order…, or draw them with “A drawn line adds to the end”).`]);
+    }
+    return { fresh, notes };
+  }
+  const layoutNow = fresh => { const F = layoutFiles(App.P); return `${U.fmtNum(fresh.length)} blocks of ${D.dxfName} added to the block layout: it now has ${U.fmtNum(App.P.blocks.length)} blocks from ${F.length} files (${F.map(f => `${layoutName(f.file)}: ${U.fmtNum(f.count)}`).join(', ')}).`; };
+  // the blocks of a list that fall on no cell of the 3D model
+  const offModel = list => list.filter(b => { const k = App.ws.blockIndex.get(b.id); return k === undefined || !App.ws.blockCells[k].length; }).length;
+  async function removeLayoutFile(file) {
+    const P = App.P, of = layoutOf(P), n = (P.resBlocks || P.blocks).filter(b => of(b) === file).length, name = layoutName(file);
+    if (!n) return;
+    if (!(await UI.confirmBox('Remove from the block layout', `Remove the ${U.fmtNum(n)} blocks of ${name} from the block layout? They are taken out of the mining paths too; the blocks of the other files stay.`, 'Remove', true))) return;
+    App.dropReserve();
+    for (const b of P.blocks) if (b.srcFile == null) b.srcFile = of(b);
+    P.blocks = P.blocks.filter(b => b.srcFile !== file);
+    const S = P.source; S.layouts = (S.layouts || []).filter(e => e.file !== file);
+    if (S.dxf && S.dxf.file === file) S.dxf = S.layouts.length ? Object.assign({}, S.layouts[S.layouts.length - 1]) : null;
+    const ids = new Set(P.blocks.map(b => b.id));
+    P.activities.forEach(a => (a.path = a.path.filter(id => ids.has(id))));
+    if (D.dxfName === file) D.dxfReport = null;
+    App.res = null; App.pb = null; App.day = -1; App.selBlock = -1;
+    if (App.ws) { App.rasterize(); Timeline.setData(null, P); }
+    App.changed('blocks', { now: true });
+    UI.renderTab(); UI.renderInspector(); UI.renderColorBy();
+    UI.toast(`${U.fmtNum(n)} blocks of ${name} removed: the block layout has ${U.fmtNum(P.blocks.length)} blocks.`);
+  }
+  // the files of the layout, when there are several: their blocks, and Remove
+  function layoutList(bl) {
+    const P = App.P, files = layoutFiles(P);
+    if (files.length < 2) return;
+    bl.push(h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' },
+      h('thead', null, h('tr', null, h('th', null, `The block layout: ${files.length} files`), h('th', { class: 'r' }, 'Blocks'), h('th', null, ''))),
+      h('tbody', null, files.map(f => {
+        const e = layoutEntry(P, f.file);
+        return h('tr', null,
+          h('td', { title: f.file, style: { whiteSpace: 'nowrap', maxWidth: '210px', overflow: 'hidden', textOverflow: 'ellipsis' } }, f.file || 'Blocks from before (an earlier layout or a grid)', e && e.prefix ? h('span', { class: 'dt' }, ` · IDs ${e.prefix}…`) : null),
+          h('td', { class: 'r num' }, U.fmtNum(f.count)),
+          h('td', { class: 'r' }, edit() ? btn('Remove', () => removeLayoutFile(f.file), 'sm ghost', `Remove the blocks of ${layoutName(f.file)} from the layout`) : null));
+      })))));
+  }
+  /* Load blocks: with blocks of other files in the layout, add this file's blocks to them (Add to the layout) or keep only
+     this file's (Replace the layout); and a prefix for the file's block IDs. */
+  function loadButtons(apply, o) {
+    const P = App.P, files = layoutFiles(P), others = files.filter(f => f.file !== D.dxfName);
+    const prefix = others.length || o.prefix ? h('div', { class: 'grid2' }, fld('Prefix for the block IDs (optional)', (() => { const i = txt(o.prefix || '', v => (o.prefix = v.trim()), { placeholder: 'such as N-' }); i.setAttribute('aria-label', 'Prefix for the block IDs'); return i; })()), h('span')) : null;
+    if (!others.length) return { prefix, btns: [btn('Load blocks', () => apply(false), 'primary sm')], note: null };
+    const n = others.reduce((t, f) => t + f.count, 0), names = others.map(f => layoutName(f.file)).join(', '), again = files.some(f => f.file === D.dxfName);
+    return {
+      prefix,
+      btns: [btn('Add to the layout', () => apply(true), 'primary sm', `Keep the ${U.fmtNum(n)} blocks of ${names} and add the blocks of ${D.dxfName}`),
+        btn('Replace the layout', async () => { if (await UI.confirmBox('Replace the block layout', `Make the block layout only the blocks of ${D.dxfName}? The ${U.fmtNum(n)} blocks of ${names} are removed, and taken out of the mining paths.`, 'Replace', true)) apply(false); }, 'sm', `Keep only the blocks of ${D.dxfName}`)],
+      note: hint(`The block layout already has ${U.fmtNum(n)} block${n === 1 ? '' : 's'} from ${names}. “Add to the layout” keeps ${n === 1 ? 'it' : 'them'} and adds the blocks of this file, such as another pit or area${again ? ' (the blocks it gave before are read again)' : ''}; “Replace the layout” keeps only this file’s blocks. If the files number their blocks the same way (1, 2, 3…), give each file a prefix for its block IDs, such as “N-” and “S-”.`)
+    };
+  }
   function blockLayoutSection(bl) {
     const P = App.P;
+    layoutList(bl);
     const dwg = (D.all || []).filter(n => ext(n) === 'dwg');
     if (!D.dxfs.length) {
       bl.push(hint(App.folder.files.size ? 'No KML, KMZ or DXF file in this folder.' : 'Choose the folder to pick the block layout (KML, KMZ or DXF).'));
@@ -14161,13 +14430,16 @@ const Tabs = (() => {
     bl.push(chk('Join separate lines into block outlines', o.joinLines !== false, v => (o.joinLines = v)));
     bl.push(chk('Ignore outlines that enclose other blocks (pit or strip boundaries)', o.dropContainers !== false, v => (o.dropContainers = v)));
     const closedAny = D.dxf.polylines.some(p => p.closed || Dxf.nearClosed(p.pts)) || D.dxf.hatches.length;
-    bl.push(h('div', { class: 'row' }, btn('Load blocks', () => applyBlocks(), 'primary sm'),
+    const LB = loadButtons(applyBlocks, o);
+    if (LB.prefix) bl.push(LB.prefix);
+    bl.push(h('div', { class: 'row' }, ...LB.btns,
       closedAny ? btn('Add closed shapes as dumps…', () => importShapes('dumps'), 'sm') : null,
       D.dxf.polylines.some(p => !p.closed) ? btn('Add lines as haul roads…', () => importShapes('roads'), 'sm') : null));
+    if (LB.note) bl.push(LB.note);
     if (D.dxfReport) for (const m of D.dxfReport) bl.push(msg(m[0], m[1]));
   }
   function gridBBox() { const g = App.P.grid; return g ? [g.x0, g.y0, g.x0 + g.nx * g.cell, g.y0 + g.ny * g.cell] : null; }
-  function applyBlocks() {
+  function applyBlocks(add) {
     const P = App.P, o = D.dxfOpts;
     if (!o.blockLayers.length) { UI.toast('Tick at least one layer that holds the block outlines.'); return; }
     UI.busy('Finding the block outlines…', 0.4);
@@ -14201,27 +14473,23 @@ const Tabs = (() => {
       else report.push(['info', `Every block got its ID from ${o.idSource === 'attrib' ? 'attribute ' + (o.attribTag || '') : 'text on layer ' + (r.textLayer || '(any)')}.`]);
     }
     if (fixNote) report.push(['warn', fixNote]);
-    App.dropReserve(); // (a new resource layout: the reserve layout is copied from it again)
-    const old = new Map(P.blocks.map(b => [b.id, b]));
-    P.blocks = blocks.map(b => ({ id: b.id, pts: b.pts, attrs: (old.get(b.id) || {}).attrs || {} }));
-    P.source.dxf = Object.assign({ file: D.dxfName, fix: D.dxfFix ? D.dxfFix.name : null }, o);
-    if (P.gridDef) delete P.gridDef.made; // (a grid of the Resource tab is no longer the layout)
-    const ids = new Set(P.blocks.map(b => b.id));
-    P.activities.forEach(a => (a.path = a.path.filter(id => ids.has(id))));
+    const { fresh, notes } = placeBlocks(blocks.map(b => ({ id: b.id, pts: b.pts })), Object.assign({ file: D.dxfName, fix: D.dxfFix ? D.dxfFix.name : null }, o), add);
+    if (add) report.splice(1, 0, ['info', layoutNow(fresh)]);
+    report.push(...notes);
     P.isDemo = false;
     if (D.wb && D.idCol) linkAttributes(true);
     App.res = null; App.pb = null; App.day = -1; App.selBlock = -1;
     if (App.ws) {
       App.rasterize(); Timeline.setData(null, P);
-      const outside = App.ws.blockCells.filter(c => !c.length).length;
-      if (outside === blocks.length) report.push(['error', 'None of the blocks fall on the elevation model. The DXF and the TIFFs seem to use different coordinate systems — check the Coordinates setting in the Project tab.']);
+      const outside = offModel(fresh);
+      if (outside === fresh.length) report.push(['error', 'None of the blocks fall on the elevation model. The DXF and the TIFFs seem to use different coordinate systems — check the Coordinates setting in the Project tab.']);
       else if (outside) report.push(['warn', `${outside} block(s) fall outside the elevation model.`]);
       View.fit();
     } else report.push(['warn', 'Build the 3D model from the elevation TIFFs to see the blocks.']);
     D.dxfReport = report;
     App.changed('blocks', { now: true });
     UI.renderTab(); UI.renderInspector(); UI.renderColorBy();
-    UI.toast(report[0][1]);
+    UI.toast(report[add ? 1 : 0][1]);
   }
   function importShapes(kind) {
     if (D.kml) return importKmlShapes(kind);
@@ -14259,7 +14527,7 @@ const Tabs = (() => {
       const text = ext(name) === 'kmz' || (u8[0] === 0x50 && u8[1] === 0x4b) ? await Kml.unzipKml(u8) : new TextDecoder().decode(u8);
       D.kml = Kml.parse(text); D.dxfName = name;
       UI.busy(null);
-      const prev = App.P.source.dxf;
+      const prev = layoutEntry(App.P, name);
       const polyFolders = D.kml.folders.filter(f => f.polygons || f.lines);
       const named = polyFolders.filter(f => /BLOCK|BLK|CUT|PANEL|MINING|STRIP/i.test(f.name) && !/DUMP|ROAD|RAMP/i.test(f.name));
       const guess = (named.length ? named : polyFolders).slice().sort((a, b) => b.polygons - a.polygons)[0];
@@ -14290,9 +14558,12 @@ const Tabs = (() => {
     if (k.fields.length) bl.push(chk(`Use the KML data fields as block attributes (${k.fields.length}: ${k.fields.slice(0, 4).join(', ')}${k.fields.length > 4 ? '…' : ''})`, o.useData, v => (o.useData = v)));
     bl.push(chk('Also use closed lines as block outlines', o.closedLines !== false, v => (o.closedLines = v)));
     const anyPoly = k.placemarks.some(p => p.polys.length), anyLine = k.placemarks.some(p => p.lines.length);
-    bl.push(h('div', { class: 'row' }, btn('Load blocks', () => applyKmlBlocks(), 'primary sm'),
+    const LB = loadButtons(applyKmlBlocks, o);
+    if (LB.prefix) bl.push(LB.prefix);
+    bl.push(h('div', { class: 'row' }, ...LB.btns,
       anyPoly ? btn('Add polygons as dumps…', () => importShapes('dumps'), 'sm') : null,
       anyLine ? btn('Add lines as haul roads…', () => importShapes('roads'), 'sm') : null));
+    if (LB.note) bl.push(LB.note);
     if (D.dxfReport) for (const m of D.dxfReport) {
       const el = msg(m[0], m[1]);
       if (m[2]) { el.classList.add('has-acts'); el.append(h('div', { class: 'msg-acts' }, ...[].concat(m[2]).map(a => btn(a.label, a.fn, 'sm')))); }
@@ -14337,7 +14608,7 @@ const Tabs = (() => {
     }
     applyKmlBlocks();
   }
-  function applyKmlBlocks() {
+  function applyKmlBlocks(add) {
     const P = App.P, o = D.kmlOpts, k = D.kml;
     if (!o.folders.length) { UI.toast('Tick at least one folder that holds the block polygons.'); return; }
     let res;
@@ -14349,19 +14620,17 @@ const Tabs = (() => {
     if (r.multi) report.push(['warn', `${r.multi} placemark(s) hold more than one polygon; their parts were numbered _1, _2…`]);
     if (r.autoNumbered) report.push(['warn', `${r.autoNumbered} block(s) had no ${o.idSource === 'field' ? 'value in ' + o.idField : 'name'} and were numbered B0001, B0002…`]);
     if (o.useData && r.withData) report.push(['info', `Attributes taken from the KML for ${r.withData} block(s).`]);
-    const old = new Map(P.blocks.map(b => [b.id, b]));
-    P.blocks = blocks.map(b => ({ id: b.id, pts: b.pts, attrs: Object.assign({}, (old.get(b.id) || {}).attrs || {}, b.attrs) }));
+    const { fresh, notes } = placeBlocks(blocks, Object.assign({ file: D.dxfName, kind: 'kml' }, o), add);
+    if (add) report.splice(1, 0, ['info', layoutNow(fresh)]);
+    report.push(...notes);
     if (o.useData && k.fields.length) { P.attrColumns = Array.from(new Set(k.fields.concat(P.attrColumns || []))); if (!P.idColumn && o.idSource === 'field') P.idColumn = o.idField; }
-    P.source.dxf = Object.assign({ file: D.dxfName, kind: 'kml' }, o);
-    const ids = new Set(P.blocks.map(b => b.id));
-    P.activities.forEach(a => (a.path = a.path.filter(id => ids.has(id))));
     P.isDemo = false;
     if (D.wb && D.idCol) linkAttributes(true);
     App.res = null; App.pb = null; App.day = -1; App.selBlock = -1;
     if (App.ws) {
       App.rasterize(); Timeline.setData(null, P);
-      const outside = App.ws.blockCells.filter(c => !c.length).length;
-      if (outside > blocks.length * 0.5) {
+      const outside = offModel(fresh);
+      if (outside > fresh.length * 0.5) {
         const sug = suggestCrs(k, o);
         if (sug && !sug.alts.length) report.push(['error', `The blocks do not fall on the elevation model with the current coordinate system. They line up with “${sug.preset.name}”${sug.flip ? ' (the model will be rebuilt from the TIFFs)' : ''}.`, { label: 'Switch and reload', fn: () => switchCrsAndReload(sug.preset, sug.flip) }]);
         else if (sug) {
@@ -14369,14 +14638,14 @@ const Tabs = (() => {
           report.push(['error', `The blocks do not fall on the elevation model with the current coordinate system. They fit with ${all.map(c => `“${c.preset.name}”${c.flip ? ' (rebuilds the model)' : ''}`).join(' or ')}. These place the blocks up to ${Math.round(far)} m apart, so choose the one your survey data is in.`,
             all.map(c => ({ label: 'Use ' + c.preset.name.split(' — ')[0] + (c.preset.name.includes('CAD') ? ' CAD' : ''), fn: () => switchCrsAndReload(c.preset, c.flip) }))]);
         }
-        else report.push(['error', `${outside} of ${blocks.length} blocks do not fall on the elevation model. KML is in latitude/longitude, so the project’s coordinate system (Project tab) must match the one the TIFFs are in.`]);
+        else report.push(['error', `${outside} of ${fresh.length} blocks do not fall on the elevation model. KML is in latitude/longitude, so the project’s coordinate system (Project tab) must match the one the TIFFs are in.`]);
       } else if (outside) report.push(['warn', `${outside} block(s) fall outside the elevation model.`]);
       View.fit();
     } else report.push(['warn', 'Build the 3D model from the elevation TIFFs to see the blocks.']);
     D.dxfReport = report;
     App.changed('blocks', { now: true });
     UI.renderTab(); UI.renderInspector(); UI.renderColorBy();
-    UI.toast(report[0][1]);
+    UI.toast(report[add ? 1 : 0][1]);
   }
   function importKmlShapes(kind) {
     const P = App.P;
@@ -15802,7 +16071,7 @@ const Tabs = (() => {
     // the layout of the project now
     const made = GD.made && GD.used, U_ = GD.used || {};
     parts.push(made ? msg('info', `The project’s block layout is this grid: ${U.fmtNum(GD.n)} blocks of ${U.fmtNum(U_.width, 0)} × ${U.fmtNum(U_.length, 0)} m, strips at ${U.fmtNum(U_.angle, 0)}°, made ${U.fmtDate(U.parseISO(GD.made))}.`)
-      : msg('info', (P.resBlocks || P.blocks).length ? `The project’s block layout is the one loaded in the Geological Data tab (${U.fmtNum((P.resBlocks || P.blocks).length)} blocks${P.source && P.source.dxf && P.source.dxf.file ? `, ${P.source.dxf.file}` : ''}). Creating the grid replaces it.` : 'The project has no block layout yet.'));
+      : msg('info', (P.resBlocks || P.blocks).length ? `The project’s block layout is the one loaded in the Geological Data tab (${U.fmtNum((P.resBlocks || P.blocks).length)} blocks${(() => { const F = layoutFiles(P).map(f => f.file).filter(Boolean); return F.length ? `, ${F.join(', ')}` : ''; })()}). Creating the grid replaces it.` : 'The project has no block layout yet.'));
     if (made && !B.error && (U_.width !== o.width || U_.length !== o.length || U_.angle !== o.angle || U_.minCover !== o.minCover || (o.x0 != null && Math.abs(o.x0 - U_.x0) > 1e-6) || (o.y0 != null && Math.abs(o.y0 - U_.y0) > 1e-6)))
       parts.push(msg('warn', 'The settings above differ from the layout in use: make it again to use them.'));
     if (made && (GD.missing || []).length) parts.push(msg('warn', `These quality rasters were not read for the grid, as they were not loaded in this session: ${GD.missing.join(', ')}. Add the files again in the Geological Data tab (Coal quality rasters) to give the blocks their qualities.`));
@@ -16231,6 +16500,154 @@ const Tabs = (() => {
   // =============== PRODUCTION ===============
   /* The teams that do the mining and the monthly targets the schedule is held to (the coal losses that turn the tons mined
      into as received tons are in the Reserve tab). */
+  /* ---------- the target test (Production tab): trial schedules for a smooth monthly coal and waste profile ----------
+     TargetTest runs them; App.targetTest keeps the last test of the session ({pid, when, rows, ref, best, o, plan}). */
+  const ttPct = v => (v == null || !(v === v) ? '–' : `${Math.round(Math.max(0, v) * 100)}%`);
+  const ttUnits = P => { const T = P.targets || {}; return { cu: T.coalBasis === 'ar' ? 't as received' : T.coalBasis === 'product' ? 't of product' : 't', wu: T.wasteUnit === 't' ? 't' : 'bcm' }; };
+  function targetTestSection(body) {
+    const P = App.P, R = App.targetTest && App.targetTest.pid === P.id ? App.targetTest : null, B = R && R.best, { cu, wu } = ttUnits(P);
+    body.append(sec('Target test', B ? h('span', { class: 'chip' }, 'sweet spot found') : null,
+      hint('Finds the monthly coal and waste targets that give the smoothest profile of both: the whole schedule is run several times, each time with another pair of targets and as many teams as it needs, and the months of each run are compared. The project is not changed until you use a result.'),
+      R ? msg(B && B.ok ? 'info' : 'warn', B ? `Last test (${R.when}, ${R.rows.length} trial${R.rows.length === 1 ? '' : 's'}): the sweet spot is ${U.fmtNum(B.coal, 0)} ${cu} of coal and ${U.fmtNum(B.waste, 0)} ${wu} of waste a month — ${ttPct(1 - B.score)} smooth, about ${U.fmtNum(B.teamsAvg, 1)} teams (${U.fmtNum(B.teamsPeak, 1)} in the busiest month).${B.ok ? '' : B.complete ? ' No trial reached 95% of its targets: see the results.' : ' No trial mined as much as the schedule now: see the results.'}` : `Last test (${R.when}): no trial finished.`) : null,
+      edit() ? h('div', { class: 'row' }, btn('Test the targets…', () => targetTestDialog(false), 'primary sm', 'Run trial schedules to find the coal and waste targets of a smooth monthly profile'), R ? btn('Show the results', () => targetTestDialog(true), 'sm') : null) : null));
+  }
+  function targetTestDialog(showLast) {
+    const P = App.P, ws0 = App.ws, T = P.targets || (P.targets = {}), { cu, wu } = ttUnits(P);
+    if (!ws0 || !P.blocks.length) { UI.toast('Build the 3D model and load the block layout first (Geological Data tab).'); return; }
+    const last = App.targetTest && App.targetTest.pid === P.id ? App.targetTest : null;
+    // the plan: what the schedule now mines (or sets out to mine), else the blocks in the paths
+    const TM = Model.teams(P), now = App.res && !App.stale ? TargetTest.judge(P, ws0, App.res) : null;
+    let pl = now ? TargetTest.plan(P, ws0, App.res, now) : TargetTest.plan(P, ws0);
+    // the coal of an average month now: the coal target, else the last schedule, else what the teams move at the plan's strip ratio
+    let c0 = +T.coal > 0 ? +T.coal : now && now.coalAvg > 0 ? now.coalAvg : 0;
+    if (!c0 && pl.coal > 0) { const one = TargetTest.teamsFor(P, 1, pl.sr, false); c0 = TM.count > 0 && one > 0 ? TM.count / one : pl.coal / 60; }
+    const sig3 = TargetTest.sig3, anyRate = P.activities.some(a => +a.maxRate > 0);
+    const o = last ? Object.assign({}, last.o) : { from: sig3(c0 * 0.6), to: sig3(c0 * 1.4), levels: 4, refine: true, lift: anyRate };
+    const S = { phase: showLast && last ? 'done' : 'setup', rows: last && showLast ? last.rows.slice() : [], ref: last && showLast ? last.ref : null, sel: last && showLast ? last.best : null, stopped: last && showLast ? last.stopped : null, error: null, setTeams: true };
+    const host = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } });
+    UI.modal('Target test: a smooth coal and waste profile', host, [], { wide: true });
+    let prog = null; // the progress line and bar while it runs
+    const kept = () => {
+      const k = [T.basis === 'working' ? 'targets by working days' : null, +T.rampMonths > 0 ? `a coal ramp-up of ${T.rampMonths} months` : null, Monthly.startMonths(P) ? `start-up waste of ${U.fmtNum(+T.wasteStart, 0)} ${wu} a month for ${Monthly.startMonths(P)} months` : null,
+        +T.wasteMin > 0 ? `a minimum waste of ${U.fmtNum(+T.wasteMin, 0)} ${wu}` : null, T.coalExtra ? 'extra coal onto the ROM stockpile' : null].filter(Boolean);
+      return k.length ? `The other target settings are kept: ${k.join(', ')}. ` : '';
+    };
+    const nRuns = () => { const L = Math.max(1, Math.round(o.levels) || 1), n = new Set(Array.from({ length: L }, (_, i) => sig3(L === 1 ? o.from : o.from + ((o.to - o.from) * i) / (L - 1)))).size; return [n, n + (o.refine ? 4 : 0)]; };
+    const time = ms => (ms >= 90000 ? `${U.fmtNum(ms / 60000, ms >= 600000 ? 0 : 1)} min` : `${Math.max(1, Math.round(ms / 1000))} s`);
+    function table() {
+      const rows = (S.ref ? [S.ref] : []).concat(S.rows.slice().sort((a, b) => a.coal - b.coal || a.waste - b.waste)), best = TargetTest.best(S.rows);
+      if (!rows.length) return null;
+      const tr = r => {
+        const el = h('tr', { class: r === S.sel ? 'on' : '', title: r.ref ? 'The schedule as it is now: your targets and teams' : 'Show this trial’s months' },
+          h('td', null, r.ref ? 'Now' : r === best ? '★' : ''),
+          h('td', { class: 'r num' }, r.coal > 0 ? U.fmtNum(r.coal, 0) : '–'), h('td', { class: 'r num' }, r.waste > 0 ? U.fmtNum(r.waste, 0) : '–'),
+          h('td', { class: 'r num' }, r.coal > 0 && r.waste > 0 ? U.fmtNum(r.waste / r.coal, 2) : '–'),
+          h('td', { class: 'r num' }, r.achC != null ? ttPct(r.achC) : U.fmtNum(r.coalAvg, 0)), h('td', { class: 'r num' }, ttPct(1 - r.cvC)),
+          h('td', { class: 'r num' }, r.achW != null ? ttPct(r.achW) : U.fmtNum(r.wasteAvg, 0)), h('td', { class: 'r num' }, ttPct(1 - r.cvW)),
+          h('td', { class: 'r num' }, h('b', null, ttPct(1 - r.score))),
+          h('td', { class: 'r num' }, r.months ? `${r.months} · ${r.end}` : '–'),
+          h('td', { class: 'r num' }, `${U.fmtNum(r.teamsAvg, 1)} / ${U.fmtNum(r.teamsPeak, 1)}`),
+          h('td', null, !r.allMined ? h('span', { class: 'chip', style: { color: r.complete ? 'var(--warn)' : 'var(--bad)' }, title: `Stopped before the plan was mined: ${r.stuck}` }, 'not all mined') : !r.ref && !r.ok ? h('span', { class: 'chip', style: { color: 'var(--warn)' } }, 'below target') : ''));
+        el.addEventListener('click', () => { S.sel = r; draw(); });
+        return el;
+      };
+      return h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl ttest' },
+        h('thead', null, h('tr', null, h('th', null, ''), h('th', { class: 'r' }, `Coal (${cu}/month)`), h('th', { class: 'r' }, `Waste (${wu}/month)`), h('th', { class: 'r', title: 'The waste target ÷ the coal target' }, `${wu}/t`),
+          h('th', { class: 'r', title: 'The coal of the steady months on average, as a share of the coal target' }, 'Coal mined'), h('th', { class: 'r', title: '1 − the coefficient of variation of the monthly coal over the steady months' }, 'Coal smooth'),
+          h('th', { class: 'r', title: 'The waste of the steady months on average, as a share of the waste target' }, 'Waste moved'), h('th', { class: 'r', title: '1 − the coefficient of variation of the monthly waste over the steady months' }, 'Waste smooth'),
+          h('th', { class: 'r', title: 'The coal and the waste together' }, 'Smooth'), h('th', { class: 'r', title: 'Months from the first mining to the last coal, and the last month of coal' }, 'Months · coal ends'),
+          h('th', { class: 'r', title: 'The teams the mining, the ramps and the batters keep busy: on average over the steady months / in the busiest month (rehandling left out)' }, 'Teams avg / peak'), h('th', null, ''))),
+        h('tbody', null, rows.map(tr))));
+    }
+    function chart(r) {
+      if (!r) return null;
+      const lab = m => U.MONTHS[(r.k0 + m) % 12] + '/' + Math.floor((r.k0 + m) / 12), labels = r.coalM.map((_, m) => lab(m));
+      const kv = a => (a ? a.map(v => v / 1000) : null), box = (title, s) => { const b = h('div', { class: 'chart-box' }); setTimeout(() => Charts.lines(b, labels, s.filter(x => x.v), title), 0); return b; };
+      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+        h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `${r.ref ? 'The schedule now' : `Coal ${U.fmtNum(r.coal, 0)} ${cu} and waste ${U.fmtNum(r.waste, 0)} ${wu} a month`}: the months it mined, against its targets. The steady months judged: ${lab(r.m0)} to ${lab(r.m1)}.`),
+        box(`k${cu}`, [{ name: 'Coal mined', color: '#cf5516', v: kv(r.coalM), unit: cu }, { name: 'Coal target', color: '#8a8a80', v: kv(r.coalTgtM), unit: cu }]),
+        box(`k${wu}`, [{ name: 'Waste moved', color: '#2a78d6', v: kv(r.wasteM), unit: wu }, { name: 'Waste target', color: '#8a8a80', v: kv(r.wasteTgtM), unit: wu }]));
+    }
+    async function use(r, run) {
+      T.coal = r.coal; T.waste = r.waste > 0 ? r.waste : null; T.mode = 'limit';
+      const nT = Math.ceil(r.teamsPeak - 1e-6);
+      if (S.setTeams && nT > 0) P.teams = Object.assign({}, P.teams || {}, { count: nT });
+      App.changed('sim'); UI.closeModal(); UI.renderTab();
+      if (run) await App.runSim();
+      else UI.toast(`Targets set: coal ${U.fmtNum(r.coal, 0)} ${cu} and waste ${U.fmtNum(r.waste, 0)} ${wu} a month${S.setTeams && nT > 0 ? `, with ${nT} teams` : ''}. Run the simulation to schedule to them.`, 7000);
+    }
+    async function start() {
+      if (!(o.from > 0) || !(o.to > 0)) { UI.toast('Type the lowest and the highest coal target to test.'); return; }
+      if (o.to < o.from) [o.from, o.to] = [o.to, o.from];
+      S.ref = now ? TargetTest.row(+T.coal || 0, +T.waste || 0, now, { ref: true, ok: false, teams: TM.count }) : null;
+      if (App.res) App.clearMemory({ quiet: true }); // (two schedules are never held at once: the trials need the memory)
+      const ws = App.ws, ctrl = (S.ctrl = new AbortController()), t0 = Date.now();
+      S.phase = 'running'; S.rows = []; S.sel = null; S.error = null; S.stopped = null; draw();
+      let i = 0, n = 1, cur = null, est = now ? now.months * Monthly.AVG_MONTH : 1500;
+      const say = d => {
+        if (!host.isConnected) { ctrl.abort(); return; }
+        const done = S.rows.reduce((s, r) => s + r.ms, 0), each = S.rows.length ? done / S.rows.length : App.lastRunMs || 0, f = Math.min(0.98, d / Math.max(30, est));
+        if (prog) { prog.text.textContent = `Trial ${i + 1} of about ${n}: coal ${U.fmtNum(cur[0], 0)} ${cu} and waste ${U.fmtNum(cur[1], 0)} ${wu} a month — day ${U.fmtNum(d)} (${U.fmtDay(P.startDate, d)})${each ? ` · about ${time(Math.max(0, each * (n - i - f)))} to go` : ''}`; prog.bar.style.width = Math.round(((i + f) / n) * 100) + '%'; }
+      };
+      const out = await TargetTest.search(ws, Object.assign({}, o, {
+        signal: ctrl.signal, plan: pl, ref: S.ref, onPlan: q => (pl = q),
+        onRun: (k, m, c, w) => { i = k; n = m; cur = [c, w]; say(0); },
+        onDay: d => say(d),
+        onRow: r => { S.rows.push(r); est = r.days; if (host.isConnected) draw(); }
+      }));
+      if (out.error) S.error = out.error; else if (out.stopped) S.stopped = out.stopped;
+      S.phase = 'done'; S.sel = TargetTest.best(S.rows);
+      App.targetTest = { pid: P.id, when: `${U.fmtDate(new Date())} ${U.pad2(new Date().getHours())}:${U.pad2(new Date().getMinutes())}`, rows: S.rows, ref: S.ref, best: S.sel, stopped: S.stopped, o: Object.assign({}, o), plan: pl, ms: Date.now() - t0 };
+      if (host.isConnected) draw();
+      UI.renderTab();
+    }
+    function draw() {
+      host.innerHTML = ''; prog = null;
+      const B = TargetTest.best(S.rows);
+      if (S.phase === 'setup') {
+        const [n1, n2] = nRuns();
+        const fi = num(o.from, v => { o.from = v > 0 ? v : 0; draw(); }, { min: 0, step: 1000 }), ti = num(o.to, v => { o.to = v > 0 ? v : 0; draw(); }, { min: 0, step: 1000 }), li = num(o.levels, v => { o.levels = U.clamp(Math.round(v) || 1, 1, 12); draw(); }, { min: 1, max: 12, step: 1 });
+        fi.setAttribute('aria-label', 'Lowest coal target to test'); ti.setAttribute('aria-label', 'Highest coal target to test'); li.setAttribute('aria-label', 'Coal levels to test');
+        host.append(
+          msg('info', pl.coal > 0 ? `${pl.from === 'run' ? 'The schedule now mines' : pl.from === 'scheduled' ? 'The schedule now sets out to mine' : 'The blocks in the mining paths hold'} ${U.fmtBig(pl.coal, cu)} of coal and ${U.fmtBig(pl.waste, wu)} of waste: ${U.fmtNum(pl.sr, 2)} ${wu} a ton${pl.from === 'run' ? '' : pl.from === 'scheduled' ? ' (from the volumes it schedules: the first trial that mines it all gives the exact figure)' : ' (an estimate: keep-out zones, depth limits and ramps are not counted; the first trial that mines the plan gives the exact figure)'}. Each trial is the whole schedule with one coal and one waste target a month and as many teams as it needs; the waste starts at this strip ratio × the coal.` : 'There is no coal in the mining paths: set the activities’ paths in the Sequence tab first.'),
+          h('div', { class: 'grid3' }, fld(`Coal from (${cu} a month)`, fi), fld(`Coal to (${cu} a month)`, ti), fld('Coal levels', li)),
+          chk('Then refine around the best: the waste lower and higher, and a coal level in between', o.refine, v => { o.refine = v; draw(); }),
+          anyRate ? chk('Lift the activities’ maximum daily rates (Sequence tab) as well as the teams', o.lift, v => (o.lift = v)) : null,
+          h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `${n1 === n2 ? n1 : `${n1} to ${n2}`} trial schedules${App.lastRunMs ? `; the last simulation took ${time(App.lastRunMs)}, so the test takes about ${time(App.lastRunMs * n1)}${n2 > n1 ? ` to ${time(App.lastRunMs * n2)}` : ''}` : ''}. You can stop it at any time and keep the trials done.`),
+          hint(`${kept()}A trial is judged on its steady months — from the first coal, after any ramp-up and start-up waste, to the month before the coal ends — by how even the coal and the waste are from month to month (smooth: 1 − their coefficient of variation) and how much of its targets it mines. The sweet spot is the smoothest trial that mines the whole plan and reaches 95% of its targets; between trials about as smooth, the one with more coal.${App.res ? ' The schedule on screen is released while the test runs: run the simulation again afterwards.' : ''}`),
+          h('div', { class: 'row' }, btn('Start the test', () => start(), 'primary', 'Run the trial schedules')));
+        if (last && !showLast) host.append(h('div', { class: 'row' }, btn('Show the last results', () => { S.phase = 'done'; S.rows = last.rows.slice(); S.ref = last.ref; S.sel = last.best; S.stopped = last.stopped; draw(); }, 'sm')));
+        return;
+      }
+      if (S.phase === 'running') {
+        const text = h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, 'Starting…'), bar = h('span');
+        prog = { text, bar };
+        host.append(text, h('div', { class: 'tt-bar' }, bar), h('div', { class: 'row' }, btn('Stop', () => { if (S.ctrl) S.ctrl.abort(); text.textContent = 'Stopping…'; }, 'sm', 'Stop the test now: the trials done so far are kept')));
+      }
+      if (S.error) host.append(msg('error', `The test stopped: ${S.error}`));
+      if (S.phase === 'done') {
+        if (B) host.append(msg(B.ok ? 'info' : 'warn', B.ok ? `Sweet spot: ${U.fmtNum(B.coal, 0)} ${cu} of coal and ${U.fmtNum(B.waste, 0)} ${wu} of waste a month (${U.fmtNum(B.waste / B.coal, 2)} ${wu}/t) — ${ttPct(1 - B.score)} smooth (coal ${ttPct(1 - B.cvC)}, waste ${ttPct(1 - B.cvW)}), the coal ends ${B.end} after ${B.months} months, about ${U.fmtNum(B.teamsAvg, 1)} teams on average and ${U.fmtNum(B.teamsPeak, 1)} in the busiest month.`
+          : B.complete ? `No trial reached 95% of its targets. The best of them: ${U.fmtNum(B.coal, 0)} ${cu} and ${U.fmtNum(B.waste, 0)} ${wu} a month (${ttPct(1 - B.score)} smooth, ${ttPct(B.achC)} of the coal target and ${ttPct(B.achW)} of the waste target).`
+          : `No trial mined as much as the schedule now. The best of them: ${U.fmtNum(B.coal, 0)} ${cu} and ${U.fmtNum(B.waste, 0)} ${wu} a month (${ttPct(1 - B.score)} smooth); it stopped when ${B.stuck}.${S.ref && S.ref.allMined ? ' The schedule now mines it all with its own teams: going faster than they allow runs into that limit, so the limit is not the teams: check the dump space, the paths and the precedence.' : ''}`));
+        else if (!S.error) host.append(msg('warn', 'No trial finished.'));
+        if (B && B.complete && !B.allMined) host.append(msg('warn', `No run mines the whole plan${S.ref && !S.ref.allMined ? ', and neither does the schedule now' : ''}: they stop when ${B.stuck}. The trials are compared on what they do mine (those that mine as much coal as any count as mining the plan); to mine it all, check the dump space, the paths and the precedence.`));
+        if (B && B.ok) { const cs = S.rows.map(r => r.coal), lo = Math.min(...cs), hi = Math.max(...cs); if (hi > lo && (B.coal === hi || B.coal === lo)) host.append(msg('info', `The sweet spot is the ${B.coal === hi ? 'highest' : 'lowest'} coal target tested: test again from ${U.fmtNum(B.coal === hi ? B.coal : TargetTest.sig3(B.coal * 0.6), 0)} to ${U.fmtNum(B.coal === hi ? TargetTest.sig3(B.coal * 1.6) : B.coal, 0)} ${cu} to see whether ${B.coal === hi ? 'more' : 'less'} coal a month is smoother still.`)); }
+        if (S.stopped) host.append(msg('warn', `The test was stopped after ${S.rows.length} trial${S.rows.length === 1 ? '' : 's'}.`));
+      }
+      const tb = table(); if (tb) host.append(tb);
+      if (S.rows.length) host.append(hint(`Click a row to see its months. Coal and waste mined: their steady months on average, as a share of the targets. Smooth: 1 − the coefficient of variation of the monthly figures (per average month) over the steady months.` + ' Teams: what the mining, the ramps and the batters keep busy (rehandling left out); the test itself gave each trial enough teams that they never held it back.'));
+      if (S.phase === 'done' && S.sel) host.append(chart(S.sel));
+      if (S.phase === 'done') {
+        const r = S.sel && !S.sel.ref ? S.sel : B, nT = r ? Math.ceil(r.teamsPeak - 1e-6) : 0;
+        if (r) host.append(
+          chk(`Also set the teams to ${nT} (enough for its busiest month; now ${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)})`, S.setTeams, v => (S.setTeams = v)),
+          h('div', { class: 'row' }, btn(r === B ? 'Use the sweet spot' : 'Use these targets', () => use(r, false), 'primary', `Coal ${U.fmtNum(r.coal, 0)} ${cu} and waste ${U.fmtNum(r.waste, 0)} ${wu} a month`), btn('Use them and run the simulation', () => use(r, true), 'sm'),
+            btn('Test again…', () => { S.phase = 'setup'; draw(); }, 'sm ghost')));
+        else host.append(h('div', { class: 'row' }, btn('Test again…', () => { S.phase = 'setup'; draw(); }, 'sm ghost')));
+      }
+    }
+    draw();
+  }
   function production(body) {
     const P = App.P, TM = Model.teams(P), per = Monthly.daysPerMonth(P);
     const T = P.targets || (P.targets = { coal: null, waste: null, wasteUnit: 'bcm', basis: 'calendar', mode: 'limit', coalBasis: 'insitu' });
@@ -16357,6 +16774,7 @@ const Tabs = (() => {
         any && App.res && App.stale ? msg('warn', 'Run the simulation again to schedule to these targets.') : null,
         hint(`Type the target for an average month; each month gets that figure × its ${basis === 'working' ? 'working days ÷ ' + U.fmtNum(per, 1) : 'days ÷ 30.44'}. ${limit ? 'The schedule mines the coal and the waste to them: no more than the target in any month, as far as the teams and the exposed coal allow. Every working day gets what is left of the month ÷ the working days left. With a coal target and no waste target the waste follows the coal (above); with neither, the teams mine as much as they can. A coal ramp-up steps the coal target up over the first months of the schedule (counted in average months from its start date), so the waste gets ahead and builds up exposed coal before the full target.' : 'The schedule is not held to them (only the teams limit it); the Results tab and the Excel monthly summary show each month against the target.'} A coal target as received is mined in situ as that target ÷ the as received factor of the seam (losses and contamination, in the Reserve tab). Leave a box empty for no target.`)));
     }
+    targetTestSection(body);
     // the first day each kind of material is mined: topsoil, waste and coal
     {
       const SB = P.startBy || {}, res = App.res && !App.stale ? App.res : null;
@@ -21018,7 +21436,7 @@ const App = {
     const res = await Sim.run(this.ws, { onProgress: (d) => UI.busy(`Simulating day ${d.toLocaleString('en-ZA')} — ${U.fmtDay(this.P.startDate, d)}`, Math.min(0.95, d / est)) });
     UI.busy(null);
     if (res.error) { this.clearMemory({ quiet: true }); UI.toast(res.error); return; }
-    this.res = res; this.stale = false; this.lastValidation = null;
+    this.res = res; this.stale = false; this.lastValidation = null; this.lastRunMs = performance.now() - t0;
     this.pb = Sim.playback(this.ws, res);
     WaterUI.reset();
     Timeline.setData(res, this.P);
