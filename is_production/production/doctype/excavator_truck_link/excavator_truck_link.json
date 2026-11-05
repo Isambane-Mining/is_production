@@ -8,6 +8,7 @@
  "field_order": [
   "excavator",
   "excavator_model",
+  "is_production_excavator",
   "truck",
   "truck_model",
   "sort_order"
@@ -43,6 +44,13 @@
    "fieldtype": "Data",
    "label": "Truck Model",
    "read_only": 1
+  },
+  {
+   "fieldname": "is_production_excavator",
+   "fieldtype": "Check",
+   "label": "Production Excavator",
+   "default": "0",
+   "description": "Identifies an excavator assigned to production, including when no ADTs are currently attached."
   }
  ],
  "grid_page_length": 50,

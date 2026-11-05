@@ -1,0 +1,62 @@
+{
+  "doctype": "DocType",
+  "name": "Excluded Production Machine",
+  "module": "Production",
+  "istable": 1,
+  "editable_grid": 1,
+  "engine": "InnoDB",
+  "field_order": [
+    "asset",
+    "machine_type",
+    "original_category",
+    "original_excavator",
+    "original_dozing_type",
+    "exclusion_reason"
+  ],
+  "fields": [
+    {
+      "fieldname": "asset",
+      "fieldtype": "Link",
+      "label": "Machine",
+      "options": "Asset",
+      "reqd": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "machine_type",
+      "fieldtype": "Select",
+      "label": "Machine Type",
+      "options": "Excavator\nTruck\nDozer",
+      "reqd": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "original_category",
+      "fieldtype": "Select",
+      "label": "Original Category",
+      "options": "Production\nSpare/Swing",
+      "reqd": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "original_excavator",
+      "fieldtype": "Link",
+      "label": "Original Assigned Excavator",
+      "options": "Asset"
+    },
+    {
+      "fieldname": "original_dozing_type",
+      "fieldtype": "Data",
+      "label": "Original Dozing Type"
+    },
+    {
+      "fieldname": "exclusion_reason",
+      "fieldtype": "Small Text",
+      "label": "Exclusion Reason"
+    }
+  ],
+  "permissions": [],
+  "actions": [],
+  "links": [],
+  "states": []
+}

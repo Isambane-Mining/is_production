@@ -24,6 +24,7 @@
   "dnd_html_truck_ui",
   "dnd_dozer_assigned",
   "excavator_truck_assignments",
+  "excluded_production_machines",
   "dozer_table",
   "month_production_days_tab",
   "shift_system",
@@ -578,6 +579,13 @@
    "fieldtype": "Table",
    "label": "Tub Factors",
    "options": "Monthly Production Tub Factor"
+  },
+  {
+   "fieldname": "excluded_production_machines",
+   "fieldtype": "Table",
+   "label": "Excluded Production Machines",
+   "options": "Excluded Production Machine",
+   "description": "Machines excluded from both production and spare/swing allocations."
   }
  ],
  "grid_page_length": 50,

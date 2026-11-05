@@ -2,6 +2,356 @@
 // Combined functionality: existing Monthly Production Planning logic + drag-and-drop Excavator Teams & Trucks
 
 // helper for logging errors without breaking your flow
+/*
+ * Monthly Production Planning - Machine Exclusion Helpers
+ *
+ * Exclusion state belongs to the Monthly Production Planning
+ * document and is stored in excluded_production_machines.
+ *
+ * This module contains only data helpers.
+ * UI integration is handled separately.
+ */
+
+function getExcludedProductionMachines(frm) {
+    return frm.doc.excluded_production_machines || [];
+}
+
+function getExcludedProductionMachineIds(frm) {
+    return new Set(
+        getExcludedProductionMachines(frm)
+            .map(row => row.asset)
+            .filter(Boolean)
+    );
+}
+
+function isProductionMachineExcluded(frm, assetId) {
+    if (!assetId) {
+        return false;
+    }
+
+    return getExcludedProductionMachineIds(frm).has(assetId);
+}
+
+function getActiveProductionAssignments(frm) {
+    const excluded = getExcludedProductionMachineIds(frm);
+
+    return (frm.doc.excavator_truck_assignments || [])
+        .map(row => {
+            const excavatorExcluded = (
+                row.excavator &&
+                excluded.has(row.excavator)
+            );
+
+            const truckExcluded = (
+                row.truck &&
+                excluded.has(row.truck)
+            );
+
+            if (excavatorExcluded && truckExcluded) {
+                return null;
+            }
+
+            if (truckExcluded) {
+                return {
+                    ...row,
+                    truck: null,
+                    truck_model: null
+                };
+            }
+
+            if (excavatorExcluded) {
+                return {
+                    ...row,
+                    excavator: null,
+                    excavator_model: null
+                };
+            }
+
+            return row;
+        })
+        .filter(row => row && (row.excavator || row.truck));
+}
+
+function getActiveProductionDozers(frm) {
+    const excluded = getExcludedProductionMachineIds(frm);
+
+    return (frm.doc.dozer_table || [])
+        .filter(row => (
+            row.asset_name &&
+            !excluded.has(row.asset_name)
+        ));
+}
+
+
+
+function getMonthlyPlanningMachineCategory(frm, assetId, type) {
+    if (type === "Dozer") {
+        const row = (frm.doc.dozer_table || [])
+            .find(r => r.asset_name === assetId);
+
+        return row && row.dozing_type ? "Production" : "Spare/Swing";
+    }
+
+    if (type === "Truck") {
+        const row = (frm.doc.excavator_truck_assignments || [])
+            .find(r => r.truck === assetId);
+
+        return row && row.excavator &&
+            !isProductionMachineExcluded(frm, row.excavator)
+            ? "Production"
+            : "Spare/Swing";
+    }
+
+    const assignments = getActiveProductionAssignments(frm);
+
+    const assigned = assignments.some(
+        r => r.excavator === assetId && r.truck
+    );
+
+    return assigned ||
+        getPersistedProductionExcavators(frm).has(assetId) ||
+        getActiveEmptyExcavators(frm).includes(assetId)
+        ? "Production"
+        : "Spare/Swing";
+}
+
+async function excludeMonthlyPlanningMachine(frm, assetId, type) {
+    if (!canManageMonthlyPlanningMachines()) {
+        showMachinePlanningPermissionMessage();
+        return;
+    }
+
+    if (isProductionMachineExcluded(frm, assetId)) {
+        frappe.msgprint(__("This machine is already excluded."));
+        return;
+    }
+
+    const category = getMonthlyPlanningMachineCategory(
+        frm, assetId, type
+    );
+
+    const assignment = type === "Truck"
+        ? (frm.doc.excavator_truck_assignments || [])
+            .find(r => r.truck === assetId)
+        : null;
+
+    const dozer = type === "Dozer"
+        ? (frm.doc.dozer_table || [])
+            .find(r => r.asset_name === assetId)
+        : null;
+
+
+    // Preserve excavator identity and release its ADTs.
+    // Never automatically exclude the associated trucks.
+    if (type === "Excavator") {
+        const rows = (
+            frm.doc.excavator_truck_assignments || []
+        ).filter(r => r.excavator === assetId);
+
+        if (!rows.length) {
+            frappe.msgprint(__("Excavator not found in this plan."));
+            return;
+        }
+
+        const model = rows.find(r => r.excavator_model)
+            ?.excavator_model || "";
+
+        // Keep one excavator-only row for later restoration.
+        let emptyRow = rows.find(r => !r.truck);
+
+        if (!emptyRow) {
+            emptyRow = frm.add_child(
+                "excavator_truck_assignments"
+            );
+            emptyRow.excavator = assetId;
+            emptyRow.excavator_model = model;
+        }
+
+        rows.forEach(r => {
+            if (r.truck) {
+                r.excavator = null;
+                r.excavator_model = null;
+                r.is_production_excavator = 0;
+            }
+        });
+
+        emptyRow.is_production_excavator =
+            category === "Production" ? 1 : 0;
+
+        removeActiveEmptyExcavator(frm, assetId);
+        frm.refresh_field("excavator_truck_assignments");
+    }
+
+    const row = frm.add_child("excluded_production_machines");
+
+    row.asset = assetId;
+    row.machine_type = type;
+    row.original_category = category;
+    row.original_excavator = assignment?.excavator || null;
+    row.original_dozing_type = dozer?.dozing_type || null;
+
+    frm.refresh_field("excluded_production_machines");
+    frm.dirty();
+
+    try {
+        await frm.trigger("update_equipment_counts");
+        await frm.save();
+
+        renderTruckAssignmentUI(frm);
+        renderDozerAssignmentUI(frm);
+
+        frappe.show_alert({
+            message: __("{0} excluded successfully.", [assetId]),
+            indicator: "green"
+        });
+    } catch (error) {
+        frappe.msgprint(__("Unable to exclude machine. Please reload and try again."));
+        console.error(error);
+        await frm.reload_doc();
+    }
+}
+
+async function restoreMonthlyPlanningMachine(frm, assetId) {
+    if (!canManageMonthlyPlanningMachines()) {
+        showMachinePlanningPermissionMessage();
+        return;
+    }
+
+    const row = getExcludedProductionMachines(frm)
+        .find(r => r.asset === assetId);
+
+    if (!row) {
+        frappe.msgprint(__("Excluded machine not found."));
+        return;
+    }
+
+    const index = frm.doc.excluded_production_machines
+        .findIndex(r => r.name === row.name);
+
+    if (index === -1) return;
+
+
+    if (row.machine_type === "Excavator") {
+        const production = row.original_category === "Production";
+        await setProductionExcavatorStatus(
+            frm, assetId, production
+        );
+        removeActiveEmptyExcavator(frm, assetId);
+    }
+
+    frm.doc.excluded_production_machines.splice(index, 1);
+
+    frm.refresh_field("excluded_production_machines");
+    frm.dirty();
+
+    try {
+        await frm.trigger("update_equipment_counts");
+        await frm.save();
+
+        renderTruckAssignmentUI(frm);
+        renderDozerAssignmentUI(frm);
+
+        frappe.show_alert({
+            message: __("{0} restored successfully.", [assetId]),
+            indicator: "green"
+        });
+    } catch (error) {
+        frappe.msgprint(__("Unable to restore machine. Please reload and try again."));
+        console.error(error);
+        await frm.reload_doc();
+    }
+}
+
+
+function appendMonthlyMachineExcludeButton(frm, card, assetId, type) {
+    if (!canManageMonthlyPlanningMachines()) return;
+
+    const button = $('<button type="button" class="btn btn-warning btn-xs">')
+        .text(__("Exclude"))
+        .css({margin: "6px", cursor: "pointer"});
+
+    button.on("click", function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        excludeMonthlyPlanningMachine(frm, assetId, type);
+    });
+
+    button.css({
+        padding: "2px 6px",
+        fontSize: "10px",
+        lineHeight: "1.2",
+        margin: "0 2px",
+        flexShrink: "0",
+        whiteSpace: "nowrap",
+        cursor: "pointer"
+    });
+
+    card.append(button);
+}
+
+function renderMonthlyExcludedMachines(frm, wrapper) {
+    const excluded = getExcludedProductionMachines(frm);
+
+    const section = $('<div>')
+        .css({
+            padding: "12px",
+            marginTop: "16px",
+            background: "#fff3f3",
+            border: "1px solid #e5b5b5",
+            borderRadius: "4px"
+        })
+        .appendTo(wrapper);
+
+    $('<h4>').text(__("Excluded Machines")).appendTo(section);
+
+    if (!excluded.length) {
+        $('<p>')
+            .text(__("No excluded machines."))
+            .appendTo(section);
+        return;
+    }
+
+    excluded.forEach(row => {
+        const item = $('<div>')
+            .css({
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                padding: "8px",
+                marginBottom: "6px",
+                background: "#ffffff",
+                border: "1px solid #ddd",
+                borderRadius: "4px"
+            })
+            .appendTo(section);
+
+        const details = $('<div>').appendTo(item);
+
+        $('<strong>')
+            .text(row.asset || "")
+            .appendTo(details);
+
+        $('<div>')
+            .addClass("text-muted")
+            .text(
+                (row.machine_type || "") + " - " +
+                (row.original_category || "")
+            )
+            .appendTo(details);
+
+        if (canManageMonthlyPlanningMachines()) {
+            $('<button type="button" class="btn btn-primary btn-xs">')
+                .text(__("Restore"))
+                .appendTo(item)
+                .on("click", function(event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    restoreMonthlyPlanningMachine(frm, row.asset);
+                });
+        }
+    });
+}
+
 function logError(section, err) {
   console.error(`Error in ${section}:`, err);
 }
@@ -382,6 +732,7 @@ async refresh_machines_from_assets(frm) {
 
   // Add only missing machines; never attach a new ADT or assign a new dozer.
   assets.forEach(asset => {
+    if (isProductionMachineExcluded(frm, asset.name)) return;
     if (asset.asset_category === "Dozer") {
       if (doc.dozer_table.some(row => row.asset_name === asset.name)) return;
       const row = frm.add_child("dozer_table");
@@ -655,9 +1006,9 @@ update_mtd_production(frm) {
 
    // Section 9: Update Equipment Counts (with logging)
   
-update_equipment_counts(frm) {
+async update_equipment_counts(frm) {
   try {
-    const assignments = frm.doc.excavator_truck_assignments || [];
+    const assignments = getActiveProductionAssignments(frm);
 
     const productionExcavators = new Set();
 
@@ -669,8 +1020,15 @@ update_equipment_counts(frm) {
     });
 
     // Empty excavators that user dragged to Assigned side must still count.
-    getActiveEmptyExcavators(frm).forEach(excavatorId => {
-      productionExcavators.add(excavatorId);
+    const persistedProduction = getPersistedProductionExcavators(frm);
+
+    [
+      ...persistedProduction,
+      ...getActiveEmptyExcavators(frm)
+    ].forEach(excavatorId => {
+      if (!isProductionMachineExcluded(frm, excavatorId)) {
+        productionExcavators.add(excavatorId);
+      }
     });
 
     const numExcavators = productionExcavators.size;
@@ -679,11 +1037,11 @@ update_equipment_counts(frm) {
     const numTrucks = assignments.filter(r => r.excavator && r.truck).length;
 
     // Any dozer with a selected dozing_type is a production dozer.
-    const numDozers = (frm.doc.dozer_table || []).filter(r => !!r.dozing_type).length;
+    const numDozers = getActiveProductionDozers(frm).filter(r => !!r.dozing_type).length;
 
     console.log(`Equipment counts -> Excavators: ${numExcavators}, Trucks: ${numTrucks}, Dozers: ${numDozers}`);
 
-    frm.set_value({
+    await frm.set_value({
       num_excavators: numExcavators,
       num_trucks: numTrucks,
       num_dozers: numDozers
@@ -692,6 +1050,7 @@ update_equipment_counts(frm) {
     frm.refresh_fields(['num_excavators', 'num_trucks', 'num_dozers']);
   } catch (e) {
     logError('update_equipment_counts', e);
+    throw e;
   }
 },
 
@@ -1244,6 +1603,61 @@ function renderTeam(container, excavatorId, excavatorModel, truckList) {
 
 
 
+
+function getPersistedProductionExcavators(frm) {
+    const production = new Set();
+
+    (frm.doc.excavator_truck_assignments || []).forEach(row => {
+        if (row.excavator && (
+            Number(row.is_production_excavator) === 1 ||
+            !!row.truck
+        )) {
+            production.add(row.excavator);
+        }
+    });
+
+    return production;
+}
+
+async function setProductionExcavatorStatus(frm, excavatorId, enabled) {
+    if (!excavatorId) return;
+
+    const assignments = frm.doc.excavator_truck_assignments || [];
+    let rows = assignments.filter(
+        row => row.excavator === excavatorId
+    );
+
+    if (!rows.length && enabled) {
+        const row = frm.add_child("excavator_truck_assignments");
+        row.excavator = excavatorId;
+        rows = [row];
+    }
+
+    let model = rows.find(row => row.excavator_model)
+        ?.excavator_model || "";
+
+    if (!model && rows.length) {
+        const asset = await frappe.db.get_value(
+            "Asset",
+            excavatorId,
+            "item_name"
+        );
+
+        model = asset?.message?.item_name || "";
+    }
+
+    rows.forEach(row => {
+        row.is_production_excavator = enabled ? 1 : 0;
+
+        if (model && !row.excavator_model) {
+            row.excavator_model = model;
+        }
+    });
+
+    frm.refresh_field("excavator_truck_assignments");
+    frm.dirty();
+}
+
 function getMppLocalKey(frm, key) {
   return `mpp_${frm.doc.name}_${key}`;
 }
@@ -1280,33 +1694,65 @@ function removeActiveEmptyExcavator(frm, excavatorId) {
   setActiveEmptyExcavators(frm, list);
 }
 
-function moveTruckBackToSpare(frm, truckId) {
-  console.log("Moving ADT back to Spare/Swing unit:", truckId);
-
-  const row = (frm.doc.excavator_truck_assignments || []).find(r => r.truck === truckId);
-
-  if (!row) {
-    console.warn("Truck row not found:", truckId);
+async function moveTruckBackToSpare(frm, truckId) {
+  if (!canManageMonthlyPlanningMachines()) {
+    showMachinePlanningPermissionMessage();
     return;
   }
 
-  const oldExcavator = row.excavator;
+  const assignments = frm.doc.excavator_truck_assignments || [];
+  const row = assignments.find(r => r.truck === truckId);
 
-  // Keep excavator on production side after its ADT is moved back to spare.
-  if (oldExcavator) {
-    addActiveEmptyExcavator(frm, oldExcavator);
+  if (!row) {
+    frappe.msgprint(__("ADT not found in this plan."));
+    return;
+  }
+
+  if (isProductionMachineExcluded(frm, truckId)) {
+    frappe.msgprint(__("Restore this ADT before moving it."));
+    return;
+  }
+
+  const previousExcavator = row.excavator;
+  const previousModel = row.excavator_model;
+
+  if (previousExcavator) {
+    const remaining = assignments.some(other =>
+      other !== row &&
+      other.excavator === previousExcavator
+    );
+
+    if (!remaining) {
+      const standalone = frm.add_child(
+        "excavator_truck_assignments"
+      );
+
+      standalone.excavator = previousExcavator;
+      standalone.excavator_model = previousModel;
+      standalone.is_production_excavator = 1;
+    }
   }
 
   row.excavator = null;
   row.excavator_model = null;
+  row.is_production_excavator = 0;
 
-  frm.refresh_field('excavator_truck_assignments');
+  removeActiveEmptyExcavator(frm, previousExcavator);
+
+  frm.refresh_field("excavator_truck_assignments");
   frm.dirty();
 
-  frm.save().then(() => {
-    frm.trigger('update_equipment_counts');
+  try {
+    await frm.trigger("update_equipment_counts");
+    await frm.save();
     renderTruckAssignmentUI(frm);
-  });
+  } catch (error) {
+    console.error("Failed to move ADT to Spare/Swing:", error);
+    frappe.msgprint(
+      __("Unable to move ADT. Reloading the plan.")
+    );
+    await frm.reload_doc();
+  }
 }
 
 function enableDragAndDrop(frm) {
@@ -1330,7 +1776,7 @@ function enableTruckDragAndDrop(frm) {
       draggable: '.truck-item',
       filter: 'button, select, input, textarea',
       preventOnFilter: false,
-      onAdd(evt) {
+      async onAdd(evt) {
         const truckId = evt.item.dataset.truck;
         const newExcavator = evt.to.dataset.excavator === 'spare'
           ? null
@@ -1348,21 +1794,50 @@ function enableTruckDragAndDrop(frm) {
         const row = (frm.doc.excavator_truck_assignments || []).find(r => r.truck === truckId);
 
         if (row) {
+          const previousExcavator = row.excavator;
+          const previousModel = row.excavator_model;
+
+          // Keep the previous excavator in Production
+          // when its final assigned ADT is moved away.
+          if (previousExcavator &&
+              previousExcavator !== newExcavator) {
+            const remaining = (
+              frm.doc.excavator_truck_assignments || []
+            ).some(other =>
+              other !== row &&
+              other.excavator === previousExcavator
+            );
+
+            if (!remaining) {
+              const emptyRow = frm.add_child(
+                'excavator_truck_assignments'
+              );
+              emptyRow.excavator = previousExcavator;
+              emptyRow.excavator_model = previousModel;
+              emptyRow.is_production_excavator = 1;
+            }
+          }
+
           row.excavator = newExcavator;
           row.excavator_model = excavatorModel;
 
+          if (!newExcavator) {
+            row.is_production_excavator = 0;
+          }
+
           if (newExcavator) {
+            await setProductionExcavatorStatus(
+              frm, newExcavator, true
+            );
             removeActiveEmptyExcavator(frm, newExcavator);
           }
 
           frm.refresh_field('excavator_truck_assignments');
           frm.dirty();
 
-          frm.save()
-            .then(() => {
-              frm.trigger('update_equipment_counts');
-              renderTruckAssignmentUI(frm);
-            })
+          frm.trigger('update_equipment_counts')
+            .then(() => frm.save())
+            .then(() => renderTruckAssignmentUI(frm))
             .catch(err => console.error(`Save failed for ${truckId}:`, err));
         } else {
           console.warn("Could not find truck row:", truckId);
@@ -1370,6 +1845,62 @@ function enableTruckDragAndDrop(frm) {
       }
     });
   });
+}
+
+async function moveExcavatorToSpare(frm, excavatorId) {
+  const rows = (
+    frm.doc.excavator_truck_assignments || []
+  ).filter(row => row.excavator === excavatorId);
+
+  if (!rows.length) {
+    frappe.msgprint(__("Excavator not found in this plan."));
+    renderTruckAssignmentUI(frm);
+    return;
+  }
+
+  const model = rows.find(row => row.excavator_model)
+    ?.excavator_model || "";
+
+  let standalone = rows.find(row => !row.truck);
+
+  if (!standalone) {
+    standalone = frm.add_child(
+      "excavator_truck_assignments"
+    );
+    standalone.excavator = excavatorId;
+    standalone.excavator_model = model;
+  }
+
+  standalone.is_production_excavator = 0;
+
+  rows.forEach(row => {
+    row.is_production_excavator = 0;
+
+    if (row.truck) {
+      row.excavator = null;
+      row.excavator_model = null;
+    }
+  });
+
+  removeActiveEmptyExcavator(frm, excavatorId);
+
+  frm.refresh_field("excavator_truck_assignments");
+  frm.dirty();
+
+  try {
+    await frm.trigger("update_equipment_counts");
+    await frm.save();
+    renderTruckAssignmentUI(frm);
+  } catch (error) {
+    console.error(
+      "Failed to move excavator to Spare/Swing:",
+      error
+    );
+    frappe.msgprint(
+      __("Could not move excavator. Reloading the plan.")
+    );
+    await frm.reload_doc();
+  }
 }
 
 function enableExcavatorDragAndDrop(frm) {
@@ -1384,34 +1915,28 @@ function enableExcavatorDragAndDrop(frm) {
       draggable: '.excavator-item',
       filter: 'button, select, input, textarea, .truck-bin, .truck-item',
       preventOnFilter: false,
-      onAdd(evt) {
+      async onAdd(evt) {
         const excavatorId = evt.item.dataset.excavator;
         const movedTo = evt.to.dataset.zone;
 
         console.log(`Excavator '${excavatorId}' moved to -> ${movedTo}`);
 
         if (movedTo === 'assigned') {
-          addActiveEmptyExcavator(frm, excavatorId);
-          renderTruckAssignmentUI(frm);
+          await setProductionExcavatorStatus(frm, excavatorId, true);
+          removeActiveEmptyExcavator(frm, excavatorId);
+
+          frm.trigger('update_equipment_counts')
+            .then(() => frm.save())
+            .then(() => renderTruckAssignmentUI(frm))
+            .catch(err => {
+              console.error("Failed to assign excavator:", err);
+              frm.reload_doc();
+            });
           return;
         }
 
         if (movedTo === 'spare') {
-          removeActiveEmptyExcavator(frm, excavatorId);
-
-          (frm.doc.excavator_truck_assignments || []).forEach(row => {
-            if (row.excavator === excavatorId && row.truck) {
-              row.excavator = null;
-              row.excavator_model = null;
-            }
-          });
-
-          frm.refresh_field('excavator_truck_assignments');
-          frm.dirty();
-
-          frm.save()
-            .then(() => renderTruckAssignmentUI(frm))
-            .catch(err => console.error("Save failed while moving excavator:", err));
+          await moveExcavatorToSpare(frm, excavatorId);
         }
       }
     });
@@ -1487,6 +2012,8 @@ function addExcavatorsOnce(frm) {
   }).then(excavators => {
     let added = 0;
     excavators.forEach(asset => {
+      if (isProductionMachineExcluded(frm, asset.name)) return;
+
       const alreadyExists = frm.doc.excavator_truck_assignments.some(
         r => r.excavator === asset.name
       );
@@ -1523,6 +2050,7 @@ function addTrucksOnce(frm) {
   }).then(trucks => {
     let added = 0;
     trucks.forEach(asset => {
+      if (isProductionMachineExcluded(frm, asset.name)) return;
       if (!frm.doc.excavator_truck_assignments.some(r => r.truck === asset.name)) {
         const row = frm.add_child("excavator_truck_assignments");
         row.truck       = asset.name;
@@ -1567,6 +2095,7 @@ function addDozersOnce(frm) {
     let added = 0;
 
     dozers.forEach(asset => {
+      if (isProductionMachineExcluded(frm, asset.name)) return;
       const exists = (frm.doc.dozer_table || []).some(r => r.asset_name === asset.name);
 
       if (!exists) {
@@ -1629,12 +2158,17 @@ function renderTruckAssignmentUI(frm) {
       .on('click', () => addTrucksOnce(frm));
   }
 
-  const assignments = frm.doc.excavator_truck_assignments || [];
+  const assignments = getActiveProductionAssignments(frm);
   const teamsMap = {};
   const spareTrucks = [];
   const spareExcavators = [];
   const excavatorModels = {};
-  const activeEmptyExcavators = getActiveEmptyExcavators(frm);
+  const activeEmptyExcavators = [
+    ...new Set([
+      ...getPersistedProductionExcavators(frm),
+      ...getActiveEmptyExcavators(frm)
+    ])
+  ].filter(id => !isProductionMachineExcluded(frm, id));
 
   assignments.forEach(r => {
     if (r.excavator) {
@@ -1715,8 +2249,12 @@ function renderTruckAssignmentUI(frm) {
            style="position:relative;padding:12px;margin-bottom:16px;
                   background:#ffffff;border:1px solid #ddd;border-radius:4px;
                   cursor:grab;">
-        <div style="font-weight:bold;margin-bottom:8px;">
-          ⛏️ ${excId} — ${data.model || ''}
+        <div class="excavator-header"
+             style="display:flex;justify-content:space-between;
+                    align-items:center;gap:8px;margin-bottom:8px;">
+          <span style="font-weight:bold;min-width:0;">
+            ⛏️ ${excId} — ${data.model || ''}
+          </span>
         </div>
         <ul class="truck-bin" data-excavator="${excId}"
             style="min-height:50px;list-style:none;padding:0;margin:0;cursor:default;">
@@ -1726,27 +2264,11 @@ function renderTruckAssignmentUI(frm) {
 
     if (canManage) {
       $('<button class="btn btn-danger btn-xs" ' +
-        'style="position:absolute;background:transparent;top:8px;right:8px;">🗑️</button>')
-        .appendTo(section)
+        'style="position:static;background:transparent;padding:2px 4px;flex-shrink:0;">🗑️</button>')
+        .appendTo(section.find('.excavator-header'))
         .off('click')
         .on('click', () => {
-          console.log("Moving excavator team to Spare/Swing unit:", excId);
-
-          removeActiveEmptyExcavator(frm, excId);
-
-          (frm.doc.excavator_truck_assignments || []).forEach(row => {
-            if (row.excavator === excId && row.truck) {
-              row.excavator = null;
-              row.excavator_model = null;
-            }
-          });
-
-          frm.refresh_field('excavator_truck_assignments');
-          frm.dirty();
-
-          frm.save().then(() => {
-            renderTruckAssignmentUI(frm);
-          });
+          moveExcavatorToSpare(frm, excId);
         });
     }
 
@@ -1774,9 +2296,17 @@ function renderTruckAssignmentUI(frm) {
           });
       }
 
+      appendMonthlyMachineExcludeButton(
+        frm, li, t.id, "Truck"
+      );
       section.find('.truck-bin').append(li);
     });
 
+    const excavatorHeader = section.find('.excavator-header');
+
+    appendMonthlyMachineExcludeButton(
+      frm, excavatorHeader, excId, "Excavator"
+    );
     assignedExcBin.append(section);
   });
 
@@ -1802,14 +2332,20 @@ function renderTruckAssignmentUI(frm) {
            style="position:relative;padding:10px;margin:8px 0;
                   background:#ffffff;border:1px solid #ddd;border-radius:4px;
                   cursor:grab;">
-        <strong>⛏️ ${e.id} — ${e.model || ''}</strong>
+        <div class="excavator-header"
+             style="display:flex;justify-content:space-between;
+                    align-items:center;gap:8px;">
+          <strong style="min-width:0;">
+            ⛏️ ${e.id} — ${e.model || ''}
+          </strong>
+        </div>
       </div>
     `);
 
     if (canManage) {
       $('<button class="btn btn-danger btn-xs" ' +
-        'style="position:absolute;background:transparent;top:6px;right:6px;">🗑️</button>')
-        .appendTo(excCard)
+        'style="position:static;background:transparent;padding:2px 4px;flex-shrink:0;">🗑️</button>')
+        .appendTo(excCard.find('.excavator-header'))
         .off('click')
         .on('click', () => {
           console.log("Removing Spare/Swing unit excavator:", e.id);
@@ -1834,6 +2370,9 @@ function renderTruckAssignmentUI(frm) {
         });
     }
 
+    appendMonthlyMachineExcludeButton(
+      frm, excCard.find('.excavator-header'), e.id, "Excavator"
+    );
     spareExcBin.append(excCard);
   });
 
@@ -1871,8 +2410,13 @@ function renderTruckAssignmentUI(frm) {
         });
     }
 
+    appendMonthlyMachineExcludeButton(
+      frm, li, t.id, "Truck"
+    );
     spareTruckSec.find('.truck-bin').append(li);
   });
+
+  renderMonthlyExcludedMachines(frm, wrapper);
 
   if (canManage) {
     enableDragAndDrop(frm);
@@ -1938,7 +2482,7 @@ function renderDozerAssignmentUI(frm) {
   const assignedDozers = [];
   const spareDozers = [];
 
-  (frm.doc.dozer_table || []).forEach((row, idx) => {
+  getActiveProductionDozers(frm).forEach((row, idx) => {
     if (!row || !row.asset_name) return;
 
     if (row.dozing_type) {
@@ -2057,6 +2601,9 @@ function renderDozerAssignmentUI(frm) {
         });
     }
 
+    appendMonthlyMachineExcludeButton(
+      frm, card, row.asset_name, "Dozer"
+    );
     return card;
   }
 
