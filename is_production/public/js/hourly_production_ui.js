@@ -216,6 +216,20 @@ is_production.ui.HourlyProductionUI = class {
                 this.getAssetsByCategory(['ADT', 'RIGID'])
             ]);
 
+            // Monthly Production Planning exclusions apply to
+            // equipment offered for new Hourly Production capture.
+            const excludedAssets = await this.getHourlyExcludedAssets();
+
+            const visibleExcavators = allExcavators.filter(
+                name => !excludedAssets.has(String(name || '').trim())
+            );
+            const visibleDozers = allDozers.filter(
+                name => !excludedAssets.has(String(name || '').trim())
+            );
+            const visibleTrucks = allTrucks.filter(
+                name => !excludedAssets.has(String(name || '').trim())
+            );
+
             // Create container
             const container = $(`
                 <div class="equipment-ui-container">
@@ -226,8 +240,8 @@ is_production.ui.HourlyProductionUI = class {
             this.frm.fields_dict.dnd_html_excavator_ui.$wrapper.append(container);
 
             // Load both UIs
-            this.loadExcavatorUI(allExcavators, allTrucks);
-            this.loadDozersUI(allDozers);
+            this.loadExcavatorUI(visibleExcavators, visibleTrucks);
+            this.loadDozersUI(visibleDozers);
 
         } catch (error) {
             console.error('Error loading UI:', error);
@@ -716,6 +730,59 @@ is_production.ui.HourlyProductionUI = class {
     this.setupDozerEvents();
 }
 
+
+    async getHourlyExcludedAssets() {
+        const excluded = new Set();
+
+        // Apply the planning exclusions to both new and saved
+        // Hourly Production equipment cards.
+        // This changes visibility only, not saved production data.
+
+        const planName = this.frm.doc.month_prod_planning;
+
+        if (!planName) {
+            throw new Error(
+                'Monthly Production Planning is required before loading equipment'
+            );
+        }
+
+        const plan = await frappe.db.get_doc(
+            'Monthly Production Planning',
+            planName
+        );
+
+        const assetIds = [
+            ...new Set(
+                (plan.excluded_production_machines || [])
+                    .map(row => String(row.asset || '').trim())
+                    .filter(Boolean)
+            )
+        ];
+
+        assetIds.forEach(id => excluded.add(id));
+
+        if (assetIds.length) {
+            const assets = await frappe.db.get_list('Asset', {
+                fields: ['name', 'asset_name'],
+                filters: {
+                    name: ['in', assetIds]
+                },
+                limit_page_length: assetIds.length
+            });
+
+            (assets || []).forEach(asset => {
+                excluded.add(String(asset.name || '').trim());
+                excluded.add(String(asset.asset_name || '').trim());
+            });
+        }
+
+        console.log(
+            'Hourly Production excluded assets:',
+            [...excluded]
+        );
+
+        return excluded;
+    }
 
     getAssetsByCategory(category) {
         return new Promise((resolve) => {
