@@ -2893,14 +2893,38 @@ const Model = (() => {
   /* P.limits = [{id, name, pts, layerId}]. A block whose centre lies inside a zone is mined only down to and including
      that layer. Returns the deepest layer index allowed per block and the zone that sets it (-1 = unrestricted). */
   /* The reserve boundary (P.reserve.pts, Block Margin Rank tab): the blocks whose centre lies inside it are mined; those outside are
-     left. 1 for a block inside (all of them without a boundary). */
+     left. 1 for a block inside (all of them without a boundary). With a mining right, a block outside it is never inside. */
   const hasReserve = P => !!(P.reserve && P.reserve.on !== false && P.reserve.pts && P.reserve.pts.length >= 3);
   // its rings: P.reserve.rings (the areas and the holes of a boundary made from a strip ratio cut-off), else the one polygon
   const reserveRings = P => (P.reserve && Array.isArray(P.reserve.rings) && P.reserve.rings.length ? P.reserve.rings : P.reserve && P.reserve.pts ? [P.reserve.pts] : []);
   function inReserve(P, x, y) { let k = 0; for (const r of reserveRings(P)) if (r && r.length >= 3 && Geo.pip(x, y, r)) k++; return (k & 1) === 1; }
+  /* The mining right (P.miningRight = {ov: the id of an overlay of the Feature layers tab, folder: the index of one of its
+     folders or null for all of them, on}): the polygons of that overlay (and its closed lines) in the model's coordinates.
+     A block whose centre lies in none of them is never in the reserve: a reserve boundary takes only the blocks inside the
+     right, however it was made. {on: false}: none chosen on purpose (none is then taken from the overlays' names). */
+  function rightOverlay(P) { const R = P.miningRight; return R && R.on !== false ? (P.overlays || []).find(o => o.id === R.ov) || null : null; }
+  function rightRings(P) {
+    const ov = rightOverlay(P), R = P.miningRight;
+    if (!ov || typeof Keep === 'undefined') return [];
+    const closed = q => q.length >= 4 && Math.hypot(q[0][0] - q[q.length - 1][0], q[0][1] - q[q.length - 1][1]) < 1e-6;
+    return Keep.features(P, ov).filter(F => (R.folder == null || F.f === R.folder) && F.pts.length >= 3 && (F.k === 'poly' || (F.k === 'line' && closed(F.pts)))).map(F => F.pts);
+  }
+  // 1 for a block whose centre lies inside the mining right (in any of its polygons); null without one
+  function rightMask(P, ws) {
+    const rings = rightRings(P);
+    if (!rings.length) return null;
+    const nB = P.blocks.length, m = new Uint8Array(nB);
+    ws.blockCentroid.forEach((c, b) => { if (b < nB && rings.some(r => Geo.pip(c[0], c[1], r))) m[b] = 1; });
+    return m;
+  }
+  // the overlay that looks like the mining right by its name (or its file's or a folder's), with polygons
+  function rightCandidate(P) {
+    const re = /mining[\s_-]*right|(^|[^a-z])MR([^a-z]|$)|right[\s_-]*boundary|prospecting[\s_-]*right|mining[\s_-]*permit|lease[\s_-]*area/i;
+    return (P.overlays || []).find(o => (re.test(o.name || '') || re.test(o.file || '') || (o.folders || []).some(f => re.test(f.name || ''))) && (o.features || []).some(F => F.k === 'poly')) || null;
+  }
   function reserveInside(P, ws) {
     const nB = P.blocks.length, ins = new Uint8Array(nB).fill(1);
-    if (hasReserve(P)) ws.blockCentroid.forEach((c, b) => { if (b < nB && !inReserve(P, c[0], c[1])) ins[b] = 0; });
+    if (hasReserve(P)) { const MR = rightMask(P, ws); ws.blockCentroid.forEach((c, b) => { if (b < nB && (!inReserve(P, c[0], c[1]) || (MR && !MR[b]))) ins[b] = 0; }); }
     return ins;
   }
   /* opt.noReserve: leave the reserve boundary out (the Block Margin Rank tab ranks every block, inside it or not). out[b] = 1: the
@@ -3242,7 +3266,7 @@ const Model = (() => {
   function arFactor(P, L) { const q = losses(P, L); return Math.max(0, (1 - q.geo / 100) * (1 - q.mining / 100) * (1 + q.contam / 100)); }
   function newEquipment(kind, extra) { return Object.assign({ id: U.uid('eq'), kind, activityId: '' }, U.deepClone(FLEET_DEFAULTS[kind]), extra || {}); }
 
-  return { LAYER_TYPES, ACT_COLORS, DUMP_COLORS, deplete, setDepletion, depletionStats, newProject, autoLayers, seamToken, proposeGrid, rasterExtent, rasterRes, rasterFix, rasterWhere, resample, fillHoles, conformSurfaces, buildWorkspace, applyCutoff, cutTarget, cutTargets, cellXY, cellAt, sampleGrid, cellsInPolygon, rasterizeBlocks, layerIndex, blockVolumes, layerThickness, blockDensity, kindStart, kindOf, rampToeSurf, rampSlopes, RAMP_BATTER, RAMP_FILL, surfaceLabel, rampEnd, actDests, syncActColors, blockLimits, blockDepth, zoneBlocks, stripSource, pathStrips, idStrip, blockPits, pitIndex, pitName, boxCuts, boxDef, boxMonths, boxName, boxTitle, BOX_MONTHS, pitBaseName, fleetHost, actFleet, syncPits, dropActivity, setTopsoilAsWaste, PIT_COLORS, REST, defaultActivities, newEquipment, FLEET_DEFAULTS, niceCell, teams, losses, arFactor, TEAM_LCM, pitStart, bench, wasteFollows, rainDerate, reserveInside, hasReserve, reserveRings, inReserve };
+  return { LAYER_TYPES, ACT_COLORS, DUMP_COLORS, deplete, setDepletion, depletionStats, newProject, autoLayers, seamToken, proposeGrid, rasterExtent, rasterRes, rasterFix, rasterWhere, resample, fillHoles, conformSurfaces, buildWorkspace, applyCutoff, cutTarget, cutTargets, cellXY, cellAt, sampleGrid, cellsInPolygon, rasterizeBlocks, layerIndex, blockVolumes, layerThickness, blockDensity, kindStart, kindOf, rampToeSurf, rampSlopes, RAMP_BATTER, RAMP_FILL, surfaceLabel, rampEnd, actDests, syncActColors, blockLimits, blockDepth, zoneBlocks, stripSource, pathStrips, idStrip, blockPits, pitIndex, pitName, boxCuts, boxDef, boxMonths, boxName, boxTitle, BOX_MONTHS, pitBaseName, fleetHost, actFleet, syncPits, dropActivity, setTopsoilAsWaste, PIT_COLORS, REST, defaultActivities, newEquipment, FLEET_DEFAULTS, niceCell, teams, losses, arFactor, TEAM_LCM, pitStart, bench, wasteFollows, rainDerate, reserveInside, hasReserve, reserveRings, inReserve, rightOverlay, rightRings, rightMask, rightCandidate };
 })();
 
 /* ===== KML overlays and keep-out zones (DOM-free) =====
@@ -8436,7 +8460,9 @@ const Grid = (() => {
    The boundary is the outline of the chosen blocks' cells on the model grid, smoothed by up to `tol` cells, as rings
    (P.reserve.rings: the areas and the holes in them; P.reserve.pts the largest). A block is inside when its centre is
    inside an odd number of the rings; the smoothing is undone where it would put a block on the wrong side.
-   The inputs are kept in P.reserveAuto = {srMax, mMin, share (%), minBlocks}. */
+   The inputs are kept in P.reserveAuto = {srMax, mMin, share (%), minBlocks}. With a mining right (Model.rightMask) only the
+   blocks whose centre lies inside it can be taken, by any of the steps: a group of blocks next to one outside the right is
+   not closed in by the reserve. */
 const AutoRes = (() => {
   const DEF = { srMax: null, mMin: null, share: 75, minBlocks: 3 };
   function settings(P) {
@@ -8474,13 +8500,14 @@ const AutoRes = (() => {
     for (const r of rows) { W[r.b] = r.waste || 0; C[r.b] = r.coalT || 0; RV[r.b] = r.rev || 0; CS[r.b] = r.cost || 0; }
     const share = o.share / 100;
     const pass = (w, c, rv, cs) => c > 0 && (o.srMax == null || w / c <= o.srMax + 1e-12) && (o.mMin == null || (rv - cs) / c >= o.mMin - 1e-9);
-    const take = new Uint8Array(nB), why = new Uint8Array(nB);
-    for (let b = 0; b < nB; b++) if (pass(W[b], C[b], RV[b], CS[b])) { take[b] = 1; why[b] = 1; }
+    const take = new Uint8Array(nB), why = new Uint8Array(nB), ok = o.allow ? b => o.allow[b] === 1 : () => true; // (ok: inside the mining right)
+    for (let b = 0; b < nB; b++) if (ok(b) && pass(W[b], C[b], RV[b], CS[b])) { take[b] = 1; why[b] = 1; }
     for (let it = 0; it < 100; it++) {
       let more = 0;
       // 2. the groups above the cut-off closed in by the reserve
-      for (const g of groups(nB, nb, b => !take[b])) {
+      for (const g of groups(nB, nb, b => !take[b] && ok(b))) {
         if (g.some(b => open[b] > 0)) continue; // it reaches the edge of the blocks
+        if (o.allow && g.some(b => Array.from(nb[b].keys()).some(q => !ok(q)))) continue; // or the edge of the mining right
         const ring = new Set();
         for (const b of g) for (const q of nb[b].keys()) { if (take[q]) ring.add(q); }
         if (!ring.size) continue;
@@ -8490,7 +8517,7 @@ const AutoRes = (() => {
       // 3. the notches: blocks bordered by the reserve on `share` of their edge
       const add = [];
       for (let b = 0; b < nB; b++) {
-        if (take[b]) continue;
+        if (take[b] || !ok(b)) continue;
         let inE = 0, allE = open[b], w = W[b], c = C[b], rv = RV[b], cs = CS[b];
         for (const [q, e] of nb[b]) { allE += e; if (take[q]) { inE += e; w += W[q]; c += C[q]; rv += RV[q]; cs += CS[q]; } }
         if (allE > 0 && inE / allE >= share - 1e-9 && pass(w, c, rv, cs)) add.push(b);
@@ -8610,10 +8637,12 @@ const AutoRes = (() => {
     if (o.srMax == null && o.mMin == null) throw new Error('Type the strip ratio cut-off, the block margin cut-off or both.');
     if (o.srMax != null && !(o.srMax > 0)) throw new Error('The strip ratio cut-off must be more than 0 bcm/t.');
     if (o.mMin != null && !ready) throw new Error('Type the coal price and the costs in the Block Margin Rank tab first: the margin cut-off needs them.');
-    const ch = choose(P, ws, rows, o), L = label(o, cur);
-    if (!ch.n) throw new Error(`No block has ${L} (the blocks average ${U.fmtNum(ch.srAll, 2)} bcm/t${ready ? ` and ${cur || 'R'} ${U.fmtNum(ch.marginAll, 1)}/t` : ''}).`);
+    const allow = Model.rightMask(P, ws), right = allow ? (Model.rightOverlay(P) || {}).name || 'the mining right' : null;
+    const ch = choose(P, ws, rows, Object.assign({}, o, { allow })), L = label(o, cur);
+    if (!ch.n) throw new Error(`No block${allow ? ` inside the mining right (${right})` : ''} has ${L} (the blocks average ${U.fmtNum(ch.srAll, 2)} bcm/t${ready ? ` and ${cur || 'R'} ${U.fmtNum(ch.marginAll, 1)}/t` : ''}).`);
     const ol = outline(P, ws, ch.take), name = L.charAt(0).toUpperCase() + L.slice(1);
-    const reserve = { pts: ol.rings[0], rings: ol.rings, on: true, name, auto: { srMax: o.srMax, mMin: o.mMin, currency: cur || 'R', share: o.share, minBlocks: o.minBlocks } };
+    let outRight = 0; if (allow) for (let b = 0; b < allow.length; b++) if (!allow[b]) outRight++;
+    const reserve = { pts: ol.rings[0], rings: ol.rings, on: true, name, auto: { srMax: o.srMax, mMin: o.mMin, currency: cur || 'R', share: o.share, minBlocks: o.minBlocks, right, outRight } };
     return { reserve, ch, wrong: ol.wrong };
   }
   return { DEF, settings, adjacency, choose, cellMask, trace, simplify, inRings, outline, label, build };
@@ -16341,10 +16370,52 @@ const Tabs = (() => {
     parts.push(layoutToggles());
     return parts;
   }
+  // creating a reserve boundary: with no mining right chosen, the overlay that looks like one (by its name) is taken → it, or null
+  function takeRight(P) {
+    if (P.miningRight !== undefined) return null;
+    const c = Model.rightCandidate(P);
+    if (c) P.miningRight = { ov: c.id, folder: null, on: true };
+    return c;
+  }
+  // the blocks a reserve boundary takes in but the mining right leaves out (their centre inside the boundary, outside the right)
+  function outsideRight(P, ws) {
+    const MR = Model.rightMask(P, ws); let n = 0;
+    if (MR && Model.hasReserve(P)) ws.blockCentroid.forEach((c, b) => { if (b < MR.length && !MR[b] && Model.inReserve(P, c[0], c[1])) n++; });
+    return n;
+  }
+  /* The mining right: one of the overlays of the Feature layers tab (or one folder of it). A reserve boundary takes only the
+     blocks whose centre lies inside it. */
+  function miningRightParts(P, ws) {
+    const parts = [], MR = P.miningRight, ov = Model.rightOverlay(P), opts = [['', 'None']];
+    for (const o of P.overlays || []) {
+      const fl = Array.from(new Set((o.features || []).filter(F => F.k === 'poly').map(F => F.f))).sort((a, b) => a - b);
+      if (!fl.length) continue;
+      opts.push([o.id, o.name]);
+      if (fl.length > 1) for (const f of fl) opts.push([o.id + '#' + f, `${o.name} — ${((o.folders || [])[f] || {}).name || 'folder ' + (f + 1)}`]);
+    }
+    const cand = MR === undefined ? Model.rightCandidate(P) : null, value = ov ? (MR.folder == null ? MR.ov : MR.ov + '#' + MR.folder) : '';
+    const s = sel(opts, value, v => {
+      if (!v) P.miningRight = { ov: '', folder: null, on: false };
+      else { const [id, f] = v.split('#'); P.miningRight = { ov: id, folder: f == null ? null : +f, on: true }; }
+      App.changed('reserve', { now: true }); UI.renderTab();
+    });
+    s.setAttribute('aria-label', 'Mining right'); s.disabled = !edit();
+    parts.push(h('div', { class: 'grid2' }, fld('Mining right (an overlay of the Feature layers tab)', s), h('span')));
+    const mask = ov ? Model.rightMask(P, ws) : null;
+    if (ov && !mask) parts.push(msg('warn', `“${ov.name}” has no polygon on the model${Geo.makeCRS(P.crs) || ov.xy ? '' : ': choose the project’s coordinate system in the Project tab so its KML can be placed'}, so it leaves no block out.`));
+    else if (mask) {
+      const n = mask.reduce((a, v) => a + (v ? 0 : 1), 0), nx = outsideRight(P, ws);
+      parts.push(msg(n ? 'info' : 'info', n ? `${U.fmtNum(n)} of the ${U.fmtNum(mask.length)} blocks lie outside the mining right (${ov.name}): a reserve boundary never takes them${nx ? `, so the ${U.fmtNum(nx)} of them inside the boundary are left out of the schedule` : ''}.` : `Every block lies inside the mining right (${ov.name}).`));
+    } else if (MR && MR.on !== false && MR.ov) parts.push(msg('warn', 'The overlay chosen as the mining right is no longer in the Feature layers tab: choose it again.'));
+    else if (cand) parts.push(msg('info', `“${cand.name}” (Feature layers tab) looks like the mining right: it is taken when you create or draw the reserve boundary, so that the blocks outside it are left out. Choose it above to use it now, or None.`));
+    else if (opts.length === 1) parts.push(hint('Add the mining right as a KML or DXF overlay in the Feature layers tab, then choose it here: a reserve boundary then takes only the blocks inside it.'));
+    return parts;
+  }
   function reserveBoundary(body, R, cur, kp) {
     const P = App.rv().P, B = P.reserve, drawn = !!(B && B.pts && B.pts.length >= 3), on = Model.hasReserve(P), Q = R.resv;
     const f = v => (v === v ? `${cur} ${U.fmtNum(v, Math.abs(v) < 100 ? 1 : 0)}/t` : '–');
     const parts = [];
+    if (App.rv().ws) parts.push(...miningRightParts(P, App.rv().ws));
     if (edit()) parts.push(h('div', { class: 'row edit-only' },
       btn(drawn ? 'Redraw the boundary' : 'Draw the reserve boundary', () => drawReserve(), 'sm' + (drawn ? '' : ' primary')),
       R.ready && App.colorBy !== 'margin' ? btn('Colour the blocks by margin', () => { App.colorBy = 'margin'; UI.renderColorBy(); App.refreshTint(); UI.renderTab(); }, 'sm') : null,
@@ -16376,6 +16447,7 @@ const Tabs = (() => {
       const f2 = v => U.fmtNum(v, 2), fm = v => `${cur} ${U.fmtNum(v, Math.abs(v) < 100 ? 1 : 0)}/t`;
       const create = async () => {
         const o = AutoRes.settings(P);
+        takeRight(P);
         let r; try { r = AutoRes.build(P, App.rv().ws, R.rows, o, R.ready, cur); } catch (e) { UI.toast(e.message); return; }
         if (drawn && !B.auto && !(await UI.confirmBox('Replace the reserve boundary', 'Replace the boundary you drew with one made from the cut-offs?', 'Replace'))) return;
         const c = r.ch, ids = w => P.blocks.map((q, b) => (c.why[b] === w ? q.id : null)).filter(Boolean);
@@ -16383,7 +16455,8 @@ const Tabs = (() => {
         P.reserve = r.reserve;
         App.colorBy = o.mMin != null ? 'margin' : 'sr'; UI.renderColorBy(); App.refreshTint();
         App.changed('reserve', { now: true }); UI.renderTab();
-        UI.toast(`Reserve boundary at ${AutoRes.label(o, cur)}: ${c.n} of ${P.blocks.length} blocks, strip ratio ${f2(c.sr)} bcm/t${R.ready ? `, margin ${fm(c.margin)}` : ''}${c.areas > 1 ? `, in ${c.areas} areas` : ''}. Run the simulation to schedule them.`, 9000);
+        const ra = r.reserve.auto;
+        UI.toast(`Reserve boundary at ${AutoRes.label(o, cur)}: ${c.n} of ${P.blocks.length} blocks, strip ratio ${f2(c.sr)} bcm/t${R.ready ? `, margin ${fm(c.margin)}` : ''}${c.areas > 1 ? `, in ${c.areas} areas` : ''}${ra.outRight ? `; the ${ra.outRight} blocks outside the mining right (${ra.right}) are left out` : ''}. Run the simulation to schedule them.`, 9000);
       };
       const ap = [
         h('div', { class: 'grid2' },
@@ -16419,9 +16492,10 @@ const Tabs = (() => {
       onDone: pts => {
         hud(null);
         P.reserve = { pts, on: true, name: 'Reserve boundary' };
+        takeRight(P);
         App.changed('reserve', { now: true }); UI.renderTab();
-        const ins = Model.reserveInside(P, App.rv().ws), n = Array.from(ins).filter(Boolean).length;
-        UI.toast(n ? `Reserve boundary: ${n} of ${P.blocks.length} blocks inside are scheduled; the ${P.blocks.length - n} outside are left. Run the simulation to schedule them.` : 'No block centre lies inside that polygon, so nothing would be mined. Redraw it around the blocks.', 8000);
+        const ins = Model.reserveInside(P, App.rv().ws), n = Array.from(ins).filter(Boolean).length, nx = outsideRight(P, App.rv().ws), rn = (Model.rightOverlay(P) || {}).name;
+        UI.toast(n ? `Reserve boundary: ${n} of ${P.blocks.length} blocks inside are scheduled; the ${P.blocks.length - n} outside are left${nx ? `, ${nx} of them inside the polygon but outside the mining right (${rn})` : ''}. Run the simulation to schedule them.` : nx ? `The blocks inside that polygon all lie outside the mining right (${rn}), so nothing would be mined.` : 'No block centre lies inside that polygon, so nothing would be mined. Redraw it around the blocks.', 8000);
       },
       onCancel: () => hud(null), onError: m => UI.toast(m)
     });
