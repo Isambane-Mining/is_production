@@ -2068,3 +2068,197 @@ tbody td:first-child {
     grid-column:1/-1;
   }
 }
+
+
+/* HOD Average BCM/H amber threshold */
+.hod-performance-dashboard .hod-production-table td.hod-average-bcm-amber {
+  color: #a66a00 !important;
+}
+
+
+/* HOD Presentation extracted static styles */
+.hod-extracted-style-1 {
+  display:grid;grid-template-columns:1fr 1fr;gap:4px;text-align:center;padding:4px 2px
+}
+.hod-extracted-style-2 {
+  display:block;font-size:9px;font-weight:600
+}
+.hod-extracted-style-3 {
+  display:block;font-size:13px;font-weight:800;line-height:1.3
+}
+.hod-extracted-style-4 {
+  display:block;font-size:9px;font-weight:600
+}
+.hod-extracted-style-5 {
+  display:block;font-size:13px;font-weight:800;line-height:1.3
+}
+.hod-extracted-style-6 {
+  position:relative;
+                           display:block;
+                           overflow:hidden;
+                           background:#e5ebf2;
+                           min-height:12px;
+}
+.hod-extracted-style-7 {
+  display:flex;gap:10px;justify-content:flex-end;
+                    padding:10px 12px;background:#1d242c;
+                    border:1px solid #3b4652;
+                    border-radius:6px;margin-bottom:10px
+}
+.hod-extracted-style-8 {
+  background:#303943;color:#fff;
+                       border:1px solid #66717d
+}
+.hod-extracted-style-9 {
+  background:#137344;color:#fff;
+                       border:1px solid #258c57
+}
+.hod-extracted-style-10 {
+  background:#0b5a8c;
+}
+.hod-extracted-style-11 {
+  display:block
+}
+.hod-extracted-style-12 {
+  text-align:left !important;
+}
+.hod-extracted-style-13 {
+  color:#000000 !important;font-size:11px !important;line-height:1.4 !important;
+}
+.hod-extracted-style-14 {
+  text-align:left !important;
+}
+.hod-extracted-style-15 {
+  background:#00643b
+}
+.hod-extracted-style-16 {
+  border-left:0;padding:10px 12px;min-width:0
+}
+.hod-extracted-style-17 {
+  border:1px solid #2563eb;
+                                    border-radius:10px;overflow:hidden
+}
+.hod-extracted-style-18 {
+  background:#dbeafe;color:#1d4ed8;
+                                        padding:10px 12px;font-weight:900
+}
+.hod-extracted-style-19 {
+  font-size:11px;
+                                            margin-top:5px;
+                                            font-weight:600;
+                                            color:#164db8
+}
+.hod-extracted-style-20 {
+  overflow:auto;max-height:65vh
+}
+.hod-extracted-style-21 {
+  width:100%;min-width:1150px;
+                                              border-collapse:collapse;font-size:12px
+}
+.hod-extracted-style-22 {
+  background:#dbeafe;font-weight:900
+}
+.hod-extracted-style-23 {
+  background:#006b3f;
+}
+.hod-extracted-style-24 {
+  margin:8px 8px 5px;font-size:12px;font-weight:800;color:#082e57
+}
+.hod-extracted-style-25 {
+  margin:12px 8px 5px;font-size:12px;font-weight:800;color:#082e57
+}
+.hod-extracted-style-26 {
+  margin-top:8px;display:block;height:auto;min-height:43px;padding:7px 10px;overflow:visible
+}
+.hod-extracted-style-27 {
+  display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;color:white
+}
+.hod-extracted-style-28 {
+  min-width:0
+}
+.hod-extracted-style-29 {
+  font-size:12px;font-weight:700;line-height:16px;margin-bottom:4px
+}
+.hod-extracted-style-30 {
+  display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;font-weight:600;line-height:16px
+}
+.hod-extracted-style-31 {
+  display:flex;align-items:center;justify-content:space-between
+}
+.hod-extracted-style-32 {
+  height:auto;min-height:360px;overflow:visible;box-sizing:border-box;padding-bottom:10px
+}
+.hod-extracted-style-33 {
+  padding:12px
+}
+.hod-extracted-style-34 {
+  color:#c2410c;font-weight:700
+}
+.hod-extracted-style-35 {
+  color:#7c3aed;font-weight:700
+}
+.hod-extracted-style-36 {
+  color:#047857;font-weight:700
+}
+.hod-extracted-style-37 {
+  max-height:65vh;overflow:auto
+}
+.hod-extracted-style-38 {
+  padding:10px;background:#dbeafe;color:#1d4ed8;font-weight:700
+}
+.hod-extracted-style-39 {
+  width:100%;font-size:12px;white-space:nowrap
+}
+.hod-extracted-style-40 {
+  background:#eff6ff;color:#1d4ed8;position:sticky;top:0
+}
+
+/* HOD table and export styles */
+.hod-performance-dashboard .hod-table-style-1 { padding:9px 10px;background:#eff6ff;color:#1d4ed8;text-align:left; }
+.hod-performance-dashboard .hod-table-style-2 { padding:8px 10px;border-bottom:1px solid #dbeafe;vertical-align:top;font-weight:700; }
+.hod-performance-dashboard .hod-table-style-3 { padding:8px 10px;border-bottom:1px solid #dbeafe;vertical-align:top;white-space:nowrap; }
+.hod-performance-dashboard .hod-table-style-4 { padding:8px 10px;border-bottom:1px solid #dbeafe;vertical-align:top; }
+.hod-performance-dashboard .hod-table-style-5 { padding:8px 10px;border-bottom:1px solid #dbeafe;vertical-align:top;color:#b45309; }
+.hod-performance-dashboard .hod-table-style-6 { padding:8px 10px;border-bottom:1px solid #dbeafe;vertical-align:top;color:#7c3aed; }
+.hod-performance-dashboard .hod-table-style-7 { padding:8px 10px;border-bottom:1px solid #dbeafe;vertical-align:top;color:#166534;font-weight:700; }
+.hod-performance-dashboard .hod-table-style-8 { padding:8px 10px;border-bottom:1px solid #dbeafe;vertical-align:top;min-width:210px; }
+.hod-performance-dashboard .hod-table-style-9 { padding:8px 10px;border-bottom:1px solid #dbeafe;vertical-align:top;text-align:right; }
+.hod-performance-dashboard .hod-table-style-10 { padding:8px 10px;border-bottom:1px solid #dbeafe;vertical-align:top;color:#166534; }
+
+.hod-performance-dashboard .hod-spare-cell {
+    background: #e9d5ff !important;
+}
+.hod-export-offscreen {
+    position: fixed;
+    left: -20000px;
+    top: 0;
+    width: 1600px;
+    background: white;
+}
+
+/* HOD breakdown bar appearance */
+.hod-performance-dashboard .hod-breakdown-bar-fill {
+    display: block;
+    height: 100%;
+    min-height: 9px;
+    background-image: none !important;
+    opacity: 1 !important;
+}
+.hod-performance-dashboard .hod-breakdown-bar-fill-0 { background-color: #1688e8 !important; }
+.hod-performance-dashboard .hod-breakdown-bar-fill-1 { background-color: #fa8b22 !important; }
+.hod-performance-dashboard .hod-breakdown-bar-fill-2 { background-color: #17ad61 !important; }
+.hod-performance-dashboard .hod-breakdown-bar-fill-3 { background-color: #e54868 !important; }
+.hod-performance-dashboard .hod-breakdown-bar-fill-4 { background-color: #8e55d8 !important; }
+.hod-performance-dashboard .hod-breakdown-bar-fill-5 { background-color: #e7a600 !important; }
+.hod-performance-dashboard .hod-breakdown-bar-fill-6 { background-color: #1c9ed5 !important; }
+.hod-performance-dashboard .hod-breakdown-bar-fill-7 { background-color: #21a58b !important; }
+.hod-performance-dashboard .hod-breakdown-bar-fill-8 { background-color: #db5e2b !important; }
+.hod-performance-dashboard .hod-breakdown-bar-fill-9 { background-color: #7666d8 !important; }
+.hod-performance-dashboard .hod-breakdown-bar-fill-10 { background-color: #c44b8a !important; }
+.hod-performance-dashboard .hod-breakdown-bar-fill-11 { background-color: #3478c5 !important; }
+.hod-performance-dashboard .hod-breakdown-bar-fill-12 { background-color: #d59b17 !important; }
+.hod-performance-dashboard .hod-breakdown-bar-fill-13 { background-color: #299d64 !important; }
+.hod-performance-dashboard .hod-breakdown-bar-fill-14 { background-color: #ad62d6 !important; }
+.hod-performance-dashboard .hod-breakdown-bar-fill-15 { background-color: #0e9ca8 !important; }
+.hod-performance-dashboard .hod-breakdown-bar-fill-16 { background-color: #d64c64 !important; }
+.hod-performance-dashboard .hod-breakdown-bar-fill-17 { background-color: #7c8f28 !important; }
