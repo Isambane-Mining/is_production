@@ -2075,7 +2075,7 @@ const Dxf = (() => {
     return L.join('\r\n');
   }
 
-  return { parse, summarize, buildBlocks, detectFix, fixFor, fixFn, polygonize, write, cleanMText, nearClosed };
+  return { parse, summarize, buildBlocks, detectFix, fixFor, fixFn, FIXES, polygonize, write, cleanMText, nearClosed };
 })();
 
 /* ===== Minimal PDF writer (DOM-free): vector pages, the standard Helvetica fonts, RGB images, layers (optional content
@@ -2538,6 +2538,34 @@ const Model = (() => {
     return Geo.bbox(cs);
   }
   function rasterRes(r) { const A = r.geo.affine; return Math.hypot(A.a, A.d); }
+  /* A raster (width × height px, its affine in its file's coordinates) that does not lie on the model grid as it is, but
+     would with a common mix-up of its coordinates put right — the signs flipped (positive Westing/Southing against negative
+     CAD style), X and Y swapped, millimetres (Dxf.FIXES, as for the block layout): {id, name, share, apply (an affine with
+     the fix: each mix-up is linear, so it goes into the affine — the one Tiff.read returns, which reads the file's own
+     GeoTIFF tags and may thin it), affine (this one with it)}. Its footprint against the grid: the overlap ÷ the smaller of
+     the two; null when it overlaps half of that already, or no fix makes it 60% (and 20% more). */
+  function rasterFix(width, height, A, grid, sign) {
+    const cs = [[0, 0], [width, 0], [0, height], [width, height]].map(([i, j]) => [sign * (A.a * i + A.b * j + A.c), sign * (A.d * i + A.e * j + A.f)]);
+    const G = [grid.x0, grid.y0, grid.x0 + grid.nx * grid.cell, grid.y0 + grid.ny * grid.cell], gA = (G[2] - G[0]) * (G[3] - G[1]);
+    const overlap = f => {
+      const B = Geo.bbox(cs.map(f)), w = Math.min(B[2], G[2]) - Math.max(B[0], G[0]), h = Math.min(B[3], G[3]) - Math.max(B[1], G[1]);
+      return w > 0 && h > 0 ? (w * h) / Math.max(1e-9, Math.min((B[2] - B[0]) * (B[3] - B[1]), gA)) : 0;
+    };
+    const base = overlap(p => p);
+    if (base >= 0.5) return null;
+    let best = null;
+    for (const [id, name, fn] of Dxf.FIXES) { const v = overlap(fn); if (v >= 0.6 && v > base + 0.2 && (!best || v > best.share)) best = { id, name, share: v, fn }; }
+    if (!best) return null;
+    const u = best.fn([1, 0]), w = best.fn([0, 1]); // the fix as a matrix: its columns
+    best.apply = Q => Object.assign({}, Q, { a: u[0] * Q.a + w[0] * Q.d, b: u[0] * Q.b + w[0] * Q.e, c: u[0] * Q.c + w[0] * Q.f, d: u[1] * Q.a + w[1] * Q.d, e: u[1] * Q.b + w[1] * Q.e, f: u[1] * Q.c + w[1] * Q.f });
+    best.affine = best.apply(A);
+    return best;
+  }
+  /* Where a raster lies and where the model does, in the raster file's coordinates (for a raster that misses the model) */
+  function rasterWhere(width, height, A, grid, sign) {
+    const E = rasterExtent({ geo: { affine: A }, width, height }, 1), M = Geo.bbox([[sign * grid.x0, sign * grid.y0], [sign * (grid.x0 + grid.nx * grid.cell), sign * (grid.y0 + grid.ny * grid.cell)]]), f = v => U.fmtNum(v, 0);
+    return `it lies at X ${f(E[0])} to ${f(E[2])} and Y ${f(E[1])} to ${f(E[3])} in its file, and the model at X ${f(M[0])} to ${f(M[2])} and Y ${f(M[1])} to ${f(M[3])}`;
+  }
 
   // Resample a raster band (file CRS) onto the working grid (display coords)
   function resample(r, grid, sign, band = 0) {
@@ -3214,7 +3242,7 @@ const Model = (() => {
   function arFactor(P, L) { const q = losses(P, L); return Math.max(0, (1 - q.geo / 100) * (1 - q.mining / 100) * (1 + q.contam / 100)); }
   function newEquipment(kind, extra) { return Object.assign({ id: U.uid('eq'), kind, activityId: '' }, U.deepClone(FLEET_DEFAULTS[kind]), extra || {}); }
 
-  return { LAYER_TYPES, ACT_COLORS, DUMP_COLORS, deplete, setDepletion, depletionStats, newProject, autoLayers, seamToken, proposeGrid, rasterExtent, rasterRes, resample, fillHoles, conformSurfaces, buildWorkspace, applyCutoff, cutTarget, cutTargets, cellXY, cellAt, sampleGrid, cellsInPolygon, rasterizeBlocks, layerIndex, blockVolumes, layerThickness, blockDensity, kindStart, kindOf, rampToeSurf, rampSlopes, RAMP_BATTER, RAMP_FILL, surfaceLabel, rampEnd, actDests, syncActColors, blockLimits, blockDepth, zoneBlocks, stripSource, pathStrips, idStrip, blockPits, pitIndex, pitName, boxCuts, boxDef, boxMonths, boxName, boxTitle, BOX_MONTHS, pitBaseName, fleetHost, actFleet, syncPits, dropActivity, setTopsoilAsWaste, PIT_COLORS, REST, defaultActivities, newEquipment, FLEET_DEFAULTS, niceCell, teams, losses, arFactor, TEAM_LCM, pitStart, bench, wasteFollows, rainDerate, reserveInside, hasReserve, reserveRings, inReserve };
+  return { LAYER_TYPES, ACT_COLORS, DUMP_COLORS, deplete, setDepletion, depletionStats, newProject, autoLayers, seamToken, proposeGrid, rasterExtent, rasterRes, rasterFix, rasterWhere, resample, fillHoles, conformSurfaces, buildWorkspace, applyCutoff, cutTarget, cutTargets, cellXY, cellAt, sampleGrid, cellsInPolygon, rasterizeBlocks, layerIndex, blockVolumes, layerThickness, blockDensity, kindStart, kindOf, rampToeSurf, rampSlopes, RAMP_BATTER, RAMP_FILL, surfaceLabel, rampEnd, actDests, syncActColors, blockLimits, blockDepth, zoneBlocks, stripSource, pathStrips, idStrip, blockPits, pitIndex, pitName, boxCuts, boxDef, boxMonths, boxName, boxTitle, BOX_MONTHS, pitBaseName, fleetHost, actFleet, syncPits, dropActivity, setTopsoilAsWaste, PIT_COLORS, REST, defaultActivities, newEquipment, FLEET_DEFAULTS, niceCell, teams, losses, arFactor, TEAM_LCM, pitStart, bench, wasteFollows, rainDerate, reserveInside, hasReserve, reserveRings, inReserve };
 })();
 
 /* ===== KML overlays and keep-out zones (DOM-free) =====
@@ -10017,10 +10045,14 @@ const Recon = (() => {
     let affine = info.geo.affine;
     if (!affine && worldFile) affine = Imagery.parseWorld(await worldFile.text());
     if (!affine) throw new Error('it has no georeferencing: no GeoTIFF tags and no world file (.tfw) with the same name. Choose its .tfw file together with it.');
+    // (signs flipped, X and Y swapped or millimetres: put right, as for the block layout)
+    const fx = Model.rasterFix(info.width, info.height, affine, P.grid, Geo.axisSign(P.crs));
+    if (fx) affine = fx.affine;
     // (a raster in another coordinate system than the model's, by its EPSG code)
     const pid = info.geo.epsg ? Geo.presetForEpsg(info.geo.epsg) : null, name = id => (Geo.PRESETS.find(p => p.id === id) || { name: id }).name;
     const crs = pid && pid !== 'custom' && P.crs.preset !== 'custom' && P.crs.preset !== 'local' && pid !== P.crs.preset ? `It is in ${name(pid)}${/EPSG/.test(name(pid)) ? '' : ` (EPSG ${info.geo.epsg})`}, the model in ${name(P.crs.preset)}.` : '';
     const r = await Tiff.read(info, { targetRes: Math.min(P.grid.cell / 2, disp ? disp.cell : Infinity), maxBands: Math.min(info.spp, 4), affine, onProgress }), sign = Geo.axisSign(P.crs);
+    if (fx) r.geo.affine = fx.apply(r.geo.affine);
     // (a DTM without a "no data" tag often marks its gaps -9999, -32767 or -32768: no ground lies that low)
     for (const B of r.bands) for (let i = 0; i < B.length; i++) if (B[i] <= -9999) B[i] = NaN;
     // the band of elevations: of several, the one nearest the ground of the model as built (over a sample of the cells)
@@ -10034,12 +10066,13 @@ const Recon = (() => {
     const grid = Model.resample(r, P.grid, sign, band);
     let hit = 0, zMin = Infinity, zMax = -Infinity;
     for (let c = 0; c < ws.n; c++) { const z = grid[c]; if (z !== z) continue; hit++; if (z < zMin) zMin = z; if (z > zMax) zMax = z; }
-    if (!hit) throw new Error(`it does not cover the model. Check that it is in the coordinate system of the model (${name(P.crs.preset)}).${crs ? ' ' + crs : ''}`);
+    if (!hit) throw new Error(`it does not cover the model: ${Model.rasterWhere(info.width, info.height, affine, P.grid, sign)}. Check that it is in the coordinate system of the model (${name(P.crs.preset)}).${crs ? ' ' + crs : ''}`);
     const filled = fillGaps(grid, ws.nx, ws.ny, 2), res = Math.hypot(affine.a, affine.d);
     const raster = `${info.width.toLocaleString('en-ZA')} × ${info.height.toLocaleString('en-ZA')} px at ${U.fmtNum(res, res < 10 ? 2 : 1)} m${r.bands.length > 1 ? `, ${info.spp} bands (the elevations in band ${band + 1})` : ''}${info.bps === 8 ? ' (8-bit values: check they are elevations)' : ''}`;
     // the bands on the grid of the DEM display (Dem), when it is given
     const dv = disp ? r.bands.map((_, b) => Model.resample(r, disp, sign, b)) : null;
-    return { grid, band, disp: dv, info: { raster, cells: hit + filled, filled, zMin, zMax, crs: crs || null } };
+    const note = [crs, fx ? `It did not line up with the model, so ${fx.name}.` : ''].filter(Boolean).join(' ');
+    return { grid, band, disp: dv, info: { raster, cells: hit + filled, filled, zMin, zMax, crs: note || null } };
   }
   /* An empty cell takes the inverse-distance mean of the surveyed cells within `reach` cells of it, when they lie on
      three or four sides of it (so the survey is not carried out past its edge). → how many cells were filled */
@@ -13917,6 +13950,7 @@ const Tabs = (() => {
       e.guessed ? msg('warn', `The ${e.seamGuessed === false ? 'quality' : 'seam or the quality'} was not in the file name: check the seam and the quality above.`) : null,
       note ? msg('warn', note) : null,
       e.crs ? msg('warn', e.crs) : null,
+      e.fix ? msg('info', `It did not line up with the model, so ${e.fix}; it does now.`) : null,
       S.nNone ? msg('info', `${S.nNone} block${S.nNone === 1 ? ' has' : 's have'} ${seam} but no data in the raster: ${S.nNone === 1 ? 'it keeps' : 'they keep'} no value, and the Block Margin Rank tab gives ${S.nNone === 1 ? 'it' : 'them'} the seam’s average.`) : null,
       stale ? msg('warn', `The blocks or the 3D model changed since this raster was read.${g ? '' : ' Add the file again to work out the values of the blocks as they are now.'}`) : null,
       h('div', { class: 'row' },
@@ -13957,16 +13991,21 @@ const Tabs = (() => {
           if (wf) affine = Imagery.parseWorld(await wf.text());
         }
         if (!affine) throw new Error('it has no georeferencing: no GeoTIFF tags and no world file (.tfw) with the same name. Choose its .tfw file together with it.');
+        // (signs flipped, X and Y swapped or millimetres: put right, as for the block layout)
+        const fx = Model.rasterFix(info.width, info.height, affine, P.grid, sign);
+        if (fx) affine = fx.affine;
         const rec = { name }; await crsFromFile(rec, info, affine);
         const crs = rec.crsHint && P.crs.preset !== 'custom' && P.crs.preset !== 'local' && rec.crsHint !== P.crs.preset ? `It is in ${Geo.PRESETS.find(p => p.id === rec.crsHint).name} (${rec.crsFrom}), the model in ${(Geo.PRESETS.find(p => p.id === P.crs.preset) || { name: P.crs.preset }).name}.` : '';
         const r = await Tiff.read(info, { targetRes: P.grid.cell / 2, affine, onProgress: fr => UI.busy(`Reading ${name} (${k + 1} of ${tifs.length})… ${Math.round(fr * 100)}%`, (k + fr * 0.8) / tifs.length) });
+        if (fx) r.geo.affine = fx.apply(r.geo.affine);
         UI.busy(`Averaging ${name} over the blocks…`, (k + 0.9) / tifs.length); await U.nextFrame();
         const g = Model.resample(r, P.grid, sign), det = Qual.detect(P, name);
         if (!det.layerId) throw new Error('the model has no seam.');
         const e = { id: U.uid('qr'), file: name, layerId: det.layerId, kind: det.kind, label: stem(name), res: Math.round(Math.hypot(affine.a, affine.d) * 100) / 100, guessed: !(det.seamSure && det.kindSure), seamGuessed: !det.seamSure, read: U.todayISO() };
         if (crs) e.crs = crs + ' Check that the raster lines up with the blocks.';
+        if (fx) e.fix = fx.name;
         Qual.assign(P, ws, e, g);
-        if (!e.stats.n) { const rd = e.kind === 'rd'; Qual.remove(P, e); if (rd) App.changed('layers'); throw new Error(`it does not cover any block. Check that it is in the coordinate system of the model.${crs ? ' ' + crs : ''}`); }
+        if (!e.stats.n) { const rd = e.kind === 'rd'; Qual.remove(P, e); if (rd) App.changed('layers'); throw new Error(`it does not cover any block: ${Model.rasterWhere(info.width, info.height, affine, P.grid, sign)}. Check that it is in the coordinate system of the model (${(Geo.PRESETS.find(p => p.id === P.crs.preset) || { name: P.crs.preset }).name}).${crs ? ' ' + crs : ''}`); }
         App.qgrid.set(e.id, g);
         done.push(e);
       } catch (err) { bad.push(`${name}: ${err.message}`); console.warn(name, err); }
