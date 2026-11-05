@@ -35,6 +35,7 @@ class MonthlyProductionPlanning(Document):
         Only sync month_prod_days when production date/shift setup changed.
         """
         self.validate_shift_hours()
+        self.validate_excluded_production_machines()
         self.validate_machine_allocation_access()
 
         # Production Month End Invoicing must follow the captured Production Month End Date.
@@ -240,6 +241,26 @@ class MonthlyProductionPlanning(Document):
         copied_excavator_truck = False
         copied_dozers = False
 
+        # Preserve previous-month machine exclusions.
+        # Do not overwrite exclusions already selected in a new plan.
+        if not self.get("excluded_production_machines"):
+            for row in (
+                previous.get("excluded_production_machines")
+                or []
+            ):
+                self.append(
+                    "excluded_production_machines",
+                    {
+                        "asset": row.asset,
+                        "machine_type": row.machine_type,
+                        "original_category": row.original_category,
+                        "original_excavator": row.original_excavator,
+                        "original_dozing_type":
+                            row.original_dozing_type,
+                        "exclusion_reason": row.exclusion_reason,
+                    },
+                )
+
         # ------------------------------------------------------
         # Excavators / ADTs
         # ------------------------------------------------------
@@ -259,6 +280,8 @@ class MonthlyProductionPlanning(Document):
                             row.truck_model,
                         "sort_order":
                             row.sort_order,
+                        "is_production_excavator":
+                            row.is_production_excavator,
                     },
                 )
 
@@ -298,6 +321,94 @@ class MonthlyProductionPlanning(Document):
             )
 
 
+
+    def validate_excluded_production_machines(self):
+        """Validate machines excluded from monthly allocations."""
+
+        excluded = self.get("excluded_production_machines") or []
+        seen = set()
+
+        machine_categories = {
+            "Excavator": "Excavator",
+            "Truck": "ADT",
+            "Dozer": "Dozer",
+        }
+
+        planned_excavators = {
+            row.excavator
+            for row in self.get("excavator_truck_assignments") or []
+            if row.excavator
+        }
+
+        planned_trucks = {
+            row.truck
+            for row in self.get("excavator_truck_assignments") or []
+            if row.truck
+        }
+
+        planned_dozers = {
+            row.asset_name
+            for row in self.get("dozer_table") or []
+            if row.asset_name
+        }
+
+        planned = {
+            "Excavator": planned_excavators,
+            "Truck": planned_trucks,
+            "Dozer": planned_dozers,
+        }
+
+        for row in excluded:
+            asset = row.asset
+            machine_type = row.machine_type
+
+            if not asset:
+                frappe.throw("Excluded machine must have an Asset.")
+
+            if asset in seen:
+                frappe.throw(
+                    f"Machine {frappe.bold(asset)} is excluded more than once."
+                )
+
+            seen.add(asset)
+
+            if machine_type not in machine_categories:
+                frappe.throw(
+                    f"Invalid excluded machine type for {frappe.bold(asset)}."
+                )
+
+            if asset not in planned[machine_type]:
+                frappe.throw(
+                    f"Excluded machine {frappe.bold(asset)} "
+                    "is not part of this Monthly Production Plan."
+                )
+
+            asset_doc = frappe.db.get_value(
+                "Asset",
+                asset,
+                ["asset_category", "location"],
+                as_dict=True,
+            )
+
+            if not asset_doc:
+                frappe.throw(
+                    f"Excluded machine {frappe.bold(asset)} does not exist."
+                )
+
+            expected_category = machine_categories[machine_type]
+
+            if asset_doc.asset_category != expected_category:
+                frappe.throw(
+                    f"Machine {frappe.bold(asset)} must belong to "
+                    f"Asset Category {frappe.bold(expected_category)}."
+                )
+
+            if asset_doc.location != self.location:
+                frappe.throw(
+                    f"Machine {frappe.bold(asset)} does not belong "
+                    "to the Monthly Production Planning location."
+                )
+
     def validate_machine_allocation_access(self):
         """
         Only the approved machine-allocation roles may change:
@@ -322,6 +433,7 @@ class MonthlyProductionPlanning(Document):
         current_excavators = self._excavator_truck_snapshot(self)
         current_dozers = self._dozer_snapshot(self)
         current_counts = self._machine_count_snapshot(self)
+        current_exclusions = self._excluded_machine_snapshot(self)
 
         # ----------------------------------------------------------
         # New document:
@@ -344,6 +456,9 @@ class MonthlyProductionPlanning(Document):
                         previous
                     )
                 )
+                previous_exclusions = (
+                    self._excluded_machine_snapshot(previous)
+                )
 
                 if (
                     current_excavators
@@ -352,6 +467,8 @@ class MonthlyProductionPlanning(Document):
                     != previous_dozers
                     or current_counts
                     != previous_counts
+                    or current_exclusions
+                    != previous_exclusions
                 ):
                     self._throw_machine_allocation_permission_error()
 
@@ -365,6 +482,7 @@ class MonthlyProductionPlanning(Document):
                 current_excavators
                 or current_dozers
                 or any(current_counts)
+                or current_exclusions
             ):
                 self._throw_machine_allocation_permission_error()
 
@@ -391,13 +509,40 @@ class MonthlyProductionPlanning(Document):
         previous_excavators = self._excavator_truck_snapshot(before)
         previous_dozers = self._dozer_snapshot(before)
         previous_counts = self._machine_count_snapshot(before)
+        previous_exclusions = self._excluded_machine_snapshot(before)
 
         excavator_changed = current_excavators != previous_excavators
         dozer_changed = current_dozers != previous_dozers
         counts_changed = current_counts != previous_counts
+        exclusions_changed = current_exclusions != previous_exclusions
 
-        if excavator_changed or dozer_changed or counts_changed:
+        if (
+            excavator_changed
+            or dozer_changed
+            or counts_changed
+            or exclusions_changed
+        ):
             self._throw_machine_allocation_permission_error()
+
+    @staticmethod
+    def _excluded_machine_snapshot(doc):
+        """Stable representation of excluded machine records."""
+
+        rows = []
+
+        for row in doc.get("excluded_production_machines") or []:
+            rows.append(
+                (
+                    row.asset or "",
+                    row.machine_type or "",
+                    row.original_category or "",
+                    row.original_excavator or "",
+                    row.original_dozing_type or "",
+                    row.exclusion_reason or "",
+                )
+            )
+
+        return sorted(rows)
 
     @staticmethod
     def _excavator_truck_snapshot(doc):
@@ -418,6 +563,7 @@ class MonthlyProductionPlanning(Document):
                     row.truck or "",
                     row.truck_model or "",
                     int(row.sort_order or 0),
+                    int(row.is_production_excavator or 0),
                 )
             )
 
