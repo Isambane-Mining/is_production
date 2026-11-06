@@ -483,7 +483,22 @@ function hodBreakdownBarChart(classifications) {
         (sum, item) => sum + (Number(item.hours) || 0), 0
     );
 
-    return `<div class="hod-breakdown-bars">
+    // HOD_DOWNTIME_TWO_COLUMNS_V2
+    // Two columns, filling from top to bottom.
+    // Existing clickable breakdown buttons remain unchanged.
+    const rowCount = classifications.length;
+    const rowsPerColumn = Math.ceil(rowCount / 2);
+
+    return `<div class="hod-breakdown-bars"
+        style="
+            display:grid;
+            grid-template-columns:repeat(2,minmax(0,1fr));
+            grid-template-rows:repeat(${rowsPerColumn},auto);
+            grid-auto-flow:column;
+            column-gap:12px;
+            row-gap:4px;
+            align-items:start;
+        ">
         ${classifications.map((item, index) => {
             const hours = Number(item.hours) || 0;
             const width = totalHours > 0 ? hours / totalHours * 100 : 0;
@@ -1505,6 +1520,174 @@ function hodReliabilityPanel(engineering) {
     `;
 }
 
+// HOD_HR_STATS_V2
+// Blue workforce overview - dynamic Employee data.
+// This styling is limited to the HOD presentation.
+function hodHrStats(row) {
+    const stats = row.hr_stats || {};
+
+    const icons = {
+        employees: `<svg viewBox="0 0 24 24" width="24" height="24"
+            fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round"
+            aria-hidden="true">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+            <circle cx="9" cy="7" r="4"/>
+            <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+        </svg>`,
+
+        terminations: `<svg viewBox="0 0 24 24" width="24" height="24"
+            fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round"
+            aria-hidden="true">
+            <path d="M10 17l5-5-5-5"/>
+            <path d="M15 12H3"/>
+            <path d="M12 3h7a2 2 0 0 1 2 2v14
+                a2 2 0 0 1-2 2h-7"/>
+        </svg>`,
+
+        recruitment: `<svg viewBox="0 0 24 24" width="24" height="24"
+            fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round"
+            aria-hidden="true">
+            <circle cx="11" cy="11" r="8"/>
+            <circle cx="11" cy="9" r="2"/>
+            <path d="M6.5 16a5 5 0 0 1 9 0"/>
+            <path d="m17 17 5 5"/>
+        </svg>`
+    };
+
+    const groups = [
+        {
+            label: "TOTAL EMPLOYEES",
+            icon: icons.employees,
+            values: stats.total_employees
+        },
+        {
+            label: "TERMINATIONS",
+            icon: icons.terminations,
+            values: stats.terminations
+        },
+        {
+            label: "RECRUITMENT",
+            icon: icons.recruitment,
+            values: stats.recruitment
+        }
+    ];
+
+    const safeCount = value => {
+        const number = Number(value);
+        return Number.isFinite(number) && number >= 0
+            ? Math.floor(number)
+            : 0;
+    };
+
+    return `
+        <div class="hod-hr-stats"
+            style="
+                margin-top:8px;
+                margin-bottom:8px;
+                padding:9px 10px;
+                border-radius:7px;
+                box-sizing:border-box;
+                width:100%;
+                color:#ffffff;
+                background:linear-gradient(
+                    110deg,
+                    #004d39 0%,
+                    #005c43 55%,
+                    #006b4c 100%
+                );
+                display:grid;
+                grid-template-columns:minmax(92px,0.8fr)
+                    repeat(3,minmax(0,1fr));
+                gap:7px;
+                align-items:stretch;
+                font-family:Arial,sans-serif;
+            ">
+
+            <div style="
+                display:flex;
+                flex-direction:column;
+                justify-content:center;
+                min-width:0;
+                padding-right:5px;
+                border-right:1px solid rgba(255,255,255,.45);
+            ">
+                <div style="
+                    font-size:15px;
+                    font-weight:400;
+                    line-height:18px;
+                    letter-spacing:.3px;
+                ">HR STATS</div>
+
+                <div style="
+                    font-size:9px;
+                    font-weight:400;
+                    opacity:.92;
+                    margin-top:3px;
+                    line-height:11px;
+                ">WORKFORCE OVERVIEW</div>
+            </div>
+
+            ${groups.map(group => `
+                <div style="
+                    min-width:0;
+                    border-radius:6px;
+                    padding:7px 5px;
+                    box-sizing:border-box;
+                    background:linear-gradient(
+                        135deg,
+                        #087d59 0%,
+                        #00694d 45%,
+                        #00533e 100%
+                    );
+                    border:1px solid rgba(155,235,192,.35);
+                ">
+                    <div style="
+                        display:flex;
+                        align-items:center;
+                        justify-content:center;
+                        gap:4px;
+                        min-width:0;
+                        color:white;
+                    ">
+                        <span style="
+                            display:inline-flex;
+                            flex-shrink:0;
+                        ">${group.icon}</span>
+
+                        <span style="
+                            font-size:12px;
+                            font-weight:400;
+                            line-height:12px;
+                            overflow-wrap:anywhere;
+                        ">${group.label}</span>
+                    </div>
+
+                    <div style="
+                        display:flex;
+                        justify-content:center;
+                        align-items:center;
+                        flex-wrap:wrap;
+                        gap:3px 5px;
+                        margin-top:8px;
+                        font-size:12px;
+                        font-weight:400;
+                        text-align:center;
+                        line-height:13px;
+                    ">
+                        <span>Male = <strong style="font-size:13px;font-weight:400;color:#ffffff">${safeCount(group.values?.male)}</strong></span>
+                        <span style="opacity:.6">|</span>
+                        <span>Female = <strong style="font-size:13px;font-weight:400;color:#ffffff">${safeCount(group.values?.female)}</strong></span>
+                    </div>
+                </div>
+            `).join("")}
+        </div>
+    `;
+}
+
 function hodDashboard(row) {
     const engineering = row.engineering;
     return `<article class="hod-performance-dashboard" data-site="${hodEscape(row.site)}">
@@ -1513,26 +1696,121 @@ function hodDashboard(row) {
         <div class="hod-columns">
             <section class="hod-domain-panel hod-engineering-panel">
 
-                <div class="hod-domain-heading"
-                    style="margin-top:8px;display:block;height:auto;min-height:43px;padding:7px 10px;overflow:visible">
-                    <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;color:white">
-                        ${[
-                            {label:'TOTAL MACHINES', counts:engineering.fleet_counts},
-                            {label:'PRODUCTION MACHINES', counts:engineering.fleet_scope_counts?.production},
-                            {label:'SWING MACHINES', counts:engineering.fleet_scope_counts?.swing}
-                        ].map(group => `
-                            <div style="min-width:0">
-                                <div style="font-size:12px;font-weight:700;line-height:16px;margin-bottom:4px">
+                <!-- HOD_SUMMARY_LARGE_NUMBERS_V1 -->
+<!-- HOD_MACHINE_CARDS_V1 -->
+                <div class="hod-domain-heading hod-machine-summary"
+                    style="
+                        margin-top:8px;
+                        margin-bottom:0;
+                        padding:5px 7px;
+                        border-radius:6px;
+                        box-sizing:border-box;
+                        width:100%;
+                        color:#fff;
+                        background:linear-gradient(
+                            110deg,
+                            #06366b 0%,
+                            #07558b 55%,
+                            #006a9a 100%
+                        );
+                        display:grid;
+                        grid-template-columns:repeat(3,minmax(0,1fr));
+                        gap:6px;
+                        align-items:stretch;
+                    ">
+
+                    ${[
+                        {
+                            label:"TOTAL MACHINES",
+                            counts:engineering.fleet_counts,
+                            icon:"total"
+                        },
+                        {
+                            label:"PRODUCTION MACHINES",
+                            counts:engineering.fleet_scope_counts?.production,
+                            icon:"production"
+                        },
+                        {
+                            label:"SWING MACHINES",
+                            counts:engineering.fleet_scope_counts?.swing,
+                            icon:"swing"
+                        }
+                    ].map(group => `
+                        <div style="
+                            min-width:0;
+                            min-height:0;
+                            border-radius:5px;
+                            padding:4px 4px;
+                            box-sizing:border-box;
+                            background:linear-gradient(
+                                135deg,
+                                #087db4 0%,
+                                #075c96 45%,
+                                #054677 100%
+                            );
+                            border:1px solid rgba(150,220,255,.35);
+                            display:flex;
+                            flex-direction:column;
+                            justify-content:center;
+                        ">
+                            <div style="
+                                display:flex;
+                                align-items:center;
+                                justify-content:center;
+                                gap:5px;
+                                min-width:0;
+                            ">
+                                <svg viewBox="0 0 24 24"
+                                    width="19" height="19"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    style="flex-shrink:0"
+                                    aria-hidden="true">
+                                    ${group.icon === "total"
+                                        ? `<rect x="2" y="10" width="20" height="8" rx="2"/>
+                                           <circle cx="7" cy="20" r="2"/>
+                                           <circle cx="17" cy="20" r="2"/>
+                                           <path d="M5 10V6h6l4 4M15 10V5h4"/>`
+                                        : group.icon === "production"
+                                        ? `<path d="M3 21V8l6 4V8l6 4V4h6v17Z"/>
+                                           <path d="M7 17h2m4 0h2m3 0h1"/>`
+                                        : `<path d="M4 7h16l-4-4m4 4-4 4"/>
+                                           <path d="M20 17H4l4-4m-4 4 4 4"/>`
+                                    }
+                                </svg>
+
+                                <span style="
+                                    font-size:12px;
+                                    font-weight:400;
+                                    line-height:12px;
+                                    text-align:center;
+                                    overflow-wrap:anywhere;
+                                ">
                                     ${group.label}
-                                </div>
-                                <div style="display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;font-weight:600;line-height:16px">
-                                    <span>Excavator = ${group.counts?.Excavator ?? 0}</span>
-                                    <span>Dozer = ${group.counts?.Dozer ?? 0}</span>
-                                    <span>ADT = ${group.counts?.ADT ?? 0}</span>
-                                </div>
+                                </span>
                             </div>
-                        `).join('')}
-                    </div>
+
+                            <div style="
+                                display:flex;
+                                align-items:center;
+                                justify-content:center;
+                                flex-wrap:wrap;
+                                gap:3px 8px;
+                                margin-top:5px;
+                                font-size:12px;
+                                font-weight:400;
+                                line-height:13px;
+                                text-align:center;
+                            ">
+                                <span>Excavator = <strong style="font-size:13px;font-weight:400;color:#ffffff">${group.counts?.Excavator ?? 0}</strong></span>
+                                <span>Dozer = <strong style="font-size:13px;font-weight:400;color:#ffffff">${group.counts?.Dozer ?? 0}</strong></span>
+                                <span>ADT = <strong style="font-size:13px;font-weight:400;color:#ffffff">${group.counts?.ADT ?? 0}</strong></span>
+                            </div>
+                        </div>
+                    `).join('')}
                 </div>
 
                 <div class="hod-domain-heading"><div><h3>Engineering</h3><span>Availability &amp; utilisation</span></div><div class="hod-header-legend"><span>Availability ${hodMetricLegend('avail')}</span><span>Utilisation ${hodMetricLegend('util')}</span></div></div>
@@ -1545,7 +1823,8 @@ function hodDashboard(row) {
 ${hodProblemMachinesPanel(engineering)}
             </section>
             <section class="hod-domain-panel hod-production-panel">
-                <div class="hod-domain-heading"><div><h3>Production</h3><span>Production performance</span></div></div>
+                ${hodHrStats(row)}
+                <div class="hod-domain-heading hod-production-title"><div><h3>Production</h3><span>Production performance</span></div></div>
                 <div class="hod-domain-main" style="height:auto;min-height:360px;overflow:visible;box-sizing:border-box;padding-bottom:10px">${hodProduction(row)}</div>
                 ${hodDowntimeContributorsPanel(engineering)}
             </section>
@@ -1553,38 +1832,236 @@ ${hodProblemMachinesPanel(engineering)}
 
     </article>`;
 }
+// HOD_HR_SUMMARY_ALIGNMENT_V2
+// Match the summary box heights without stretching their contents.
 function alignHodDomainHeadings(root) {
-    const dashboards = root.find('.hod-performance-dashboard');
-
-    dashboards.each(function () {
+    root.find(".hod-performance-dashboard").each(function () {
         const board = this;
-        const engineering = board.querySelector(
-            '.hod-engineering-panel > .hod-domain-heading:nth-child(2)'
+
+        const engineeringPanel = board.querySelector(
+            ".hod-engineering-panel"
         );
-        const productionPanel = board.querySelector('.hod-production-panel');
+        const productionPanel = board.querySelector(
+            ".hod-production-panel"
+        );
 
-        if (!engineering || !productionPanel) return;
+        if (!engineeringPanel || !productionPanel) return;
 
-        productionPanel.style.paddingTop = '0px';
-
+        const machineSummary = engineeringPanel.querySelector(
+            ":scope > .hod-domain-heading:first-child"
+        );
+        const hrSummary = productionPanel.querySelector(
+            ":scope > .hod-hr-stats"
+        );
+        const engineeringHeading = engineeringPanel.querySelector(
+            ":scope > .hod-domain-heading:nth-child(2)"
+        );
         const productionHeading = productionPanel.querySelector(
-            '.hod-domain-heading:first-child'
+            ":scope > .hod-production-title"
         );
 
-        if (!productionHeading) return;
+        if (!machineSummary || !hrSummary ||
+            !engineeringHeading || !productionHeading) return;
 
+        // Remove previous adjustments before measuring natural sizes.
+        machineSummary.style.height = "auto";
+        hrSummary.style.height = "auto";
+        engineeringPanel.style.paddingTop = "0px";
+        productionPanel.style.paddingTop = "0px";
+
+        machineSummary.style.boxSizing = "border-box";
+        hrSummary.style.boxSizing = "border-box";
+
+        // Match heights without changing the card contents.
+        const height = Math.ceil(Math.max(
+            machineSummary.getBoundingClientRect().height,
+            hrSummary.getBoundingClientRect().height
+        ));
+
+        machineSummary.style.height = height + "px";
+        hrSummary.style.height = height + "px";
+
+        // Match vertical spacing below both summary boxes.
+        const machineMargin = parseFloat(
+            getComputedStyle(machineSummary).marginBottom
+        ) || 0;
+
+        const hrMargin = parseFloat(
+            getComputedStyle(hrSummary).marginBottom
+        ) || 0;
+
+        hrSummary.style.marginBottom = machineMargin + "px";
+
+        // Adjust only if other layout differences remain.
         const difference =
-            engineering.getBoundingClientRect().top -
+            engineeringHeading.getBoundingClientRect().top -
             productionHeading.getBoundingClientRect().top;
 
-        productionPanel.style.paddingTop =
-            Math.max(0, difference) + 'px';
+        if (difference > 0.5) {
+            productionPanel.style.paddingTop = difference + "px";
+        } else if (difference < -0.5) {
+            engineeringPanel.style.paddingTop = (-difference) + "px";
+        }
     });
 }
 
 
 // HOD_DOWNTIME_SECTION_ALIGNMENT_V1
 // Align Engineering and Production downtime section headings.
+// HOD_MAIN_PANEL_HEIGHT_ALIGNMENT_V1
+// Keep Engineering gauges and Production KPIs equal in height.
+// HOD_GAUGE_FILL_SPACE_V1
+// Fill the Engineering panel without changing gauge calculations.
+function fillHodGaugeSpace(root) {
+    root.find(".hod-performance-dashboard").each(function () {
+        const board = this;
+
+        const engineering = board.querySelector(
+            ".hod-engineering-panel > .hod-engineering-main"
+        );
+
+        const production = board.querySelector(
+            ".hod-production-panel > .hod-domain-main"
+        );
+
+        if (!engineering || !production) return;
+
+        const rows = Array.from(
+            engineering.querySelectorAll(
+                ":scope > .hod-gauge-row"
+            )
+        );
+
+        if (rows.length !== 2) return;
+
+        // Main panel heights have already been aligned.
+        const height = Math.ceil(Math.max(
+            engineering.getBoundingClientRect().height,
+            production.getBoundingClientRect().height
+        ));
+
+        engineering.style.boxSizing = "border-box";
+        engineering.style.height = height + "px";
+        engineering.style.minHeight = height + "px";
+        engineering.style.display = "flex";
+        engineering.style.flexDirection = "column";
+
+        // Override flex: 0 0 auto from the existing CSS.
+        rows.forEach(row => {
+            row.style.flex = "1 1 0";
+            row.style.minHeight = "0";
+            row.style.alignItems = "stretch";
+
+            row.querySelectorAll(".hod-gauge").forEach(card => {
+                card.style.display = "flex";
+                card.style.flexDirection = "column";
+                card.style.justifyContent = "center";
+                card.style.minHeight = "0";
+            });
+        });
+    });
+}
+
+function alignHodMainPanels(root) {
+    root.find(".hod-performance-dashboard").each(function () {
+        const board = this;
+
+        const engineering = board.querySelector(
+            ".hod-engineering-panel > .hod-engineering-main"
+        );
+
+        const production = board.querySelector(
+            ".hod-production-panel > .hod-domain-main"
+        );
+
+        if (!engineering || !production) return;
+
+        // Preserve the original minimum heights for repeat calls.
+        for (const panel of [engineering, production]) {
+            if (!panel.hasAttribute("data-hod-base-min-height")) {
+                panel.setAttribute(
+                    "data-hod-base-min-height",
+                    panel.style.minHeight || ""
+                );
+            }
+
+            panel.style.minHeight = panel.getAttribute(
+                "data-hod-base-min-height"
+            );
+        }
+
+        // Use the larger rendered height; never shrink content.
+        const targetHeight = Math.ceil(Math.max(
+            engineering.getBoundingClientRect().height,
+            production.getBoundingClientRect().height
+        ));
+
+        for (const panel of [engineering, production]) {
+            panel.style.boxSizing = "border-box";
+            panel.style.minHeight = targetHeight + "px";
+        }
+    });
+}
+
+// HOD_DOWNTIME_EQUAL_HEIGHT_V1
+// Match the outer heights of the two downtime panels.
+// Preserve table rows, graph bars and existing heading alignment.
+function alignHodDowntimePanelHeights(root) {
+    root.find(".hod-performance-dashboard").each(function () {
+        const board = this;
+
+        const engineering = board.querySelector(
+            ".hod-engineering-panel .hod-problem-machines"
+        );
+
+        const production = board.querySelector(
+            ".hod-production-panel .hod-downtime-contributors"
+        );
+
+        if (!engineering || !production) return;
+
+        const panels = [engineering, production];
+
+        // Reset previous height adjustments before measuring.
+        panels.forEach(panel => {
+            if (!panel.hasAttribute("data-hod-downtime-base-min")) {
+                panel.setAttribute(
+                    "data-hod-downtime-base-min",
+                    panel.style.minHeight || ""
+                );
+            }
+
+            panel.style.minHeight = panel.getAttribute(
+                "data-hod-downtime-base-min"
+            );
+
+            panel.style.boxSizing = "border-box";
+        });
+
+        const bounds = panels.map(panel =>
+            panel.getBoundingClientRect()
+        );
+
+        // Both bottom borders should finish on the same line.
+        const targetBottom = Math.ceil(Math.max(
+            bounds[0].bottom,
+            bounds[1].bottom
+        ));
+
+        panels.forEach((panel, index) => {
+            const requiredHeight = Math.ceil(
+                targetBottom - bounds[index].top
+            );
+
+            panel.style.minHeight =
+                Math.max(
+                    bounds[index].height,
+                    requiredHeight
+                ) + "px";
+        });
+    });
+}
+
 function alignHodDowntimeSections(root) {
     const dashboards = root.find(".hod-performance-dashboard");
 
@@ -1760,11 +2237,80 @@ function bindHodDetailButtons(view) {
 
 }
 
+// HOD_DOWNTIME_FILL_SPACE_V1
+// Distribute two-column graph bars over the available panel height.
+function fillHodDowntimeGraphSpace(root) {
+    root.find(".hod-performance-dashboard").each(function () {
+        const board = this;
+
+        const leftPanel = board.querySelector(
+            ".hod-engineering-panel .hod-problem-machines"
+        );
+
+        const rightPanel = board.querySelector(
+            ".hod-production-panel .hod-downtime-contributors"
+        );
+
+        const bars = rightPanel?.querySelector(
+            ".hod-breakdown-bars"
+        );
+
+        if (!leftPanel || !rightPanel || !bars) return;
+
+        const rows = Array.from(bars.children);
+
+        if (!rows.length || !rows.every(row =>
+            row.classList.contains("hod-breakdown-bar-row")
+        )) return;
+
+        const rowsPerColumn = Math.ceil(rows.length / 2);
+
+        // Use the aligned left-panel bottom as the target.
+        const bottom = leftPanel.getBoundingClientRect().bottom;
+        const top = bars.getBoundingClientRect().top;
+
+        const paddingBottom = parseFloat(
+            getComputedStyle(rightPanel).paddingBottom
+        ) || 0;
+
+        const availableHeight = Math.max(
+            bars.getBoundingClientRect().height,
+            bottom - top - paddingBottom - 2
+        );
+
+        // Keep both existing columns and classification order.
+        bars.style.display = "grid";
+        bars.style.gridTemplateColumns =
+            "repeat(2, minmax(0, 1fr))";
+        bars.style.gridTemplateRows =
+            `repeat(${rowsPerColumn}, minmax(0, 1fr))`;
+        bars.style.gridAutoFlow = "column";
+        bars.style.columnGap = "12px";
+        bars.style.rowGap = "4px";
+        bars.style.alignItems = "stretch";
+        bars.style.boxSizing = "border-box";
+        bars.style.height = Math.ceil(availableHeight) + "px";
+
+        // Use the available row space instead of leaving
+        // one large blank block below the graph.
+        rows.forEach(row => {
+            row.style.height = "100%";
+            row.style.minHeight = "0";
+            row.style.boxSizing = "border-box";
+            row.style.alignItems = "center";
+        });
+    });
+}
+
 async function renderHodPresentationLayout(view) {
     view.page.main.html(view.data.map(hodDashboard).join(''));
     bindHodDetailButtons(view);
     alignHodDomainHeadings(view.page.main);
+    alignHodMainPanels(view.page.main);
+    fillHodGaugeSpace(view.page.main);
     alignHodDowntimeSections(view.page.main);
+    alignHodDowntimePanelHeights(view.page.main);
+    fillHodDowntimeGraphSpace(view.page.main);
 }
 async function downloadHodPresentation(view) {
     const boards = view.page.main.find('.hod-performance-dashboard').toArray();
