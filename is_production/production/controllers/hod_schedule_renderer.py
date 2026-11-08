@@ -28,9 +28,9 @@ def capture(rows, bench, app, *, no_sandbox=False):
     from playwright.sync_api import sync_playwright
 
     bench, app = Path(bench).resolve(), Path(app).resolve()
-    css = asset_path(bench, '/assets/is_production/css/dashboards.css')
+    css = asset_path(bench, '/assets/is_production/css/hod_presentation.css')
     if '.hod-performance-dashboard' not in css.read_text():
-        raise ValueError('Installed dashboards.css does not contain the HOD dashboard styles.')
+        raise ValueError('Installed hod_presentation.css does not contain the HOD dashboard styles.')
     script = app/'production/page/hod_presentation/hod_presentation.js'
     styles = []
     manifest_path = bench/'sites/assets/assets.json'
@@ -41,6 +41,7 @@ def capture(rows, bench, app, *, no_sandbox=False):
                 asset_path(bench, value)
                 styles.append(value)
     styles.append('/assets/is_production/css/dashboards.css')
+    styles.append('/assets/is_production/css/hod_presentation.css')
     failures, slides = [], []
 
     with sync_playwright() as engine:
