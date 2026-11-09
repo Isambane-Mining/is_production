@@ -1307,3 +1307,196 @@ tbody td:first-child {
 .hod-breakdown-reason {
     color: #000000 !important;
 }
+
+/* HOD_REMAINING_STATIC_CSS_V2 */
+/* Static styles previously defined inside hod_presentation.js. */
+
+.hod-performance-dashboard
+.hod-production-table td.hod-average-bcm-amber {
+    color: #a66a00 !important;
+}
+
+.hod-performance-dashboard .hod-maintenance-title {
+    background: #006b3f;
+}
+
+.hod-performance-dashboard .hod-reliability-downtime-heading {
+    margin: 8px 8px 5px;
+    font-size: 12px;
+    font-weight: 800;
+    color: #082e57;
+}
+
+.hod-performance-dashboard .hod-reliability-planned-heading {
+    margin: 12px 8px 5px;
+    font-size: 12px;
+    font-weight: 800;
+    color: #082e57;
+}
+
+.hod-performance-dashboard .hod-spare-highlight {
+    background: #e9d5ff !important;
+}
+
+.hod-performance-dashboard .hod-hours-left {
+    text-align: left !important;
+}
+
+/* HOD_POPUP_FILTER_CSS_V1 */
+/* Breakdown Reasons popup column filters. */
+
+.hod-popup-column-filters th {
+    background: #252c35;
+    padding: 7px 5px;
+    border: 1px solid #46505c;
+}
+
+.hod-popup-column-filter {
+    width: 100%;
+    min-width: 65px;
+    box-sizing: border-box;
+    padding: 6px;
+    border: 1px solid #596574;
+    border-radius: 4px;
+    background: #111820;
+    color: #ffffff;
+    font-size: 11px;
+}
+
+.hod-popup-filter-info {
+    color: #dce6ef;
+    background: #252c35;
+    padding: 8px 12px;
+    font-size: 12px;
+    border-radius: 4px;
+    margin-bottom: 8px;
+}
+
+/* HOD_POPUP_DETAILS_CSS_V1 */
+/* Machine Breakdown Reasons detail popup. */
+
+.hod-popup-loading {
+    padding: 12px;
+}
+
+.hod-popup-excluded {
+    color: #c2410c;
+    font-weight: 700;
+}
+
+.hod-popup-sunday {
+    color: #7c3aed;
+    font-weight: 700;
+}
+
+.hod-popup-au {
+    color: #047857;
+    font-weight: 700;
+}
+
+.hod-popup-detail-scroll {
+    max-height: 65vh;
+    overflow: auto;
+}
+
+.hod-popup-detail-heading {
+    padding: 10px;
+    background: #dbeafe;
+    color: #1d4ed8;
+    font-weight: 700;
+}
+
+.hod-popup-detail-table {
+    width: 100%;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.hod-popup-detail-head {
+    background: #eff6ff;
+    color: #1d4ed8;
+    position: sticky;
+    top: 0;
+}
+
+/* HOD_CONTRIBUTORS_TABLE_CSS_V1 */
+/* Downtime Contributors detail table styling. */
+
+.hod-performance-dashboard .hod-contributor-detail-card {
+    border: 1px solid #2563eb;
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.hod-performance-dashboard .hod-contributor-detail-header {
+    background: #dbeafe;
+    color: #1d4ed8;
+    padding: 10px 12px;
+    font-weight: 900;
+}
+
+.hod-performance-dashboard .hod-contributor-calculation {
+    font-size: 11px;
+    margin-top: 5px;
+    font-weight: 600;
+    color: #164db8;
+}
+
+.hod-performance-dashboard .hod-contributor-table-scroll {
+    overflow: auto;
+    max-height: 65vh;
+}
+
+.hod-performance-dashboard .hod-contributor-detail-table {
+    width: 100%;
+    min-width: 1150px;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.hod-performance-dashboard .hod-contributor-th {
+    padding: 9px 10px;
+    background: #eff6ff;
+    color: #1d4ed8;
+    text-align: left;
+}
+
+.hod-performance-dashboard .hod-contributor-td {
+    padding: 8px 10px;
+    border-bottom: 1px solid #dbeafe;
+    vertical-align: top;
+}
+
+.hod-performance-dashboard .hod-contributor-plant {
+    font-weight: 700;
+}
+
+.hod-performance-dashboard .hod-contributor-nowrap {
+    white-space: nowrap;
+}
+
+.hod-performance-dashboard .hod-contributor-fatigue {
+    color: #b45309;
+}
+
+.hod-performance-dashboard .hod-contributor-sunday {
+    color: #7c3aed;
+}
+
+.hod-performance-dashboard .hod-contributor-au {
+    color: #166534;
+    font-weight: 700;
+}
+
+.hod-performance-dashboard .hod-contributor-reason {
+    min-width: 210px;
+}
+
+.hod-performance-dashboard .hod-contributor-total-row {
+    background: #dbeafe;
+    font-weight: 900;
+}
+
+.hod-performance-dashboard .hod-contributor-total-label {
+    text-align: right;
+}
