@@ -481,15 +481,7 @@ function hodBreakdownBarChart(classifications) {
     const rowsPerColumn = Math.ceil(rowCount / 2);
 
     return `<div class="hod-breakdown-bars"
-        style="
-            display:grid;
-            grid-template-columns:repeat(2,minmax(0,1fr));
-            grid-template-rows:repeat(${rowsPerColumn},auto);
-            grid-auto-flow:column;
-            column-gap:12px;
-            row-gap:4px;
-            align-items:start;
-        ">
+        style="grid-template-rows:repeat(${rowsPerColumn},auto)">
         ${classifications.map((item, index) => {
             const hours = Number(item.hours) || 0;
             const width = totalHours > 0 ? hours / totalHours * 100 : 0;
@@ -1629,7 +1621,7 @@ function hodDashboard(row) {
                 </div>
 
                 <div class="hod-domain-heading"><div><h3>Engineering</h3><span>Availability &amp; utilisation</span></div><div class="hod-header-legend"><span>Availability ${hodMetricLegend('avail')}</span><span>Utilisation ${hodMetricLegend('util')}</span></div></div>
-                <div class="hod-domain-main hod-engineering-main"><h4 style="display:flex;align-items:center;justify-content:space-between">
+                <div class="hod-domain-main hod-engineering-main"><h4 class="hod-engineering-summary-heading">
                         <span>Fleet averages · all filtered machines</span>
                         <button type="button" class="hod-view-au-detail" data-site="${hodEscape(row.site)}" data-from="${hodEscape(row.start_date)}" data-to="${hodEscape(row.end_date)}">View Detail</button>
                     </h4>
@@ -1640,7 +1632,7 @@ ${hodProblemMachinesPanel(engineering)}
             <section class="hod-domain-panel hod-production-panel">
                 ${hodHrStats(row)}
                 <div class="hod-domain-heading hod-production-title"><div><h3>Production</h3><span>Production performance</span></div></div>
-                <div class="hod-domain-main" style="height:auto;min-height:360px;overflow:visible;box-sizing:border-box;padding-bottom:10px">${hodProduction(row)}</div>
+                <div class="hod-domain-main hod-production-main">${hodProduction(row)}</div>
                 ${hodDowntimeContributorsPanel(engineering)}
             </section>
         </div>
@@ -2093,16 +2085,9 @@ function fillHodDowntimeGraphSpace(root) {
         );
 
         // Keep both existing columns and classification order.
-        bars.style.display = "grid";
-        bars.style.gridTemplateColumns =
-            "repeat(2, minmax(0, 1fr))";
+        bars.classList.add("hod-breakdown-bars-expanded");
         bars.style.gridTemplateRows =
             `repeat(${rowsPerColumn}, minmax(0, 1fr))`;
-        bars.style.gridAutoFlow = "column";
-        bars.style.columnGap = "12px";
-        bars.style.rowGap = "4px";
-        bars.style.alignItems = "stretch";
-        bars.style.boxSizing = "border-box";
         bars.style.height = Math.ceil(availableHeight) + "px";
 
         // Use the available row space instead of leaving

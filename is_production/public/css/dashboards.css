@@ -2920,3 +2920,42 @@ tbody td:first-child {
               grid-row:auto;
             }
           }
+
+
+/* HOD_STATIC_JS_CLEANUP_PR99_V1 */
+
+.hod-performance-dashboard .hod-breakdown-bars {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-flow: column;
+    column-gap: 12px;
+    row-gap: 4px;
+    align-items: start;
+    box-sizing: border-box;
+}
+
+.hod-performance-dashboard .hod-breakdown-bars-expanded {
+    align-items: stretch;
+}
+
+.hod-performance-dashboard .hod-breakdown-bars-expanded
+> .hod-breakdown-bar-row {
+    height: 100%;
+    min-height: 0;
+    box-sizing: border-box;
+    align-items: center;
+}
+
+.hod-performance-dashboard .hod-engineering-summary-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.hod-performance-dashboard .hod-production-main {
+    height: auto;
+    min-height: 360px;
+    overflow: visible;
+    box-sizing: border-box;
+    padding-bottom: 10px;
+}
