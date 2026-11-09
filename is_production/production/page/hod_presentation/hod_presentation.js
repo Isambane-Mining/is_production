@@ -164,6 +164,7 @@ class HodPresentationPage {
 
     async show() {
         await this.ready;
+
         const options = frappe.route_options || {};
         frappe.route_options = null;
         this.applying_filters = true;
@@ -366,14 +367,14 @@ function hodGauge(category, metric, averages) {
             <text x="18" y="99" class="hod-gauge-tick" fill="#24476c" font-family="Arial" font-size="10">0</text><text x="149" y="99" class="hod-gauge-tick" fill="#24476c" font-family="Arial" font-size="10">100</text>
             <text x="90" y="53" text-anchor="middle" fill="#17365d" font-family="Arial" font-size="9" font-weight="800">PROD + SWING</text>
             <text x="90" y="79" text-anchor="middle" class="hod-gauge-value hod-text-${band}" fill="${text}" font-family="Arial" font-size="27" font-weight="800">${hodPercent(value)}</text>
-        </svg><div class="hod-gauge-average" style="display:grid;grid-template-columns:1fr 1fr;gap:4px;text-align:center;padding:4px 2px">
+        </svg><div class="hod-gauge-average">
             <div>
-                <small style="display:block;font-size:9px;font-weight:600">Prod Machines</small>
-                <strong style="display:block;font-size:13px;font-weight:800;line-height:1.3">${hodPercent(averages?.excluding?.[metric])}</strong>
+                <small class="hod-gauge-scope-label">Prod Machines</small>
+                <strong class="hod-gauge-scope-value">${hodPercent(averages?.excluding?.[metric])}</strong>
             </div>
             <div>
-                <small style="display:block;font-size:9px;font-weight:600">Swing Machines</small>
-                <strong style="display:block;font-size:13px;font-weight:800;line-height:1.3">${hodPercent(averages?.swing?.[metric])}</strong>
+                <small class="hod-gauge-scope-label">Swing Machines</small>
+                <strong class="hod-gauge-scope-value">${hodPercent(averages?.swing?.[metric])}</strong>
             </div>
         </div>
     </div>`;
@@ -402,17 +403,7 @@ function hodRankTable(rows, category, metric, bottom = false) {
 function hodRankings(engineering, metric) {
     return hodRankTable(engineering.bottom[metric], null, metric, true);
 }
-// Average BCM/H original HOD orange threshold.
-if (typeof document !== "undefined" &&
-    !document.getElementById("hod-average-bcm-amber-style")) {
-    const style = document.createElement("style");
-    style.id = "hod-average-bcm-amber-style";
-    style.textContent =
-        ".hod-performance-dashboard " +
-        ".hod-production-table td.hod-average-bcm-amber {" +
-        "color:#a66a00 !important;}";
-    document.head.appendChild(style);
-}
+
 
 function hodProduction(row) {
     const metrics = [
@@ -483,7 +474,14 @@ function hodBreakdownBarChart(classifications) {
         (sum, item) => sum + (Number(item.hours) || 0), 0
     );
 
-    return `<div class="hod-breakdown-bars">
+    // HOD_DOWNTIME_TWO_COLUMNS_V2
+    // Two columns, filling from top to bottom.
+    // Existing clickable breakdown buttons remain unchanged.
+    const rowCount = classifications.length;
+    const rowsPerColumn = Math.ceil(rowCount / 2);
+
+    return `<div class="hod-breakdown-bars"
+        style="grid-template-rows:repeat(${rowsPerColumn},auto)">
         ${classifications.map((item, index) => {
             const hours = Number(item.hours) || 0;
             const width = totalHours > 0 ? hours / totalHours * 100 : 0;
@@ -517,11 +515,7 @@ function hodBreakdownBarChart(classifications) {
                     </span>
                 </span>
                 <span class="hod-breakdown-bar-track"
-                    style="position:relative;
-                           display:block;
-                           overflow:hidden;
-                           background:#e5ebf2;
-                           min-height:12px;">
+                   >
                     <span class="hod-breakdown-bar-fill"
                         style="width:${width.toFixed(2)}%;
                             background-color:${colour} !important;
@@ -915,11 +909,7 @@ function hodOpenDowntimePopup(button) {
         );
 
         columns.each(function(index) {
-            const th = $("<th>").css({
-                background: "#252c35",
-                padding: "7px 5px",
-                border: "1px solid #46505c"
-            });
+            const th = $("<th>");
 
             const input = $("<input>", {
                 type: "text",
@@ -930,17 +920,7 @@ function hodOpenDowntimePopup(button) {
                 "hod-popup-column-filter"
             ).attr(
                 "data-column-index", index
-            ).css({
-                width: "100%",
-                minWidth: "65px",
-                boxSizing: "border-box",
-                padding: "6px",
-                border: "1px solid #596574",
-                borderRadius: "4px",
-                background: "#111820",
-                color: "#ffffff",
-                fontSize: "11px"
-            });
+            );
 
             th.append(input);
             filterRow.append(th);
@@ -955,15 +935,7 @@ function hodOpenDowntimePopup(button) {
             });
 
         const filterInfo = $("<div>")
-            .addClass("hod-popup-filter-info")
-            .css({
-                color: "#dce6ef",
-                background: "#252c35",
-                padding: "8px 12px",
-                fontSize: "12px",
-                borderRadius: "4px",
-                marginBottom: "8px"
-            });
+            .addClass("hod-popup-filter-info");
 
         hodTable.before(filterInfo);
 
@@ -1095,20 +1067,15 @@ function hodOpenDowntimePopup(button) {
     // Print / PDF and Excel export actions for this classification.
     dialog.$body.prepend(`
         <div class="hod-popup-export-actions"
-             style="display:flex;gap:10px;justify-content:flex-end;
-                    padding:10px 12px;background:#1d242c;
-                    border:1px solid #3b4652;
-                    border-radius:6px;margin-bottom:10px">
+            >
             <button type="button"
                 class="btn btn-default btn-sm hod-popup-print"
-                style="background:#303943;color:#fff;
-                       border:1px solid #66717d">
+               >
                 Print / PDF
             </button>
             <button type="button"
                 class="btn btn-primary btn-sm hod-popup-excel"
-                style="background:#137344;color:#fff;
-                       border:1px solid #258c57">
+               >
                 Export Excel
             </button>
         </div>
@@ -1153,12 +1120,11 @@ function hodProblemMachinesPanel(engineering) {
     const machines = breakdown.top_machines || [];
     return `
         <section class="hod-new-summary hod-problem-machines">
-            <div class="hod-new-summary-title"
-                style="background:#0b5a8c;">
+            <div class="hod-new-summary-title hod-downtime-lost-title">
                 DOWNTIME LOST HOURS
             </div>
 
-            <div class="hod-breakdown-layout" style="display:block">
+            <div class="hod-breakdown-layout hod-breakdown-layout-block">
                 <div class="hod-breakdown-table-section">
                     <h4>Bottom 10 Availability</h4>
 
@@ -1169,22 +1135,22 @@ function hodProblemMachinesPanel(engineering) {
                                 <th>Fleet</th>
                                 <th>Category</th>
                                 <th>Breakdown cause</th>
-                                <th style="text-align:left !important;">Hours</th>
+                                <th class="hod-hours-column">Hours</th>
                             </tr>
                         </thead>
                         <tbody>
                             ${machines.length ? machines.map((item, index) => `
                                 <tr>
                                     <td>${index + 1}</td>
-                                    <td style="${item.is_spare ? 'background:#e9d5ff !important;' : ''}">${hodEscape(item.fleet)}</td>
-                                    <td style="${item.is_spare ? 'background:#e9d5ff !important;' : ''}">${hodEscape(item.category)}</td>
+                                    <td class="${item.is_spare ? 'hod-spare-highlight' : ''}">${hodEscape(item.fleet)}</td>
+                                    <td class="${item.is_spare ? 'hod-spare-highlight' : ''}">${hodEscape(item.category)}</td>
                                     <td title="${hodEscape(item.reason)}">
                                         ${hodEscape(item.classification)}
-                                        <small class="hod-breakdown-reason" style="color:#000000 !important;font-size:11px !important;line-height:1.4 !important;">
+                                        <small class="hod-breakdown-reason hod-reason-detail">
                                             ${hodEscape(item.reason)}
                                         </small>
                                     </td>
-                                    <td style="text-align:left !important;">${Number(item.hours).toFixed(1)}</td>
+                                    <td class="hod-hours-left">${Number(item.hours).toFixed(1)}</td>
                                 </tr>
                             `).join('') : `
                                 <tr>
@@ -1221,17 +1187,15 @@ function hodDowntimeContributorsPanel(engineering) {
         return `${Math.floor(value / 60)}h ${String(value % 60).padStart(2, "0")}m`;
     };
 
-    const cell = "padding:8px 10px;border-bottom:1px solid #dbeafe;vertical-align:top";
-    const head = "padding:9px 10px;background:#eff6ff;color:#1d4ed8;text-align:left";
+
+
 
     return `
         <section class="hod-new-summary hod-downtime-contributors">
-            <div class="hod-new-summary-title"
-                style="background:#00643b">
+            <div class="hod-new-summary-title hod-contributors-title">
                 DOWNTIME CONTRIBUTORS BAR GRAPH
             </div>
-            <div class="hod-breakdown-chart-section"
-                style="border-left:0;padding:10px 12px;min-width:0">
+            <div class="hod-breakdown-chart-section hod-contributors-chart">
 
                 ${hodBreakdownBarChart(classifications)}
 
@@ -1239,11 +1203,9 @@ function hodDowntimeContributorsPanel(engineering) {
                     <div class="hod-downtime-class-detail"
                         data-hod-class-index="${index}" hidden>
 
-                        <div style="border:1px solid #2563eb;
-                                    border-radius:10px;overflow:hidden">
+                        <div class="hod-contributor-detail-card">
 
-                            <div style="background:#dbeafe;color:#1d4ed8;
-                                        padding:10px 12px;font-weight:900">
+                            <div class="hod-contributor-detail-header">
                                 Breakdown Reasons for
                                 ${hodEscape(item.classification)}
                                 (${hodClassTotalHours > 0
@@ -1254,10 +1216,7 @@ function hodDowntimeContributorsPanel(engineering) {
                                     : "0.0"}%)
 
                                 <!-- HOD_CLASSIFICATION_CALCULATION_V1 -->
-                                <div style="font-size:11px;
-                                            margin-top:5px;
-                                            font-weight:600;
-                                            color:#164db8">
+                                <div class="hod-contributor-calculation">
                                     Calculation:
                                     ${Number(item.hours || 0).toFixed(2)} hrs
                                     &divide;
@@ -1272,9 +1231,8 @@ function hodDowntimeContributorsPanel(engineering) {
                                 </div>
                             </div>
 
-                            <div style="overflow:auto;max-height:65vh">
-                                <table style="width:100%;min-width:1150px;
-                                              border-collapse:collapse;font-size:12px">
+                            <div class="hod-contributor-table-scroll">
+                                <table class="hod-contributor-detail-table">
                                     <thead>
                                         <tr>
                                             ${[
@@ -1282,57 +1240,57 @@ function hodDowntimeContributorsPanel(engineering) {
                                                 "Total Time", "Start-up + Fatigue",
                                                 "Sunday Hours", "A&U Time", "Reason"
                                             ].map(label =>
-                                                `<th style="${head}">${label}</th>`
+                                                `<th class="hod-contributor-th">${label}</th>`
                                             ).join("")}
                                         </tr>
                                     </thead>
                                     <tbody>
                                         ${(item.details || []).map(detail => `
                                             <tr>
-                                                <td style="${cell};font-weight:700">
+                                                <td class="hod-contributor-td hod-contributor-plant">
                                                     ${hodEscape(detail.plant_no || "")}
                                                 </td>
-                                                <td style="${cell};white-space:nowrap">
+                                                <td class="hod-contributor-td hod-contributor-nowrap">
                                                     ${hodEscape(detail.start_datetime || "")}
                                                 </td>
-                                                <td style="${cell};white-space:nowrap">
+                                                <td class="hod-contributor-td hod-contributor-nowrap">
                                                     ${hodEscape(detail.resolved_datetime || "")}
                                                 </td>
-                                                <td style="${cell}">
+                                                <td class="hod-contributor-td">
                                                     ${fmt(detail.total_minutes)}
                                                 </td>
-                                                <td style="${cell};color:#b45309">
+                                                <td class="hod-contributor-td hod-contributor-fatigue">
                                                     ${fmt(detail.startup_fatigue_minutes)}
                                                 </td>
-                                                <td style="${cell};color:#7c3aed">
+                                                <td class="hod-contributor-td hod-contributor-sunday">
                                                     ${fmt(detail.sunday_minutes)}
                                                 </td>
-                                                <td style="${cell};color:#166534;font-weight:700">
+                                                <td class="hod-contributor-td hod-contributor-au">
                                                     ${fmt(detail.au_minutes)}
                                                 </td>
-                                                <td style="${cell};min-width:210px">
+                                                <td class="hod-contributor-td hod-contributor-reason">
                                                     ${hodEscape(detail.reason || "")}
                                                 </td>
                                             </tr>
                                         `).join("")}
-                                        <tr style="background:#dbeafe;font-weight:900">
+                                        <tr class="hod-contributor-total-row">
                                             <td colspan="3"
-                                                style="${cell};text-align:right">
+                                                class="hod-contributor-td hod-contributor-total-label">
                                                 TOTAL
                                             </td>
-                                            <td style="${cell}">
+                                            <td class="hod-contributor-td">
                                                 ${fmt(item.total_minutes)}
                                             </td>
-                                            <td style="${cell};color:#b45309">
+                                            <td class="hod-contributor-td hod-contributor-fatigue">
                                                 ${fmt(item.startup_fatigue_minutes)}
                                             </td>
-                                            <td style="${cell};color:#7c3aed">
+                                            <td class="hod-contributor-td hod-contributor-sunday">
                                                 ${fmt(item.sunday_minutes)}
                                             </td>
-                                            <td style="${cell};color:#166534">
+                                            <td class="hod-contributor-td hod-contributor-au">
                                                 ${fmt(item.au_minutes)}
                                             </td>
-                                            <td style="${cell}"></td>
+                                            <td class="hod-contributor-td"></td>
                                         </tr>
                                     </tbody>
                                 </table>
@@ -1361,12 +1319,10 @@ function hodReliabilityPanel(engineering) {
 
     return `
         <section class="hod-new-summary hod-reliability-panel">
-            <div class="hod-new-summary-title"
-                style="background:#006b3f;">
+            <div class="hod-new-summary-title hod-maintenance-title">
                 MAINTENANCE & RELIABILITY (Production and Swing Machine)
             </div>
-            <h4 class="hod-reliability-subheading"
-                style="margin:8px 8px 5px;font-size:12px;font-weight:800;color:#082e57">
+            <h4 class="hod-reliability-subheading hod-reliability-downtime-heading">
                 DOWNTIME
             </h4>
             <div class="hod-new-reliability-grid">
@@ -1423,8 +1379,7 @@ function hodReliabilityPanel(engineering) {
                 MTBF: operating hours per failure. MTTR: average completed breakdown restoration hours. Downtime: mechanical breakdown hours / required hours.
             </div>
 
-            <h4 class="hod-reliability-subheading"
-                style="margin:12px 8px 5px;font-size:12px;font-weight:800;color:#082e57">
+            <h4 class="hod-reliability-subheading hod-reliability-planned-heading">
                 PLANNED MAINTENANCE
             </h4>
 
@@ -1505,6 +1460,98 @@ function hodReliabilityPanel(engineering) {
     `;
 }
 
+// HOD_HR_STATS_V2
+// Blue workforce overview - dynamic Employee data.
+// This styling is limited to the HOD presentation.
+function hodHrStats(row) {
+    const stats = row.hr_stats || {};
+
+    const icons = {
+        employees: `<svg viewBox="0 0 24 24" width="24" height="24"
+            fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round"
+            aria-hidden="true">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+            <circle cx="9" cy="7" r="4"/>
+            <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+        </svg>`,
+
+        terminations: `<svg viewBox="0 0 24 24" width="24" height="24"
+            fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round"
+            aria-hidden="true">
+            <path d="M10 17l5-5-5-5"/>
+            <path d="M15 12H3"/>
+            <path d="M12 3h7a2 2 0 0 1 2 2v14
+                a2 2 0 0 1-2 2h-7"/>
+        </svg>`,
+
+        recruitment: `<svg viewBox="0 0 24 24" width="24" height="24"
+            fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round"
+            aria-hidden="true">
+            <circle cx="11" cy="11" r="8"/>
+            <circle cx="11" cy="9" r="2"/>
+            <path d="M6.5 16a5 5 0 0 1 9 0"/>
+            <path d="m17 17 5 5"/>
+        </svg>`
+    };
+
+    const groups = [
+        {
+            label: "TOTAL EMPLOYEES",
+            icon: icons.employees,
+            values: stats.total_employees
+        },
+        {
+            label: "TERMINATIONS",
+            icon: icons.terminations,
+            values: stats.terminations
+        },
+        {
+            label: "RECRUITMENT",
+            icon: icons.recruitment,
+            values: stats.recruitment
+        }
+    ];
+
+    const safeCount = value => {
+        const number = Number(value);
+        return Number.isFinite(number) && number >= 0
+            ? Math.floor(number)
+            : 0;
+    };
+
+    return `
+        <div class="hod-hr-stats"
+           >
+
+            <div class="hod-hr-header">
+                <div class="hod-hr-title">HR STATS</div>
+
+                <div class="hod-hr-subtitle">WORKFORCE OVERVIEW</div>
+            </div>
+
+            ${groups.map(group => `
+                <div class="hod-hr-card">
+                    <div class="hod-hr-card-heading">
+                        <span class="hod-hr-icon">${group.icon}</span>
+
+                        <span class="hod-hr-card-label">${group.label}</span>
+                    </div>
+
+                    <div class="hod-hr-card-values">
+                        <span>Male = <strong class="hod-hr-count">${safeCount(group.values?.male)}</strong></span>
+                        <span class="hod-hr-separator">|</span>
+                        <span>Female = <strong class="hod-hr-count">${safeCount(group.values?.female)}</strong></span>
+                    </div>
+                </div>
+            `).join("")}
+        </div>
+    `;
+}
+
 function hodDashboard(row) {
     const engineering = row.engineering;
     return `<article class="hod-performance-dashboard" data-site="${hodEscape(row.site)}">
@@ -1513,30 +1560,68 @@ function hodDashboard(row) {
         <div class="hod-columns">
             <section class="hod-domain-panel hod-engineering-panel">
 
-                <div class="hod-domain-heading"
-                    style="margin-top:8px;display:block;height:auto;min-height:43px;padding:7px 10px;overflow:visible">
-                    <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;color:white">
-                        ${[
-                            {label:'TOTAL MACHINES', counts:engineering.fleet_counts},
-                            {label:'PRODUCTION MACHINES', counts:engineering.fleet_scope_counts?.production},
-                            {label:'SWING MACHINES', counts:engineering.fleet_scope_counts?.swing}
-                        ].map(group => `
-                            <div style="min-width:0">
-                                <div style="font-size:12px;font-weight:700;line-height:16px;margin-bottom:4px">
+                <!-- HOD_SUMMARY_LARGE_NUMBERS_V1 -->
+<!-- HOD_MACHINE_CARDS_V1 -->
+                <div class="hod-domain-heading hod-machine-summary"
+                   >
+
+                    ${[
+                        {
+                            label:"TOTAL MACHINES",
+                            counts:engineering.fleet_counts,
+                            icon:"total"
+                        },
+                        {
+                            label:"PRODUCTION MACHINES",
+                            counts:engineering.fleet_scope_counts?.production,
+                            icon:"production"
+                        },
+                        {
+                            label:"SWING MACHINES",
+                            counts:engineering.fleet_scope_counts?.swing,
+                            icon:"swing"
+                        }
+                    ].map(group => `
+                        <div class="hod-machine-card">
+                            <div class="hod-machine-card-heading">
+                                <svg viewBox="0 0 24 24"
+                                    width="19" height="19"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    class="hod-machine-icon"
+                                    aria-hidden="true">
+                                    ${group.icon === "total"
+                                        ? `<rect x="2" y="10" width="20" height="8" rx="2"/>
+                                           <circle cx="7" cy="20" r="2"/>
+                                           <circle cx="17" cy="20" r="2"/>
+                                           <path d="M5 10V6h6l4 4M15 10V5h4"/>`
+                                        : group.icon === "production"
+                                        ? `<path d="M3 21V8l6 4V8l6 4V4h6v17Z"/>
+                                           <path d="M7 17h2m4 0h2m3 0h1"/>`
+                                        : `<path d="M4 7h16l-4-4m4 4-4 4"/>
+                                           <path d="M20 17H4l4-4m-4 4 4 4"/>`
+                                    }
+                                </svg>
+
+                                <span class="hod-machine-card-label">
                                     ${group.label}
-                                </div>
-                                <div style="display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;font-weight:600;line-height:16px">
-                                    <span>Excavator = ${group.counts?.Excavator ?? 0}</span>
-                                    <span>Dozer = ${group.counts?.Dozer ?? 0}</span>
-                                    <span>ADT = ${group.counts?.ADT ?? 0}</span>
-                                </div>
+                                </span>
                             </div>
-                        `).join('')}
-                    </div>
+
+                            <div class="hod-machine-card-values">
+                                <span>Excavator = <strong class="hod-machine-count">${group.counts?.Excavator ?? 0}</strong></span>
+                                <span>Dozer = <strong class="hod-machine-count">${group.counts?.Dozer ?? 0}</strong></span>
+                                <span>ADT = <strong class="hod-machine-count">${group.counts?.ADT ?? 0}</strong></span>
+                            </div>
+                        </div>
+                    `).join('')}
                 </div>
 
                 <div class="hod-domain-heading"><div><h3>Engineering</h3><span>Availability &amp; utilisation</span></div><div class="hod-header-legend"><span>Availability ${hodMetricLegend('avail')}</span><span>Utilisation ${hodMetricLegend('util')}</span></div></div>
-                <div class="hod-domain-main hod-engineering-main"><h4 style="display:flex;align-items:center;justify-content:space-between">
+                <div class="hod-domain-main hod-engineering-main"><h4 class="hod-engineering-summary-heading">
                         <span>Fleet averages · all filtered machines</span>
                         <button type="button" class="hod-view-au-detail" data-site="${hodEscape(row.site)}" data-from="${hodEscape(row.start_date)}" data-to="${hodEscape(row.end_date)}">View Detail</button>
                     </h4>
@@ -1545,46 +1630,245 @@ function hodDashboard(row) {
 ${hodProblemMachinesPanel(engineering)}
             </section>
             <section class="hod-domain-panel hod-production-panel">
-                <div class="hod-domain-heading"><div><h3>Production</h3><span>Production performance</span></div></div>
-                <div class="hod-domain-main" style="height:auto;min-height:360px;overflow:visible;box-sizing:border-box;padding-bottom:10px">${hodProduction(row)}</div>
+                ${hodHrStats(row)}
+                <div class="hod-domain-heading hod-production-title"><div><h3>Production</h3><span>Production performance</span></div></div>
+                <div class="hod-domain-main hod-production-main">${hodProduction(row)}</div>
                 ${hodDowntimeContributorsPanel(engineering)}
             </section>
         </div>
 
     </article>`;
 }
+// HOD_HR_SUMMARY_ALIGNMENT_V2
+// Match the summary box heights without stretching their contents.
 function alignHodDomainHeadings(root) {
-    const dashboards = root.find('.hod-performance-dashboard');
-
-    dashboards.each(function () {
+    root.find(".hod-performance-dashboard").each(function () {
         const board = this;
-        const engineering = board.querySelector(
-            '.hod-engineering-panel > .hod-domain-heading:nth-child(2)'
+
+        const engineeringPanel = board.querySelector(
+            ".hod-engineering-panel"
         );
-        const productionPanel = board.querySelector('.hod-production-panel');
+        const productionPanel = board.querySelector(
+            ".hod-production-panel"
+        );
 
-        if (!engineering || !productionPanel) return;
+        if (!engineeringPanel || !productionPanel) return;
 
-        productionPanel.style.paddingTop = '0px';
-
+        const machineSummary = engineeringPanel.querySelector(
+            ":scope > .hod-domain-heading:first-child"
+        );
+        const hrSummary = productionPanel.querySelector(
+            ":scope > .hod-hr-stats"
+        );
+        const engineeringHeading = engineeringPanel.querySelector(
+            ":scope > .hod-domain-heading:nth-child(2)"
+        );
         const productionHeading = productionPanel.querySelector(
-            '.hod-domain-heading:first-child'
+            ":scope > .hod-production-title"
         );
 
-        if (!productionHeading) return;
+        if (!machineSummary || !hrSummary ||
+            !engineeringHeading || !productionHeading) return;
 
+        // Remove previous adjustments before measuring natural sizes.
+        machineSummary.style.height = "auto";
+        hrSummary.style.height = "auto";
+        engineeringPanel.style.paddingTop = "0px";
+        productionPanel.style.paddingTop = "0px";
+
+        machineSummary.style.boxSizing = "border-box";
+        hrSummary.style.boxSizing = "border-box";
+
+        // Match heights without changing the card contents.
+        const height = Math.ceil(Math.max(
+            machineSummary.getBoundingClientRect().height,
+            hrSummary.getBoundingClientRect().height
+        ));
+
+        machineSummary.style.height = height + "px";
+        hrSummary.style.height = height + "px";
+
+        // Match vertical spacing below both summary boxes.
+        const machineMargin = parseFloat(
+            getComputedStyle(machineSummary).marginBottom
+        ) || 0;
+
+        const hrMargin = parseFloat(
+            getComputedStyle(hrSummary).marginBottom
+        ) || 0;
+
+        hrSummary.style.marginBottom = machineMargin + "px";
+
+        // Adjust only if other layout differences remain.
         const difference =
-            engineering.getBoundingClientRect().top -
+            engineeringHeading.getBoundingClientRect().top -
             productionHeading.getBoundingClientRect().top;
 
-        productionPanel.style.paddingTop =
-            Math.max(0, difference) + 'px';
+        if (difference > 0.5) {
+            productionPanel.style.paddingTop = difference + "px";
+        } else if (difference < -0.5) {
+            engineeringPanel.style.paddingTop = (-difference) + "px";
+        }
     });
 }
 
 
 // HOD_DOWNTIME_SECTION_ALIGNMENT_V1
 // Align Engineering and Production downtime section headings.
+// HOD_MAIN_PANEL_HEIGHT_ALIGNMENT_V1
+// Keep Engineering gauges and Production KPIs equal in height.
+// HOD_GAUGE_FILL_SPACE_V1
+// Fill the Engineering panel without changing gauge calculations.
+function fillHodGaugeSpace(root) {
+    root.find(".hod-performance-dashboard").each(function () {
+        const board = this;
+
+        const engineering = board.querySelector(
+            ".hod-engineering-panel > .hod-engineering-main"
+        );
+
+        const production = board.querySelector(
+            ".hod-production-panel > .hod-domain-main"
+        );
+
+        if (!engineering || !production) return;
+
+        const rows = Array.from(
+            engineering.querySelectorAll(
+                ":scope > .hod-gauge-row"
+            )
+        );
+
+        if (rows.length !== 2) return;
+
+        // Main panel heights have already been aligned.
+        const height = Math.ceil(Math.max(
+            engineering.getBoundingClientRect().height,
+            production.getBoundingClientRect().height
+        ));
+
+        engineering.style.boxSizing = "border-box";
+        engineering.style.height = height + "px";
+        engineering.style.minHeight = height + "px";
+        engineering.style.display = "flex";
+        engineering.style.flexDirection = "column";
+
+        // Override flex: 0 0 auto from the existing CSS.
+        rows.forEach(row => {
+            row.style.flex = "1 1 0";
+            row.style.minHeight = "0";
+            row.style.alignItems = "stretch";
+
+            row.querySelectorAll(".hod-gauge").forEach(card => {
+                card.style.display = "flex";
+                card.style.flexDirection = "column";
+                card.style.justifyContent = "center";
+                card.style.minHeight = "0";
+            });
+        });
+    });
+}
+
+function alignHodMainPanels(root) {
+    root.find(".hod-performance-dashboard").each(function () {
+        const board = this;
+
+        const engineering = board.querySelector(
+            ".hod-engineering-panel > .hod-engineering-main"
+        );
+
+        const production = board.querySelector(
+            ".hod-production-panel > .hod-domain-main"
+        );
+
+        if (!engineering || !production) return;
+
+        // Preserve the original minimum heights for repeat calls.
+        for (const panel of [engineering, production]) {
+            if (!panel.hasAttribute("data-hod-base-min-height")) {
+                panel.setAttribute(
+                    "data-hod-base-min-height",
+                    panel.style.minHeight || ""
+                );
+            }
+
+            panel.style.minHeight = panel.getAttribute(
+                "data-hod-base-min-height"
+            );
+        }
+
+        // Use the larger rendered height; never shrink content.
+        const targetHeight = Math.ceil(Math.max(
+            engineering.getBoundingClientRect().height,
+            production.getBoundingClientRect().height
+        ));
+
+        for (const panel of [engineering, production]) {
+            panel.style.boxSizing = "border-box";
+            panel.style.minHeight = targetHeight + "px";
+        }
+    });
+}
+
+// HOD_DOWNTIME_EQUAL_HEIGHT_V1
+// Match the outer heights of the two downtime panels.
+// Preserve table rows, graph bars and existing heading alignment.
+function alignHodDowntimePanelHeights(root) {
+    root.find(".hod-performance-dashboard").each(function () {
+        const board = this;
+
+        const engineering = board.querySelector(
+            ".hod-engineering-panel .hod-problem-machines"
+        );
+
+        const production = board.querySelector(
+            ".hod-production-panel .hod-downtime-contributors"
+        );
+
+        if (!engineering || !production) return;
+
+        const panels = [engineering, production];
+
+        // Reset previous height adjustments before measuring.
+        panels.forEach(panel => {
+            if (!panel.hasAttribute("data-hod-downtime-base-min")) {
+                panel.setAttribute(
+                    "data-hod-downtime-base-min",
+                    panel.style.minHeight || ""
+                );
+            }
+
+            panel.style.minHeight = panel.getAttribute(
+                "data-hod-downtime-base-min"
+            );
+
+            panel.style.boxSizing = "border-box";
+        });
+
+        const bounds = panels.map(panel =>
+            panel.getBoundingClientRect()
+        );
+
+        // Both bottom borders should finish on the same line.
+        const targetBottom = Math.ceil(Math.max(
+            bounds[0].bottom,
+            bounds[1].bottom
+        ));
+
+        panels.forEach((panel, index) => {
+            const requiredHeight = Math.ceil(
+                targetBottom - bounds[index].top
+            );
+
+            panel.style.minHeight =
+                Math.max(
+                    bounds[index].height,
+                    requiredHeight
+                ) + "px";
+        });
+    });
+}
+
 function alignHodDowntimeSections(root) {
     const dashboards = root.find(".hod-performance-dashboard");
 
@@ -1668,7 +1952,7 @@ function bindHodDetailButtons(view) {
 
             dialog.show();
             dialog.fields_dict.details.$wrapper.html(
-                '<div style="padding:12px">Loading breakdown details...</div>'
+                '<div class="hod-popup-loading">Loading breakdown details...</div>'
             );
 
             try {
@@ -1697,21 +1981,20 @@ function bindHodDetailButtons(view) {
                         <td>${startTime}</td>
                         <td>${resolvedTime}</td>
                         <td><strong>${total}</strong></td>
-                        <td style="color:#c2410c;font-weight:700">${excluded}</td>
-                        <td style="color:#7c3aed;font-weight:700">${sunday}</td>
-                        <td style="color:#047857;font-weight:700">${au}</td>
+                        <td class="hod-popup-excluded">${excluded}</td>
+                        <td class="hod-popup-sunday">${sunday}</td>
+                        <td class="hod-popup-au">${au}</td>
                         <td>${reason}</td>
                     </tr>`;
                 }).join('');
 
                 const html = `
-                    <div style="max-height:65vh;overflow:auto">
-                        <div style="padding:10px;background:#dbeafe;color:#1d4ed8;font-weight:700">
+                    <div class="hod-popup-detail-scroll">
+                        <div class="hod-popup-detail-heading">
                             Breakdown Reasons for ${escape(fleet)}
                         </div>
-                        <table class="table table-bordered"
-                               style="width:100%;font-size:12px;white-space:nowrap">
-                            <thead style="background:#eff6ff;color:#1d4ed8;position:sticky;top:0">
+                        <table class="table table-bordered hod-popup-detail-table">
+                            <thead class="hod-popup-detail-head">
                                 <tr>
                                     <th>Start</th>
                                     <th>Resolved</th>
@@ -1760,11 +2043,73 @@ function bindHodDetailButtons(view) {
 
 }
 
+// HOD_DOWNTIME_FILL_SPACE_V1
+// Distribute two-column graph bars over the available panel height.
+function fillHodDowntimeGraphSpace(root) {
+    root.find(".hod-performance-dashboard").each(function () {
+        const board = this;
+
+        const leftPanel = board.querySelector(
+            ".hod-engineering-panel .hod-problem-machines"
+        );
+
+        const rightPanel = board.querySelector(
+            ".hod-production-panel .hod-downtime-contributors"
+        );
+
+        const bars = rightPanel?.querySelector(
+            ".hod-breakdown-bars"
+        );
+
+        if (!leftPanel || !rightPanel || !bars) return;
+
+        const rows = Array.from(bars.children);
+
+        if (!rows.length || !rows.every(row =>
+            row.classList.contains("hod-breakdown-bar-row")
+        )) return;
+
+        const rowsPerColumn = Math.ceil(rows.length / 2);
+
+        // Use the aligned left-panel bottom as the target.
+        const bottom = leftPanel.getBoundingClientRect().bottom;
+        const top = bars.getBoundingClientRect().top;
+
+        const paddingBottom = parseFloat(
+            getComputedStyle(rightPanel).paddingBottom
+        ) || 0;
+
+        const availableHeight = Math.max(
+            bars.getBoundingClientRect().height,
+            bottom - top - paddingBottom - 2
+        );
+
+        // Keep both existing columns and classification order.
+        bars.classList.add("hod-breakdown-bars-expanded");
+        bars.style.gridTemplateRows =
+            `repeat(${rowsPerColumn}, minmax(0, 1fr))`;
+        bars.style.height = Math.ceil(availableHeight) + "px";
+
+        // Use the available row space instead of leaving
+        // one large blank block below the graph.
+        rows.forEach(row => {
+            row.style.height = "100%";
+            row.style.minHeight = "0";
+            row.style.boxSizing = "border-box";
+            row.style.alignItems = "center";
+        });
+    });
+}
+
 async function renderHodPresentationLayout(view) {
     view.page.main.html(view.data.map(hodDashboard).join(''));
     bindHodDetailButtons(view);
     alignHodDomainHeadings(view.page.main);
+    alignHodMainPanels(view.page.main);
+    fillHodGaugeSpace(view.page.main);
     alignHodDowntimeSections(view.page.main);
+    alignHodDowntimePanelHeights(view.page.main);
+    fillHodDowntimeGraphSpace(view.page.main);
 }
 async function downloadHodPresentation(view) {
     const boards = view.page.main.find('.hod-performance-dashboard').toArray();
