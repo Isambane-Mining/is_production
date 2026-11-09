@@ -89,7 +89,7 @@ test('threshold bands, legends and unavailable values agree', () => {
     const context = load();
     for (const [metric,cases] of Object.entries({
         avail:[[74.99,'red'],[75,'amber'],[84.99,'amber'],[85,'green']],
-        util:[[69.99,'red'],[70,'amber'],[79.99,'amber'],[80,'green']]
+        util:[[69.99,'red'],[70,'amber'],[84.99,'amber'],[85,'green']]
     })) {
         const band = vm.runInContext('hodBand', context);
         cases.forEach(([value,expected])=>assert.equal(band(metric,value),expected));
@@ -97,7 +97,7 @@ test('threshold bands, legends and unavailable values agree', () => {
     }
     assert.equal(vm.runInContext('hodPercent(null)',context),'—');
     assert.match(vm.runInContext("hodMetricLegend('avail')",context),/75–&lt;85%/);
-    assert.match(vm.runInContext("hodMetricLegend('util')",context),/70–&lt;80%/);
+    assert.match(vm.runInContext("hodMetricLegend('util')",context),/70–&lt;85%/);
 });
 
 test('ranking tables escape recorded text and retain spare colours', () => {
@@ -115,9 +115,9 @@ test('ranking tables escape recorded text and retain spare colours', () => {
 test('gauges carry their threshold colours and font sizes into SVG image capture', () => {
     const context = load();
     const html = vm.runInContext("hodGauge('ADT','avail',{including:{avail:74},excluding:{avail:80}})",context);
-    assert.match(html,/stroke="#e02f43"/);
-    assert.match(html,/fill="#b42131" font-family="Arial" font-size="27" font-weight="800"/);
-    assert.match(html,/stroke-dasharray="74 100"/);
+    assert.match(html,/stroke="#f1a900"/);
+    assert.match(html,/fill="#a16a00" font-family="Arial" font-size="27" font-weight="800"/);
+    assert.match(html,/stroke-dasharray="80 100"/);
     const missing = vm.runInContext("hodGauge('Dozer','util',{})",context);
     assert.match(missing,/stroke="#a0a8b2"/);
     assert.match(missing,/—/);
