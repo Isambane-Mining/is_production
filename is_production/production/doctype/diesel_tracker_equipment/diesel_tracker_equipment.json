@@ -1,0 +1,107 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2026-11-09 09:00:00.000000",
+ "description": "A machine of the Diesel L/BCM Tracker (/portal_diesel_tracker). Separate from Asset.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "site",
+  "equipment_name",
+  "column_break_type",
+  "equipment_type",
+  "is_example"
+ ],
+ "fields": [
+  {
+   "fieldname": "site",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Site",
+   "options": "Diesel Tracker Site",
+   "reqd": 1
+  },
+  {
+   "fieldname": "equipment_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Fleet Number or Name",
+   "length": 40,
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_type",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Excavator",
+   "fieldname": "equipment_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Type",
+   "options": "Excavator\nHaul truck\nFront-end loader\nDozer\nDrill rig\nGrader\nWater cart\nOther",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "description": "Made by Load example data on the Diesel L/BCM Tracker page; Remove example data deletes it.",
+   "fieldname": "is_example",
+   "fieldtype": "Check",
+   "label": "Example Data",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-11-09 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Production",
+ "name": "Diesel Tracker Equipment",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Production Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Production User"
+  }
+ ],
+ "row_format": "Dynamic",
+ "search_fields": "equipment_name,site,equipment_type",
+ "show_title_field_in_link": 1,
+ "sort_field": "equipment_name",
+ "sort_order": "ASC",
+ "states": [],
+ "title_field": "equipment_name",
+ "track_changes": 1
+}

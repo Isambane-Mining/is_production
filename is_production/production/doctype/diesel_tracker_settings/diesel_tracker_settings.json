@@ -1,0 +1,91 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-11-09 09:00:00.000000",
+ "description": "Coal density and gauge bands of the Diesel L/BCM Tracker (/portal_diesel_tracker).",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "coal_density",
+  "column_break_gauge",
+  "green_limit",
+  "amber_limit",
+  "gauge_max"
+ ],
+ "fields": [
+  {
+   "default": "1.4",
+   "description": "Turns coal tons into bcm: total bcm = waste bcm + coal tons ÷ this.",
+   "fieldname": "coal_density",
+   "fieldtype": "Float",
+   "label": "Coal Density (t/bcm)",
+   "precision": "2",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_gauge",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0.8",
+   "fieldname": "green_limit",
+   "fieldtype": "Float",
+   "label": "Green Up To (L/bcm)",
+   "precision": "2",
+   "reqd": 1
+  },
+  {
+   "default": "1.2",
+   "description": "Above this shows red.",
+   "fieldname": "amber_limit",
+   "fieldtype": "Float",
+   "label": "Amber Up To (L/bcm)",
+   "precision": "2",
+   "reqd": 1
+  },
+  {
+   "default": "2",
+   "fieldname": "gauge_max",
+   "fieldtype": "Float",
+   "label": "Gauge Maximum (L/bcm)",
+   "precision": "2",
+   "reqd": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 0,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-11-09 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Production",
+ "name": "Diesel Tracker Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "Production Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Production User"
+  }
+ ],
+ "row_format": "Dynamic",
+ "states": [],
+ "track_changes": 1
+}

@@ -1,0 +1,83 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2026-11-09 09:00:00.000000",
+ "description": "A site of the Diesel L/BCM Tracker (/portal_diesel_tracker). Separate from Location.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "site_name",
+  "is_example"
+ ],
+ "fields": [
+  {
+   "description": "A site, pit or area the diesel is tracked for (Diesel L/BCM Tracker).",
+   "fieldname": "site_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Site Name",
+   "length": 60,
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "default": "0",
+   "description": "Made by Load example data on the Diesel L/BCM Tracker page; Remove example data deletes it.",
+   "fieldname": "is_example",
+   "fieldtype": "Check",
+   "label": "Example Data",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-11-09 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Production",
+ "name": "Diesel Tracker Site",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Production Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Production User"
+  }
+ ],
+ "row_format": "Dynamic",
+ "search_fields": "site_name",
+ "show_title_field_in_link": 1,
+ "sort_field": "site_name",
+ "sort_order": "ASC",
+ "states": [],
+ "title_field": "site_name",
+ "track_changes": 1
+}

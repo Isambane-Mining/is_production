@@ -1,0 +1,137 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2026-11-09 09:00:00.000000",
+ "description": "Diesel litres and the coal and waste one machine moved, for a shift, day or week (Diesel L/BCM Tracker, /portal_diesel_tracker).",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "entry_date",
+  "site",
+  "equipment",
+  "column_break_volumes",
+  "diesel_litres",
+  "coal_tons",
+  "waste_bcm",
+  "is_example"
+ ],
+ "fields": [
+  {
+   "default": "Today",
+   "fieldname": "entry_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Date",
+   "reqd": 1
+  },
+  {
+   "fieldname": "site",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Site",
+   "options": "Diesel Tracker Site",
+   "reqd": 1
+  },
+  {
+   "fieldname": "equipment",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Equipment",
+   "options": "Diesel Tracker Equipment",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_volumes",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "diesel_litres",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Diesel (litres)",
+   "non_negative": 1,
+   "precision": "2",
+   "reqd": 1
+  },
+  {
+   "fieldname": "coal_tons",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Coal (tons)",
+   "non_negative": 1,
+   "precision": "2"
+  },
+  {
+   "fieldname": "waste_bcm",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Waste (bcm)",
+   "non_negative": 1,
+   "precision": "2"
+  },
+  {
+   "default": "0",
+   "description": "Made by Load example data on the Diesel L/BCM Tracker page; Remove example data deletes it.",
+   "fieldname": "is_example",
+   "fieldtype": "Check",
+   "label": "Example Data",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-11-09 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Production",
+ "name": "Diesel Tracker Entry",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Production Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 0,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Production User",
+   "share": 0,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "entry_date",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
