@@ -96,7 +96,7 @@ doctype_js = {
 }
 
 app_include_css = [
-    "/assets/is_production/css/dashboards.css?v=20261109-hod99"
+    "/assets/is_production/css/dashboards.css"
 ]
 
 page_js = {
