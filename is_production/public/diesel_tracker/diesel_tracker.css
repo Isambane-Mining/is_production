@@ -137,7 +137,10 @@ tbody tr:hover { background: var(--surface-2); }
 .form-actions { display: flex; gap: 10px; align-items: center; margin-top: 14px; flex-wrap: wrap; }
 .hint { font-size: .82rem; color: var(--muted); }
 .stack { display: grid; gap: 12px; }
-.setup { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.setup { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+.explain { columns: 2 380px; column-gap: 28px; }
+.explain p { margin: 0 0 10px; break-inside: avoid; }
+.kpi .sub { font-size: .78rem; color: var(--muted); }
 .site-block { border-top: 1px solid var(--line); padding-top: 10px; display: grid; gap: 6px; }
 .site-block:first-child { border-top: 0; padding-top: 0; }
 .site-line { display: flex; justify-content: space-between; align-items: center; gap: 8px; }

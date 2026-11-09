@@ -10,8 +10,10 @@ from frappe.utils import now_datetime
 from is_production.production import diesel_tracker as svc
 
 USER = "diesel.tracker.user@example.com"
+MANAGER = "diesel.tracker.manager@example.com"
 ALL = {"from": "", "to": "", "site": "all", "limit": 2000}
-LOC = "DT Test Pit"  # (the source records of the sync tests, in 2001, away from real data)
+LOC = "DT Test Pit"  # (the source records, in 2001, away from real data)
+MARCH = {"from": "2001-03-01", "to": "2001-03-31"}
 
 
 def clear():
@@ -22,6 +24,8 @@ def clear():
 
 def raw(doctype, rows):
 	"""Source records written straight to their tables (they need no forms or other masters here)."""
+	if not rows:
+		return
 	stamp = now_datetime()
 	fields = sorted({k for r in rows for k in r} | {"creation", "modified", "owner", "modified_by"})
 	values = [tuple({"creation": stamp, "modified": stamp, "owner": "Administrator", "modified_by": "Administrator", **r}.get(f) for f in fields) for r in rows]
@@ -29,17 +33,20 @@ def raw(doctype, rows):
 
 
 def sources():
-	"""Two days at LOC: EX-T1 fills HT-T1 (waste and coal), DZ-T1 dozes; diesel to all three and a light vehicle.
-	(Written afresh each time: a test may have changed them.)"""
-	sheets, hours = ["DDS-T1", "DDS-T2", "DDS-T3"], ["HP-T1", "HP-T2"]
+	"""Two days at LOC in the production month MPP-T1: EX-T1 fills HT-T1 (waste and coal), DZ-T1 dozes; diesel to
+	all three and a light vehicle; their engine hours and the excavator's OEM rate. (Written afresh each time: a
+	test may have changed them.)"""
+	sheets, hours, pre = ["DDS-T1", "DDS-T2", "DDS-T3"], ["HP-T1", "HP-T2"], ["PU-T1", "PU-T2", "PU-T3", "PU-T4"]
 	frappe.db.delete("Daily Diesel Entries", {"parent": ["in", sheets]})
 	frappe.db.delete("Daily Diesel Sheet", {"name": ["in", sheets]})
 	for child in ("Truck Loads", "Dozer Production"):
 		frappe.db.delete(child, {"parent": ["in", hours]})
 	frappe.db.delete("Hourly Production", {"name": ["in", hours]})
-	frappe.db.delete("Pre-use Assets", {"parent": ["in", ["PU-T1", "PU-T2", "PU-T3", "PU-T4"]]})
-	frappe.db.delete("Pre-Use Hours", {"name": ["in", ["PU-T1", "PU-T2", "PU-T3", "PU-T4"]]})
+	frappe.db.delete("Pre-use Assets", {"parent": ["in", pre]})
+	frappe.db.delete("Pre-Use Hours", {"name": ["in", pre]})
 	frappe.db.delete("OEM Diesel Burn Rate", {"name": ["in", ["OEM-T1", "OEM-T2"]]})
+	frappe.db.delete("Monthly Production Days", {"parent": "MPP-T1"})
+	frappe.db.delete(svc.MPP, {"name": "MPP-T1"})
 	if not frappe.db.exists("Location", LOC):
 		raw("Location", [{"name": LOC, "location_name": LOC}])
 	raw("Asset", [
@@ -57,12 +64,22 @@ def sources():
 		sheet("DDS-T1", 1, "EX-T1", 800), sheet("DDS-T1", 2, "HT-T1", 300), sheet("DDS-T1", 3, "DZ-T1", 400), sheet("DDS-T1", 4, "LV-T1", 60),
 		sheet("DDS-T2", 1, "EX-T1", 700), sheet("DDS-T3", 1, "EX-T1", 999),
 	])
-	raw("Hourly Production", [{"name": "HP-T1", "location": LOC, "prod_date": "2001-03-01"}, {"name": "HP-T2", "location": LOC, "prod_date": "2001-03-02"}])
+	raw("Hourly Production", [
+		{"name": "HP-T1", "location": LOC, "prod_date": "2001-03-01", "month_prod_planning": "MPP-T1"},
+		{"name": "HP-T2", "location": LOC, "prod_date": "2001-03-02", "month_prod_planning": "MPP-T1"},
+	])
 	load = lambda parent, i, bcm, mat: {"name": f"{parent}-L{i}", "parent": parent, "parenttype": "Hourly Production", "parentfield": "truck_loads", "idx": i, "asset_name_shoval": "EX-T1", "asset_name_truck": "HT-T1", "bcms": bcm, "mat_type": mat}
 	raw("Truck Loads", [load("HP-T1", 1, 1000, "Hards"), load("HP-T1", 2, 200, "Softs"), load("HP-T1", 3, 300, "Coal"), load("HP-T2", 1, 900, "Hards")])
 	raw("Dozer Production", [
 		{"name": "HP-T1-D1", "parent": "HP-T1", "parenttype": "Hourly Production", "parentfield": "dozer_production", "idx": 1, "asset_name": "DZ-T1", "bcm_hour": 150},
 		{"name": "HP-T1-D2", "parent": "HP-T1", "parenttype": "Hourly Production", "parentfield": "dozer_production", "idx": 2, "asset_name": "DZ-T1", "bcm_hour": 0},
+	])
+	# the production month: a survey on the 1st found 300 bcm more than the tallies; 600 t of coal actual
+	raw(svc.MPP, [{"name": "MPP-T1", "location": LOC, "prod_month_start_date": "2001-03-01", "prod_month_end_date": "2001-03-31",
+		"monthly_act_tally_survey_variance": 300, "month_actual_coal": 600}])
+	raw("Monthly Production Days", [
+		{"name": "MPP-T1-1", "parent": "MPP-T1", "parenttype": svc.MPP, "parentfield": "month_prod_days", "idx": 1, "shift_start_date": "2001-03-01", "tot_cum_ts_survey": 1800, "tot_cum_dozing_survey": 150},
+		{"name": "MPP-T1-2", "parent": "MPP-T1", "parenttype": svc.MPP, "parentfield": "month_prod_days", "idx": 2, "shift_start_date": "2001-03-02", "tot_cum_ts_survey": 0, "tot_cum_dozing_survey": 0},
 	])
 	# engine hours (drafts count): EX-T1 20 h on the 1st, its 2nd has a closing reading of 0; HT-T1 has no night
 	# sheet on the 1st and 12 h on the 2nd; DZ-T1 a day of 30 h (left out)
@@ -91,107 +108,17 @@ class TestDieselTracker(IntegrationTestCase):
 	@classmethod
 	def setUpClass(cls):
 		super().setUpClass()
-		if not frappe.db.exists("User", USER):
-			frappe.get_doc(
-				{"doctype": "User", "email": USER, "first_name": "Diesel", "send_welcome_email": 0, "roles": [{"role": "Production User"}]}
-			).insert(ignore_permissions=True)
+		for email, role in ((USER, "Production User"), (MANAGER, "Production Manager")):
+			if not frappe.db.exists("User", email):
+				frappe.get_doc({"doctype": "User", "email": email, "first_name": "Diesel", "send_welcome_email": 0, "roles": [{"role": role}]}).insert(ignore_permissions=True)
 
 	def setUp(self):
 		frappe.set_user("Administrator")
 		clear()
+		sources()
 
 	def tearDown(self):
 		frappe.set_user("Administrator")
-
-	def add(self):
-		site = svc.add_site(name="Pit 3 East")["id"]
-		ex = svc.add_equipment(siteId=site, name="EX01", type="Excavator")["id"]
-		ht = svc.add_equipment(siteId=site, name="HT14", type="Haul truck")["id"]
-		svc.add_entry(date="2026-11-02", siteId=site, equipmentId=ex, diesel=4800, coal=0, waste=9600)
-		out = svc.add_entry(date="2026-11-03", siteId=site, equipmentId=ht, diesel="2100", coal="1400", waste="", view=ALL)
-		return site, ex, ht, out
-
-	def test_add_and_read(self):
-		site, ex, ht, out = self.add()
-		data = out["data"]
-		self.assertEqual([s["name"] for s in data["sites"]], ["Pit 3 East"])
-		self.assertEqual({q["name"]: q["type"] for q in data["equipment"]}, {"EX01": "Excavator", "HT14": "Haul truck"})
-		e = next(e for e in data["entries"] if e["equipmentId"] == ht)
-		self.assertEqual((e["date"], e["siteId"], e["diesel"], e["coal"], e["waste"], e["counted"], e["auto"]), ("2026-11-03", site, 2100.0, 1400.0, 0.0, True, False))
-		self.assertEqual(data["settings"], svc.DEFAULTS)
-		self.assertTrue(all(data["can"].values()))
-		self.assertEqual(data["entryCount"], 2)
-		# each machine's sums over the period
-		s = {r["equipmentId"]: r for r in data["summary"]}
-		self.assertEqual((s[ex]["diesel"], s[ex]["waste"], s[ex]["wasteCounted"], s[ht]["coalCounted"]), (4800.0, 9600.0, 9600.0, 1400.0))
-		# a period and a site
-		nov3 = svc.get_data(view={"from": "2026-11-03", "to": "2026-11-30", "site": site})
-		self.assertEqual([r["equipmentId"] for r in nov3["summary"]], [ht])
-		self.assertEqual(svc.get_data(view={"latest": 1})["view"]["from"], "2026-11-01")
-		self.assertEqual(svc.get_data(view={"site": "other"})["entryCount"], 0)
-
-	def test_rules(self):
-		site, ex, ht, _out = self.add()
-		other = svc.add_site(name="North Pit")["id"]
-		self.assertRaises(frappe.ValidationError, svc.add_site, name="pit 3 east")  # the same name, any case
-		self.assertRaises(frappe.ValidationError, svc.add_site, name="  ")
-		self.assertRaises(frappe.ValidationError, svc.add_equipment, siteId=site, name="ex01", type="Excavator")
-		svc.add_equipment(siteId=other, name="EX01", type="Excavator")  # the same fleet number on another site
-		self.assertRaises(frappe.ValidationError, svc.add_equipment, siteId=site, name="DZ1", type="Bulldozer")
-		self.assertRaises(frappe.ValidationError, svc.add_entry, date="2026-11-04", siteId=other, equipmentId=ex, diesel=10)
-		self.assertRaises(frappe.ValidationError, svc.add_entry, date="2026-11-04", siteId=site, equipmentId=ex, diesel=-1)
-		self.assertRaises(frappe.ValidationError, svc.add_entry, date="2026-11-04", siteId=site, equipmentId=ex, diesel="")
-		self.assertRaises(frappe.ValidationError, svc.add_entry, date="", siteId=site, equipmentId=ex, diesel=5)
-
-	def test_delete_cascades(self):
-		site, ex, ht, _out = self.add()
-		data = svc.delete(kind="equipment", id=ht, view=ALL)["data"]
-		self.assertEqual([q["id"] for q in data["equipment"]], [ex])
-		self.assertEqual([e["equipmentId"] for e in data["entries"]], [ex])
-		data = svc.delete(kind="sites", id=site, view=ALL)["data"]
-		self.assertEqual((data["sites"], data["equipment"], data["entries"]), ([], [], []))
-		self.assertTrue(frappe.db.exists("Deleted Document", {"deleted_doctype": svc.SITE, "deleted_name": site}))
-		self.assertRaises(frappe.ValidationError, svc.delete, kind="sites", id=site)  # gone already
-		self.assertRaises(frappe.ValidationError, svc.delete, kind="users", id="Administrator")
-
-	def test_settings(self):
-		data = svc.save_settings(density="1.45", green=0.7, amber=1.1, max=2.5)["data"]
-		self.assertEqual(data["settings"], {"density": 1.45, "green": 0.7, "amber": 1.1, "max": 2.5})
-		self.assertRaises(frappe.ValidationError, svc.save_settings, density=1.4, green=1.2, amber=1.2, max=2)
-		self.assertRaises(frappe.ValidationError, svc.save_settings, density=1.4, green=0.8, amber=1.2, max=1.2)
-		self.assertRaises(frappe.ValidationError, svc.save_settings, density=0, green=0.8, amber=1.2, max=2)
-		self.assertEqual(svc.settings()["density"], 1.45)
-
-	def test_example_data(self):
-		data = svc.load_example(view=ALL)["data"]
-		self.assertEqual(len(data["sites"]), 2)
-		self.assertEqual(len(data["equipment"]), 6)
-		self.assertEqual(data["entryCount"], 18 * 6)  # weekly over the last 17 weeks and this one
-		self.assertTrue(all(e["example"] for e in data["entries"]))
-		self.assertRaises(frappe.ValidationError, svc.load_example)
-		# a real entry logged against an example machine keeps that machine and its site
-		q = next(q for q in data["equipment"] if q["name"] == "EX01")
-		svc.add_entry(date="2026-11-05", siteId=q["siteId"], equipmentId=q["id"], diesel=100, waste=200)
-		out = svc.clear_example(view=ALL)
-		self.assertEqual(sorted(out["kept"]), ["EX01", "North Pit (example)"])
-		self.assertEqual([e["diesel"] for e in out["data"]["entries"]], [100.0])
-		self.assertEqual([s["name"] for s in out["data"]["sites"]], ["North Pit (example)"])
-
-	def test_production_user(self):
-		site, ex, _ht, _out = self.add()
-		frappe.set_user(USER)
-		can = svc.get_data()["can"]
-		self.assertEqual(can, {"entry": True, "deleteEntry": True, "setup": False, "deleteSetup": False, "settings": False, "sync": False})
-		entry = svc.add_entry(date="2026-11-06", siteId=site, equipmentId=ex, diesel=50, waste=100)["id"]
-		svc.delete(kind="entries", id=entry)
-		self.assertRaises(frappe.PermissionError, svc.add_site, name="Pit 9")
-		self.assertRaises(frappe.PermissionError, svc.add_equipment, siteId=site, name="HT99", type="Haul truck")
-		self.assertRaises(frappe.PermissionError, svc.delete, kind="equipment", id=ex)
-		self.assertRaises(frappe.PermissionError, svc.save_settings, density=1.4, green=0.8, amber=1.2, max=2)
-		self.assertRaises(frappe.PermissionError, svc.load_example)
-		self.assertRaises(frappe.PermissionError, svc.sync_now, from_date="2001-03-01", to_date="2001-03-02")
-
-	# ---- the production records
 
 	def entries(self):
 		rows = frappe.get_all(
@@ -201,18 +128,17 @@ class TestDieselTracker(IntegrationTestCase):
 		return {(str(r.entry_date), names[r.equipment]): r for r in rows}
 
 	def test_sync(self):
-		sources()
-		manual_site = svc.add_site(name=LOC)["id"]  # a site typed with the Location's name takes the link
+		typed = frappe.get_doc({"doctype": svc.SITE, "site_name": LOC}).insert().name  # a site of the Location's name takes the link
 		r = svc.sync("2001-03-01", "2001-03-02")
 		self.assertEqual((r["added"], r["updated"], r["removed"], r["sites"], r["machines"]), (6, 0, 0, 0, 4))
-		self.assertEqual(frappe.db.get_value(svc.SITE, manual_site, "location"), LOC)
+		self.assertEqual(frappe.db.get_value(svc.SITE, typed, "location"), LOC)
 		machines = {q.equipment_name: q for q in frappe.get_all(svc.EQUIP, fields=["equipment_name", "equipment_type", "asset", "site"])}
 		self.assertEqual({n: (q.equipment_type, q.asset) for n, q in machines.items()},
 			{"EX-T1": ("Excavator", "EX-T1"), "HT-T1": ("Haul truck", "HT-T1"), "DZ-T1": ("Dozer", "DZ-T1"), "LV-T1": ("Light vehicle", "LV-T1")})
 		e = self.entries()
-		# the excavator: its diesel (not the cancelled sheet's) and the loads it filled, counted
+		# the excavator: its diesel (not the cancelled sheet's) and the loads it filled, counted; coal t = bcm × 1.5
 		ex1 = e[("2001-03-01", "EX-T1")]
-		self.assertEqual((ex1.diesel_litres, ex1.waste_bcm, ex1.coal_bcm, ex1.coal_tons, ex1.volume_counted), (800, 1200, 300, 420, 1))
+		self.assertEqual((ex1.diesel_litres, ex1.waste_bcm, ex1.coal_bcm, ex1.coal_tons, ex1.volume_counted), (800, 1200, 300, 450, 1))
 		self.assertEqual(e[("2001-03-02", "EX-T1")].diesel_litres, 700)
 		# the truck: the same loads, its own, not counted again
 		ht1 = e[("2001-03-01", "HT-T1")]
@@ -221,8 +147,7 @@ class TestDieselTracker(IntegrationTestCase):
 		# the dozer's production dozing; the light vehicle's diesel only
 		self.assertEqual((e[("2001-03-01", "DZ-T1")].waste_bcm, e[("2001-03-01", "DZ-T1")].volume_counted), (150, 1))
 		self.assertEqual((e[("2001-03-01", "LV-T1")].diesel_litres, e[("2001-03-01", "LV-T1")].waste_bcm), (60, 0))
-		# the page: each bcm once in the site's totals
-		data = svc.get_data(view={"from": "2001-03-01", "to": "2001-03-02"})
+		data = svc.get_data(view=MARCH)
 		self.assertEqual(sum(s["wasteCounted"] for s in data["summary"]), 1200 + 900 + 150)
 		self.assertEqual(sum(s["diesel"] for s in data["summary"]), 800 + 700 + 300 + 400 + 60)
 		self.assertEqual(data["entryCount"], 6)
@@ -238,48 +163,73 @@ class TestDieselTracker(IntegrationTestCase):
 		e = self.entries()
 		self.assertEqual((e[("2001-03-01", "EX-T1")].diesel_litres, e[("2001-03-02", "EX-T1")].diesel_litres), (0, 720))
 		self.assertNotIn(("2001-03-01", "LV-T1"), e)
-		self.assertEqual((r["updated"], r["removed"]), (4, 1))  # EX, HT, DZ lose their diesel; EX on the 2nd; LV goes
+		self.assertEqual((r["updated"], r["removed"]), (4, 1))
 		# only the days given are touched
 		frappe.db.set_value("Daily Diesel Entries", "DDS-T2-1", "litres_issued", 10)
 		svc.sync("2001-03-01", "2001-03-01")
 		self.assertEqual(self.entries()[("2001-03-02", "EX-T1")].diesel_litres, 720)
-		# the coal's tons follow the density
-		svc.save_settings(density=1.5, green=0.8, amber=1.2, max=2)
-		self.assertEqual(self.entries()[("2001-03-01", "EX-T1")].coal_tons, 450)
-
-	def test_records_are_not_deleted_here(self):
-		sources()
-		svc.sync("2001-03-01", "2001-03-02")
-		entry = frappe.get_all(svc.ENTRY, filters={"source": svc.AUTO}, pluck="name")[0]
-		site = frappe.db.get_value(svc.SITE, {"location": LOC})
-		machine = frappe.db.get_value(svc.EQUIP, {"asset": "EX-T1"})
-		self.assertRaises(frappe.ValidationError, svc.delete, kind="entries", id=entry)
-		self.assertRaises(frappe.ValidationError, svc.delete, kind="equipment", id=machine)
-		self.assertRaises(frappe.ValidationError, svc.delete, kind="sites", id=site)
-		s = next(x for x in svc.get_data(view=ALL)["sites"] if x["id"] == site)
-		self.assertEqual((s["n"], s["nAuto"], s["location"]), (6, 6, LOC))
-		# the hourly job: everything the first time, the last week after
+		# the hourly job: everything the first time
 		clear()
 		svc.scheduled_sync()
 		self.assertTrue(frappe.db.exists(svc.ENTRY, {"source": svc.AUTO, "entry_date": "2001-03-01"}))
 		self.assertTrue(svc.last_sync()["at"])
 
-	def test_burn_rates(self):
-		sources()
+	def test_actual_volume(self):
 		svc.sync("2001-03-01", "2001-03-02")
-		burn = {f["key"]: f for f in svc.get_data(view={"from": "2001-03-01", "to": "2001-03-31"})["burn"]}
-		self.assertEqual([f["key"] for f in svc.get_data(view={"from": "2001-03-01", "to": "2001-03-31"})["burn"]], ["adt", "excavator", "dozer"])
+		# the tallies: 1 650 bcm on the 1st (1 200 waste + 300 coal loads, 150 dozed), 900 on the 2nd; the survey
+		# on the 1st adds the plan's 300 there; coal: 300 bcm tallied (450 t), 600 t actual
+		a = svc.get_data(view=MARCH)["actual"]
+		self.assertEqual((a["tallied"], a["bcm"], a["coalTallied"], a["coalT"], a["wasteBcm"], a["months"], a["surveyed"]), (2550, 2850, 450, 600, 2450, 1, 1))
+		first = svc.get_data(view={"from": "2001-03-01", "to": "2001-03-01"})["actual"]
+		second = svc.get_data(view={"from": "2001-03-02", "to": "2001-03-02"})["actual"]
+		self.assertEqual((first["bcm"], first["coalT"]), (1950, 600))
+		self.assertEqual((second["bcm"], second["coalT"]), (900, 0))  # (after the survey: as tallied)
+		# a day in no production month: as tallied
+		frappe.db.set_value(svc.MPP, "MPP-T1", "prod_month_end_date", "2001-03-01")
+		frappe.db.set_value("Hourly Production", "HP-T2", "month_prod_planning", None)
+		a = svc.get_data(view=MARCH)["actual"]
+		self.assertEqual((a["bcm"], a["months"]), (2850, 1))
+		self.assertEqual(svc.get_data(view={"from": "2001-03-02", "to": "2001-03-02"})["actual"]["months"], 0)
+		# another site's view: none of it
+		other = frappe.get_doc({"doctype": svc.SITE, "site_name": "Elsewhere"}).insert().name
+		self.assertEqual(svc.get_data(view=dict(MARCH, site=other))["actual"]["bcm"], 0)
+
+	def test_burn_rates(self):
+		svc.sync("2001-03-01", "2001-03-02")
+		data = svc.get_data(view=MARCH)
+		self.assertEqual([f["key"] for f in data["burn"]], ["adt", "excavator", "dozer"])
+		burn = {f["key"]: f for f in data["burn"]}
 		ex = burn["excavator"]["machines"][0]
 		self.assertEqual((ex["litres"], ex["hours"], ex["days"], ex["lph"], ex["oem"], ex["model"]), (1500, 20, 1, 75, 70, "EX-MODEL-T"))
 		self.assertEqual((burn["excavator"]["lph"], burn["excavator"]["oem"], burn["excavator"]["oemShare"]), (75, 70, 1))
 		ht = burn["adt"]["machines"][0]
 		self.assertEqual((ht["litres"], ht["hours"], ht["lph"], ht["oem"]), (300, 12, 25, None))
-		self.assertEqual((burn["adt"]["lph"], burn["adt"]["oem"]), (25, None))
 		dz = burn["dozer"]
 		self.assertEqual((dz["machines"][0]["litres"], dz["machines"][0]["hours"], dz["machines"][0]["lph"], dz["lph"], dz["noHours"]), (400, 0, None, None, 1))
 		# the OEM rate in force at the end of the period: April's for a period to April
 		april = {f["key"]: f for f in svc.get_data(view={"from": "2001-03-01", "to": "2001-04-30"})["burn"]}
 		self.assertEqual(april["excavator"]["machines"][0]["oem"], 80)
-		# a site without the machines: empty graphs
-		other = svc.add_site(name="Elsewhere")["id"]
-		self.assertTrue(all(not f["machines"] for f in svc.get_data(view={"from": "2001-03-01", "to": "2001-03-31", "site": other})["burn"]))
+
+	def test_settings(self):
+		data = svc.save_settings(green=0.7, amber=1.1, max=2.5)["data"]
+		self.assertEqual(data["settings"], {"green": 0.7, "amber": 1.1, "max": 2.5, "density": 1.5})
+		self.assertRaises(frappe.ValidationError, svc.save_settings, green=1.2, amber=1.2, max=2)
+		self.assertRaises(frappe.ValidationError, svc.save_settings, green=0.8, amber=1.2, max=1.2)
+
+	def test_permissions(self):
+		svc.sync("2001-03-01", "2001-03-02")
+		# a Production User reads; nothing more
+		frappe.set_user(USER)
+		self.assertEqual(svc.get_data(view=MARCH)["can"], {"settings": False, "sync": False})
+		self.assertRaises(frappe.PermissionError, svc.save_settings, green=0.8, amber=1.2, max=2)
+		self.assertRaises(frappe.PermissionError, svc.sync_now, from_date="2001-03-01", to_date="2001-03-02")
+		# a Production Manager sets the gauge and brings the records in, but types nothing: sites, machines and
+		# entries come from the production records only
+		frappe.set_user(MANAGER)
+		self.assertEqual(svc.get_data(view=MARCH)["can"], {"settings": True, "sync": True})
+		self.assertEqual(svc.sync_now(from_date="2001-03-01", to_date="2001-03-02")["sync"]["added"], 0)
+		svc.save_settings(green=0.9, amber=1.3, max=2)
+		for doc in ({"doctype": svc.SITE, "site_name": "Typed"}, {"doctype": svc.ENTRY, "entry_date": "2001-03-03"}):
+			self.assertRaises(frappe.PermissionError, frappe.get_doc(doc).insert)
+		for gone in ("add_site", "add_equipment", "add_entry", "delete", "load_example", "clear_example"):
+			self.assertFalse(hasattr(svc, gone), gone)

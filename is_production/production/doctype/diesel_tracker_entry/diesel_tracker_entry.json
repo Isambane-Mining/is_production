@@ -3,7 +3,7 @@
  "allow_rename": 0,
  "autoname": "hash",
  "creation": "2026-11-09 09:00:00.000000",
- "description": "Diesel litres and the coal and waste one machine moved, for a shift, day or week (Diesel L/BCM Tracker, /portal_diesel_tracker); typed, or brought in from the production records.",
+ "description": "Diesel litres and the coal and waste one machine moved in a day, brought in from the production records (Diesel L/BCM Tracker, /portal_diesel_tracker).",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -16,8 +16,7 @@
   "coal_tons",
   "coal_bcm",
   "waste_bcm",
-  "volume_counted",
-  "is_example"
+  "volume_counted"
  ],
  "fields": [
   {
@@ -55,7 +54,7 @@
   },
   {
    "default": "Manual",
-   "description": "Production records: brought in every hour from the submitted Daily Diesel Sheets (diesel) and Hourly Production (truck loads by excavator and truck, production dozing). Change those, not this entry.",
+   "description": "Brought in every hour from the submitted Daily Diesel Sheets (diesel) and Hourly Production (truck loads by excavator and truck, production dozing). Change those, not this entry.",
    "fieldname": "source",
    "fieldtype": "Select",
    "in_list_view": 1,
@@ -80,7 +79,7 @@
    "reqd": 1
   },
   {
-   "description": "From the production records: the coal bcm × the coal density (Diesel Tracker Settings).",
+   "description": "The coal bcm × 1.5, as in Hourly Production and the Monthly Production Planning.",
    "fieldname": "coal_tons",
    "fieldtype": "Float",
    "in_list_view": 1,
@@ -114,20 +113,12 @@
    "fieldtype": "Check",
    "label": "Counts Toward the Site's Volume",
    "read_only_depends_on": "eval:doc.source=='Production records'"
-  },
-  {
-   "default": "0",
-   "description": "Made by Load example data on the Diesel L/BCM Tracker page; Remove example data deletes it.",
-   "fieldname": "is_example",
-   "fieldtype": "Check",
-   "label": "Example Data",
-   "read_only": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-11-09 11:00:00.000000",
+ "modified": "2026-11-09 14:00:00.000000",
  "modified_by": "Administrator",
  "module": "Production",
  "name": "Diesel Tracker Entry",
@@ -147,28 +138,18 @@
    "write": 1
   },
   {
-   "create": 1,
-   "delete": 1,
-   "email": 1,
    "export": 1,
    "print": 1,
    "read": 1,
    "report": 1,
-   "role": "Production Manager",
-   "share": 1,
-   "write": 1
+   "role": "Production Manager"
   },
   {
-   "create": 1,
-   "delete": 1,
-   "email": 0,
    "export": 1,
    "print": 1,
    "read": 1,
    "report": 1,
-   "role": "Production User",
-   "share": 0,
-   "write": 1
+   "role": "Production User"
   }
  ],
  "row_format": "Dynamic",

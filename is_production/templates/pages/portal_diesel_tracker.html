@@ -34,18 +34,9 @@
     <button class="btn-ghost" id="btnSync" type="button" data-need="sync">Update now</button>
   </div>
 
-  <div class="banner" id="exampleBanner" hidden>
-    <span>You're looking at <strong>example data</strong>. Remove it when you're ready to enter your own figures.</span>
-    <button class="btn-ghost" id="btnClearEx" type="button" data-need="exampleData">Remove example data</button>
-  </div>
-
   <section class="card empty" id="emptyState" hidden>
-    <h2>No sites yet</h2>
-    <p id="emptyText">Add a site and its equipment under <strong>Setup</strong>, then log diesel litres, coal tons and waste volumes. Or load a few months of example data to see how the gauge and chart work.</p>
-    <div class="row" data-need="setup">
-      <button class="btn" id="btnLoadEx" type="button" data-need="exampleData">Load example data</button>
-      <a class="btn-ghost btn-link" href="#setup">Go to setup</a>
-    </div>
+    <h2>No production records yet</h2>
+    <p id="emptyText">The sites, machines, diesel and volumes come in every hour from the submitted Daily Diesel Sheets and Hourly Production.</p>
   </section>
 
   <section class="overview">
@@ -73,9 +64,9 @@
     <div class="right-col">
       <div class="kpis">
         <div class="kpi"><span class="eyebrow">Diesel used</span><b id="kDiesel">0</b><span class="unit">litres</span></div>
-        <div class="kpi"><span class="eyebrow">Waste moved</span><b id="kWaste">0</b><span class="unit">bcm</span></div>
-        <div class="kpi"><span class="eyebrow">Coal moved</span><b id="kCoal">0</b><span class="unit" id="kCoalUnit">tons</span></div>
-        <div class="kpi"><span class="eyebrow">Total volume</span><b id="kBcm">0</b><span class="unit">bcm (waste + coal)</span></div>
+        <div class="kpi"><span class="eyebrow">Waste moved</span><b id="kWaste">0</b><span class="unit">bcm, actual</span></div>
+        <div class="kpi"><span class="eyebrow">Coal moved</span><b id="kCoal">0</b><span class="unit" id="kCoalUnit">tons, actual</span></div>
+        <div class="kpi" id="kBcmCard"><span class="eyebrow">Total volume</span><b id="kBcm">0</b><span class="unit" id="kBcmUnit">bcm, actual (waste + coal)</span></div>
       </div>
       <div class="card">
         <div class="card-head">
@@ -133,7 +124,7 @@
   <section class="card">
     <div class="card-head">
       <h2>Equipment summary</h2>
-      <span class="muted small" id="periodLabel"></span>
+      <span class="muted small"><span id="periodLabel"></span> · each machine on its tallied loads</span>
     </div>
     <div class="table-wrap">
       <table id="eqTableWrap">
@@ -144,30 +135,13 @@
     <div class="form-actions" id="eqMoreWrap" hidden><button class="btn-ghost" type="button" id="btnEqMore">Show all machines</button></div>
   </section>
 
-  <section class="forms">
-    <form class="card" id="entryForm" autocomplete="off" data-need="entry">
-      <div class="card-head"><h2>Log diesel and volumes</h2><span class="hint">One entry per machine per shift, day or week</span></div>
-      <div class="form-grid">
-        <label class="f">Date <input type="date" id="eDate" required></label>
-        <label class="f">Site <select id="eSite" required></select></label>
-        <label class="f">Equipment <select id="eEquip" required></select></label>
-        <label class="f">Diesel (litres) <input type="number" id="eDiesel" min="0" step="any" inputmode="decimal" placeholder="e.g. 4 800" required></label>
-        <label class="f">Coal (tons) <input type="number" id="eCoal" min="0" step="any" inputmode="decimal" placeholder="0"></label>
-        <label class="f">Waste (bcm) <input type="number" id="eWaste" min="0" step="any" inputmode="decimal" placeholder="0"></label>
-      </div>
-      <div class="form-actions">
-        <button class="btn" type="submit" id="eSubmit">Save entry</button>
-        <span class="hint" id="ePreview"></span>
-      </div>
-    </form>
-
-    <div class="card">
-      <div class="card-head"><h2>How L/BCM is worked out</h2></div>
-      <p class="small" style="margin:0 0 8px">Total bcm = waste bcm + coal tons ÷ coal density.</p>
-      <p class="small" style="margin:0 0 8px">L/BCM = diesel litres ÷ total bcm, for each machine and for the whole site.</p>
-      <p class="small" style="margin:0 0 8px">From the production records: diesel from the submitted Daily Diesel Sheets; volumes from Hourly Production, the truck loads each excavator filled and each truck hauled, and production dozing. A truck's loads are its excavator's bcm, so they count once in the site's total.</p>
-      <p class="small" style="margin:0 0 8px">Burn rate = diesel litres ÷ engine hours, for each ADT, excavator and dozer and for each fleet. Engine hours come from the Pre-Use Hours sheets: the night shift's closing hour-meter reading less the day shift's opening one, as in the Monthly Diesel Reconciliation. The OEM burn rate is the model's (OEM Diesel Burn Rate) at the end of the period.</p>
-      <p class="small muted" style="margin:0">Current coal density: <strong id="densityNote">1.4</strong> t/bcm. Machines that moved no volume (water carts, graders, light vehicles) show their diesel but no L/BCM. Change density and the gauge bands under Setup.</p>
+  <section class="card">
+    <div class="card-head"><h2>How it is worked out</h2></div>
+    <div class="explain">
+      <p class="small">Everything comes from the production records, every hour: diesel from the submitted Daily Diesel Sheets; the tallies from Hourly Production, the truck loads each excavator filled and each truck hauled, and production dozing. A truck's loads are its excavator's bcm, so the site counts them once.</p>
+      <p class="small">The site's volume is the actual volume, as in the Monthly Production Planning: the tallies with the surveys applied. Within a production month, the last survey's variance falls on the days up to the survey, in proportion to their tallies, and the days after it count as tallied; so a whole production month comes to the plan's Monthly Actual BCMs. Coal: the surveyed coal tons up to the survey, then the tallied coal × 1.5 t/bcm.</p>
+      <p class="small">Overall L/BCM = the site's diesel litres ÷ its actual bcm. A machine's L/BCM = its diesel ÷ its own tallied bcm (the surveys are by site, not by machine). Machines that moved no volume (water carts, graders, light vehicles) show their diesel but no L/BCM.</p>
+      <p class="small">Burn rate = diesel litres ÷ engine hours, for each ADT, excavator and dozer and for each fleet. Engine hours come from the Pre-Use Hours sheets: the night shift's closing hour-meter reading less the day shift's opening one, as in the Monthly Diesel Reconciliation. The OEM burn rate is the model's (OEM Diesel Burn Rate) at the end of the period.</p>
     </div>
   </section>
 
@@ -178,7 +152,7 @@
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Date</th><th>Site</th><th>Equipment</th><th class="r">Diesel (L)</th><th class="r">Coal (t)</th><th class="r">Waste (bcm)</th><th class="r">L/bcm</th><th></th></tr></thead>
+        <thead><tr><th>Date</th><th>Site</th><th>Equipment</th><th class="r">Diesel (L)</th><th class="r">Coal (t)</th><th class="r">Waste (bcm)</th><th class="r">L/bcm</th></tr></thead>
         <tbody id="entryTable"></tbody>
       </table>
     </div>
@@ -190,33 +164,12 @@
       <div class="card-head"><h2>Sites and equipment</h2></div>
       <div class="stack" id="siteList"></div>
     </div>
-    <div class="card stack" id="setupForms">
-      <form class="stack" id="siteForm" autocomplete="off" data-need="setup">
-        <h3>Add a site</h3>
-        <label class="f">Site name <input id="sName" required maxlength="60" placeholder="e.g. Pit 3 East"></label>
-        <div><button class="btn" type="submit">Add site</button></div>
-      </form>
-      <form class="stack" id="equipForm" autocomplete="off" data-need="setup" style="border-top:1px solid var(--line);padding-top:14px">
-        <h3>Add equipment</h3>
-        <label class="f">Site <select id="qSite" required></select></label>
-        <label class="f">Fleet number or name <input id="qName" required maxlength="40" placeholder="e.g. HT14"></label>
-        <label class="f">Type
-          <select id="qType">
-            <option>Excavator</option><option>Haul truck</option><option>Front-end loader</option><option>Dozer</option>
-            <option>Drill rig</option><option>Grader</option><option>Water cart</option><option>Other</option>
-          </select>
-        </label>
-        <div><button class="btn" type="submit">Add equipment</button></div>
-      </form>
-      <p class="hint" id="setupNote" hidden style="margin:0">A Production Manager adds the sites and equipment.</p>
-    </div>
     <form class="card stack" id="settingsForm" autocomplete="off">
-      <h3>Gauge and conversion</h3>
-      <label class="f">Coal density (t/bcm) <input type="number" id="stDensity" min="0.5" max="3" step="0.01" required></label>
+      <h3>Gauge</h3>
       <label class="f">Green up to (L/bcm) <input type="number" id="stGreen" min="0" step="0.01" required></label>
       <label class="f">Amber up to (L/bcm) <input type="number" id="stAmber" min="0" step="0.01" required></label>
       <label class="f">Gauge maximum (L/bcm) <input type="number" id="stMax" min="0.1" step="0.1" required></label>
-      <p class="hint" style="margin:0">Above the amber limit shows red.</p>
+      <p class="hint" style="margin:0">Above the amber limit shows red. A Production Manager changes these.</p>
       <div data-need="settings"><button class="btn" type="submit">Save settings</button></div>
     </form>
   </section>

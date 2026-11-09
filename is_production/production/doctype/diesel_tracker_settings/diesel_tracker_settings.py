@@ -8,11 +8,9 @@ from frappe.utils import flt
 
 
 class DieselTrackerSettings(Document):
-	"""The coal density (coal tons to bcm) and the gauge bands of the Diesel L/BCM Tracker."""
+	"""The gauge bands of the Diesel L/BCM Tracker (L/bcm), and when the production records were last brought in."""
 
 	def validate(self):
-		if flt(self.coal_density) <= 0:
-			frappe.throw(_("Coal density must be more than 0."))
 		if flt(self.green_limit) < 0 or flt(self.amber_limit) <= flt(self.green_limit):
 			frappe.throw(_("The amber limit must be higher than the green limit."))
 		if flt(self.gauge_max) <= flt(self.amber_limit):

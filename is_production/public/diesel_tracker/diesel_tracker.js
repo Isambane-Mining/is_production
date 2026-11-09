@@ -1,32 +1,31 @@
 /* The Diesel L/BCM Tracker (templates/pages/portal_diesel_tracker.html).
 
-   Its sites, equipment, entries and settings live on the bench, in the Diesel Tracker doctypes, through
-   is_production.production.diesel_tracker. Entries are typed here, or brought in every hour from the production
-   records (the submitted Daily Diesel Sheets and Hourly Production). The page asks for one period (and site) at a
-   time: the server sends each machine's sums over it ("summary") and the latest entries. Every change answers
-   with the data afresh, and the page looks again every two minutes while it is shown. What the user may change
-   (the data's "can") decides which forms and buttons are shown.
+   Everything comes in every hour from the production records (the submitted Daily Diesel Sheets and Hourly
+   Production), through is_production.production.diesel_tracker; nothing is typed here. The page asks for one
+   period (and site) at a time: the server sends each machine's sums over it ("summary"), the site's actual volume
+   ("actual"), the burn rates ("burn") and the latest entries. It looks again every two minutes while it is shown.
+   What the user may change (the data's "can": the gauge's bands, bringing the records in now) decides which
+   buttons are shown.
 
-   L/BCM = diesel litres ÷ (waste bcm + coal tons ÷ coal density), per machine and over the period. A haul
-   truck's loads from the production records are its excavator's bcm: they are the truck's own, but the site's
-   totals count them once (the entries' "counted").
-
-   Burn rate = diesel litres ÷ engine hours (Pre-Use Hours), per ADT, excavator and dozer, against the OEM burn rate
-   of its model ("burn": worked out on the server, as the Monthly Diesel Reconciliation does). */
+   The site's volume is the actual volume: the tallies with the surveys applied, as the Monthly Production Planning
+   works out its Monthly Actual BCMs. Overall L/BCM = the diesel ÷ the actual bcm. A machine's L/BCM = its diesel ÷
+   its own tallied bcm (waste bcm + coal t ÷ 1.5; a haul truck's loads are its excavator's: its own, but the site
+   counts them once). Burn rate = diesel litres ÷ engine hours (Pre-Use Hours), against the OEM rate of the model. */
 (function () {
   "use strict";
   const CFG = window.DIESEL_TRACKER || {};
   const API = "/api/method/is_production.production.diesel_tracker.";
-  const DEFAULTS = { density: 1.4, green: 0.8, amber: 1.2, max: 2 };
+  const DEFAULTS = { density: 1.5, green: 0.8, amber: 1.2, max: 2 };
   const LIST = 40, EQ_LIST = 50, BARS = 30; // the entries and machines listed, the bars drawn, before "show all"
   const FLEETS = ["adt", "excavator", "dozer"]; // the burn rate graphs
-  const S = { sites: [], equipment: [], summary: [], burn: [], entries: [], entryCount: 0, months: [], view: {}, settings: { ...DEFAULTS }, sync: {}, can: {}, ready: false, failed: false, loadedAt: 0 };
+  const S = { sites: [], equipment: [], summary: [], actual: {}, burn: [], entries: [], entryCount: 0, months: [], view: {}, settings: { ...DEFAULTS }, sync: {}, can: {}, ready: false, failed: false, loadedAt: 0 };
   const F = { site: "all", month: "", from: "", to: "", init: false, showAll: false, showAllEq: false };
   const $ = (id) => document.getElementById(id);
   const nf0 = new Intl.NumberFormat("en-ZA", { maximumFractionDigits: 0 });
   const nf2 = new Intl.NumberFormat("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const fmt0 = (v) => nf0.format(v || 0);
   const fmt2 = (v) => (v == null || !isFinite(v) ? "–" : nf2.format(v));
+  const fmt1 = (v) => (v == null || !isFinite(v) ? "–" : new Intl.NumberFormat("en-ZA", { maximumFractionDigits: 1 }).format(v));
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const todayISO = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
   const monthLabel = (ym) => { const [y, m] = ym.split("-").map(Number); return new Date(y, m - 1, 1).toLocaleDateString("en-ZA", { month: "long", year: "numeric" }); };
@@ -41,7 +40,7 @@
   function serverMsg(status, data) {
     const type = data && data.exc_type;
     if (type === "SessionExpired" || type === "CSRFTokenError") return "Your session has ended. Reload the page to sign in again.";
-    let msg = status === 403 ? "You don't have permission to change this data. Ask a Production Manager." : `Couldn't save: the server answered ${status}. Try again.`;
+    let msg = status === 403 ? "You don't have permission to change this. Ask a Production Manager." : `Couldn't save: the server answered ${status}. Try again.`;
     try {
       const m = JSON.parse(JSON.parse(data._server_messages)[0]);
       if (m.message) msg = String(m.message).replace(/<[^>]+>/g, "");
@@ -70,7 +69,7 @@
   function apply(d, mine) {
     if (!d || mine < applied) return;
     applied = mine;
-    S.sites = d.sites || []; S.equipment = d.equipment || []; S.summary = d.summary || []; S.burn = d.burn || []; S.entries = d.entries || [];
+    S.sites = d.sites || []; S.equipment = d.equipment || []; S.summary = d.summary || []; S.actual = d.actual || {}; S.burn = d.burn || []; S.entries = d.entries || [];
     S.entryCount = d.entryCount || 0; S.months = d.months || []; S.view = d.view || {};
     S.settings = { ...DEFAULTS, ...(d.settings || {}) }; S.sync = d.sync || {}; S.can = d.can || {};
     if (!F.init) {
@@ -94,11 +93,6 @@
   }
   let refreshT = 0;
   const refreshSoon = () => { clearTimeout(refreshT); refreshT = setTimeout(refresh, 120); };
-  const backend = {
-    add: (col, obj) => write({ sites: "add_site", equipment: "add_equipment", entries: "add_entry" }[col], obj).then((r) => r.id),
-    remove: (col, id) => write("delete", { kind: col, id }),
-    saveSettings: (o) => write("save_settings", o),
-  };
   const errMsg = (e) => (e && e.message) || "Couldn't save. Check your connection and try again.";
 
   let toastT;
@@ -106,16 +100,11 @@
     const t = $("toast"); t.textContent = msg; t.className = "show" + (err ? " err" : "");
     clearTimeout(toastT); toastT = setTimeout(() => { t.className = err ? "err" : ""; }, ms || (err ? 5000 : 2400));
   }
-
-  // what the user may do: entry, setup, settings, sync, and loading or removing the example data
-  function allowed(what) {
-    const c = S.can;
-    if (what === "exampleData") return !!(c.setup && c.entry && c.deleteSetup);
-    return !!c[what];
-  }
+  // what the user may do: change the gauge's bands ("settings"), bring the production records in now ("sync")
+  const allowed = (what) => !!S.can[what];
 
   /* ---------- calculations ---------- */
-  const bcmOf = (e) => (+e.waste || 0) + (+e.coal || 0) / (S.settings.density || 1.4);
+  const bcmOf = (e) => (+e.waste || 0) + (+e.coal || 0) / (S.settings.density || 1.5);
   const status = (v) => (v == null || !isFinite(v) ? "none" : v <= S.settings.green ? "good" : v <= S.settings.amber ? "avg" : "bad");
   const STATUS_TEXT = { good: "Low use", avg: "Average", bad: "High use", none: "No volume" };
   const siteName = (id) => (S.sites.find((s) => s.id === id) || {}).name || "Removed site";
@@ -193,7 +182,7 @@
       `<span><i style="background:var(--bad)"></i>High &gt; ${fmt2(st.amber)}</span>`;
   }
 
-  /* chart */
+  /* L/BCM by machine */
   let chart = null;
   const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
   const thresholdPlugin = {
@@ -213,7 +202,7 @@
   function drawChart(rows) {
     const all = rows.filter((r) => r.lbcm != null).sort((a, b) => b.lbcm - a.lbcm), data = all.slice(0, BARS);
     $("chartEmpty").hidden = data.length > 0;
-    $("chartNote").textContent = !data.length ? "" : (all.length > BARS ? `The ${BARS} highest of ${all.length} machines. ` : "") + "Dashed lines mark the green and amber limits";
+    $("chartNote").textContent = !data.length ? "" : (all.length > BARS ? `The ${BARS} highest of ${all.length} machines. ` : "") + "On their tallied loads. Dashed lines mark the green and amber limits";
     if (!window.Chart) { if (data.length) { $("chartEmpty").hidden = false; $("chartEmpty").textContent = "The chart library didn't load. The table below has the same figures."; } return; }
     const colFor = { good: cssVar("--good"), avg: cssVar("--avg"), bad: cssVar("--bad") };
     const muted = cssVar("--muted"), line = cssVar("--line"), ink = cssVar("--ink");
@@ -230,7 +219,7 @@
             callbacks: {
               title: (items) => labels[items[0].dataIndex],
               label: (ctx) => nf2.format(data[ctx.dataIndex].lbcm) + " L/bcm (" + STATUS_TEXT[status(data[ctx.dataIndex].lbcm)] + ")",
-              afterLabel: (ctx) => { const r = data[ctx.dataIndex]; return fmt0(r.diesel) + " L diesel over " + fmt0(r.bcm) + " bcm" + (r.hauled ? " hauled" : ""); },
+              afterLabel: (ctx) => { const r = data[ctx.dataIndex]; return fmt0(r.diesel) + " L diesel over " + fmt0(r.bcm) + " bcm " + (r.hauled ? "hauled" : "tallied"); },
             },
           },
         },
@@ -250,7 +239,6 @@
      unsteady rates: they are left out of the graph (not of the fleet's figure) and counted under it. */
   const burnCharts = {};
   const burnStatus = (m) => (!m.oem ? "nooem" : m.lph <= m.oem ? "good" : m.lph <= m.oem * 1.1 ? "avg" : "bad");
-  const fmt1 = (v) => (v == null || !isFinite(v) ? "–" : new Intl.NumberFormat("en-ZA", { maximumFractionDigits: 1 }).format(v));
   function drawBurnFleet(key) {
     const f = S.burn.find((x) => x.key === key) || { title: key, machines: [], lph: null, oem: null, oemShare: 0, noHours: 0 };
     const what = { adt: "ADT", excavator: "excavator", dozer: "dozer" }[key];
@@ -313,15 +301,10 @@
     });
   }
 
-  // the forms and buttons the user may use; the rest is hidden (the settings shown, but not editable)
+  // the buttons the user may use; the gauge's bands shown to all, editable by those who may change them
   function drawAccess() {
     document.querySelectorAll("[data-need]").forEach((el) => { el.hidden = !S.ready || !allowed(el.dataset.need); });
-    document.querySelector(".forms").classList.toggle("one", !allowed("entry"));
-    $("setupNote").hidden = !S.ready || allowed("setup");
-    ["stDensity", "stGreen", "stAmber", "stMax"].forEach((id) => { $(id).disabled = !allowed("settings"); });
-    $("emptyText").innerHTML = allowed("setup")
-      ? "Add a site and its equipment under <strong>Setup</strong>, then log diesel litres, coal tons and waste volumes. Or load a few months of example data to see how the gauge and chart work."
-      : "No sites have been set up yet. A Production Manager adds the sites and equipment under <strong>Setup</strong>.";
+    ["stGreen", "stAmber", "stMax"].forEach((id) => { $(id).disabled = !allowed("settings"); });
   }
 
   // when the production records were last brought in
@@ -337,37 +320,36 @@
     drawFilters();
     drawAccess();
     drawSync();
-    const st = S.settings;
-    const hasEx = S.sites.some((d) => d.example) || S.equipment.some((d) => d.example);
-    $("exampleBanner").hidden = !hasEx;
+    const st = S.settings, A = S.actual || {};
     $("emptyState").hidden = !S.ready || S.sites.length > 0;
     $("modeNote").textContent = !S.ready
       ? (S.failed ? `The saved data can't be reached: ${S.failMsg} The page tries again in two minutes.` : "Loading saved data…")
       : S.failed ? `Couldn't refresh (${S.failMsg}): showing the figures from ${timeLabel(S.loadedAt)}.`
-      : "Saved on the bench. Everyone with access sees the same figures.";
-    $("densityNote").textContent = nf2.format(st.density);
+      : "From the production records. Everyone with access sees the same figures.";
 
-    // the period's totals: all the diesel; each bcm once (haul trucks' loads are their excavators')
-    let tD = 0, tC = 0, tW = 0;
-    S.summary.forEach((r) => { tD += r.diesel; tC += r.coalCounted; tW += r.wasteCounted; });
-    const coalBcm = tC / st.density, tB = tW + coalBcm;
+    // the period's totals: all the diesel over the actual volume (the tallies with the surveys applied)
+    let tD = 0;
+    S.summary.forEach((r) => { tD += r.diesel; });
+    const tB = A.bcm || 0, coalT = A.coalT || 0, coalBcm = coalT / st.density, survey = tB - (A.tallied || 0);
     const overall = tB > 0 ? tD / tB : null;
     $("kDiesel").textContent = fmt0(tD);
-    $("kWaste").textContent = fmt0(tW);
-    $("kCoal").textContent = fmt0(tC);
-    $("kCoalUnit").textContent = "tons (" + fmt0(coalBcm) + " bcm)";
+    $("kWaste").textContent = fmt0(A.wasteBcm);
+    $("kCoal").textContent = fmt0(coalT);
+    $("kCoalUnit").textContent = "tons, actual (" + fmt0(coalBcm) + " bcm)";
     $("kBcm").textContent = fmt0(tB);
-    $("gaugeScope").textContent = (F.site === "all" ? "All sites" : siteName(F.site)) + " · " + periodText();
+    $("kBcmUnit").innerHTML = "bcm, actual (waste + coal)" + (A.tallied ? `<span class="sub">tallies ${fmt0(A.tallied)} bcm; surveys ${survey >= 0 ? "+" : "−"}${fmt0(Math.abs(survey))}</span>` : "");
+    $("kBcmCard").title = A.months ? `${A.months} production month${A.months === 1 ? "" : "s"}, ${A.surveyed || 0} with a survey applied` : "";
+    $("gaugeScope").textContent = (F.site === "all" ? "All sites" : siteName(F.site)) + " · " + periodText() + " · on the actual bcm";
     $("periodLabel").textContent = periodText();
     drawGauge(overall);
 
-    // each machine over the period, on its own volumes
+    // each machine over the period, on its own tallied volumes
     const rows = S.summary.map((r) => {
       const q = equip(r.equipmentId), bcm = r.waste + r.coal / st.density;
       return { ...r, id: r.equipmentId, name: q.name, type: q.type, bcm, lbcm: bcm > 0 ? r.diesel / bcm : null,
-        hauled: r.coal + r.waste > 1e-9 && r.coalCounted + r.wasteCounted < r.coal + r.waste - 1e-6, auto: r.nAuto > 0 };
+        hauled: r.coal + r.waste > 1e-9 && r.coalCounted + r.wasteCounted < r.coal + r.waste - 1e-6 };
     }).sort((a, b) => (b.lbcm == null ? -1 : b.lbcm) - (a.lbcm == null ? -1 : a.lbcm) || b.diesel - a.diesel);
-    // (a chart that fails leaves the tables and forms below drawn)
+    // (a chart that fails leaves the tables below drawn)
     try { drawChart(rows); }
     catch (e) {
       console.error(e);
@@ -383,61 +365,37 @@
     }).join("") : `<tr><td colspan="9" class="muted">No entries for ${esc(periodText().toLowerCase() === "all dates" ? "any date" : periodText())}${F.site === "all" ? "" : " at " + esc(siteName(F.site))}.</td></tr>`;
 
     // the latest entries of the period (all of them, up to 2 000, after "Show all entries")
-    const del = allowed("deleteEntry"), n = S.entryCount;
+    const n = S.entryCount;
     $("entryCount").textContent = fmt0(n) + (n === 1 ? " entry" : " entries") + (S.entries.length < n ? ` · the latest ${fmt0(S.entries.length)} shown` : "");
     $("moreWrap").hidden = n <= LIST || F.showAll;
     $("entryTable").innerHTML = S.entries.length ? S.entries.map((e) => {
       const b = bcmOf(e), l = b > 0 ? (+e.diesel || 0) / b : null, s = status(l);
-      const tag = e.auto ? '<span class="tag" title="Brought in from the Daily Diesel Sheets and Hourly Production">records</span>' : "";
-      return `<tr><td>${esc(dateLabel(e.date))}</td><td>${esc(siteName(e.siteId))}</td><td>${esc(equip(e.equipmentId).name)}${tag}</td><td class="r">${fmt0(e.diesel)}</td><td class="r">${fmt0(e.coal)}</td><td class="r">${fmt0(e.waste)}</td><td class="r" style="color:var(--${s === "none" ? "muted" : s})"><strong>${fmt2(l)}</strong></td><td class="r">${del && !e.auto ? `<button type="button" class="btn-del" data-del="entries" data-id="${esc(e.id)}">Delete</button>` : ""}</td></tr>`;
-    }).join("") : `<tr><td colspan="8" class="muted">Nothing logged in this period yet.</td></tr>`;
+      return `<tr><td>${esc(dateLabel(e.date))}</td><td>${esc(siteName(e.siteId))}</td><td>${esc(equip(e.equipmentId).name)}</td><td class="r">${fmt0(e.diesel)}</td><td class="r">${fmt0(e.coal)}</td><td class="r">${fmt0(e.waste)}</td><td class="r" style="color:var(--${s === "none" ? "muted" : s})"><strong>${fmt2(l)}</strong></td></tr>`;
+    }).join("") : `<tr><td colspan="7" class="muted">Nothing came in for this period.</td></tr>`;
 
-    drawForms();
+    drawSettings();
     drawSetup();
   }
 
-  let newSite = null; // (the site just added: the equipment form turns to it)
-  function drawForms() {
-    const siteOpts = S.sites.slice().sort((a, b) => a.name.localeCompare(b.name)).map((s) => [s.id, s.name]);
-    const none = [["", "Add a site first"]];
-    const eSite = $("eSite");
-    const wantSite = eSite.value || (F.site !== "all" ? F.site : "");
-    fillSelect(eSite, siteOpts.length ? siteOpts : none, wantSite);
-    fillSelect($("qSite"), siteOpts.length ? siteOpts : none, newSite || $("qSite").value || wantSite);
-    newSite = null;
-    const eqOpts = S.equipment.filter((q) => q.siteId === eSite.value).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })).map((q) => [q.id, q.name + " (" + q.type + ")"]);
-    fillSelect($("eEquip"), eqOpts.length ? eqOpts : [["", siteOpts.length ? "Add equipment to this site" : "Add a site first"]], $("eEquip").value);
-    if (!$("eDate").value) $("eDate").value = todayISO();
+  function drawSettings() {
     const ss = S.settings;
-    [["stDensity", ss.density], ["stGreen", ss.green], ["stAmber", ss.amber], ["stMax", ss.max]].forEach(([id, v]) => {
+    [["stGreen", ss.green], ["stAmber", ss.amber], ["stMax", ss.max]].forEach(([id, v]) => {
       const el = $(id); if (document.activeElement !== el && !el.dataset.dirty) el.value = v;
     });
-    preview();
   }
 
-  // sites and their machines; what the production records bring in cannot be deleted here (it would come back)
+  // the sites and their machines, as the production records made them
   function drawSetup() {
     const sites = S.sites.slice().sort((a, b) => a.name.localeCompare(b.name));
-    const del = allowed("deleteSetup");
-    const chip = (q) => `<span class="chip">${esc(q.name)} <em>${esc(q.type)}</em>${del && !q.nAuto ? `<button type="button" class="btn-del" data-del="equipment" data-id="${esc(q.id)}" aria-label="Delete ${esc(q.name)}">✕</button>` : ""}</span>`;
+    const chip = (q) => `<span class="chip">${esc(q.name)} <em>${esc(q.type)}</em></span>`;
     const openSites = new Set(Array.from(document.querySelectorAll("#siteList details[open]")).map((d) => d.dataset.site));
     $("siteList").innerHTML = sites.length ? sites.map((s) => {
       const eq = S.equipment.filter((q) => q.siteId === s.id).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
       const first = eq.slice(0, 12), rest = eq.slice(12);
-      const linked = s.location ? `<span class="tag" title="Its entries come in from the production records of ${esc(s.location)}">records</span>` : "";
-      return `<div class="site-block"><div class="site-line"><strong>${esc(s.name)}${linked}</strong>${del && !s.nAuto ? `<button type="button" class="btn-del" data-del="sites" data-id="${esc(s.id)}">Delete site</button>` : `<span class="muted small">${fmt0(eq.length)} machines</span>`}</div>
-        <div class="chips">${first.length ? first.map(chip).join("") : '<span class="muted small">No equipment yet</span>'}</div>
+      return `<div class="site-block"><div class="site-line"><strong>${esc(s.name)}</strong><span class="muted small">${s.location ? "Location " + esc(s.location) + " · " : ""}${fmt0(eq.length)} machines</span></div>
+        <div class="chips">${first.length ? first.map(chip).join("") : '<span class="muted small">No machines yet</span>'}</div>
         ${rest.length ? `<details class="more" data-site="${esc(s.id)}"${openSites.has(s.id) ? " open" : ""}><summary>${fmt0(rest.length)} more</summary><div class="chips">${rest.map(chip).join("")}</div></details>` : ""}</div>`;
-    }).join("") : `<p class="muted small" style="margin:0">${allowed("setup") ? "No sites yet. Add one on the right." : "No sites yet."}</p>`;
-  }
-
-  function preview() {
-    const d = parseFloat($("eDiesel").value), c = parseFloat($("eCoal").value) || 0, w = parseFloat($("eWaste").value) || 0;
-    const b = w + c / S.settings.density;
-    const el = $("ePreview");
-    if (!(d > 0)) { el.textContent = ""; return; }
-    if (!(b > 0)) { el.textContent = "No volume entered, so this entry adds diesel only."; return; }
-    const l = d / b; el.innerHTML = `This entry: <strong style="color:var(--${status(l)})">${fmt2(l)} L/bcm</strong> over ${fmt0(b)} bcm`;
+    }).join("") : '<p class="muted small" style="margin:0">No sites yet: they come in with the production records.</p>';
   }
 
   /* ---------- events ---------- */
@@ -458,52 +416,14 @@
   }));
   $("btnMore").addEventListener("click", () => { F.showAll = true; refresh(); });
   $("btnEqMore").addEventListener("click", () => { F.showAllEq = true; render(); });
-  $("eSite").addEventListener("change", () => { $("eEquip").value = ""; render(); });
-  ["eDiesel", "eCoal", "eWaste"].forEach((id) => $(id).addEventListener("input", preview));
-  ["stDensity", "stGreen", "stAmber", "stMax"].forEach((id) => $(id).addEventListener("input", (e) => { e.target.dataset.dirty = "1"; }));
-
-  $("entryForm").addEventListener("submit", async (ev) => {
-    ev.preventDefault();
-    const siteId = $("eSite").value, equipmentId = $("eEquip").value, date = $("eDate").value;
-    const diesel = parseFloat($("eDiesel").value), coal = parseFloat($("eCoal").value) || 0, waste = parseFloat($("eWaste").value) || 0;
-    if (!siteId) return toast("Add a site under Setup first.", true);
-    if (!equipmentId) return toast("Pick a machine. Add equipment to this site under Setup if the list is empty.", true);
-    if (!date) return toast("Enter the date for this entry.", true);
-    if (!(diesel >= 0) || coal < 0 || waste < 0) return toast("Diesel, coal and waste must be zero or more.", true);
-    $("eSubmit").disabled = true;
-    try {
-      await backend.add("entries", { date, siteId, equipmentId, diesel, coal, waste });
-      toast("Entry saved for " + equip(equipmentId).name);
-      $("eDiesel").value = ""; $("eCoal").value = ""; $("eWaste").value = ""; preview(); $("eDiesel").focus();
-    } catch (e) { toast(errMsg(e), true); }
-    $("eSubmit").disabled = false;
-  });
-
-  $("siteForm").addEventListener("submit", async (ev) => {
-    ev.preventDefault();
-    const name = $("sName").value.trim(); if (!name) return;
-    if (S.sites.some((s) => s.name.toLowerCase() === name.toLowerCase())) return toast("A site with that name already exists.", true);
-    try { newSite = await backend.add("sites", { name }); $("sName").value = ""; toast("Site added: " + name); render(); }
-    catch (e) { toast(errMsg(e), true); }
-  });
-
-  $("equipForm").addEventListener("submit", async (ev) => {
-    ev.preventDefault();
-    const siteId = $("qSite").value, name = $("qName").value.trim(), type = $("qType").value;
-    if (!siteId) return toast("Add a site first.", true);
-    if (!name) return;
-    if (S.equipment.some((q) => q.siteId === siteId && q.name.toLowerCase() === name.toLowerCase())) return toast("That site already has equipment called " + name + ".", true);
-    try { await backend.add("equipment", { siteId, name, type }); $("qName").value = ""; toast(name + " added to " + siteName(siteId)); }
-    catch (e) { toast(errMsg(e), true); }
-  });
+  ["stGreen", "stAmber", "stMax"].forEach((id) => $(id).addEventListener("input", (e) => { e.target.dataset.dirty = "1"; }));
 
   $("settingsForm").addEventListener("submit", async (ev) => {
     ev.preventDefault();
-    const o = { density: parseFloat($("stDensity").value), green: parseFloat($("stGreen").value), amber: parseFloat($("stAmber").value), max: parseFloat($("stMax").value) };
-    if (!(o.density > 0)) return toast("Coal density must be more than 0.", true);
+    const o = { green: parseFloat($("stGreen").value), amber: parseFloat($("stAmber").value), max: parseFloat($("stMax").value) };
     if (!(o.green >= 0) || !(o.amber > o.green)) return toast("The amber limit must be higher than the green limit.", true);
     if (!(o.max > o.amber)) return toast("The gauge maximum must be higher than the amber limit.", true);
-    try { await backend.saveSettings(o); ["stDensity", "stGreen", "stAmber", "stMax"].forEach((id) => delete $(id).dataset.dirty); toast("Settings saved"); render(); }
+    try { await write("save_settings", o); ["stGreen", "stAmber", "stMax"].forEach((id) => delete $(id).dataset.dirty); toast("Settings saved"); render(); }
     catch (e) { toast(errMsg(e), true); }
   });
 
@@ -518,52 +438,7 @@
     btn.disabled = false; btn.textContent = "Update now";
   });
 
-  /* two-click delete (a site or machine takes its entries with it, on the server) */
-  document.addEventListener("click", async (ev) => {
-    const b = ev.target.closest("[data-del]"); if (!b) return;
-    if (!b.classList.contains("armed")) {
-      document.querySelectorAll(".btn-del.armed").forEach((x) => { x.classList.remove("armed"); x.textContent = x.dataset.label; });
-      b.dataset.label = b.textContent; b.classList.add("armed");
-      const col = b.dataset.del, id = b.dataset.id;
-      let extra = "";
-      if (col === "sites") { const n = S.equipment.filter((q) => q.siteId === id).length, m = (S.sites.find((s) => s.id === id) || {}).n || 0; extra = n || m ? ` + ${n} machines, ${m} entries` : ""; }
-      if (col === "equipment") { const m = (S.equipment.find((q) => q.id === id) || {}).n || 0; extra = m ? ` + ${m} entries` : ""; }
-      b.textContent = "Confirm" + extra;
-      setTimeout(() => { if (b.isConnected && b.classList.contains("armed")) { b.classList.remove("armed"); b.textContent = b.dataset.label; } }, 4000);
-      return;
-    }
-    const col = b.dataset.del, id = b.dataset.id;
-    b.disabled = true;
-    try {
-      await backend.remove(col, id);
-      toast(col === "entries" ? "Entry deleted" : col === "equipment" ? "Equipment deleted" : "Site deleted");
-    } catch (e) { toast(errMsg(e), true); b.disabled = false; refresh(); }
-  });
-
-  /* example data: made and removed on the server */
-  $("btnLoadEx").addEventListener("click", async () => {
-    const btn = $("btnLoadEx"); btn.disabled = true; btn.textContent = "Loading example data…";
-    try {
-      F.init = false; // (the period: the latest month, the example's)
-      await write("load_example");
-      toast("Example data loaded");
-    } catch (e) { toast(errMsg(e), true); }
-    btn.disabled = false; btn.textContent = "Load example data"; render();
-  });
-  $("btnClearEx").addEventListener("click", async () => {
-    const btn = $("btnClearEx");
-    if (btn.dataset.armed !== "1") { btn.dataset.armed = "1"; btn.textContent = "Click again to remove all example data"; setTimeout(() => { btn.dataset.armed = ""; btn.textContent = "Remove example data"; }, 4000); return; }
-    btn.disabled = true; btn.textContent = "Removing…";
-    try {
-      F.init = false;
-      const r = await write("clear_example");
-      const kept = (r && r.kept) || [];
-      toast(kept.length ? `Example data removed. Kept ${kept.join(", ")}: your own entries are logged against ${kept.length === 1 ? "it" : "them"}.` : "Example data removed", false);
-    } catch (e) { toast(errMsg(e), true); }
-    btn.disabled = false; btn.dataset.armed = ""; btn.textContent = "Remove example data"; render();
-  });
-
-  /* theme changes: recolour the chart */
+  /* theme changes: recolour the charts */
   try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render); } catch (e) { /* old browser */ }
   new MutationObserver(render).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 

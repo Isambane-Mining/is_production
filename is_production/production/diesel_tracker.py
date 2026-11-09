@@ -4,18 +4,25 @@
 """The Diesel L/BCM Tracker (portal page /portal_diesel_tracker): the diesel each machine burns against the
 coal and waste it moves, by site.
 
-	L/BCM = diesel litres ÷ (waste bcm + coal tons ÷ coal density)
-
 It keeps its own sites, equipment, entries and settings (the Diesel Tracker doctypes), separate from the
-Mining Simulation. Entries are typed on the page, or brought in from the production records (sync):
+Mining Simulation. Everything is brought in from the production records (sync); nothing is typed:
 
 	diesel  the litres issued to each Asset on the submitted Daily Diesel Sheets of a Location, by sheet date
 	waste   the bcm of the Hourly Production truck loads each excavator filled (Softs, Hards) and each truck
 	coal    hauled (Coal), and the bcm of production dozing, by production date
 
-one entry per site (Location), machine (Asset) and day. A truck's loads are its excavator's bcm, so its entries
-do not count toward the site's volume (volume_counted = 0): the site counts each bcm once, while the truck's
-own L/BCM still uses them. Coal comes as bcm; its tons are the bcm × the coal density of the settings.
+one entry per site (Location), machine (Asset) and day. These are the tallies. A truck's loads are its
+excavator's bcm, so its entries do not count toward the site's volume (volume_counted = 0): the site counts
+each bcm once, while the truck's own L/BCM still uses them. Coal comes as bcm; its tons are bcm × 1.5, as in
+Hourly Production and the Monthly Production Planning.
+
+The site's volume is the actual volume, not the tallies (actual_volumes): the surveys applied as the Monthly
+Production Planning applies them to its Monthly Actual BCMs.
+
+	L/BCM (the site's) = diesel litres ÷ the actual bcm
+	L/BCM (a machine's) = its diesel litres ÷ its tallied bcm (surveys are by site, not by machine)
+	burn rate (L/h)     = diesel litres ÷ engine hours (Pre-Use Hours)
+
 The page asks for one period at a time, and the server sums it by machine.
 """
 
@@ -29,13 +36,9 @@ SITE = "Diesel Tracker Site"
 EQUIP = "Diesel Tracker Equipment"
 ENTRY = "Diesel Tracker Entry"
 SETTINGS = "Diesel Tracker Settings"
-MANUAL = "Manual"
 AUTO = "Production records"
+COAL_T_PER_BCM = 1.5  # (as Hourly Production and the Monthly Production Planning)
 
-TYPES = (
-	"Excavator", "Haul truck", "Front-end loader", "Dozer", "Drill rig", "Grader", "Water cart",
-	"Light vehicle", "Lighting plant", "Generator", "Water pump", "Diesel bowser", "Other",
-)
 # the type of a machine made from an Asset, by its Asset Category
 CATEGORY_TYPES = {
 	"Excavator": "Excavator", "ADT": "Haul truck", "RDT": "Haul truck", "Loader": "Front-end loader",
@@ -43,28 +46,17 @@ CATEGORY_TYPES = {
 	"LDV": "Light vehicle", "Vehicles": "Light vehicle", "Lightning Plant": "Lighting plant",
 	"Generator": "Generator", "Water pump": "Water pump", "Diesel Bowsers": "Diesel bowser", "Diesel Bulk": "Diesel bowser",
 }
-# the settings: the page's names and their fields, with the values used until they are saved
-SETTING_FIELDS = {"density": "coal_density", "green": "green_limit", "amber": "amber_limit", "max": "gauge_max"}
-DEFAULTS = {"density": 1.4, "green": 0.8, "amber": 1.2, "max": 2.0}
-KINDS = {"sites": SITE, "equipment": EQUIP, "entries": ENTRY}
+# the gauge's settings: the page's names and their fields, with the values used until they are saved
+SETTING_FIELDS = {"green": "green_limit", "amber": "amber_limit", "max": "gauge_max"}
+DEFAULTS = {"green": 0.8, "amber": 1.2, "max": 2.0}
 LIST_LIMIT, ALL_LIMIT = 40, 2000  # the entries listed: the latest, or all of the period up to this
 RECENT_DAYS, RESYNC_DAYS = 7, 90  # brought in again: every hour, and every night
 
 
 def permissions():
-	"""What the user may do on the page."""
-	has = frappe.has_permission
-	setup = bool(has(SITE, "create") and has(EQUIP, "create"))
-	return {
-		"entry": bool(has(ENTRY, "create")),
-		"deleteEntry": bool(has(ENTRY, "delete")),
-		# sites and machines; removing one removes its entries too
-		"setup": setup,
-		"deleteSetup": bool(has(SITE, "delete") and has(EQUIP, "delete") and has(ENTRY, "delete")),
-		"settings": bool(has(SETTINGS, "write")),
-		# bring the entries in from the production records now
-		"sync": setup and bool(has(ENTRY, "create") and has(ENTRY, "delete")),
-	}
+	"""What the user may do on the page: change the gauge's bands, and bring the production records in now."""
+	settings_ = bool(frappe.has_permission(SETTINGS, "write"))
+	return {"settings": settings_, "sync": settings_}
 
 
 def settings():
@@ -73,6 +65,7 @@ def settings():
 	for key, field in SETTING_FIELDS.items():
 		if stored.get(field) not in (None, ""):
 			out[key] = flt(stored.get(field))
+	out["density"] = COAL_T_PER_BCM
 	return out
 
 
@@ -99,11 +92,9 @@ def _view(view=None):
 	return {"from": frm, "to": to, "site": site, "limit": limit}
 
 
-def page_data(view=None):
-	"""Sites and equipment (with their entry counts), and for the period: each machine's sums, the latest entries
-	and their number; the months that have entries, the settings and what the user may do."""
-	v = _view(view)
-	where, values = ["1=1"], {"auto": AUTO, "limit": v["limit"]}
+def _where(v, extra=()):
+	"""The entries of the view: an SQL condition and its values."""
+	where, values = ["1=1", *extra], {"auto": AUTO}
 	if v["from"]:
 		where.append("entry_date >= %(from)s")
 		values["from"] = v["from"]
@@ -113,7 +104,15 @@ def page_data(view=None):
 	if v["site"]:
 		where.append("site = %(site)s")
 		values["site"] = v["site"]
-	cond = " and ".join(where)
+	return " and ".join(where), values
+
+
+def page_data(view=None):
+	"""Sites and equipment, and for the period: each machine's sums, the actual volume, the burn rates, the latest
+	entries and their number; the months that have entries, the settings and what the user may do."""
+	v = _view(view)
+	cond, values = _where(v)
+	values["limit"] = v["limit"]
 	summary = frappe.db.sql(
 		f"""select equipment, site, sum(diesel_litres) diesel, sum(coal_tons) coal, sum(waste_bcm) waste,
 			sum(if(volume_counted, coal_tons, 0)) coal_counted, sum(if(volume_counted, waste_bcm, 0)) waste_counted,
@@ -123,31 +122,20 @@ def page_data(view=None):
 		as_dict=True,
 	)
 	entries = frappe.db.sql(
-		f"""select name, entry_date, site, equipment, diesel_litres, coal_tons, waste_bcm, volume_counted, source, is_example
+		f"""select name, entry_date, site, equipment, diesel_litres, coal_tons, waste_bcm, volume_counted, source
 		from `tab{ENTRY}` where {cond} order by entry_date desc, creation desc limit %(limit)s""",
 		values,
 		as_dict=True,
 	)
 	count = frappe.db.sql(f"select count(*) from `tab{ENTRY}` where {cond}", values)[0][0]
 	months = [r[0] for r in frappe.db.sql(f"select distinct date_format(entry_date, '%Y-%m') m from `tab{ENTRY}` order by m")]
-	# the entries of each site and machine, all of them (what deleting it would take; production records cannot be)
-	by_site = {r[0]: r[1:] for r in frappe.db.sql(f"select site, count(*), sum(source = %s) from `tab{ENTRY}` group by site", (AUTO,))}
-	by_equip = {r[0]: r[1:] for r in frappe.db.sql(f"select equipment, count(*), sum(source = %s) from `tab{ENTRY}` group by equipment", (AUTO,))}
-	sites = frappe.get_list(SITE, fields=["name", "site_name", "location", "is_example"], order_by="site_name asc", limit_page_length=0)
+	sites = frappe.get_list(SITE, fields=["name", "site_name", "location"], order_by="site_name asc", limit_page_length=0)
 	equipment = frappe.get_list(
-		EQUIP, fields=["name", "site", "equipment_name", "equipment_type", "asset", "is_example"], order_by="equipment_name asc", limit_page_length=0
+		EQUIP, fields=["name", "site", "equipment_name", "equipment_type", "asset"], order_by="equipment_name asc", limit_page_length=0
 	)
 	return {
-		"sites": [
-			{"id": s.name, "name": s.site_name, "location": s.location, "example": bool(s.is_example),
-			 "n": cint(by_site.get(s.name, (0, 0))[0]), "nAuto": cint(by_site.get(s.name, (0, 0))[1])}
-			for s in sites
-		],
-		"equipment": [
-			{"id": q.name, "siteId": q.site, "name": q.equipment_name, "type": q.equipment_type, "asset": q.asset, "example": bool(q.is_example),
-			 "n": cint(by_equip.get(q.name, (0, 0))[0]), "nAuto": cint(by_equip.get(q.name, (0, 0))[1])}
-			for q in equipment
-		],
+		"sites": [{"id": s.name, "name": s.site_name, "location": s.location} for s in sites],
+		"equipment": [{"id": q.name, "siteId": q.site, "name": q.equipment_name, "type": q.equipment_type, "asset": q.asset} for q in equipment],
 		"summary": [
 			{"equipmentId": r.equipment, "siteId": r.site, "diesel": flt(r.diesel), "coal": flt(r.coal), "waste": flt(r.waste),
 			 "coalCounted": flt(r.coal_counted), "wasteCounted": flt(r.waste_counted), "n": cint(r.n), "nAuto": cint(r.n_auto)}
@@ -155,16 +143,152 @@ def page_data(view=None):
 		],
 		"entries": [
 			{"id": e.name, "date": str(e.entry_date), "siteId": e.site, "equipmentId": e.equipment, "diesel": flt(e.diesel_litres),
-			 "coal": flt(e.coal_tons), "waste": flt(e.waste_bcm), "counted": bool(e.volume_counted), "auto": e.source == AUTO, "example": bool(e.is_example)}
+			 "coal": flt(e.coal_tons), "waste": flt(e.waste_bcm), "counted": bool(e.volume_counted), "auto": e.source == AUTO}
 			for e in entries
 		],
 		"entryCount": cint(count),
+		"actual": actual_volumes(v, sites),
 		"burn": burn_rates(v, summary, sites),
 		"months": months,
 		"view": {"from": str(v["from"]) if v["from"] else "", "to": str(v["to"]) if v["to"] else "", "site": v["site"] or "all", "limit": v["limit"]},
 		"settings": settings(),
 		"sync": last_sync(),
 		"can": permissions(),
+	}
+
+
+@frappe.whitelist()
+def get_data(view=None):
+	frappe.has_permission(ENTRY, "read", throw=True)
+	return page_data(view)
+
+
+@frappe.whitelist(methods=["POST"])
+def save_settings(green=None, amber=None, max=None, view=None):
+	"""The gauge's bands (L/bcm): green up to, amber up to (red above), and the gauge's top."""
+	doc = frappe.get_doc(SETTINGS)
+	given = {"green": green, "amber": amber, "max": max}
+	for key, field in SETTING_FIELDS.items():
+		doc.set(field, flt(given[key]) if given[key] not in (None, "") else DEFAULTS[key])
+	doc.save()
+	return {"data": page_data(view)}
+
+
+# ---- the actual volume: the tallies with the surveys applied
+
+MPP = "Monthly Production Planning"
+
+
+def actual_volumes(v, sites):
+	"""The actual volume of the period (and site): the Monthly Production Planning's Monthly Actual BCMs and Monthly
+	Actual Coal tons (the tallies with the surveys applied), shared over the days of each production month:
+
+	- a day belongs to the production month (plan) most of its Hourly Production records belong to, else to the
+	  one whose dates hold it;
+	- bcm: the plan's survey variance (Monthly Actual BCM Tally Variance) falls on the days up to its last survey
+	  (the day of the plan's survey row), pro rata to their tallies; the days after it count as tallied. A whole
+	  production month so comes to its tallies + the variance, the plan's Monthly Actual BCMs;
+	- coal: the plan's Monthly Actual Coal tons, shared over its days pro rata to their tallied coal;
+	- days in no production month count as tallied.
+
+	The tallies are the volumes the site counts (the excavators' loads and production dozing). The figures are
+	as fresh as the plans: worked out again every hour while their month runs, or with the plan's Update MTD
+	Production. → {bcm, coalT, wasteBcm (actual); tallied, coalTallied; months, surveyed (production months, with
+	a survey variance)}"""
+	cond, values = _where(v, ["source = %(auto)s", "volume_counted = 1"])
+	days = frappe.db.sql(
+		f"select site, entry_date, sum(waste_bcm + coal_bcm), sum(coal_bcm) from `tab{ENTRY}` where {cond} group by site, entry_date",
+		values,
+	)
+	location = {s.name: s.location for s in sites if s.location}
+	locs = sorted({location[s] for s, *_x in days if s in location})
+	plans, day_plan, tallies = {}, {}, {}
+	if locs:
+		lo, hi = min(getdate(d) for _s, d, *_x in days), max(getdate(d) for _s, d, *_x in days)
+		for name, loc, start, end, var, coal in frappe.db.sql(
+			f"""select name, location, prod_month_start_date, prod_month_end_date, monthly_act_tally_survey_variance, month_actual_coal
+			from `tab{MPP}` where location in %(locs)s and prod_month_start_date <= %(hi)s and prod_month_end_date >= %(lo)s""",
+			{"locs": tuple(locs), "hi": hi, "lo": lo},
+		):
+			plans[name] = {"loc": loc, "start": getdate(start), "end": getdate(end), "var": flt(var), "coal": flt(coal), "until": None}
+	if plans:
+		names = tuple(plans)
+		first, last = min(p["start"] for p in plans.values()), max(p["end"] for p in plans.values())
+		# the plan of each day: the one most of its Hourly Production records belong to
+		counts = {}
+		for loc, day, plan, n in frappe.db.sql(
+			"""select location, prod_date, month_prod_planning, count(*) from `tabHourly Production`
+			where location in %(locs)s and prod_date between %(lo)s and %(hi)s and month_prod_planning in %(names)s
+			group by location, prod_date, month_prod_planning""",
+			{"locs": tuple(locs), "lo": first, "hi": last, "names": names},
+		):
+			key = (loc, getdate(day))
+			if n > counts.get(key, 0):
+				counts[key], day_plan[key] = n, plan
+		# the day of each plan's last survey (its survey row)
+		for parent, day in frappe.db.sql(
+			"""select parent, shift_start_date from `tabMonthly Production Days` where parenttype = %(mpp)s and parent in %(names)s
+				and (ifnull(tot_cum_ts_survey, 0) != 0 or ifnull(tot_cum_dozing_survey, 0) != 0) order by shift_start_date""",
+			{"mpp": MPP, "names": names},
+		):
+			plans[parent]["until"] = getdate(day)
+		# the tallies of the whole production months, beyond the period too (the variance and coal are shared over them)
+		site_loc = {s: loc for s, loc in location.items() if loc in locs}
+		for site, day, vol, coal in frappe.db.sql(
+			f"""select site, entry_date, sum(waste_bcm + coal_bcm), sum(coal_bcm) from `tab{ENTRY}`
+			where source = %(auto)s and volume_counted = 1 and site in %(sites)s and entry_date between %(lo)s and %(hi)s
+			group by site, entry_date""",
+			{"auto": AUTO, "sites": tuple(site_loc), "lo": first, "hi": last},
+		):
+			t = tallies.setdefault((site_loc[site], getdate(day)), [0.0, 0.0])
+			t[0] += flt(vol)
+			t[1] += flt(coal)
+
+	def plan_of(loc, day):
+		name = day_plan.get((loc, day))
+		if name in plans:
+			return name
+		hit = [n for n, p in plans.items() if p["loc"] == loc and p["start"] <= day <= p["end"]]
+		return max(hit, key=lambda n: plans[n]["start"]) if hit else None
+
+	def in_view(loc, day):
+		return (not v["from"] or day >= v["from"]) and (not v["to"] or day <= v["to"]) and (not v["site"] or location.get(v["site"]) == loc)
+
+	# what each plan shares over its days: the variance over those up to its survey, the coal over all of them
+	lumps = 0.0, 0.0
+	for name, p in plans.items():
+		mine = [(day, t) for (loc, day), t in tallies.items() if loc == p["loc"] and plan_of(loc, day) == name]
+		upto = p["until"] if p["until"] else p["end"]  # (a variance without its survey row: over the whole month)
+		p["base"] = sum(t[0] for day, t in mine if day <= upto)
+		p["upto"] = upto
+		coal = sum(t[1] for _d, t in mine) * COAL_T_PER_BCM
+		p["kc"] = p["coal"] / coal if coal > 0 else 1.0
+		# (a variance or coal with no tallies to share it over: on the survey day, or the month's last)
+		if p["var"] and p["base"] <= 0 and in_view(p["loc"], upto):
+			lumps = (lumps[0] + p["var"], lumps[1])
+		if p["coal"] and coal <= 0 and in_view(p["loc"], p["end"]):
+			lumps = (lumps[0], lumps[1] + p["coal"])
+	bcm = tallied = coal_t = coal_tallied = 0.0
+	used, surveyed = set(), set()
+	for site, day, vol, coal in days:
+		day, vol, coal = getdate(day), flt(vol), flt(coal)
+		loc = location.get(site)
+		name = plan_of(loc, day) if plans and loc else None
+		p = plans.get(name) if name else None
+		share = vol / p["base"] if p and p["var"] and p["base"] > 0 and day <= p["upto"] else 0.0
+		if p:
+			used.add(name)
+			if p["var"]:
+				surveyed.add(name)
+		tallied += vol
+		bcm += vol + share * (p["var"] if p else 0.0)
+		coal_tallied += coal * COAL_T_PER_BCM
+		coal_t += coal * COAL_T_PER_BCM * (p["kc"] if p else 1.0)
+	bcm += lumps[0]
+	coal_t += lumps[1]
+	return {
+		"bcm": round(bcm, 1), "coalT": round(coal_t, 1), "wasteBcm": round(bcm - coal_t / COAL_T_PER_BCM, 1),
+		"tallied": round(tallied, 1), "coalTallied": round(coal_tallied, 1), "months": len(used), "surveyed": len(surveyed),
 	}
 
 
@@ -256,107 +380,6 @@ def burn_rates(v, summary, sites):
 	return out
 
 
-def _answer(view=None, doc_id=None):
-	return {"id": doc_id, "data": page_data(view)}
-
-
-@frappe.whitelist()
-def get_data(view=None):
-	frappe.has_permission(ENTRY, "read", throw=True)
-	return page_data(view)
-
-
-# ---- typed on the page
-
-
-@frappe.whitelist(methods=["POST"])
-def add_site(name=None, view=None):
-	doc = frappe.get_doc({"doctype": SITE, "site_name": (name or "").strip()}).insert()
-	return _answer(view, doc.name)
-
-
-@frappe.whitelist(methods=["POST"])
-def add_equipment(siteId=None, name=None, type=None, view=None):
-	if type not in TYPES:
-		frappe.throw(_("Choose the type of machine."))
-	doc = frappe.get_doc({"doctype": EQUIP, "site": siteId, "equipment_name": (name or "").strip(), "equipment_type": type}).insert()
-	return _answer(view, doc.name)
-
-
-def _amount(value, label, required=False):
-	if value in (None, ""):
-		if required:
-			frappe.throw(_("Type the {0}.").format(label))
-		return 0.0
-	try:
-		v = float(value)
-	except (TypeError, ValueError):
-		frappe.throw(_("The {0} must be a number.").format(label))
-	if v < 0:
-		frappe.throw(_("The {0} must be zero or more.").format(label))
-	return v
-
-
-@frappe.whitelist(methods=["POST"])
-def add_entry(date=None, siteId=None, equipmentId=None, diesel=None, coal=None, waste=None, view=None):
-	if not date:
-		frappe.throw(_("Enter the date for this entry."))
-	doc = frappe.get_doc(
-		{
-			"doctype": ENTRY,
-			"entry_date": getdate(date),
-			"site": siteId,
-			"equipment": equipmentId,
-			"source": MANUAL,
-			"diesel_litres": _amount(diesel, _("diesel litres"), required=True),
-			"coal_tons": _amount(coal, _("coal tons")),
-			"waste_bcm": _amount(waste, _("waste bcm")),
-			"volume_counted": 1,
-		}
-	).insert()
-	return _answer(view, doc.name)
-
-
-@frappe.whitelist(methods=["POST"])
-def delete(kind=None, id=None, view=None):
-	"""Delete a typed entry, a machine (with its entries) or a site (with its machines and their entries). Each
-	goes to Deleted Documents, where it can be restored from the desk. What the production records bring in is
-	not deleted here: it would come back with the next hour."""
-	doctype = KINDS.get(kind)
-	if not doctype or not id or not frappe.db.exists(doctype, id):
-		frappe.throw(_("That is no longer there: the page has been refreshed."))
-	if kind == "entries":
-		if frappe.db.get_value(ENTRY, id, "source") == AUTO:
-			frappe.throw(_("This entry comes from the production records. Correct the Daily Diesel Sheet or the Hourly Production instead: the entry follows within the hour."))
-	else:
-		for dt in (ENTRY, EQUIP, SITE):
-			frappe.has_permission(dt, "delete", throw=True)
-		field = "site" if kind == "sites" else "equipment"
-		if frappe.db.exists(ENTRY, {field: id, "source": AUTO}):
-			frappe.throw(_("Its entries come from the production records, so it would come back within the hour. Only sites and machines typed on the page can be deleted."))
-		for name in frappe.get_all(ENTRY, filters={field: id}, pluck="name"):
-			frappe.delete_doc(ENTRY, name)
-		if kind == "sites":
-			for name in frappe.get_all(EQUIP, filters={"site": id}, pluck="name"):
-				frappe.delete_doc(EQUIP, name)
-	frappe.delete_doc(doctype, id)
-	return _answer(view)
-
-
-@frappe.whitelist(methods=["POST"])
-def save_settings(density=None, green=None, amber=None, max=None, view=None):
-	doc = frappe.get_doc(SETTINGS)
-	before = settings()["density"]
-	given = {"density": density, "green": green, "amber": amber, "max": max}
-	for key, field in SETTING_FIELDS.items():
-		doc.set(field, flt(given[key]) if given[key] not in (None, "") else DEFAULTS[key])
-	doc.save()
-	if flt(doc.coal_density) != before:
-		# (the coal of the production records comes as bcm: its tons follow the density)
-		frappe.db.sql(f"update `tab{ENTRY}` set coal_tons = coal_bcm * %s where source = %s", (flt(doc.coal_density), AUTO))
-	return _answer(view)
-
-
 # ---- brought in from the production records
 
 # the litres issued to each asset on the submitted Daily Diesel Sheets, by location and sheet date
@@ -379,6 +402,7 @@ DOZING_SQL = """select h.location, h.prod_date, d.asset_name, sum(d.bcm_hour)
 	where d.parenttype = 'Hourly Production' and h.prod_date between %s and %s
 		and ifnull(h.location, '') != '' and ifnull(d.asset_name, '') != '' and ifnull(d.bcm_hour, 0) > 0
 	group by h.location, h.prod_date, d.asset_name"""
+WANT_FIELDS = ("diesel_litres", "coal_bcm", "coal_tons", "waste_bcm", "volume_counted")
 
 
 def _first_source_day():
@@ -406,7 +430,7 @@ def _ensure_sites(locations):
 
 
 def _ensure_equipment(pairs):
-	"""The tracker's machine of each (site, Asset): linked, or the one typed with the asset's fleet number on that
+	"""The tracker's machine of each (site, Asset): linked, or the one named for the asset's fleet number on that
 	site (linked now), or a new one named for the asset, its type from the Asset Category."""
 	have = {(q.site, q.asset): q.name for q in frappe.get_all(EQUIP, filters={"asset": ["is", "set"]}, fields=["name", "site", "asset"], limit_page_length=0)}
 	missing = sorted(p for p in pairs if p not in have)
@@ -434,9 +458,9 @@ def _ensure_equipment(pairs):
 
 
 def sync(from_date=None, to_date=None):
-	"""Make the production-record entries of the days from_date..to_date (every day the records hold when not
-	given) match the Daily Diesel Sheets and Hourly Production: new ones added, changed ones updated, those whose
-	records are gone removed. Typed entries are left as they are. → what it did."""
+	"""Make the entries of the days from_date..to_date (every day the records hold when not given) match the Daily
+	Diesel Sheets and Hourly Production: new ones added, changed ones updated, those whose records are gone
+	removed. → what it did."""
 	frm = getdate(from_date) if from_date else _first_source_day()
 	to = getdate(to_date) if to_date else getdate(today())
 	result = {"from": str(frm) if frm else "", "to": str(to), "added": 0, "updated": 0, "removed": 0, "sites": 0, "machines": 0}
@@ -475,7 +499,6 @@ def sync(from_date=None, to_date=None):
 		result["sites"] = frappe.db.count(SITE) - sites_before
 		result["machines"] = frappe.db.count(EQUIP) - machines_before
 
-		density = settings()["density"]
 		want = {}
 		for (loc, day, asset), r in rows.items():
 			site = site_of[loc]
@@ -483,7 +506,7 @@ def sync(from_date=None, to_date=None):
 			want[(site, equip_of[(site, asset)], day)] = {
 				"diesel_litres": round(max(r["diesel"], 0.0), 3),
 				"coal_bcm": coal,
-				"coal_tons": round(coal * density, 3),
+				"coal_tons": round(coal * COAL_T_PER_BCM, 3),
 				"waste_bcm": round(max(r["waste"], 0.0), 3),
 				"volume_counted": 0 if (r["haul"] and not r["dig"]) else 1,
 			}
@@ -492,7 +515,7 @@ def sync(from_date=None, to_date=None):
 			for e in frappe.get_all(
 				ENTRY,
 				filters={"source": AUTO, "entry_date": ["between", [frm, to]]},
-				fields=["name", "site", "equipment", "entry_date", *want_fields()],
+				fields=["name", "site", "equipment", "entry_date", *WANT_FIELDS],
 				limit_page_length=0,
 			)
 		}
@@ -501,7 +524,7 @@ def sync(from_date=None, to_date=None):
 			old = have.get(key)
 			if old is None:
 				new.append((key, vals))
-			elif any(abs(flt(old.get(f)) - flt(v)) > 1e-6 for f, v in vals.items()):
+			elif any(abs(flt(old.get(f)) - flt(val)) > 1e-6 for f, val in vals.items()):
 				frappe.db.set_value(ENTRY, old.name, vals)
 				result["updated"] += 1
 		gone = [e.name for key, e in have.items() if key not in want]
@@ -510,12 +533,12 @@ def sync(from_date=None, to_date=None):
 		result["removed"] = len(gone)
 		if new:
 			stamp, user = now_datetime(), frappe.session.user
-			fields = ["name", "creation", "modified", "owner", "modified_by", "docstatus", "idx", "entry_date", "site", "equipment", "source", "is_example", *want_fields()]
+			fields = ["name", "creation", "modified", "owner", "modified_by", "docstatus", "idx", "entry_date", "site", "equipment", "source", *WANT_FIELDS]
 			frappe.db.bulk_insert(
 				ENTRY,
 				fields,
 				[
-					(frappe.generate_hash(length=10), stamp, stamp, user, user, 0, 0, day, site, eq, AUTO, 0, *(vals[f] for f in want_fields()))
+					(frappe.generate_hash(length=10), stamp, stamp, user, user, 0, 0, day, site, eq, AUTO, *(vals[f] for f in WANT_FIELDS))
 					for (site, eq, day), vals in new
 				],
 				chunk_size=2000,
@@ -533,19 +556,13 @@ def sync(from_date=None, to_date=None):
 	return result
 
 
-def want_fields():
-	return ("diesel_litres", "coal_bcm", "coal_tons", "waste_bcm", "volume_counted")
-
-
 @frappe.whitelist(methods=["POST"])
 def sync_now(from_date=None, to_date=None, view=None):
 	"""Bring the entries in from the production records now, for the days given (all of them when none)."""
 	if not permissions()["sync"]:
 		raise frappe.PermissionError(_("A Production Manager brings the entries in from the production records."))
 	result = sync(from_date or None, to_date or None)
-	out = _answer(view)
-	out["sync"] = result
-	return out
+	return {"data": page_data(view), "sync": result}
 
 
 def scheduled_sync():
@@ -559,81 +576,3 @@ def scheduled_sync():
 def scheduled_resync():
 	"""Every night (hooks): the last three months, for sheets submitted, cancelled or corrected late."""
 	sync(add_days(today(), -RESYNC_DAYS), today())
-
-
-# ---- example data: two sites, six machines and weekly entries over the last four months
-
-EXAMPLE_SITES = ("North Pit (example)", "South Pit (example)")
-# site, fleet number, type, waste bcm a week, coal t a week, L/bcm it burns at
-EXAMPLE_MACHINES = (
-	(0, "EX01", "Excavator", 9500, 0, 0.46),
-	(0, "HT01", "Haul truck", 3300, 800, 0.92),
-	(0, "HT02", "Haul truck", 3100, 700, 1.34),
-	(1, "EX02", "Excavator", 2200, 4600, 0.62),
-	(1, "HT03", "Haul truck", 1800, 1500, 0.98),
-	(1, "DZ01", "Dozer", 2900, 0, 1.12),
-)
-
-
-@frappe.whitelist(methods=["POST"])
-def load_example(view=None):
-	import random
-	from datetime import timedelta
-
-	if frappe.db.exists(SITE, {"is_example": 1}):
-		frappe.throw(_("The example data is already loaded."))
-	for dt in (SITE, EQUIP, ENTRY):
-		frappe.has_permission(dt, "create", throw=True)
-	density = settings()["density"]
-	sites = [frappe.get_doc({"doctype": SITE, "site_name": n, "is_example": 1}).insert().name for n in EXAMPLE_SITES]
-	machines = [
-		frappe.get_doc({"doctype": EQUIP, "site": sites[s], "equipment_name": n, "equipment_type": t, "is_example": 1}).insert().name
-		for s, n, t, *_rest in EXAMPLE_MACHINES
-	]
-	rand = random.Random(20261109)
-	end = getdate(today())
-	day = end - timedelta(weeks=17)
-	while day <= end:
-		for (s, _n, _t, waste_w, coal_w, lbcm), machine in zip(EXAMPLE_MACHINES, machines):
-			waste = round(waste_w * (0.85 + rand.random() * 0.3))
-			coal = round(coal_w * (0.85 + rand.random() * 0.3))
-			diesel = round((waste + coal / density) * lbcm * (0.88 + rand.random() * 0.24))
-			frappe.get_doc(
-				{
-					"doctype": ENTRY,
-					"entry_date": day,
-					"site": sites[s],
-					"equipment": machine,
-					"source": MANUAL,
-					"diesel_litres": diesel,
-					"coal_tons": coal,
-					"waste_bcm": waste,
-					"is_example": 1,
-				}
-			).insert()
-		day += timedelta(weeks=1)
-	return _answer(view)
-
-
-@frappe.whitelist(methods=["POST"])
-def clear_example(view=None):
-	"""Delete the example data. An example site or machine that real entries were logged against is kept,
-	with those entries."""
-	for dt in (SITE, EQUIP, ENTRY):
-		frappe.has_permission(dt, "delete", throw=True)
-	for name in frappe.get_all(ENTRY, filters={"is_example": 1}, pluck="name"):
-		frappe.delete_doc(ENTRY, name)
-	kept = []
-	for name, label in frappe.get_all(EQUIP, filters={"is_example": 1}, fields=["name", "equipment_name"], as_list=True):
-		if frappe.db.exists(ENTRY, {"equipment": name}):
-			kept.append(label)
-		else:
-			frappe.delete_doc(EQUIP, name)
-	for name, label in frappe.get_all(SITE, filters={"is_example": 1}, fields=["name", "site_name"], as_list=True):
-		if frappe.db.exists(EQUIP, {"site": name}) or frappe.db.exists(ENTRY, {"site": name}):
-			kept.append(label)
-		else:
-			frappe.delete_doc(SITE, name)
-	out = _answer(view)
-	out["kept"] = kept
-	return out

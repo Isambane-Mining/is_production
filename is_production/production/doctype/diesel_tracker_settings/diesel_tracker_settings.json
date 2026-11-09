@@ -2,12 +2,10 @@
  "actions": [],
  "allow_rename": 0,
  "creation": "2026-11-09 09:00:00.000000",
- "description": "Coal density and gauge bands of the Diesel L/BCM Tracker (/portal_diesel_tracker).",
+ "description": "The gauge bands of the Diesel L/BCM Tracker (/portal_diesel_tracker).",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "coal_density",
-  "column_break_gauge",
   "green_limit",
   "amber_limit",
   "gauge_max",
@@ -16,19 +14,6 @@
   "last_sync_note"
  ],
  "fields": [
-  {
-   "default": "1.4",
-   "description": "Turns coal tons into bcm: total bcm = waste bcm + coal tons ÷ this.",
-   "fieldname": "coal_density",
-   "fieldtype": "Float",
-   "label": "Coal Density (t/bcm)",
-   "precision": "2",
-   "reqd": 1
-  },
-  {
-   "fieldname": "column_break_gauge",
-   "fieldtype": "Column Break"
-  },
   {
    "default": "0.8",
    "fieldname": "green_limit",
@@ -77,7 +62,7 @@
  "index_web_pages_for_search": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-09 11:00:00.000000",
+ "modified": "2026-11-09 14:00:00.000000",
  "modified_by": "Administrator",
  "module": "Production",
  "name": "Diesel Tracker Settings",
