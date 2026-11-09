@@ -159,12 +159,101 @@ def page_data(view=None):
 			for e in entries
 		],
 		"entryCount": cint(count),
+		"burn": burn_rates(v, summary, sites),
 		"months": months,
 		"view": {"from": str(v["from"]) if v["from"] else "", "to": str(v["to"]) if v["to"] else "", "site": v["site"] or "all", "limit": v["limit"]},
 		"settings": settings(),
 		"sync": last_sync(),
 		"can": permissions(),
 	}
+
+
+# ---- burn rate: litres an engine hour of the ADTs, excavators and dozers
+
+# the three graphs: key, title, Asset Categories
+FLEETS = (("adt", "ADTs", ("ADT",)), ("excavator", "Excavators", ("Excavator",)), ("dozer", "Dozers", ("Dozer",)))
+# the engine hours of each asset a day at a location, as the Monthly Diesel Reconciliation counts them: the Night
+# (Afternoon) shift's closing hour-meter reading less the Day (Morning) shift's opening one, on the Pre-Use Hours
+# sheets not cancelled; a day without both, with a closing reading of 0, or under 0 or over 24 hours is left out
+HOURS_SQL = """select location, asset_name, sum(h_end - h_start), count(*) from (
+		select p.location, e.asset_name, p.shift_date,
+			max(case when p.shift in ('Day', 'Morning') then e.eng_hrs_start end) h_start,
+			max(case when p.shift in ('Night', 'Afternoon') then e.eng_hrs_end end) h_end
+		from `tabPre-use Assets` e join `tabPre-Use Hours` p on p.name = e.parent
+		where e.parenttype = 'Pre-Use Hours' and e.parentfield = 'pre_use_assets' and p.docstatus < 2
+			and p.shift_date between %(from)s and %(to)s and e.asset_name in %(assets)s {loc}
+		group by p.location, e.asset_name, p.shift_date
+	) d
+	where h_start is not null and h_end is not null and h_end != 0 and h_end - h_start between 0 and 24
+	group by location, asset_name"""
+
+
+def _oem_rates(models, day):
+	"""The OEM burn rate (L/h) of each model on the day: the latest effective then (OEM Diesel Burn Rate)."""
+	if not models:
+		return {}
+	rows = frappe.db.sql(
+		"""select model, burn_rate_lph from `tabOEM Diesel Burn Rate`
+		where model in %(models)s and effective_from <= %(day)s
+		order by model, effective_from, modified""",
+		{"models": tuple(models), "day": day},
+	)
+	return {model: flt(rate) for model, rate in rows}  # (the latest of each model last)
+
+
+def burn_rates(v, summary, sites):
+	"""Each ADT, excavator and dozer of the period (and site): its litres (its entries'), engine hours (Pre-Use
+	Hours, as the Monthly Diesel Reconciliation counts them) and burn rate = litres ÷ hours, against the OEM burn
+	rate of its model at the end of the period; and each fleet's: the litres ÷ the hours of its machines that
+	have hours, against their OEM rates weighted by their hours."""
+	cats = {c: key for key, _t, cs in FLEETS for c in cs}
+	assets = {
+		a.name: a
+		for a in frappe.get_all("Asset", filters={"asset_category": ["in", list(cats)]}, fields=["name", "asset_category", "item_code"], limit_page_length=0)
+	}
+	where = {"asset": ["in", list(assets) or [""]]}
+	if v["site"]:
+		where["site"] = v["site"]
+	machines = frappe.get_all(EQUIP, filters=where, fields=["name", "site", "asset"], limit_page_length=0)
+	litres = {r.equipment: flt(r.diesel) for r in summary}
+	location = {s.name: s.location for s in sites if s.location}
+	day_to = v["to"] or getdate(today())
+	hours = {}
+	if machines:
+		locs = sorted({location[q.site] for q in machines if q.site in location})
+		if locs:
+			for loc, asset, h, days in frappe.db.sql(
+				HOURS_SQL.format(loc="and p.location in %(locs)s"),
+				{"from": v["from"] or "2000-01-01", "to": day_to, "assets": tuple(sorted({q.asset for q in machines})), "locs": tuple(locs)},
+			):
+				hours[(loc, asset)] = (flt(h), cint(days))
+	oem = _oem_rates(sorted({assets[q.asset].item_code for q in machines if assets[q.asset].item_code}), day_to)
+	out = []
+	for key, title, _cs in FLEETS:
+		rows, lit_h, hrs, oem_h, hrs_oem, no_hours = [], 0.0, 0.0, 0.0, 0.0, 0
+		for q in machines:
+			a = assets[q.asset]
+			if cats.get(a.asset_category) != key:
+				continue
+			h, days = hours.get((location.get(q.site), q.asset), (0.0, 0))
+			l = litres.get(q.name, 0.0)
+			if not l and not h:
+				continue
+			rate = oem.get(a.item_code)
+			rows.append({"equipmentId": q.name, "siteId": q.site, "model": a.item_code or "", "litres": l, "hours": round(h, 2), "days": days,
+						 "lph": round(l / h, 2) if h > 0 else None, "oem": rate})
+			if h > 0:
+				lit_h += l
+				hrs += h
+				if rate:
+					oem_h += rate * h
+					hrs_oem += h
+			elif l:
+				no_hours += 1
+		out.append({"key": key, "title": title, "machines": rows, "litres": round(lit_h, 2), "hours": round(hrs, 2),
+					"lph": round(lit_h / hrs, 2) if hrs > 0 else None, "oem": round(oem_h / hrs_oem, 2) if hrs_oem > 0 else None,
+					"oemShare": round(hrs_oem / hrs, 3) if hrs > 0 else 0, "noHours": no_hours})
+	return out
 
 
 def _answer(view=None, doc_id=None):

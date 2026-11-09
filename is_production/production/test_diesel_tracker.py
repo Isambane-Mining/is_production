@@ -37,11 +37,14 @@ def sources():
 	for child in ("Truck Loads", "Dozer Production"):
 		frappe.db.delete(child, {"parent": ["in", hours]})
 	frappe.db.delete("Hourly Production", {"name": ["in", hours]})
+	frappe.db.delete("Pre-use Assets", {"parent": ["in", ["PU-T1", "PU-T2", "PU-T3", "PU-T4"]]})
+	frappe.db.delete("Pre-Use Hours", {"name": ["in", ["PU-T1", "PU-T2", "PU-T3", "PU-T4"]]})
+	frappe.db.delete("OEM Diesel Burn Rate", {"name": ["in", ["OEM-T1", "OEM-T2"]]})
 	if not frappe.db.exists("Location", LOC):
 		raw("Location", [{"name": LOC, "location_name": LOC}])
 	raw("Asset", [
-		{"name": n, "asset_name": n, "asset_category": c, "docstatus": 1}
-		for n, c in (("EX-T1", "Excavator"), ("HT-T1", "ADT"), ("DZ-T1", "Dozer"), ("LV-T1", "LDV"))
+		{"name": n, "asset_name": n, "asset_category": c, "item_code": m, "docstatus": 1}
+		for n, c, m in (("EX-T1", "Excavator", "EX-MODEL-T"), ("HT-T1", "ADT", "ADT-MODEL-T"), ("DZ-T1", "Dozer", "DZ-MODEL-T"), ("LV-T1", "LDV", None))
 		if not frappe.db.exists("Asset", n)
 	])
 	raw("Daily Diesel Sheet", [
@@ -60,6 +63,27 @@ def sources():
 	raw("Dozer Production", [
 		{"name": "HP-T1-D1", "parent": "HP-T1", "parenttype": "Hourly Production", "parentfield": "dozer_production", "idx": 1, "asset_name": "DZ-T1", "bcm_hour": 150},
 		{"name": "HP-T1-D2", "parent": "HP-T1", "parenttype": "Hourly Production", "parentfield": "dozer_production", "idx": 2, "asset_name": "DZ-T1", "bcm_hour": 0},
+	])
+	# engine hours (drafts count): EX-T1 20 h on the 1st, its 2nd has a closing reading of 0; HT-T1 has no night
+	# sheet on the 1st and 12 h on the 2nd; DZ-T1 a day of 30 h (left out)
+	raw("Pre-Use Hours", [
+		{"name": "PU-T1", "location": LOC, "shift_date": "2001-03-01", "shift": "Day", "docstatus": 0},
+		{"name": "PU-T2", "location": LOC, "shift_date": "2001-03-01", "shift": "Night", "docstatus": 0},
+		{"name": "PU-T3", "location": LOC, "shift_date": "2001-03-02", "shift": "Day", "docstatus": 0},
+		{"name": "PU-T4", "location": LOC, "shift_date": "2001-03-02", "shift": "Night", "docstatus": 0},
+	])
+	pu = lambda parent, i, asset, start, end: {"name": f"{parent}-{i}", "parent": parent, "parenttype": "Pre-Use Hours", "parentfield": "pre_use_assets", "idx": i, "asset_name": asset, "eng_hrs_start": start, "eng_hrs_end": end}
+	raw("Pre-use Assets", [
+		pu("PU-T1", 1, "EX-T1", 1000, 1010), pu("PU-T2", 1, "EX-T1", 1010, 1020),
+		pu("PU-T3", 1, "EX-T1", 1020, 1031), pu("PU-T4", 1, "EX-T1", 1031, 0),
+		pu("PU-T1", 2, "HT-T1", 480, 490),
+		pu("PU-T3", 2, "HT-T1", 500, 506), pu("PU-T4", 2, "HT-T1", 506, 512),
+		pu("PU-T1", 3, "DZ-T1", 100, 115), pu("PU-T2", 3, "DZ-T1", 115, 130),
+	])
+	# the excavator's OEM rate: 70 L/h from January; 80 from April, after the period
+	raw("OEM Diesel Burn Rate", [
+		{"name": "OEM-T1", "model": "EX-MODEL-T", "burn_rate_lph": 70, "effective_from": "2001-01-01"},
+		{"name": "OEM-T2", "model": "EX-MODEL-T", "burn_rate_lph": 80, "effective_from": "2001-04-01"},
 	])
 
 
@@ -239,3 +263,23 @@ class TestDieselTracker(IntegrationTestCase):
 		svc.scheduled_sync()
 		self.assertTrue(frappe.db.exists(svc.ENTRY, {"source": svc.AUTO, "entry_date": "2001-03-01"}))
 		self.assertTrue(svc.last_sync()["at"])
+
+	def test_burn_rates(self):
+		sources()
+		svc.sync("2001-03-01", "2001-03-02")
+		burn = {f["key"]: f for f in svc.get_data(view={"from": "2001-03-01", "to": "2001-03-31"})["burn"]}
+		self.assertEqual([f["key"] for f in svc.get_data(view={"from": "2001-03-01", "to": "2001-03-31"})["burn"]], ["adt", "excavator", "dozer"])
+		ex = burn["excavator"]["machines"][0]
+		self.assertEqual((ex["litres"], ex["hours"], ex["days"], ex["lph"], ex["oem"], ex["model"]), (1500, 20, 1, 75, 70, "EX-MODEL-T"))
+		self.assertEqual((burn["excavator"]["lph"], burn["excavator"]["oem"], burn["excavator"]["oemShare"]), (75, 70, 1))
+		ht = burn["adt"]["machines"][0]
+		self.assertEqual((ht["litres"], ht["hours"], ht["lph"], ht["oem"]), (300, 12, 25, None))
+		self.assertEqual((burn["adt"]["lph"], burn["adt"]["oem"]), (25, None))
+		dz = burn["dozer"]
+		self.assertEqual((dz["machines"][0]["litres"], dz["machines"][0]["hours"], dz["machines"][0]["lph"], dz["lph"], dz["noHours"]), (400, 0, None, None, 1))
+		# the OEM rate in force at the end of the period: April's for a period to April
+		april = {f["key"]: f for f in svc.get_data(view={"from": "2001-03-01", "to": "2001-04-30"})["burn"]}
+		self.assertEqual(april["excavator"]["machines"][0]["oem"], 80)
+		# a site without the machines: empty graphs
+		other = svc.add_site(name="Elsewhere")["id"]
+		self.assertTrue(all(not f["machines"] for f in svc.get_data(view={"from": "2001-03-01", "to": "2001-03-31", "site": other})["burn"]))

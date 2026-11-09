@@ -9,14 +9,18 @@
 
    L/BCM = diesel litres ÷ (waste bcm + coal tons ÷ coal density), per machine and over the period. A haul
    truck's loads from the production records are its excavator's bcm: they are the truck's own, but the site's
-   totals count them once (the entries' "counted"). */
+   totals count them once (the entries' "counted").
+
+   Burn rate = diesel litres ÷ engine hours (Pre-Use Hours), per ADT, excavator and dozer, against the OEM burn rate
+   of its model ("burn": worked out on the server, as the Monthly Diesel Reconciliation does). */
 (function () {
   "use strict";
   const CFG = window.DIESEL_TRACKER || {};
   const API = "/api/method/is_production.production.diesel_tracker.";
   const DEFAULTS = { density: 1.4, green: 0.8, amber: 1.2, max: 2 };
   const LIST = 40, EQ_LIST = 50, BARS = 30; // the entries and machines listed, the bars drawn, before "show all"
-  const S = { sites: [], equipment: [], summary: [], entries: [], entryCount: 0, months: [], view: {}, settings: { ...DEFAULTS }, sync: {}, can: {}, ready: false, failed: false, loadedAt: 0 };
+  const FLEETS = ["adt", "excavator", "dozer"]; // the burn rate graphs
+  const S = { sites: [], equipment: [], summary: [], burn: [], entries: [], entryCount: 0, months: [], view: {}, settings: { ...DEFAULTS }, sync: {}, can: {}, ready: false, failed: false, loadedAt: 0 };
   const F = { site: "all", month: "", from: "", to: "", init: false, showAll: false, showAllEq: false };
   const $ = (id) => document.getElementById(id);
   const nf0 = new Intl.NumberFormat("en-ZA", { maximumFractionDigits: 0 });
@@ -66,7 +70,7 @@
   function apply(d, mine) {
     if (!d || mine < applied) return;
     applied = mine;
-    S.sites = d.sites || []; S.equipment = d.equipment || []; S.summary = d.summary || []; S.entries = d.entries || [];
+    S.sites = d.sites || []; S.equipment = d.equipment || []; S.summary = d.summary || []; S.burn = d.burn || []; S.entries = d.entries || [];
     S.entryCount = d.entryCount || 0; S.months = d.months || []; S.view = d.view || {};
     S.settings = { ...DEFAULTS, ...(d.settings || {}) }; S.sync = d.sync || {}; S.can = d.can || {};
     if (!F.init) {
@@ -241,6 +245,74 @@
     else chart = new Chart($("eqChart"), cfg);
   }
 
+  /* burn rate: a graph per fleet, a bar per machine (its L/h, coloured against its OEM rate), the OEM rate a tick
+     over it. Machines with few engine hours in the period (under a tenth of the busiest's, at most 24) give
+     unsteady rates: they are left out of the graph (not of the fleet's figure) and counted under it. */
+  const burnCharts = {};
+  const burnStatus = (m) => (!m.oem ? "nooem" : m.lph <= m.oem ? "good" : m.lph <= m.oem * 1.1 ? "avg" : "bad");
+  const fmt1 = (v) => (v == null || !isFinite(v) ? "–" : new Intl.NumberFormat("en-ZA", { maximumFractionDigits: 1 }).format(v));
+  function drawBurnFleet(key) {
+    const f = S.burn.find((x) => x.key === key) || { title: key, machines: [], lph: null, oem: null, oemShare: 0, noHours: 0 };
+    const what = { adt: "ADT", excavator: "excavator", dozer: "dozer" }[key];
+    const withH = f.machines.filter((m) => m.lph != null), busiest = Math.max(0, ...withH.map((m) => m.hours));
+    const minH = Math.min(24, busiest / 10), steady = withH.filter((m) => m.hours >= minH).sort((a, b) => b.lph - a.lph), data = steady.slice(0, BARS);
+    $("burnFleet_" + key).innerHTML = f.lph == null ? "No engine hours"
+      : `<strong>${fmt2(f.lph)} L/h</strong> · ` + (f.oem ? `OEM ${fmt2(f.oem)}${f.oemShare < 0.995 ? ` (for ${Math.round(f.oemShare * 100)}% of the hours)` : ""}` : "no OEM rate");
+    const few = withH.length - steady.length;
+    $("burnHint_" + key).textContent = [
+      steady.length > BARS ? `The ${BARS} highest of ${steady.length}.` : "",
+      few ? `${few} with under ${fmt1(minH)} engine hours left out.` : "",
+      f.noHours ? `${f.noHours} with diesel but no engine hours.` : "",
+    ].filter(Boolean).join(" ");
+    const empty = $("burnEmpty_" + key);
+    empty.hidden = data.length > 0;
+    empty.textContent = f.machines.length ? `No ${what} has engine hours on the Pre-Use Hours sheets in this period.` : `No ${what} worked in this period.`;
+    if (!window.Chart) { if (data.length) { empty.hidden = false; empty.textContent = "The chart library didn't load."; } return; }
+    const col = { good: cssVar("--good"), avg: cssVar("--avg"), bad: cssVar("--bad"), nooem: cssVar("--accent") };
+    const muted = cssVar("--muted"), line = cssVar("--line"), ink = cssVar("--ink");
+    const labels = data.map((m) => equip(m.equipmentId).name + (F.site === "all" && S.sites.length > 1 ? " · " + siteName(m.siteId) : ""));
+    const yMax = Math.max(10, ...data.map((m) => Math.max(m.lph, m.oem || 0) * 1.12));
+    const tick = Math.max(4, Math.min(12, 150 / Math.max(1, data.length)));
+    const cfg = {
+      type: "bar",
+      data: { labels, datasets: [
+        { type: "line", label: "OEM", data: data.map((m) => m.oem || null), showLine: false, pointStyle: "line", pointRadius: tick, pointHoverRadius: tick, pointBorderWidth: 3, pointHoverBorderWidth: 3, borderColor: ink, backgroundColor: ink, order: 0 },
+        { type: "bar", label: "Burn rate", data: data.map((m) => m.lph), backgroundColor: data.map((m) => col[burnStatus(m)]), borderRadius: 3, maxBarThickness: 40, order: 1 },
+      ] },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: { duration: 350 },
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            filter: (item) => item.dataset.type === "bar",
+            callbacks: {
+              title: (items) => labels[items[0].dataIndex],
+              label: (ctx) => { const m = data[ctx.dataIndex]; return `${fmt2(m.lph)} L/h` + (m.oem ? ` · OEM ${fmt2(m.oem)} (${m.lph > m.oem ? "+" : ""}${fmt1(((m.lph - m.oem) / m.oem) * 100)}%)` : " · no OEM rate"); },
+              afterLabel: (ctx) => { const m = data[ctx.dataIndex]; return `${fmt0(m.litres)} L over ${fmt1(m.hours)} engine hours${m.model ? " · " + m.model : ""}`; },
+            },
+          },
+        },
+        scales: {
+          y: { beginAtZero: true, max: Math.ceil(yMax), title: { display: true, text: "Litres per engine hour", color: muted, font: { family: "Barlow" } }, ticks: { color: muted, font: { family: "Barlow" } }, grid: { color: line } },
+          x: { ticks: { color: ink, font: { family: "Barlow", weight: "600" }, autoSkip: false, maxRotation: 60 }, grid: { display: false } },
+        },
+      },
+    };
+    if (burnCharts[key]) { burnCharts[key].data = cfg.data; burnCharts[key].options = cfg.options; burnCharts[key].update(); }
+    else burnCharts[key] = new Chart($("burnChart_" + key), cfg);
+  }
+  function drawBurn() {
+    $("burnPeriod").textContent = (F.site === "all" ? "All sites" : siteName(F.site)) + " · " + periodText();
+    FLEETS.forEach((key) => {
+      try { drawBurnFleet(key); }
+      catch (e) {
+        console.error(e);
+        const empty = $("burnEmpty_" + key); empty.hidden = false; empty.textContent = "The graph couldn't be drawn.";
+      }
+    });
+  }
+
   // the forms and buttons the user may use; the rest is hidden (the settings shown, but not editable)
   function drawAccess() {
     document.querySelectorAll("[data-need]").forEach((el) => { el.hidden = !S.ready || !allowed(el.dataset.need); });
@@ -301,6 +373,7 @@
       console.error(e);
       $("chartEmpty").hidden = false; $("chartEmpty").textContent = "The chart couldn't be drawn. The table below has the same figures.";
     }
+    drawBurn();
     const shownEq = F.showAllEq ? rows : rows.slice(0, EQ_LIST);
     $("eqMoreWrap").hidden = rows.length <= EQ_LIST || F.showAllEq;
     $("btnEqMore").textContent = `Show all ${fmt0(rows.length)} machines`;

@@ -90,6 +90,46 @@
     </div>
   </section>
 
+  <section class="card" id="burnSection">
+    <div class="card-head">
+      <h2>Burn rate, litres per engine hour</h2>
+      <span class="muted small" id="burnPeriod"></span>
+    </div>
+    <div class="burn-grid">
+      <div class="burn" data-fleet="adt">
+        <div class="burn-head"><h3>ADTs</h3><span class="burn-fleet num" id="burnFleet_adt"></span></div>
+        <div class="chart-wrap burn-wrap">
+          <canvas id="burnChart_adt" aria-label="Bar chart of the litres per engine hour of each ADT, with its OEM burn rate"></canvas>
+          <div class="chart-empty" id="burnEmpty_adt" hidden></div>
+        </div>
+        <p class="hint burn-hint" id="burnHint_adt"></p>
+      </div>
+      <div class="burn" data-fleet="excavator">
+        <div class="burn-head"><h3>Excavators</h3><span class="burn-fleet num" id="burnFleet_excavator"></span></div>
+        <div class="chart-wrap burn-wrap">
+          <canvas id="burnChart_excavator" aria-label="Bar chart of the litres per engine hour of each excavator, with its OEM burn rate"></canvas>
+          <div class="chart-empty" id="burnEmpty_excavator" hidden></div>
+        </div>
+        <p class="hint burn-hint" id="burnHint_excavator"></p>
+      </div>
+      <div class="burn" data-fleet="dozer">
+        <div class="burn-head"><h3>Dozers</h3><span class="burn-fleet num" id="burnFleet_dozer"></span></div>
+        <div class="chart-wrap burn-wrap">
+          <canvas id="burnChart_dozer" aria-label="Bar chart of the litres per engine hour of each dozer, with its OEM burn rate"></canvas>
+          <div class="chart-empty" id="burnEmpty_dozer" hidden></div>
+        </div>
+        <p class="hint burn-hint" id="burnHint_dozer"></p>
+      </div>
+    </div>
+    <div class="legend burn-legend">
+      <span><i style="background:var(--good)"></i>Within the OEM rate</span>
+      <span><i style="background:var(--avg)"></i>Up to 10% over</span>
+      <span><i style="background:var(--bad)"></i>More than 10% over</span>
+      <span><i style="background:var(--accent)"></i>No OEM rate for the model</span>
+      <span><i class="tick"></i>OEM burn rate</span>
+    </div>
+  </section>
+
   <section class="card">
     <div class="card-head">
       <h2>Equipment summary</h2>
@@ -126,6 +166,7 @@
       <p class="small" style="margin:0 0 8px">Total bcm = waste bcm + coal tons ÷ coal density.</p>
       <p class="small" style="margin:0 0 8px">L/BCM = diesel litres ÷ total bcm, for each machine and for the whole site.</p>
       <p class="small" style="margin:0 0 8px">From the production records: diesel from the submitted Daily Diesel Sheets; volumes from Hourly Production, the truck loads each excavator filled and each truck hauled, and production dozing. A truck's loads are its excavator's bcm, so they count once in the site's total.</p>
+      <p class="small" style="margin:0 0 8px">Burn rate = diesel litres ÷ engine hours, for each ADT, excavator and dozer and for each fleet. Engine hours come from the Pre-Use Hours sheets: the night shift's closing hour-meter reading less the day shift's opening one, as in the Monthly Diesel Reconciliation. The OEM burn rate is the model's (OEM Diesel Burn Rate) at the end of the period.</p>
       <p class="small muted" style="margin:0">Current coal density: <strong id="densityNote">1.4</strong> t/bcm. Machines that moved no volume (water carts, graders, light vehicles) show their diesel but no L/BCM. Change density and the gauge bands under Setup.</p>
     </div>
   </section>

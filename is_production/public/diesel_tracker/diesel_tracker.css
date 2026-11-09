@@ -109,6 +109,17 @@ details.more .chips { margin-top: 6px; }
 .chart-wrap { position: relative; height: 300px; }
 .chart-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); text-align: center; padding: 20px; }
 
+/* burn rate: one graph per fleet */
+.burn-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.burn { display: grid; gap: 6px; min-width: 0; align-content: start; }
+.burn-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.burn-fleet { font-size: .85rem; color: var(--muted); }
+.burn-fleet strong { color: var(--ink); font-family: var(--font-display); font-size: 1.15rem; font-weight: 600; }
+.burn-wrap { height: 260px; }
+.burn-hint { margin: 0; min-height: 1.2em; }
+.burn-legend { justify-content: flex-start; margin-top: 12px; }
+.legend i.tick { width: 14px; height: 0; border-top: 3px solid var(--ink); border-radius: 0; }
+
 /* tables */
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: .9rem; }
@@ -139,7 +150,7 @@ tbody tr:hover { background: var(--surface-2); }
 #toast.err { background: var(--bad); color: #fff; }
 
 @media (max-width: 960px) {
-  .overview, .forms { grid-template-columns: 1fr; }
+  .overview, .forms, .burn-grid { grid-template-columns: 1fr; }
   .setup { grid-template-columns: 1fr; }
   .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
