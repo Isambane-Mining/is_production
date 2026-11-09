@@ -73,6 +73,11 @@ button { font: inherit; font-weight: 600; cursor: pointer; border-radius: 7px; b
 .btn-del.armed { background: var(--bad); color: #fff; }
 button:disabled { opacity: .55; cursor: default; }
 
+.sync-bar { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 14px; font-size: .88rem; color: var(--muted); }
+.tag { display: inline-block; font-size: .7rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--accent); background: var(--surface-2); border-radius: 4px; padding: 1px 6px; margin-left: 6px; vertical-align: 1px; }
+.hauled { color: var(--muted); font-size: .78rem; display: block; }
+details.more summary { cursor: pointer; color: var(--accent); font-size: .85rem; font-weight: 600; margin-top: 4px; }
+details.more .chips { margin-top: 6px; }
 .banner { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; background: var(--avg-soft); border: 1px solid var(--avg); border-radius: var(--radius); padding: 10px 14px; font-size: .92rem; }
 .empty { display: grid; gap: 10px; justify-items: start; }
 .empty p { margin: 0; max-width: 62ch; }

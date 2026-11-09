@@ -29,6 +29,11 @@
     </div>
   </header>
 
+  <div class="sync-bar" id="syncBar" hidden>
+    <span id="syncNote"></span>
+    <button class="btn-ghost" id="btnSync" type="button" data-need="sync">Update now</button>
+  </div>
+
   <div class="banner" id="exampleBanner" hidden>
     <span>You're looking at <strong>example data</strong>. Remove it when you're ready to enter your own figures.</span>
     <button class="btn-ghost" id="btnClearEx" type="button" data-need="exampleData">Remove example data</button>
@@ -91,11 +96,12 @@
       <span class="muted small" id="periodLabel"></span>
     </div>
     <div class="table-wrap">
-      <table>
+      <table id="eqTableWrap">
         <thead><tr><th>Equipment</th><th>Type</th><th>Site</th><th class="r">Diesel (L)</th><th class="r">Coal (t)</th><th class="r">Waste (bcm)</th><th class="r">Total bcm</th><th class="r">L/bcm</th><th>Status</th></tr></thead>
         <tbody id="eqTable"></tbody>
       </table>
     </div>
+    <div class="form-actions" id="eqMoreWrap" hidden><button class="btn-ghost" type="button" id="btnEqMore">Show all machines</button></div>
   </section>
 
   <section class="forms">
@@ -119,7 +125,8 @@
       <div class="card-head"><h2>How L/BCM is worked out</h2></div>
       <p class="small" style="margin:0 0 8px">Total bcm = waste bcm + coal tons ÷ coal density.</p>
       <p class="small" style="margin:0 0 8px">L/BCM = diesel litres ÷ total bcm, for each machine and for the whole site.</p>
-      <p class="small muted" style="margin:0">Current coal density: <strong id="densityNote">1.4</strong> t/bcm. Machines that moved no volume (water carts, graders) show their diesel but no L/BCM. Change density and the gauge bands under Setup.</p>
+      <p class="small" style="margin:0 0 8px">From the production records: diesel from the submitted Daily Diesel Sheets; volumes from Hourly Production, the truck loads each excavator filled and each truck hauled, and production dozing. A truck's loads are its excavator's bcm, so they count once in the site's total.</p>
+      <p class="small muted" style="margin:0">Current coal density: <strong id="densityNote">1.4</strong> t/bcm. Machines that moved no volume (water carts, graders, light vehicles) show their diesel but no L/BCM. Change density and the gauge bands under Setup.</p>
     </div>
   </section>
 

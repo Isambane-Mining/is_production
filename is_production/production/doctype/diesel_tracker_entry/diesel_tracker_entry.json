@@ -3,17 +3,20 @@
  "allow_rename": 0,
  "autoname": "hash",
  "creation": "2026-11-09 09:00:00.000000",
- "description": "Diesel litres and the coal and waste one machine moved, for a shift, day or week (Diesel L/BCM Tracker, /portal_diesel_tracker).",
+ "description": "Diesel litres and the coal and waste one machine moved, for a shift, day or week (Diesel L/BCM Tracker, /portal_diesel_tracker); typed, or brought in from the production records.",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
   "entry_date",
   "site",
   "equipment",
+  "source",
   "column_break_volumes",
   "diesel_litres",
   "coal_tons",
+  "coal_bcm",
   "waste_bcm",
+  "volume_counted",
   "is_example"
  ],
  "fields": [
@@ -24,7 +27,9 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Date",
-   "reqd": 1
+   "read_only_depends_on": "eval:doc.source=='Production records'",
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "site",
@@ -33,7 +38,9 @@
    "in_standard_filter": 1,
    "label": "Site",
    "options": "Diesel Tracker Site",
-   "reqd": 1
+   "read_only_depends_on": "eval:doc.source=='Production records'",
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "equipment",
@@ -42,7 +49,21 @@
    "in_standard_filter": 1,
    "label": "Equipment",
    "options": "Diesel Tracker Equipment",
-   "reqd": 1
+   "read_only_depends_on": "eval:doc.source=='Production records'",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "default": "Manual",
+   "description": "Production records: brought in every hour from the submitted Daily Diesel Sheets (diesel) and Hourly Production (truck loads by excavator and truck, production dozing). Change those, not this entry.",
+   "fieldname": "source",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Source",
+   "options": "Manual\nProduction records",
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "fieldname": "column_break_volumes",
@@ -55,15 +76,27 @@
    "label": "Diesel (litres)",
    "non_negative": 1,
    "precision": "2",
+   "read_only_depends_on": "eval:doc.source=='Production records'",
    "reqd": 1
   },
   {
+   "description": "From the production records: the coal bcm × the coal density (Diesel Tracker Settings).",
    "fieldname": "coal_tons",
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Coal (tons)",
    "non_negative": 1,
-   "precision": "2"
+   "precision": "2",
+   "read_only_depends_on": "eval:doc.source=='Production records'"
+  },
+  {
+   "depends_on": "eval:doc.source=='Production records'",
+   "fieldname": "coal_bcm",
+   "fieldtype": "Float",
+   "label": "Coal (bcm)",
+   "non_negative": 1,
+   "precision": "2",
+   "read_only": 1
   },
   {
    "fieldname": "waste_bcm",
@@ -71,7 +104,16 @@
    "in_list_view": 1,
    "label": "Waste (bcm)",
    "non_negative": 1,
-   "precision": "2"
+   "precision": "2",
+   "read_only_depends_on": "eval:doc.source=='Production records'"
+  },
+  {
+   "default": "1",
+   "description": "Off for haul trucks from the production records: their loads are the excavators' bcm, so the site counts them once. The machine's own L/BCM still uses them.",
+   "fieldname": "volume_counted",
+   "fieldtype": "Check",
+   "label": "Counts Toward the Site's Volume",
+   "read_only_depends_on": "eval:doc.source=='Production records'"
   },
   {
    "default": "0",
@@ -85,7 +127,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-11-09 09:00:00.000000",
+ "modified": "2026-11-09 11:00:00.000000",
  "modified_by": "Administrator",
  "module": "Production",
  "name": "Diesel Tracker Entry",

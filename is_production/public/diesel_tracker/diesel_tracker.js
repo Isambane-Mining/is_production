@@ -1,18 +1,23 @@
 /* The Diesel L/BCM Tracker (templates/pages/portal_diesel_tracker.html).
 
    Its sites, equipment, entries and settings live on the bench, in the Diesel Tracker doctypes, through
-   is_production.production.diesel_tracker. Every change answers with the data afresh, and the page looks again
-   every minute while it is shown, so everyone with access sees the same figures. What the user may change
-   (window.DIESEL_TRACKER and the data's "can") decides which forms and delete buttons are shown.
+   is_production.production.diesel_tracker. Entries are typed here, or brought in every hour from the production
+   records (the submitted Daily Diesel Sheets and Hourly Production). The page asks for one period (and site) at a
+   time: the server sends each machine's sums over it ("summary") and the latest entries. Every change answers
+   with the data afresh, and the page looks again every two minutes while it is shown. What the user may change
+   (the data's "can") decides which forms and buttons are shown.
 
-   L/BCM = diesel litres ÷ (waste bcm + coal tons ÷ coal density), per machine and over the period. */
+   L/BCM = diesel litres ÷ (waste bcm + coal tons ÷ coal density), per machine and over the period. A haul
+   truck's loads from the production records are its excavator's bcm: they are the truck's own, but the site's
+   totals count them once (the entries' "counted"). */
 (function () {
   "use strict";
   const CFG = window.DIESEL_TRACKER || {};
   const API = "/api/method/is_production.production.diesel_tracker.";
   const DEFAULTS = { density: 1.4, green: 0.8, amber: 1.2, max: 2 };
-  const S = { sites: [], equipment: [], entries: [], settings: { ...DEFAULTS }, can: {}, ready: false, failed: false, loadedAt: 0 };
-  const F = { site: "all", month: "", from: "", to: "", init: false, showAll: false };
+  const LIST = 40, EQ_LIST = 50, BARS = 30; // the entries and machines listed, the bars drawn, before "show all"
+  const S = { sites: [], equipment: [], summary: [], entries: [], entryCount: 0, months: [], view: {}, settings: { ...DEFAULTS }, sync: {}, can: {}, ready: false, failed: false, loadedAt: 0 };
+  const F = { site: "all", month: "", from: "", to: "", init: false, showAll: false, showAllEq: false };
   const $ = (id) => document.getElementById(id);
   const nf0 = new Intl.NumberFormat("en-ZA", { maximumFractionDigits: 0 });
   const nf2 = new Intl.NumberFormat("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -24,6 +29,8 @@
   const monthRange = (ym) => { const [y, m] = ym.split("-").map(Number); const last = new Date(y, m, 0).getDate(); return [ym + "-01", ym + "-" + String(last).padStart(2, "0")]; };
   const dateLabel = (iso) => { const [y, m, d] = iso.split("-").map(Number); return new Date(y, m - 1, d).toLocaleDateString("en-ZA", { day: "numeric", month: "short", year: "numeric" }); };
   const timeLabel = (t) => new Date(t).toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" });
+  // (the server's "2026-11-09 10:14:03.123456", in the bench's time)
+  const stampLabel = (s) => { const [d, t] = String(s).split(" "); return dateLabel(d) + (t ? " " + t.slice(0, 5) : ""); };
 
   /* ---------- the bench ---------- */
   // the message of a failed call: Frappe's own (a validation), else what the status says
@@ -52,27 +59,37 @@
     if (!r.ok) throw new Error(serverMsg(r.status, data));
     return data ? data.message : null;
   }
+  // the period and site the page shows (the latest month with entries, the first time)
+  const view = () => (F.init ? { from: F.from, to: F.to, site: F.site, limit: F.showAll ? 2000 : LIST } : { latest: 1, site: F.site, limit: LIST });
   // (each answer is applied unless a later request has already been: a slow refresh never undoes a save)
-  let seq = 0, applied = 0, writing = 0;
+  let seq = 0, applied = 0, writing = 0, pending = false;
   function apply(d, mine) {
     if (!d || mine < applied) return;
     applied = mine;
-    S.sites = d.sites || []; S.equipment = d.equipment || []; S.entries = d.entries || [];
-    S.settings = { ...DEFAULTS, ...(d.settings || {}) }; S.can = d.can || {};
+    S.sites = d.sites || []; S.equipment = d.equipment || []; S.summary = d.summary || []; S.entries = d.entries || [];
+    S.entryCount = d.entryCount || 0; S.months = d.months || []; S.view = d.view || {};
+    S.settings = { ...DEFAULTS, ...(d.settings || {}) }; S.sync = d.sync || {}; S.can = d.can || {};
+    if (!F.init) {
+      F.init = true; F.from = S.view.from || ""; F.to = S.view.to || "";
+      const ym = F.from.slice(0, 7);
+      F.month = !F.from && !F.to ? "all" : ym && monthRange(ym).join() === [F.from, F.to].join() ? ym : "custom";
+    }
     S.ready = true; S.failed = false; S.loadedAt = Date.now();
     render();
   }
   async function write(method, args) {
     const mine = ++seq; writing++;
-    try { const r = await call(method, args); apply(r && r.data, mine); return r || {}; }
-    finally { writing--; }
+    try { const r = await call(method, { ...args, view: view() }); apply(r && r.data, mine); return r || {}; }
+    finally { writing--; if (!writing && pending) { pending = false; refresh(); } }
   }
   async function refresh() {
-    if (writing) return;
+    if (writing) { pending = true; return; }
     const mine = ++seq;
-    try { apply(await call("get_data"), mine); }
+    try { apply(await call("get_data", { view: view() }), mine); }
     catch (e) { S.failed = true; S.failMsg = e.message; render(); }
   }
+  let refreshT = 0;
+  const refreshSoon = () => { clearTimeout(refreshT); refreshT = setTimeout(refresh, 120); };
   const backend = {
     add: (col, obj) => write({ sites: "add_site", equipment: "add_equipment", entries: "add_entry" }[col], obj).then((r) => r.id),
     remove: (col, id) => write("delete", { kind: col, id }),
@@ -81,12 +98,12 @@
   const errMsg = (e) => (e && e.message) || "Couldn't save. Check your connection and try again.";
 
   let toastT;
-  function toast(msg, err) {
+  function toast(msg, err, ms) {
     const t = $("toast"); t.textContent = msg; t.className = "show" + (err ? " err" : "");
-    clearTimeout(toastT); toastT = setTimeout(() => { t.className = err ? "err" : ""; }, err ? 5000 : 2400);
+    clearTimeout(toastT); toastT = setTimeout(() => { t.className = err ? "err" : ""; }, ms || (err ? 5000 : 2400));
   }
 
-  // what the user may do: entry, setup, settings, and loading or removing the example data
+  // what the user may do: entry, setup, settings, sync, and loading or removing the example data
   function allowed(what) {
     const c = S.can;
     if (what === "exampleData") return !!(c.setup && c.entry && c.deleteSetup);
@@ -99,9 +116,6 @@
   const STATUS_TEXT = { good: "Low use", avg: "Average", bad: "High use", none: "No volume" };
   const siteName = (id) => (S.sites.find((s) => s.id === id) || {}).name || "Removed site";
   const equip = (id) => S.equipment.find((q) => q.id === id) || { name: "Removed equipment", type: "" };
-  function periodEntries() {
-    return S.entries.filter((e) => (!F.from || e.date >= F.from) && (!F.to || e.date <= F.to) && (F.site === "all" || e.siteId === F.site));
-  }
 
   /* ---------- rendering ---------- */
   let raf = 0;
@@ -114,19 +128,11 @@
     else if (opts.length) sel.value = opts[0][0];
   }
 
-  function initFilters() {
-    if (F.init || !S.ready) return;
-    F.init = true;
-    const months = [...new Set(S.entries.map((e) => (e.date || "").slice(0, 7)))].filter(Boolean).sort();
-    const ym = months.length ? months[months.length - 1] : todayISO().slice(0, 7);
-    F.month = ym; [F.from, F.to] = monthRange(ym);
-  }
-
   function drawFilters() {
     const siteOpts = [["all", "All sites"], ...S.sites.slice().sort((a, b) => a.name.localeCompare(b.name)).map((s) => [s.id, s.name])];
-    if (F.site !== "all" && !S.sites.some((s) => s.id === F.site)) F.site = "all";
+    if (F.site !== "all" && S.ready && !S.sites.some((s) => s.id === F.site)) { F.site = "all"; refreshSoon(); }
     fillSelect($("fSite"), siteOpts, F.site);
-    const months = new Set(S.entries.map((e) => (e.date || "").slice(0, 7)).filter(Boolean));
+    const months = new Set(S.months);
     months.add(todayISO().slice(0, 7));
     if (F.month && F.month.length === 7) months.add(F.month);
     const mOpts = [...months].sort().reverse().map((m) => [m, monthLabel(m)]);
@@ -201,9 +207,9 @@
     },
   };
   function drawChart(rows) {
-    const data = rows.filter((r) => r.lbcm != null).sort((a, b) => b.lbcm - a.lbcm);
+    const all = rows.filter((r) => r.lbcm != null).sort((a, b) => b.lbcm - a.lbcm), data = all.slice(0, BARS);
     $("chartEmpty").hidden = data.length > 0;
-    $("chartNote").textContent = data.length ? "Dashed lines mark the green and amber limits" : "";
+    $("chartNote").textContent = !data.length ? "" : (all.length > BARS ? `The ${BARS} highest of ${all.length} machines. ` : "") + "Dashed lines mark the green and amber limits";
     if (!window.Chart) { if (data.length) { $("chartEmpty").hidden = false; $("chartEmpty").textContent = "The chart library didn't load. The table below has the same figures."; } return; }
     const colFor = { good: cssVar("--good"), avg: cssVar("--avg"), bad: cssVar("--bad") };
     const muted = cssVar("--muted"), line = cssVar("--line"), ink = cssVar("--ink");
@@ -220,7 +226,7 @@
             callbacks: {
               title: (items) => labels[items[0].dataIndex],
               label: (ctx) => nf2.format(data[ctx.dataIndex].lbcm) + " L/bcm (" + STATUS_TEXT[status(data[ctx.dataIndex].lbcm)] + ")",
-              afterLabel: (ctx) => { const r = data[ctx.dataIndex]; return fmt0(r.diesel) + " L diesel over " + fmt0(r.bcm) + " bcm"; },
+              afterLabel: (ctx) => { const r = data[ctx.dataIndex]; return fmt0(r.diesel) + " L diesel over " + fmt0(r.bcm) + " bcm" + (r.hauled ? " hauled" : ""); },
             },
           },
         },
@@ -246,29 +252,32 @@
       : "No sites have been set up yet. A Production Manager adds the sites and equipment under <strong>Setup</strong>.";
   }
 
+  // when the production records were last brought in
+  function drawSync() {
+    const at = S.sync && S.sync.at;
+    $("syncBar").hidden = !S.ready || (!at && !allowed("sync"));
+    $("syncNote").textContent = at
+      ? `Diesel and volumes come in every hour from the Daily Diesel Sheets and Hourly Production. Last brought in ${stampLabel(at)}${S.sync.note ? " (" + S.sync.note + ")" : ""}.`
+      : "Diesel and volumes come in every hour from the Daily Diesel Sheets and Hourly Production. They have not been brought in yet.";
+  }
+
   function draw() {
-    initFilters();
     drawFilters();
     drawAccess();
+    drawSync();
     const st = S.settings;
-    const hasEx = [S.sites, S.equipment, S.entries].some((c) => c.some((d) => d.example));
+    const hasEx = S.sites.some((d) => d.example) || S.equipment.some((d) => d.example);
     $("exampleBanner").hidden = !hasEx;
     $("emptyState").hidden = !S.ready || S.sites.length > 0;
     $("modeNote").textContent = !S.ready
-      ? (S.failed ? `The saved data can't be reached: ${S.failMsg} The page tries again every minute.` : "Loading saved data…")
+      ? (S.failed ? `The saved data can't be reached: ${S.failMsg} The page tries again in two minutes.` : "Loading saved data…")
       : S.failed ? `Couldn't refresh (${S.failMsg}): showing the figures from ${timeLabel(S.loadedAt)}.`
       : "Saved on the bench. Everyone with access sees the same figures.";
     $("densityNote").textContent = nf2.format(st.density);
 
-    const list = periodEntries();
+    // the period's totals: all the diesel; each bcm once (haul trucks' loads are their excavators')
     let tD = 0, tC = 0, tW = 0;
-    const byEq = new Map();
-    list.forEach((e) => {
-      tD += +e.diesel || 0; tC += +e.coal || 0; tW += +e.waste || 0;
-      const r = byEq.get(e.equipmentId) || { id: e.equipmentId, siteId: e.siteId, diesel: 0, coal: 0, waste: 0 };
-      r.diesel += +e.diesel || 0; r.coal += +e.coal || 0; r.waste += +e.waste || 0;
-      byEq.set(e.equipmentId, r);
-    });
+    S.summary.forEach((r) => { tD += r.diesel; tC += r.coalCounted; tW += r.wasteCounted; });
     const coalBcm = tC / st.density, tB = tW + coalBcm;
     const overall = tB > 0 ? tD / tB : null;
     $("kDiesel").textContent = fmt0(tD);
@@ -280,29 +289,34 @@
     $("periodLabel").textContent = periodText();
     drawGauge(overall);
 
-    const rows = [...byEq.values()].map((r) => {
-      const q = equip(r.id); const bcm = r.waste + r.coal / st.density;
-      return { ...r, name: q.name, type: q.type, bcm, lbcm: bcm > 0 ? r.diesel / bcm : null };
-    }).sort((a, b) => (b.lbcm == null ? -1 : b.lbcm) - (a.lbcm == null ? -1 : a.lbcm));
+    // each machine over the period, on its own volumes
+    const rows = S.summary.map((r) => {
+      const q = equip(r.equipmentId), bcm = r.waste + r.coal / st.density;
+      return { ...r, id: r.equipmentId, name: q.name, type: q.type, bcm, lbcm: bcm > 0 ? r.diesel / bcm : null,
+        hauled: r.coal + r.waste > 1e-9 && r.coalCounted + r.wasteCounted < r.coal + r.waste - 1e-6, auto: r.nAuto > 0 };
+    }).sort((a, b) => (b.lbcm == null ? -1 : b.lbcm) - (a.lbcm == null ? -1 : a.lbcm) || b.diesel - a.diesel);
     // (a chart that fails leaves the tables and forms below drawn)
     try { drawChart(rows); }
     catch (e) {
       console.error(e);
       $("chartEmpty").hidden = false; $("chartEmpty").textContent = "The chart couldn't be drawn. The table below has the same figures.";
     }
-    $("eqTable").innerHTML = rows.length ? rows.map((r) => {
+    const shownEq = F.showAllEq ? rows : rows.slice(0, EQ_LIST);
+    $("eqMoreWrap").hidden = rows.length <= EQ_LIST || F.showAllEq;
+    $("btnEqMore").textContent = `Show all ${fmt0(rows.length)} machines`;
+    $("eqTable").innerHTML = shownEq.length ? shownEq.map((r) => {
       const s = status(r.lbcm);
-      return `<tr><td><strong>${esc(r.name)}</strong></td><td>${esc(r.type)}</td><td>${esc(siteName(r.siteId))}</td><td class="r">${fmt0(r.diesel)}</td><td class="r">${fmt0(r.coal)}</td><td class="r">${fmt0(r.waste)}</td><td class="r">${fmt0(r.bcm)}</td><td class="r"><strong>${fmt2(r.lbcm)}</strong></td><td><span class="pill ${s}">${STATUS_TEXT[s]}</span></td></tr>`;
+      return `<tr><td><strong>${esc(r.name)}</strong></td><td>${esc(r.type)}</td><td>${esc(siteName(r.siteId))}</td><td class="r">${fmt0(r.diesel)}</td><td class="r">${fmt0(r.coal)}</td><td class="r">${fmt0(r.waste)}</td><td class="r">${fmt0(r.bcm)}${r.hauled ? '<span class="hauled" title="Its loads are the excavators\' bcm: the site counts them once">hauled</span>' : ""}</td><td class="r"><strong>${fmt2(r.lbcm)}</strong></td><td><span class="pill ${s}">${STATUS_TEXT[s]}</span></td></tr>`;
     }).join("") : `<tr><td colspan="9" class="muted">No entries for ${esc(periodText().toLowerCase() === "all dates" ? "any date" : periodText())}${F.site === "all" ? "" : " at " + esc(siteName(F.site))}.</td></tr>`;
 
-    const sorted = list.slice().sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-    const shown = F.showAll ? sorted : sorted.slice(0, 40);
-    const del = allowed("deleteEntry");
-    $("entryCount").textContent = sorted.length + (sorted.length === 1 ? " entry" : " entries");
-    $("moreWrap").hidden = sorted.length <= 40 || F.showAll;
-    $("entryTable").innerHTML = shown.length ? shown.map((e) => {
+    // the latest entries of the period (all of them, up to 2 000, after "Show all entries")
+    const del = allowed("deleteEntry"), n = S.entryCount;
+    $("entryCount").textContent = fmt0(n) + (n === 1 ? " entry" : " entries") + (S.entries.length < n ? ` · the latest ${fmt0(S.entries.length)} shown` : "");
+    $("moreWrap").hidden = n <= LIST || F.showAll;
+    $("entryTable").innerHTML = S.entries.length ? S.entries.map((e) => {
       const b = bcmOf(e), l = b > 0 ? (+e.diesel || 0) / b : null, s = status(l);
-      return `<tr><td>${esc(dateLabel(e.date))}</td><td>${esc(siteName(e.siteId))}</td><td>${esc(equip(e.equipmentId).name)}</td><td class="r">${fmt0(e.diesel)}</td><td class="r">${fmt0(e.coal)}</td><td class="r">${fmt0(e.waste)}</td><td class="r" style="color:var(--${s === "none" ? "muted" : s})"><strong>${fmt2(l)}</strong></td><td class="r">${del ? `<button type="button" class="btn-del" data-del="entries" data-id="${esc(e.id)}">Delete</button>` : ""}</td></tr>`;
+      const tag = e.auto ? '<span class="tag" title="Brought in from the Daily Diesel Sheets and Hourly Production">records</span>' : "";
+      return `<tr><td>${esc(dateLabel(e.date))}</td><td>${esc(siteName(e.siteId))}</td><td>${esc(equip(e.equipmentId).name)}${tag}</td><td class="r">${fmt0(e.diesel)}</td><td class="r">${fmt0(e.coal)}</td><td class="r">${fmt0(e.waste)}</td><td class="r" style="color:var(--${s === "none" ? "muted" : s})"><strong>${fmt2(l)}</strong></td><td class="r">${del && !e.auto ? `<button type="button" class="btn-del" data-del="entries" data-id="${esc(e.id)}">Delete</button>` : ""}</td></tr>`;
     }).join("") : `<tr><td colspan="8" class="muted">Nothing logged in this period yet.</td></tr>`;
 
     drawForms();
@@ -328,13 +342,19 @@
     preview();
   }
 
+  // sites and their machines; what the production records bring in cannot be deleted here (it would come back)
   function drawSetup() {
     const sites = S.sites.slice().sort((a, b) => a.name.localeCompare(b.name));
     const del = allowed("deleteSetup");
+    const chip = (q) => `<span class="chip">${esc(q.name)} <em>${esc(q.type)}</em>${del && !q.nAuto ? `<button type="button" class="btn-del" data-del="equipment" data-id="${esc(q.id)}" aria-label="Delete ${esc(q.name)}">✕</button>` : ""}</span>`;
+    const openSites = new Set(Array.from(document.querySelectorAll("#siteList details[open]")).map((d) => d.dataset.site));
     $("siteList").innerHTML = sites.length ? sites.map((s) => {
       const eq = S.equipment.filter((q) => q.siteId === s.id).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-      return `<div class="site-block"><div class="site-line"><strong>${esc(s.name)}</strong>${del ? `<button type="button" class="btn-del" data-del="sites" data-id="${esc(s.id)}">Delete site</button>` : ""}</div>
-        <div class="chips">${eq.length ? eq.map((q) => `<span class="chip">${esc(q.name)} <em>${esc(q.type)}</em>${del ? `<button type="button" class="btn-del" data-del="equipment" data-id="${esc(q.id)}" aria-label="Delete ${esc(q.name)}">✕</button>` : ""}</span>`).join("") : '<span class="muted small">No equipment yet</span>'}</div></div>`;
+      const first = eq.slice(0, 12), rest = eq.slice(12);
+      const linked = s.location ? `<span class="tag" title="Its entries come in from the production records of ${esc(s.location)}">records</span>` : "";
+      return `<div class="site-block"><div class="site-line"><strong>${esc(s.name)}${linked}</strong>${del && !s.nAuto ? `<button type="button" class="btn-del" data-del="sites" data-id="${esc(s.id)}">Delete site</button>` : `<span class="muted small">${fmt0(eq.length)} machines</span>`}</div>
+        <div class="chips">${first.length ? first.map(chip).join("") : '<span class="muted small">No equipment yet</span>'}</div>
+        ${rest.length ? `<details class="more" data-site="${esc(s.id)}"${openSites.has(s.id) ? " open" : ""}><summary>${fmt0(rest.length)} more</summary><div class="chips">${rest.map(chip).join("")}</div></details>` : ""}</div>`;
     }).join("") : `<p class="muted small" style="margin:0">${allowed("setup") ? "No sites yet. Add one on the right." : "No sites yet."}</p>`;
   }
 
@@ -348,21 +368,23 @@
   }
 
   /* ---------- events ---------- */
-  $("fSite").addEventListener("change", (e) => { F.site = e.target.value; render(); });
+  const periodChanged = () => { F.showAll = false; F.showAllEq = false; render(); refreshSoon(); };
+  $("fSite").addEventListener("change", (e) => { F.site = e.target.value; periodChanged(); });
   $("fMonth").addEventListener("change", (e) => {
     const v = e.target.value; F.month = v;
     if (v === "all") { F.from = ""; F.to = ""; }
     else if (v.length === 7) [F.from, F.to] = monthRange(v);
-    render();
+    periodChanged();
   });
   ["fFrom", "fTo"].forEach((id) => $(id).addEventListener("change", () => {
     F.from = $("fFrom").value; F.to = $("fTo").value;
     if (F.from && F.to && F.from > F.to) { [F.from, F.to] = [F.to, F.from]; }
     const match = F.from && F.from.slice(0, 7) === (F.to || "").slice(0, 7) && monthRange(F.from.slice(0, 7)).join() === [F.from, F.to].join();
     F.month = match ? F.from.slice(0, 7) : (!F.from && !F.to ? "all" : "custom");
-    $("fFrom").blur(); render();
+    $("fFrom").blur(); periodChanged();
   }));
-  $("btnMore").addEventListener("click", () => { F.showAll = true; render(); });
+  $("btnMore").addEventListener("click", () => { F.showAll = true; refresh(); });
+  $("btnEqMore").addEventListener("click", () => { F.showAllEq = true; render(); });
   $("eSite").addEventListener("change", () => { $("eEquip").value = ""; render(); });
   ["eDiesel", "eCoal", "eWaste"].forEach((id) => $(id).addEventListener("input", preview));
   ["stDensity", "stGreen", "stAmber", "stMax"].forEach((id) => $(id).addEventListener("input", (e) => { e.target.dataset.dirty = "1"; }));
@@ -412,6 +434,17 @@
     catch (e) { toast(errMsg(e), true); }
   });
 
+  // bring the period shown in from the production records now (every day of them for "All dates")
+  $("btnSync").addEventListener("click", async () => {
+    const btn = $("btnSync"); btn.disabled = true; btn.textContent = "Bringing them in…";
+    try {
+      const r = await write("sync_now", { from_date: F.from, to_date: F.to });
+      const x = r.sync || {};
+      toast(`From the production records, ${x.from ? dateLabel(x.from) : "–"} to ${x.to ? dateLabel(x.to) : "–"}: ${fmt0(x.added)} added, ${fmt0(x.updated)} updated, ${fmt0(x.removed)} removed.`, false, 6000);
+    } catch (e) { toast(errMsg(e), true); }
+    btn.disabled = false; btn.textContent = "Update now";
+  });
+
   /* two-click delete (a site or machine takes its entries with it, on the server) */
   document.addEventListener("click", async (ev) => {
     const b = ev.target.closest("[data-del]"); if (!b) return;
@@ -420,8 +453,8 @@
       b.dataset.label = b.textContent; b.classList.add("armed");
       const col = b.dataset.del, id = b.dataset.id;
       let extra = "";
-      if (col === "sites") { const n = S.equipment.filter((q) => q.siteId === id).length, m = S.entries.filter((e) => e.siteId === id).length; extra = n || m ? ` + ${n} machines, ${m} entries` : ""; }
-      if (col === "equipment") { const m = S.entries.filter((e) => e.equipmentId === id).length; extra = m ? ` + ${m} entries` : ""; }
+      if (col === "sites") { const n = S.equipment.filter((q) => q.siteId === id).length, m = (S.sites.find((s) => s.id === id) || {}).n || 0; extra = n || m ? ` + ${n} machines, ${m} entries` : ""; }
+      if (col === "equipment") { const m = (S.equipment.find((q) => q.id === id) || {}).n || 0; extra = m ? ` + ${m} entries` : ""; }
       b.textContent = "Confirm" + extra;
       setTimeout(() => { if (b.isConnected && b.classList.contains("armed")) { b.classList.remove("armed"); b.textContent = b.dataset.label; } }, 4000);
       return;
@@ -438,8 +471,8 @@
   $("btnLoadEx").addEventListener("click", async () => {
     const btn = $("btnLoadEx"); btn.disabled = true; btn.textContent = "Loading example data…";
     try {
+      F.init = false; // (the period: the latest month, the example's)
       await write("load_example");
-      F.init = false; initFilters();
       toast("Example data loaded");
     } catch (e) { toast(errMsg(e), true); }
     btn.disabled = false; btn.textContent = "Load example data"; render();
@@ -449,8 +482,8 @@
     if (btn.dataset.armed !== "1") { btn.dataset.armed = "1"; btn.textContent = "Click again to remove all example data"; setTimeout(() => { btn.dataset.armed = ""; btn.textContent = "Remove example data"; }, 4000); return; }
     btn.disabled = true; btn.textContent = "Removing…";
     try {
+      F.init = false;
       const r = await write("clear_example");
-      F.init = false; F.month = ""; initFilters();
       const kept = (r && r.kept) || [];
       toast(kept.length ? `Example data removed. Kept ${kept.join(", ")}: your own entries are logged against ${kept.length === 1 ? "it" : "them"}.` : "Example data removed", false);
     } catch (e) { toast(errMsg(e), true); }
@@ -461,9 +494,9 @@
   try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render); } catch (e) { /* old browser */ }
   new MutationObserver(render).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
-  /* ---------- start: load, then look again every minute while the page is shown ---------- */
+  /* ---------- start: load, then look again every two minutes while the page is shown ---------- */
   render();
   refresh();
-  setInterval(() => { if (document.visibilityState === "visible") refresh(); }, 60000);
+  setInterval(() => { if (document.visibilityState === "visible") refresh(); }, 120000);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && Date.now() - S.loadedAt > 15000) refresh(); });
 })();

@@ -10,7 +10,10 @@
   "column_break_gauge",
   "green_limit",
   "amber_limit",
-  "gauge_max"
+  "gauge_max",
+  "section_break_sync",
+  "last_synced",
+  "last_sync_note"
  ],
  "fields": [
   {
@@ -50,13 +53,31 @@
    "label": "Gauge Maximum (L/bcm)",
    "precision": "2",
    "reqd": 1
+  },
+  {
+   "fieldname": "section_break_sync",
+   "fieldtype": "Section Break",
+   "label": "Production Records"
+  },
+  {
+   "description": "When the entries were last brought in from the Daily Diesel Sheets and Hourly Production.",
+   "fieldname": "last_synced",
+   "fieldtype": "Datetime",
+   "label": "Last Brought In",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_sync_note",
+   "fieldtype": "Small Text",
+   "label": "What Was Brought In",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-09 09:00:00.000000",
+ "modified": "2026-11-09 11:00:00.000000",
  "modified_by": "Administrator",
  "module": "Production",
  "name": "Diesel Tracker Settings",

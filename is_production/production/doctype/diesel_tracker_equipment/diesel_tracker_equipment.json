@@ -3,12 +3,13 @@
  "allow_rename": 0,
  "autoname": "hash",
  "creation": "2026-11-09 09:00:00.000000",
- "description": "A machine of the Diesel L/BCM Tracker (/portal_diesel_tracker). Separate from Asset.",
+ "description": "A machine of the Diesel L/BCM Tracker (/portal_diesel_tracker); linked to an Asset, its entries come in from the production records.",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
   "site",
   "equipment_name",
+  "asset",
   "column_break_type",
   "equipment_type",
   "is_example"
@@ -32,6 +33,16 @@
    "reqd": 1
   },
   {
+   "description": "The Asset whose diesel and loads fill this machine's entries. Set on the machines made from the production records.",
+   "fieldname": "asset",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Asset",
+   "options": "Asset",
+   "search_index": 1
+  },
+  {
    "fieldname": "column_break_type",
    "fieldtype": "Column Break"
   },
@@ -42,7 +53,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Type",
-   "options": "Excavator\nHaul truck\nFront-end loader\nDozer\nDrill rig\nGrader\nWater cart\nOther",
+   "options": "Excavator\nHaul truck\nFront-end loader\nDozer\nDrill rig\nGrader\nWater cart\nLight vehicle\nLighting plant\nGenerator\nWater pump\nDiesel bowser\nOther",
    "reqd": 1
   },
   {
@@ -57,7 +68,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-11-09 09:00:00.000000",
+ "modified": "2026-11-09 11:00:00.000000",
  "modified_by": "Administrator",
  "module": "Production",
  "name": "Diesel Tracker Equipment",
@@ -97,7 +108,7 @@
   }
  ],
  "row_format": "Dynamic",
- "search_fields": "equipment_name,site,equipment_type",
+ "search_fields": "equipment_name,site,equipment_type,asset",
  "show_title_field_in_link": 1,
  "sort_field": "equipment_name",
  "sort_order": "ASC",

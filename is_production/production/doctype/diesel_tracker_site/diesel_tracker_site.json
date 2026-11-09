@@ -3,11 +3,12 @@
  "allow_rename": 0,
  "autoname": "hash",
  "creation": "2026-11-09 09:00:00.000000",
- "description": "A site of the Diesel L/BCM Tracker (/portal_diesel_tracker). Separate from Location.",
+ "description": "A site of the Diesel L/BCM Tracker (/portal_diesel_tracker); linked to a Location, its entries come in from the production records.",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
   "site_name",
+  "location",
   "is_example"
  ],
  "fields": [
@@ -22,6 +23,16 @@
    "unique": 1
   },
   {
+   "description": "The Location whose Daily Diesel Sheets and Hourly Production fill this site's entries (every hour). Set on the sites made from the production records.",
+   "fieldname": "location",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Location",
+   "options": "Location",
+   "search_index": 1
+  },
+  {
    "default": "0",
    "description": "Made by Load example data on the Diesel L/BCM Tracker page; Remove example data deletes it.",
    "fieldname": "is_example",
@@ -33,7 +44,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-11-09 09:00:00.000000",
+ "modified": "2026-11-09 11:00:00.000000",
  "modified_by": "Administrator",
  "module": "Production",
  "name": "Diesel Tracker Site",

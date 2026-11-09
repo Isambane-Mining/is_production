@@ -140,6 +140,14 @@ scheduler_events = {
         "27 6,18 * * *": [
             "is_production.production.controllers.production_summary_scheduler.create_shift_summaries",
         ],
+        # Diesel L/BCM Tracker: entries from the Daily Diesel Sheets and Hourly Production
+        # (the last week every hour; the last three months every night).
+        "14 * * * *": [
+            "is_production.production.diesel_tracker.scheduled_sync",
+        ],
+        "56 2 * * *": [
+            "is_production.production.diesel_tracker.scheduled_resync",
+        ],
         # DAILY 05:55 - CEO Dashboard 1 PDF snapshot email
         "55 5 * * *": [
             "is_production.production.controllers.notifications.send_ceo_dashboard_daily_emails",
