@@ -1889,6 +1889,805 @@ tbody td:first-child {
     font-variant-numeric: tabular-nums;
 }
 
+/* HOD_HR_CSS_EXTRACT_V1 */
+
+/* HR Statistics card styling extracted from JavaScript. */
+
+.hod-performance-dashboard .hod-hr-stats {
+    margin-top:4px;
+                margin-bottom:4px;
+                padding:4px 6px;
+                border-radius:7px;
+                box-sizing:border-box;
+                width:100%;
+                color:#ffffff;
+                background:linear-gradient(
+                    110deg,
+                    #004d39 0%,
+                    #005c43 55%,
+                    #006b4c 100%
+                );
+                display:grid;
+                grid-template-columns:minmax(92px,0.8fr)
+                    repeat(3,minmax(0,1fr));
+                gap:4px;
+                align-items:stretch;
+                font-family:Arial,sans-serif;
+}
+
+.hod-performance-dashboard .hod-hr-header {
+    display:flex;
+                flex-direction:column;
+                justify-content:center;
+                min-width:0;
+                padding-right:5px;
+                border-right:1px solid rgba(255,255,255,.45);
+}
+
+.hod-performance-dashboard .hod-hr-title {
+    font-size:15px;
+                    font-weight:400;
+                    line-height:18px;
+                    letter-spacing:.3px;
+}
+
+.hod-performance-dashboard .hod-hr-subtitle {
+    font-size:9px;
+                    font-weight:400;
+                    opacity:.92;
+                    margin-top:3px;
+                    line-height:11px;
+}
+
+.hod-performance-dashboard .hod-hr-card {
+    min-width:0;
+                    border-radius:6px;
+                    padding:3px 4px;
+                    box-sizing:border-box;
+                    background:linear-gradient(
+                        135deg,
+                        #087d59 0%,
+                        #00694d 45%,
+                        #00533e 100%
+                    );
+                    border:0;
+}
+
+.hod-performance-dashboard .hod-hr-card-heading {
+    display:flex;
+                        align-items:center;
+                        justify-content:center;
+                        gap:4px;
+                        min-width:0;
+                        color:white;
+}
+
+.hod-performance-dashboard .hod-hr-icon {
+    display:inline-flex;
+                            flex-shrink:0;
+}
+
+.hod-performance-dashboard .hod-hr-card-label {
+    font-size:12px;
+                            font-weight:400;
+                            line-height:12px;
+                            overflow-wrap:anywhere;
+}
+
+.hod-performance-dashboard .hod-hr-card-values {
+    display:flex;
+                        justify-content:center;
+                        align-items:center;
+                        flex-wrap:wrap;
+                        gap:3px 5px;
+                        margin-top:3px;
+                        font-size:12px;
+                        font-weight:400;
+                        text-align:center;
+                        line-height:13px;
+}
+
+.hod-performance-dashboard .hod-hr-count {
+    font-size:13px;font-weight:400;color:#ffffff
+}
+
+.hod-performance-dashboard .hod-hr-separator {
+    opacity:.6
+}
+
+/* HOD_MACHINE_CSS_EXTRACT_V1 */
+
+/* Blue Machine Summary styling extracted from JS. */
+
+.hod-performance-dashboard .hod-machine-summary {
+    margin-top:4px;
+                        margin-bottom:0;
+                        padding:3px 5px;
+                        border-radius:6px;
+                        box-sizing:border-box;
+                        width:100%;
+                        color:#fff;
+                        background:linear-gradient(
+                            110deg,
+                            #06366b 0%,
+                            #07558b 55%,
+                            #006a9a 100%
+                        );
+                        display:grid;
+                        grid-template-columns:repeat(3,minmax(0,1fr));
+                        gap:4px;
+                        align-items:stretch;
+}
+
+.hod-performance-dashboard .hod-machine-card {
+    min-width:0;
+                            min-height:0;
+                            border-radius:5px;
+                            padding:2px 3px;
+                            box-sizing:border-box;
+                            background:linear-gradient(
+                                135deg,
+                                #087db4 0%,
+                                #075c96 45%,
+                                #054677 100%
+                            );
+                            border:0;
+                            display:flex;
+                            flex-direction:column;
+                            justify-content:center;
+}
+
+.hod-performance-dashboard .hod-machine-card-heading {
+    display:flex;
+                                align-items:center;
+                                justify-content:center;
+                                gap:5px;
+                                min-width:0;
+}
+
+.hod-performance-dashboard .hod-machine-icon {
+    flex-shrink:0
+}
+
+.hod-performance-dashboard .hod-machine-card-label {
+    font-size:12px;
+                                    font-weight:400;
+                                    line-height:12px;
+                                    text-align:center;
+                                    overflow-wrap:anywhere;
+}
+
+.hod-performance-dashboard .hod-machine-card-values {
+    display:flex;
+                                align-items:center;
+                                justify-content:center;
+                                flex-wrap:wrap;
+                                gap:3px 8px;
+                                margin-top:2px;
+                                font-size:12px;
+                                font-weight:400;
+                                line-height:13px;
+                                text-align:center;
+}
+
+.hod-performance-dashboard .hod-machine-count {
+    font-size:13px;font-weight:400;color:#ffffff
+}
+
+
+/* HOD_GAUGE_AVERAGE_CSS_V1 */
+
+.hod-performance-dashboard .hod-gauge-average {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    text-align: center;
+    padding: 4px 2px;
+}
+
+.hod-performance-dashboard .hod-gauge-scope-label {
+    display: block;
+    font-size: 9px;
+    font-weight: 600;
+}
+
+.hod-performance-dashboard .hod-gauge-scope-value {
+    display: block;
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1.3;
+}
+
+/* HOD_DOWNTIME_STATIC_CSS_V1 */
+/* Downtime graph and modal toolbar styling. */
+
+.hod-performance-dashboard .hod-breakdown-bar-track {
+    position:relative;
+                           display:block;
+                           overflow:hidden;
+                           background:#e5ebf2;
+                           min-height:12px;
+}
+
+.hod-downtime-dark-theme .hod-popup-export-actions {
+    display:flex;gap:10px;justify-content:flex-end;
+                    padding:10px 12px;background:#1d242c;
+                    border:1px solid #3b4652;
+                    border-radius:6px;margin-bottom:10px
+}
+
+.hod-downtime-dark-theme .hod-popup-print {
+    background:#303943;color:#fff;
+                       border:1px solid #66717d
+}
+
+.hod-downtime-dark-theme .hod-popup-excel {
+    background:#137344;color:#fff;
+                       border:1px solid #258c57
+}
+
+
+/* HOD_DOWNTIME_TABLE_CSS_V1 */
+
+.hod-performance-dashboard .hod-downtime-lost-title {
+    background: #0b5a8c;
+}
+
+.hod-performance-dashboard .hod-breakdown-layout-block {
+    display: block;
+}
+
+.hod-performance-dashboard .hod-hours-column {
+    text-align: left !important;
+}
+
+.hod-performance-dashboard .hod-reason-detail {
+    color: #000000 !important;
+    font-size: 11px !important;
+    line-height: 1.4 !important;
+}
+
+.hod-performance-dashboard .hod-contributors-title {
+    background: #00643b;
+}
+
+.hod-performance-dashboard .hod-contributors-chart {
+    border-left: 0;
+    padding: 10px 12px;
+    min-width: 0;
+}
+
+/* HOD Production downtime classification drill-down */
+.hod-performance-dashboard .hod-downtime-bar-button {
+    width: 100%;
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.hod-performance-dashboard .hod-downtime-bar-button:hover,
+.hod-performance-dashboard .hod-downtime-bar-button[aria-expanded="true"] {
+    background: rgba(0, 100, 59, .08);
+}
+
+.hod-performance-dashboard .hod-downtime-bar-button:focus-visible {
+    outline: 2px solid #00643b;
+    outline-offset: 2px;
+}
+
+.hod-performance-dashboard .hod-downtime-class-detail[hidden] {
+    display: none !important;
+}
+
+.hod-performance-dashboard .hod-downtime-class-detail {
+    margin-top: 12px;
+    padding-top: 8px;
+    border-top: 2px solid #00643b;
+}
+
+.hod-performance-dashboard .hod-downtime-class-detail h4 {
+    margin: 0 0 8px;
+    font-size: 12px;
+    font-weight: 700;
+    color: #00643b;
+}
+
+.hod-performance-dashboard .hod-downtime-detail-scroll {
+    overflow-x: auto;
+}
+
+.hod-performance-dashboard .hod-downtime-detail-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+}
+
+.hod-performance-dashboard .hod-downtime-detail-table th,
+.hod-performance-dashboard .hod-downtime-detail-table td {
+    padding: 6px 7px;
+    border: 1px solid #d6e1e8;
+    vertical-align: top;
+}
+
+.hod-performance-dashboard .hod-downtime-detail-table thead,
+.hod-performance-dashboard .hod-downtime-detail-table tfoot {
+    background: #e5f2eb;
+    font-weight: 700;
+}
+
+.hod-performance-dashboard .hod-downtime-detail-table th:last-child,
+.hod-performance-dashboard .hod-downtime-detail-table td:last-child {
+    text-align: right;
+    white-space: nowrap;
+}
+
+/* HOD DOWNTIME DETAIL TABLE ENHANCEMENT */
+
+.hod-performance-dashboard .hod-downtime-class-detail {
+    margin-top: 14px;
+    border: 1px solid #c9d8e5;
+    border-radius: 5px;
+    padding: 10px;
+    background: #fff;
+}
+
+.hod-performance-dashboard .hod-downtime-class-detail h4 {
+    color: #00643b;
+    font-size: 12px;
+    font-weight: 800;
+    margin: 0 0 10px;
+    padding-bottom: 7px;
+    border-bottom: 2px solid #00643b;
+}
+
+.hod-performance-dashboard .hod-downtime-detail-scroll {
+    width: 100%;
+    overflow-x: auto;
+}
+
+.hod-performance-dashboard .hod-downtime-detail-table {
+    width: 100%;
+    min-width: 760px;
+    border-collapse: collapse;
+    table-layout: auto;
+    font-size: 11px;
+    background: #fff;
+}
+
+.hod-performance-dashboard .hod-downtime-detail-table th,
+.hod-performance-dashboard .hod-downtime-detail-table td {
+    border: 1px solid #ccd9e3;
+    padding: 7px 8px;
+    vertical-align: top;
+    line-height: 1.35;
+}
+
+.hod-performance-dashboard .hod-downtime-detail-table thead th {
+    background: #075781;
+    color: #fff;
+    font-weight: 700;
+    text-align: left;
+    white-space: normal;
+}
+
+.hod-performance-dashboard .hod-downtime-detail-table tbody tr:nth-child(even) {
+    background: #edf4f8;
+}
+
+.hod-performance-dashboard .hod-downtime-detail-table tbody tr:hover {
+    background: #e1f1e8;
+}
+
+.hod-performance-dashboard .hod-downtime-detail-table td:nth-child(1) {
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.hod-performance-dashboard .hod-downtime-detail-table td:nth-child(2) {
+    min-width: 180px;
+    overflow-wrap: anywhere;
+}
+
+.hod-performance-dashboard .hod-downtime-detail-table td:nth-child(3),
+.hod-performance-dashboard .hod-downtime-detail-table td:nth-child(4) {
+    white-space: nowrap;
+}
+
+.hod-performance-dashboard .hod-downtime-detail-table th:last-child,
+.hod-performance-dashboard .hod-downtime-detail-table td:last-child {
+    text-align: right;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.hod-performance-dashboard .hod-downtime-detail-table tfoot th {
+    background: #dcefe3;
+    color: #064a2d;
+    font-weight: 800;
+}
+
+
+/* ==========================================================
+   HOD_DOWNTIME_DARK_THEME_V1
+   HOD Breakdown Reasons Popup - Dark Readable Theme
+   ========================================================== */
+
+.hod-downtime-dark-theme .modal-content,
+.hod-downtime-dark-theme .modal-header,
+.hod-downtime-dark-theme .modal-body,
+.hod-downtime-dark-theme .modal-footer {
+    background: #111315 !important;
+    color: #f5f6f8 !important;
+    border-color: #30343a !important;
+}
+
+.hod-downtime-dark-theme .modal-title,
+.hod-downtime-dark-theme .modal-header .modal-title,
+.hod-downtime-dark-theme h4,
+.hod-downtime-dark-theme h5 {
+    color: #ffffff !important;
+}
+
+.hod-downtime-dark-theme .modal-header .close,
+.hod-downtime-dark-theme .modal-header .btn-modal-close,
+.hod-downtime-dark-theme .modal-header button {
+    color: #ffffff !important;
+}
+
+/* Section heading - override old inline blue styles */
+
+.hod-downtime-dark-theme .modal-body
+.hod-downtime-class-detail > div,
+.hod-downtime-dark-theme .modal-body > div {
+    background: #15181d !important;
+    border-color: #41464e !important;
+}
+
+.hod-downtime-dark-theme .modal-body
+.hod-downtime-class-detail > div > div:first-child,
+.hod-downtime-dark-theme .modal-body > div > div:first-child {
+    background: #22262d !important;
+    color: #ffffff !important;
+    border-color: #41464e !important;
+}
+
+/* Table layout */
+
+.hod-downtime-dark-theme .modal-body table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    background: #111315 !important;
+    color: #f5f6f8 !important;
+    font-size: 12px !important;
+}
+
+.hod-downtime-dark-theme .modal-body table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #292e36 !important;
+    color: #ffffff !important;
+    font-weight: 800 !important;
+    border: 1px solid #444a53 !important;
+    padding: 10px 12px !important;
+    white-space: nowrap;
+}
+
+/* Body cells - override all previous inline light colours */
+
+.hod-downtime-dark-theme .modal-body table tbody td {
+    background: #15181d !important;
+    color: #edf0f4 !important;
+    border: 1px solid #343a43 !important;
+    padding: 9px 12px !important;
+    line-height: 1.5 !important;
+}
+
+.hod-downtime-dark-theme
+.modal-body table tbody tr:nth-child(even) td {
+    background: #1d2229 !important;
+}
+
+.hod-downtime-dark-theme
+.modal-body table tbody tr:hover td {
+    background: #303843 !important;
+}
+
+/* Plant number */
+
+.hod-downtime-dark-theme
+.modal-body table tbody td:nth-child(1) {
+    color: #ffffff !important;
+    font-weight: 800 !important;
+}
+
+/* Total Time */
+
+.hod-downtime-dark-theme
+.modal-body table tbody td:nth-child(4) {
+    color: #ffffff !important;
+    font-weight: 700 !important;
+}
+
+/* Startup + Fatigue */
+
+.hod-downtime-dark-theme
+.modal-body table tbody td:nth-child(5) {
+    color: #ffae61 !important;
+    font-weight: 700 !important;
+}
+
+/* Sunday Hours */
+
+.hod-downtime-dark-theme
+.modal-body table tbody td:nth-child(6) {
+    color: #c6a0ff !important;
+    font-weight: 700 !important;
+}
+
+/* Effective A&U Time */
+
+.hod-downtime-dark-theme
+.modal-body table tbody td:nth-child(7) {
+    color: #75e6a3 !important;
+    font-weight: 800 !important;
+}
+
+/* Reasons */
+
+.hod-downtime-dark-theme
+.modal-body table tbody td:nth-child(8) {
+    color: #ffffff !important;
+    min-width: 210px;
+}
+
+/* Totals row */
+
+.hod-downtime-dark-theme
+.modal-body table tbody tr:last-child td {
+    background: #26362f !important;
+    color: #ffffff !important;
+    font-weight: 800 !important;
+    border-top: 2px solid #75e6a3 !important;
+}
+
+.hod-downtime-dark-theme
+.modal-body table tbody tr:last-child td:nth-child(5) {
+    color: #ffae61 !important;
+}
+
+.hod-downtime-dark-theme
+.modal-body table tbody tr:last-child td:nth-child(6) {
+    color: #c6a0ff !important;
+}
+
+.hod-downtime-dark-theme
+.modal-body table tbody tr:last-child td:nth-child(7) {
+    color: #75e6a3 !important;
+}
+
+/* Scrollbar */
+
+.hod-downtime-dark-theme .modal-body ::-webkit-scrollbar {
+    width: 9px;
+    height: 9px;
+}
+
+.hod-downtime-dark-theme .modal-body ::-webkit-scrollbar-track {
+    background: #111315;
+}
+
+.hod-downtime-dark-theme .modal-body ::-webkit-scrollbar-thumb {
+    background: #555d69;
+    border-radius: 8px;
+}
+
+
+/* HOD_BOTTOM10_REASON_BLACK_V1
+   Bottom 10 Availability: breakdown comments only.
+   Keep classification headings and all other styles unchanged.
+*/
+.hod-performance-dashboard .hod-new-problem-table
+.hod-breakdown-reason {
+    color: #000000 !important;
+}
+
+/* HOD_REMAINING_STATIC_CSS_V2 */
+/* Static styles previously defined inside hod_presentation.js. */
+
+.hod-performance-dashboard
+.hod-production-table td.hod-average-bcm-amber {
+    color: #a66a00 !important;
+}
+
+.hod-performance-dashboard .hod-maintenance-title {
+    background: #006b3f;
+}
+
+.hod-performance-dashboard .hod-reliability-downtime-heading {
+    margin: 8px 8px 5px;
+    font-size: 12px;
+    font-weight: 800;
+    color: #082e57;
+}
+
+.hod-performance-dashboard .hod-reliability-planned-heading {
+    margin: 12px 8px 5px;
+    font-size: 12px;
+    font-weight: 800;
+    color: #082e57;
+}
+
+.hod-performance-dashboard .hod-spare-highlight {
+    background: #e9d5ff !important;
+}
+
+.hod-performance-dashboard .hod-hours-left {
+    text-align: left !important;
+}
+
+/* HOD_POPUP_FILTER_CSS_V1 */
+/* Breakdown Reasons popup column filters. */
+
+.hod-popup-column-filters th {
+    background: #252c35;
+    padding: 7px 5px;
+    border: 1px solid #46505c;
+}
+
+.hod-popup-column-filter {
+    width: 100%;
+    min-width: 65px;
+    box-sizing: border-box;
+    padding: 6px;
+    border: 1px solid #596574;
+    border-radius: 4px;
+    background: #111820;
+    color: #ffffff;
+    font-size: 11px;
+}
+
+.hod-popup-filter-info {
+    color: #dce6ef;
+    background: #252c35;
+    padding: 8px 12px;
+    font-size: 12px;
+    border-radius: 4px;
+    margin-bottom: 8px;
+}
+
+/* HOD_POPUP_DETAILS_CSS_V1 */
+/* Machine Breakdown Reasons detail popup. */
+
+.hod-popup-loading {
+    padding: 12px;
+}
+
+.hod-popup-excluded {
+    color: #c2410c;
+    font-weight: 700;
+}
+
+.hod-popup-sunday {
+    color: #7c3aed;
+    font-weight: 700;
+}
+
+.hod-popup-au {
+    color: #047857;
+    font-weight: 700;
+}
+
+.hod-popup-detail-scroll {
+    max-height: 65vh;
+    overflow: auto;
+}
+
+.hod-popup-detail-heading {
+    padding: 10px;
+    background: #dbeafe;
+    color: #1d4ed8;
+    font-weight: 700;
+}
+
+.hod-popup-detail-table {
+    width: 100%;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.hod-popup-detail-head {
+    background: #eff6ff;
+    color: #1d4ed8;
+    position: sticky;
+    top: 0;
+}
+
+/* HOD_CONTRIBUTORS_TABLE_CSS_V1 */
+/* Downtime Contributors detail table styling. */
+
+.hod-performance-dashboard .hod-contributor-detail-card {
+    border: 1px solid #2563eb;
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.hod-performance-dashboard .hod-contributor-detail-header {
+    background: #dbeafe;
+    color: #1d4ed8;
+    padding: 10px 12px;
+    font-weight: 900;
+}
+
+.hod-performance-dashboard .hod-contributor-calculation {
+    font-size: 11px;
+    margin-top: 5px;
+    font-weight: 600;
+    color: #164db8;
+}
+
+.hod-performance-dashboard .hod-contributor-table-scroll {
+    overflow: auto;
+    max-height: 65vh;
+}
+
+.hod-performance-dashboard .hod-contributor-detail-table {
+    width: 100%;
+    min-width: 1150px;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.hod-performance-dashboard .hod-contributor-th {
+    padding: 9px 10px;
+    background: #eff6ff;
+    color: #1d4ed8;
+    text-align: left;
+}
+
+.hod-performance-dashboard .hod-contributor-td {
+    padding: 8px 10px;
+    border-bottom: 1px solid #dbeafe;
+    vertical-align: top;
+}
+
+.hod-performance-dashboard .hod-contributor-plant {
+    font-weight: 700;
+}
+
+.hod-performance-dashboard .hod-contributor-nowrap {
+    white-space: nowrap;
+}
+
+.hod-performance-dashboard .hod-contributor-fatigue {
+    color: #b45309;
+}
+
+.hod-performance-dashboard .hod-contributor-sunday {
+    color: #7c3aed;
+}
+
+.hod-performance-dashboard .hod-contributor-au {
+    color: #166534;
+    font-weight: 700;
+}
+
+.hod-performance-dashboard .hod-contributor-reason {
+    min-width: 210px;
+}
+
+.hod-performance-dashboard .hod-contributor-total-row {
+    background: #dbeafe;
+    font-weight: 900;
+}
+
+.hod-performance-dashboard .hod-contributor-total-label {
+    text-align: right;
+}
 
 /* Hourly Productivity Analysis dashboard */
 .hpa-shell{--date-width:94px;--day-width:42px;--month-width:100px;max-width:100%;padding:12px 0;color:var(--text-color,#243447)}

@@ -164,6 +164,7 @@ class HodPresentationPage {
 
     async show() {
         await this.ready;
+
         const options = frappe.route_options || {};
         frappe.route_options = null;
         this.applying_filters = true;
@@ -366,14 +367,14 @@ function hodGauge(category, metric, averages) {
             <text x="18" y="99" class="hod-gauge-tick" fill="#24476c" font-family="Arial" font-size="10">0</text><text x="149" y="99" class="hod-gauge-tick" fill="#24476c" font-family="Arial" font-size="10">100</text>
             <text x="90" y="53" text-anchor="middle" fill="#17365d" font-family="Arial" font-size="9" font-weight="800">PROD + SWING</text>
             <text x="90" y="79" text-anchor="middle" class="hod-gauge-value hod-text-${band}" fill="${text}" font-family="Arial" font-size="27" font-weight="800">${hodPercent(value)}</text>
-        </svg><div class="hod-gauge-average" style="display:grid;grid-template-columns:1fr 1fr;gap:4px;text-align:center;padding:4px 2px">
+        </svg><div class="hod-gauge-average">
             <div>
-                <small style="display:block;font-size:9px;font-weight:600">Prod Machines</small>
-                <strong style="display:block;font-size:13px;font-weight:800;line-height:1.3">${hodPercent(averages?.excluding?.[metric])}</strong>
+                <small class="hod-gauge-scope-label">Prod Machines</small>
+                <strong class="hod-gauge-scope-value">${hodPercent(averages?.excluding?.[metric])}</strong>
             </div>
             <div>
-                <small style="display:block;font-size:9px;font-weight:600">Swing Machines</small>
-                <strong style="display:block;font-size:13px;font-weight:800;line-height:1.3">${hodPercent(averages?.swing?.[metric])}</strong>
+                <small class="hod-gauge-scope-label">Swing Machines</small>
+                <strong class="hod-gauge-scope-value">${hodPercent(averages?.swing?.[metric])}</strong>
             </div>
         </div>
     </div>`;
@@ -402,17 +403,7 @@ function hodRankTable(rows, category, metric, bottom = false) {
 function hodRankings(engineering, metric) {
     return hodRankTable(engineering.bottom[metric], null, metric, true);
 }
-// Average BCM/H original HOD orange threshold.
-if (typeof document !== "undefined" &&
-    !document.getElementById("hod-average-bcm-amber-style")) {
-    const style = document.createElement("style");
-    style.id = "hod-average-bcm-amber-style";
-    style.textContent =
-        ".hod-performance-dashboard " +
-        ".hod-production-table td.hod-average-bcm-amber {" +
-        "color:#a66a00 !important;}";
-    document.head.appendChild(style);
-}
+
 
 function hodProduction(row) {
     const metrics = [
@@ -532,11 +523,7 @@ function hodBreakdownBarChart(classifications) {
                     </span>
                 </span>
                 <span class="hod-breakdown-bar-track"
-                    style="position:relative;
-                           display:block;
-                           overflow:hidden;
-                           background:#e5ebf2;
-                           min-height:12px;">
+                   >
                     <span class="hod-breakdown-bar-fill"
                         style="width:${width.toFixed(2)}%;
                             background-color:${colour} !important;
@@ -930,11 +917,7 @@ function hodOpenDowntimePopup(button) {
         );
 
         columns.each(function(index) {
-            const th = $("<th>").css({
-                background: "#252c35",
-                padding: "7px 5px",
-                border: "1px solid #46505c"
-            });
+            const th = $("<th>");
 
             const input = $("<input>", {
                 type: "text",
@@ -945,17 +928,7 @@ function hodOpenDowntimePopup(button) {
                 "hod-popup-column-filter"
             ).attr(
                 "data-column-index", index
-            ).css({
-                width: "100%",
-                minWidth: "65px",
-                boxSizing: "border-box",
-                padding: "6px",
-                border: "1px solid #596574",
-                borderRadius: "4px",
-                background: "#111820",
-                color: "#ffffff",
-                fontSize: "11px"
-            });
+            );
 
             th.append(input);
             filterRow.append(th);
@@ -970,15 +943,7 @@ function hodOpenDowntimePopup(button) {
             });
 
         const filterInfo = $("<div>")
-            .addClass("hod-popup-filter-info")
-            .css({
-                color: "#dce6ef",
-                background: "#252c35",
-                padding: "8px 12px",
-                fontSize: "12px",
-                borderRadius: "4px",
-                marginBottom: "8px"
-            });
+            .addClass("hod-popup-filter-info");
 
         hodTable.before(filterInfo);
 
@@ -1110,20 +1075,15 @@ function hodOpenDowntimePopup(button) {
     // Print / PDF and Excel export actions for this classification.
     dialog.$body.prepend(`
         <div class="hod-popup-export-actions"
-             style="display:flex;gap:10px;justify-content:flex-end;
-                    padding:10px 12px;background:#1d242c;
-                    border:1px solid #3b4652;
-                    border-radius:6px;margin-bottom:10px">
+            >
             <button type="button"
                 class="btn btn-default btn-sm hod-popup-print"
-                style="background:#303943;color:#fff;
-                       border:1px solid #66717d">
+               >
                 Print / PDF
             </button>
             <button type="button"
                 class="btn btn-primary btn-sm hod-popup-excel"
-                style="background:#137344;color:#fff;
-                       border:1px solid #258c57">
+               >
                 Export Excel
             </button>
         </div>
@@ -1168,12 +1128,11 @@ function hodProblemMachinesPanel(engineering) {
     const machines = breakdown.top_machines || [];
     return `
         <section class="hod-new-summary hod-problem-machines">
-            <div class="hod-new-summary-title"
-                style="background:#0b5a8c;">
+            <div class="hod-new-summary-title hod-downtime-lost-title">
                 DOWNTIME LOST HOURS
             </div>
 
-            <div class="hod-breakdown-layout" style="display:block">
+            <div class="hod-breakdown-layout hod-breakdown-layout-block">
                 <div class="hod-breakdown-table-section">
                     <h4>Bottom 10 Availability</h4>
 
@@ -1184,22 +1143,22 @@ function hodProblemMachinesPanel(engineering) {
                                 <th>Fleet</th>
                                 <th>Category</th>
                                 <th>Breakdown cause</th>
-                                <th style="text-align:left !important;">Hours</th>
+                                <th class="hod-hours-column">Hours</th>
                             </tr>
                         </thead>
                         <tbody>
                             ${machines.length ? machines.map((item, index) => `
                                 <tr>
                                     <td>${index + 1}</td>
-                                    <td style="${item.is_spare ? 'background:#e9d5ff !important;' : ''}">${hodEscape(item.fleet)}</td>
-                                    <td style="${item.is_spare ? 'background:#e9d5ff !important;' : ''}">${hodEscape(item.category)}</td>
+                                    <td class="${item.is_spare ? 'hod-spare-highlight' : ''}">${hodEscape(item.fleet)}</td>
+                                    <td class="${item.is_spare ? 'hod-spare-highlight' : ''}">${hodEscape(item.category)}</td>
                                     <td title="${hodEscape(item.reason)}">
                                         ${hodEscape(item.classification)}
-                                        <small class="hod-breakdown-reason" style="color:#000000 !important;font-size:11px !important;line-height:1.4 !important;">
+                                        <small class="hod-breakdown-reason hod-reason-detail">
                                             ${hodEscape(item.reason)}
                                         </small>
                                     </td>
-                                    <td style="text-align:left !important;">${Number(item.hours).toFixed(1)}</td>
+                                    <td class="hod-hours-left">${Number(item.hours).toFixed(1)}</td>
                                 </tr>
                             `).join('') : `
                                 <tr>
@@ -1236,17 +1195,15 @@ function hodDowntimeContributorsPanel(engineering) {
         return `${Math.floor(value / 60)}h ${String(value % 60).padStart(2, "0")}m`;
     };
 
-    const cell = "padding:8px 10px;border-bottom:1px solid #dbeafe;vertical-align:top";
-    const head = "padding:9px 10px;background:#eff6ff;color:#1d4ed8;text-align:left";
+
+
 
     return `
         <section class="hod-new-summary hod-downtime-contributors">
-            <div class="hod-new-summary-title"
-                style="background:#00643b">
+            <div class="hod-new-summary-title hod-contributors-title">
                 DOWNTIME CONTRIBUTORS BAR GRAPH
             </div>
-            <div class="hod-breakdown-chart-section"
-                style="border-left:0;padding:10px 12px;min-width:0">
+            <div class="hod-breakdown-chart-section hod-contributors-chart">
 
                 ${hodBreakdownBarChart(classifications)}
 
@@ -1254,11 +1211,9 @@ function hodDowntimeContributorsPanel(engineering) {
                     <div class="hod-downtime-class-detail"
                         data-hod-class-index="${index}" hidden>
 
-                        <div style="border:1px solid #2563eb;
-                                    border-radius:10px;overflow:hidden">
+                        <div class="hod-contributor-detail-card">
 
-                            <div style="background:#dbeafe;color:#1d4ed8;
-                                        padding:10px 12px;font-weight:900">
+                            <div class="hod-contributor-detail-header">
                                 Breakdown Reasons for
                                 ${hodEscape(item.classification)}
                                 (${hodClassTotalHours > 0
@@ -1269,10 +1224,7 @@ function hodDowntimeContributorsPanel(engineering) {
                                     : "0.0"}%)
 
                                 <!-- HOD_CLASSIFICATION_CALCULATION_V1 -->
-                                <div style="font-size:11px;
-                                            margin-top:5px;
-                                            font-weight:600;
-                                            color:#164db8">
+                                <div class="hod-contributor-calculation">
                                     Calculation:
                                     ${Number(item.hours || 0).toFixed(2)} hrs
                                     &divide;
@@ -1287,9 +1239,8 @@ function hodDowntimeContributorsPanel(engineering) {
                                 </div>
                             </div>
 
-                            <div style="overflow:auto;max-height:65vh">
-                                <table style="width:100%;min-width:1150px;
-                                              border-collapse:collapse;font-size:12px">
+                            <div class="hod-contributor-table-scroll">
+                                <table class="hod-contributor-detail-table">
                                     <thead>
                                         <tr>
                                             ${[
@@ -1297,57 +1248,57 @@ function hodDowntimeContributorsPanel(engineering) {
                                                 "Total Time", "Start-up + Fatigue",
                                                 "Sunday Hours", "A&U Time", "Reason"
                                             ].map(label =>
-                                                `<th style="${head}">${label}</th>`
+                                                `<th class="hod-contributor-th">${label}</th>`
                                             ).join("")}
                                         </tr>
                                     </thead>
                                     <tbody>
                                         ${(item.details || []).map(detail => `
                                             <tr>
-                                                <td style="${cell};font-weight:700">
+                                                <td class="hod-contributor-td hod-contributor-plant">
                                                     ${hodEscape(detail.plant_no || "")}
                                                 </td>
-                                                <td style="${cell};white-space:nowrap">
+                                                <td class="hod-contributor-td hod-contributor-nowrap">
                                                     ${hodEscape(detail.start_datetime || "")}
                                                 </td>
-                                                <td style="${cell};white-space:nowrap">
+                                                <td class="hod-contributor-td hod-contributor-nowrap">
                                                     ${hodEscape(detail.resolved_datetime || "")}
                                                 </td>
-                                                <td style="${cell}">
+                                                <td class="hod-contributor-td">
                                                     ${fmt(detail.total_minutes)}
                                                 </td>
-                                                <td style="${cell};color:#b45309">
+                                                <td class="hod-contributor-td hod-contributor-fatigue">
                                                     ${fmt(detail.startup_fatigue_minutes)}
                                                 </td>
-                                                <td style="${cell};color:#7c3aed">
+                                                <td class="hod-contributor-td hod-contributor-sunday">
                                                     ${fmt(detail.sunday_minutes)}
                                                 </td>
-                                                <td style="${cell};color:#166534;font-weight:700">
+                                                <td class="hod-contributor-td hod-contributor-au">
                                                     ${fmt(detail.au_minutes)}
                                                 </td>
-                                                <td style="${cell};min-width:210px">
+                                                <td class="hod-contributor-td hod-contributor-reason">
                                                     ${hodEscape(detail.reason || "")}
                                                 </td>
                                             </tr>
                                         `).join("")}
-                                        <tr style="background:#dbeafe;font-weight:900">
+                                        <tr class="hod-contributor-total-row">
                                             <td colspan="3"
-                                                style="${cell};text-align:right">
+                                                class="hod-contributor-td hod-contributor-total-label">
                                                 TOTAL
                                             </td>
-                                            <td style="${cell}">
+                                            <td class="hod-contributor-td">
                                                 ${fmt(item.total_minutes)}
                                             </td>
-                                            <td style="${cell};color:#b45309">
+                                            <td class="hod-contributor-td hod-contributor-fatigue">
                                                 ${fmt(item.startup_fatigue_minutes)}
                                             </td>
-                                            <td style="${cell};color:#7c3aed">
+                                            <td class="hod-contributor-td hod-contributor-sunday">
                                                 ${fmt(item.sunday_minutes)}
                                             </td>
-                                            <td style="${cell};color:#166534">
+                                            <td class="hod-contributor-td hod-contributor-au">
                                                 ${fmt(item.au_minutes)}
                                             </td>
-                                            <td style="${cell}"></td>
+                                            <td class="hod-contributor-td"></td>
                                         </tr>
                                     </tbody>
                                 </table>
@@ -1376,12 +1327,10 @@ function hodReliabilityPanel(engineering) {
 
     return `
         <section class="hod-new-summary hod-reliability-panel">
-            <div class="hod-new-summary-title"
-                style="background:#006b3f;">
+            <div class="hod-new-summary-title hod-maintenance-title">
                 MAINTENANCE & RELIABILITY (Production and Swing Machine)
             </div>
-            <h4 class="hod-reliability-subheading"
-                style="margin:8px 8px 5px;font-size:12px;font-weight:800;color:#082e57">
+            <h4 class="hod-reliability-subheading hod-reliability-downtime-heading">
                 DOWNTIME
             </h4>
             <div class="hod-new-reliability-grid">
@@ -1438,8 +1387,7 @@ function hodReliabilityPanel(engineering) {
                 MTBF: operating hours per failure. MTTR: average completed breakdown restoration hours. Downtime: mechanical breakdown hours / required hours.
             </div>
 
-            <h4 class="hod-reliability-subheading"
-                style="margin:12px 8px 5px;font-size:12px;font-weight:800;color:#082e57">
+            <h4 class="hod-reliability-subheading hod-reliability-planned-heading">
                 PLANNED MAINTENANCE
             </h4>
 
@@ -1585,102 +1533,26 @@ function hodHrStats(row) {
 
     return `
         <div class="hod-hr-stats"
-            style="
-                margin-top:8px;
-                margin-bottom:8px;
-                padding:9px 10px;
-                border-radius:7px;
-                box-sizing:border-box;
-                width:100%;
-                color:#ffffff;
-                background:linear-gradient(
-                    110deg,
-                    #004d39 0%,
-                    #005c43 55%,
-                    #006b4c 100%
-                );
-                display:grid;
-                grid-template-columns:minmax(92px,0.8fr)
-                    repeat(3,minmax(0,1fr));
-                gap:7px;
-                align-items:stretch;
-                font-family:Arial,sans-serif;
-            ">
+           >
 
-            <div style="
-                display:flex;
-                flex-direction:column;
-                justify-content:center;
-                min-width:0;
-                padding-right:5px;
-                border-right:1px solid rgba(255,255,255,.45);
-            ">
-                <div style="
-                    font-size:15px;
-                    font-weight:400;
-                    line-height:18px;
-                    letter-spacing:.3px;
-                ">HR STATS</div>
+            <div class="hod-hr-header">
+                <div class="hod-hr-title">HR STATS</div>
 
-                <div style="
-                    font-size:9px;
-                    font-weight:400;
-                    opacity:.92;
-                    margin-top:3px;
-                    line-height:11px;
-                ">WORKFORCE OVERVIEW</div>
+                <div class="hod-hr-subtitle">WORKFORCE OVERVIEW</div>
             </div>
 
             ${groups.map(group => `
-                <div style="
-                    min-width:0;
-                    border-radius:6px;
-                    padding:7px 5px;
-                    box-sizing:border-box;
-                    background:linear-gradient(
-                        135deg,
-                        #087d59 0%,
-                        #00694d 45%,
-                        #00533e 100%
-                    );
-                    border:1px solid rgba(155,235,192,.35);
-                ">
-                    <div style="
-                        display:flex;
-                        align-items:center;
-                        justify-content:center;
-                        gap:4px;
-                        min-width:0;
-                        color:white;
-                    ">
-                        <span style="
-                            display:inline-flex;
-                            flex-shrink:0;
-                        ">${group.icon}</span>
+                <div class="hod-hr-card">
+                    <div class="hod-hr-card-heading">
+                        <span class="hod-hr-icon">${group.icon}</span>
 
-                        <span style="
-                            font-size:12px;
-                            font-weight:400;
-                            line-height:12px;
-                            overflow-wrap:anywhere;
-                        ">${group.label}</span>
+                        <span class="hod-hr-card-label">${group.label}</span>
                     </div>
 
-                    <div style="
-                        display:flex;
-                        justify-content:center;
-                        align-items:center;
-                        flex-wrap:wrap;
-                        gap:3px 5px;
-                        margin-top:8px;
-                        font-size:12px;
-                        font-weight:400;
-                        text-align:center;
-                        line-height:13px;
-                    ">
-                        <span>Male = <strong style="font-size:13px;font-weight:400;color:#ffffff">${safeCount(group.values?.male)}</strong></span>
-                        <span style="opacity:.6">|</span>
-                        <span>Female = <strong style="font-size:13px;font-weight:400;color:#ffffff">${safeCount(group.values?.female)}</strong></span>
+                    <div class="hod-hr-card-values">
+                        <span>Male = <strong class="hod-hr-count">${safeCount(group.values?.male)}</strong></span>
+                        <span class="hod-hr-separator">|</span>
+                        <span>Female = <strong class="hod-hr-count">${safeCount(group.values?.female)}</strong></span>
                     </div>
                 </div>
             `).join("")}
@@ -1699,25 +1571,7 @@ function hodDashboard(row) {
                 <!-- HOD_SUMMARY_LARGE_NUMBERS_V1 -->
 <!-- HOD_MACHINE_CARDS_V1 -->
                 <div class="hod-domain-heading hod-machine-summary"
-                    style="
-                        margin-top:8px;
-                        margin-bottom:0;
-                        padding:5px 7px;
-                        border-radius:6px;
-                        box-sizing:border-box;
-                        width:100%;
-                        color:#fff;
-                        background:linear-gradient(
-                            110deg,
-                            #06366b 0%,
-                            #07558b 55%,
-                            #006a9a 100%
-                        );
-                        display:grid;
-                        grid-template-columns:repeat(3,minmax(0,1fr));
-                        gap:6px;
-                        align-items:stretch;
-                    ">
+                   >
 
                     ${[
                         {
@@ -1736,30 +1590,8 @@ function hodDashboard(row) {
                             icon:"swing"
                         }
                     ].map(group => `
-                        <div style="
-                            min-width:0;
-                            min-height:0;
-                            border-radius:5px;
-                            padding:4px 4px;
-                            box-sizing:border-box;
-                            background:linear-gradient(
-                                135deg,
-                                #087db4 0%,
-                                #075c96 45%,
-                                #054677 100%
-                            );
-                            border:1px solid rgba(150,220,255,.35);
-                            display:flex;
-                            flex-direction:column;
-                            justify-content:center;
-                        ">
-                            <div style="
-                                display:flex;
-                                align-items:center;
-                                justify-content:center;
-                                gap:5px;
-                                min-width:0;
-                            ">
+                        <div class="hod-machine-card">
+                            <div class="hod-machine-card-heading">
                                 <svg viewBox="0 0 24 24"
                                     width="19" height="19"
                                     fill="none"
@@ -1767,7 +1599,7 @@ function hodDashboard(row) {
                                     stroke-width="2"
                                     stroke-linecap="round"
                                     stroke-linejoin="round"
-                                    style="flex-shrink:0"
+                                    class="hod-machine-icon"
                                     aria-hidden="true">
                                     ${group.icon === "total"
                                         ? `<rect x="2" y="10" width="20" height="8" rx="2"/>
@@ -1782,32 +1614,15 @@ function hodDashboard(row) {
                                     }
                                 </svg>
 
-                                <span style="
-                                    font-size:12px;
-                                    font-weight:400;
-                                    line-height:12px;
-                                    text-align:center;
-                                    overflow-wrap:anywhere;
-                                ">
+                                <span class="hod-machine-card-label">
                                     ${group.label}
                                 </span>
                             </div>
 
-                            <div style="
-                                display:flex;
-                                align-items:center;
-                                justify-content:center;
-                                flex-wrap:wrap;
-                                gap:3px 8px;
-                                margin-top:5px;
-                                font-size:12px;
-                                font-weight:400;
-                                line-height:13px;
-                                text-align:center;
-                            ">
-                                <span>Excavator = <strong style="font-size:13px;font-weight:400;color:#ffffff">${group.counts?.Excavator ?? 0}</strong></span>
-                                <span>Dozer = <strong style="font-size:13px;font-weight:400;color:#ffffff">${group.counts?.Dozer ?? 0}</strong></span>
-                                <span>ADT = <strong style="font-size:13px;font-weight:400;color:#ffffff">${group.counts?.ADT ?? 0}</strong></span>
+                            <div class="hod-machine-card-values">
+                                <span>Excavator = <strong class="hod-machine-count">${group.counts?.Excavator ?? 0}</strong></span>
+                                <span>Dozer = <strong class="hod-machine-count">${group.counts?.Dozer ?? 0}</strong></span>
+                                <span>ADT = <strong class="hod-machine-count">${group.counts?.ADT ?? 0}</strong></span>
                             </div>
                         </div>
                     `).join('')}
@@ -2145,7 +1960,7 @@ function bindHodDetailButtons(view) {
 
             dialog.show();
             dialog.fields_dict.details.$wrapper.html(
-                '<div style="padding:12px">Loading breakdown details...</div>'
+                '<div class="hod-popup-loading">Loading breakdown details...</div>'
             );
 
             try {
@@ -2174,21 +1989,20 @@ function bindHodDetailButtons(view) {
                         <td>${startTime}</td>
                         <td>${resolvedTime}</td>
                         <td><strong>${total}</strong></td>
-                        <td style="color:#c2410c;font-weight:700">${excluded}</td>
-                        <td style="color:#7c3aed;font-weight:700">${sunday}</td>
-                        <td style="color:#047857;font-weight:700">${au}</td>
+                        <td class="hod-popup-excluded">${excluded}</td>
+                        <td class="hod-popup-sunday">${sunday}</td>
+                        <td class="hod-popup-au">${au}</td>
                         <td>${reason}</td>
                     </tr>`;
                 }).join('');
 
                 const html = `
-                    <div style="max-height:65vh;overflow:auto">
-                        <div style="padding:10px;background:#dbeafe;color:#1d4ed8;font-weight:700">
+                    <div class="hod-popup-detail-scroll">
+                        <div class="hod-popup-detail-heading">
                             Breakdown Reasons for ${escape(fleet)}
                         </div>
-                        <table class="table table-bordered"
-                               style="width:100%;font-size:12px;white-space:nowrap">
-                            <thead style="background:#eff6ff;color:#1d4ed8;position:sticky;top:0">
+                        <table class="table table-bordered hod-popup-detail-table">
+                            <thead class="hod-popup-detail-head">
                                 <tr>
                                     <th>Start</th>
                                     <th>Resolved</th>
