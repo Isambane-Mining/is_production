@@ -5,6 +5,74 @@ from is_production.production.report.hod_presentation import hod_presentation as
 from is_production.production.report.hod_presentation.hod_presentation import build_grid_data, render_grids
 
 
+# HOD_HR_STATS_V1
+def get_hod_hr_stats(site, start_date, end_date):
+    """Return period-based HR totals by gender for an authorised HOD site."""
+    report.check_hod_site_access(site)
+
+    records = frappe.db.sql(
+        """
+        SELECT
+            gender,
+            SUM(
+                CASE WHEN date_of_joining <= %(end)s
+                    AND (
+                        relieving_date IS NULL
+                        OR relieving_date > %(end)s
+                    )
+                    THEN 1 ELSE 0
+                END
+            ) AS total_employees,
+            SUM(
+                CASE WHEN relieving_date
+                    BETWEEN %(start)s AND %(end)s
+                    THEN 1 ELSE 0
+                END
+            ) AS terminations,
+            SUM(
+                CASE WHEN date_of_joining
+                    BETWEEN %(start)s AND %(end)s
+                    THEN 1 ELSE 0
+                END
+            ) AS recruitment
+        FROM `tabEmployee`
+        WHERE company = %(company)s
+          AND branch = %(site)s
+          AND gender IN ('Male', 'Female')
+        GROUP BY gender
+        """,
+        {
+            "company": "Isambane Mining (Pty) Ltd",
+            "site": site,
+            "start": start_date,
+            "end": end_date,
+        },
+        as_dict=True,
+    )
+
+    stats = {
+        category: {"male": 0, "female": 0}
+        for category in (
+            "total_employees",
+            "terminations",
+            "recruitment",
+        )
+    }
+
+    for record in records:
+        gender = str(record.get("gender") or "").lower()
+
+        if gender not in ("male", "female"):
+            continue
+
+        for category in stats:
+            stats[category][gender] = int(
+                record.get(category) or 0
+            )
+
+    return stats
+
+
 @frappe.whitelist()
 def get_data(filters=None):
     report.check_report_access()
@@ -133,6 +201,13 @@ def get_data(filters=None):
                 )
                 if active_employees > 0
                 else None
+            )
+
+            # HOD_HR_STATS_V1: site and reporting-period statistics.
+            row["hr_stats"] = get_hod_hr_stats(
+                site=row["site"],
+                start_date=row["start_date"],
+                end_date=row["end_date"],
             )
 
             row['fleet_summary_html'] = render_grids(fleet)
