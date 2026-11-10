@@ -878,7 +878,7 @@
       const panel = page.main.find('.hpt-machines-panel');
 
       panel.html(`
-        
+
         <div class="hpa-shell hm-shell">
           <div class="hpa-filters hm-filters">
             <div class="hm-site"></div>
