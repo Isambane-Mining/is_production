@@ -3253,12 +3253,13 @@ const Model = (() => {
   };
   // ---------- production: the teams that do the mining, and the coal losses ----------
   /* P.teams = {count, rate}: the number of teams and the bcm one team moves in an operational hour. A working day gives
-     each team its rate × the operational hours of the day (P.calendar.hoursPerDay, Production tab), split over the
-     shifts of the day (P.calendar.shifts); a month, that × its working days. Every volume is bcm. */
+     each team its rate × the shifts of the day (P.calendar.shifts) × the operational hours of a shift (Production tab);
+     P.calendar.hoursPerDay holds the day's hours, the shifts × those of a shift (shiftHours: the day's ÷ the shifts).
+     A month, the working day × its working days. Every volume is bcm. */
   function teams(P) {
     const T = P.teams || {}, C = P.calendar || {}, n = +T.count > 0 ? +T.count : 0, rate = +T.rate > 0 ? +T.rate : TEAM_RATE;
     const hours = +C.hoursPerDay > 0 ? Math.min(24, +C.hoursPerDay) : 20, shifts = +C.shifts > 0 ? Math.max(1, Math.round(+C.shifts)) : 2;
-    return { count: n, rate, hours, shifts, perDay: rate * hours, day: n * rate * hours, shift: (n * rate * hours) / shifts };
+    return { count: n, rate, hours, shifts, shiftHours: hours / shifts, perDay: rate * hours, day: n * rate * hours, shift: (n * rate * hours) / shifts };
   }
   /* The swell of spoil, and of topsoil: dumped, a bcm takes that much more room than it did in the ground. Every volume
      shown is bcm; the swell only sizes the dumps and the backfill (and turns what is dug out of a dump back into bcm). */
@@ -5221,7 +5222,7 @@ const Sim = (() => {
     }
 
     /* The teams (P.teams, Production tab) do all the mining. A team moves its rate (P.teams.rate, bcm an operational hour)
-       × the operational hours of a working day (P.calendar.hoursPerDay), so the mine moves teams × that on a working day
+       × the operational hours of a working day (its shifts × the hours of a shift), so the mine moves teams × that on a working day
        and the working days of a month × that in the month: topsoil, waste and coal alike, in bcm. The monthly targets (P.targets) say how much of it is coal (t, in situ or as
        received) and how much waste (bcm or t): unless they are only compared ('compare'), the coal and the waste mined in a
        month may not pass them. Each month gets these figures × its days (or working days) ÷ the days in an average month,
@@ -5234,7 +5235,7 @@ const Sim = (() => {
     const PRD = TG.coalBasis === 'product' && typeof Wash !== 'undefined' ? Wash.product(P) : null; // a coal target in washed product (washability, Geological Data tab)
     const TL = { coal: tgLimit && +TG.coal > 0 ? +TG.coal : 0, waste: tgLimit && +TG.waste > 0 ? +TG.waste : 0, wT: TG.wasteUnit === 't', work: TG.basis === 'working', per: Monthly.daysPerMonth(P), team: TM.day, ar: TG.coalBasis === 'ar' || !!PRD, prod: PRD };
     TL.any = TL.coal > 0 || TL.waste > 0;
-    events.push({ day: 0, type: 'info', msg: `Teams: ${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)} team${TM.count === 1 ? '' : 's'} × ${U.fmtNum(TM.rate, TM.rate % 1 ? 1 : 0)} bcm an operational hour × ${U.fmtNum(TM.hours, TM.hours % 1 ? 1 : 0)} operational hours in ${TM.shifts} shift${TM.shifts === 1 ? '' : 's'} = ${U.fmtNum(TM.day, 0)} bcm a working day for the mining, the ramps and the rehandling.${TL.any ? ` The monthly targets limit it: ${[TL.coal > 0 ? `coal ${U.fmtNum(TL.coal, 0)} t${TL.prod ? ' of washed product' : TL.ar ? ' as received' : ''}` : null, TL.waste > 0 ? `waste ${U.fmtNum(TL.waste, 0)} ${TL.wT ? 't' : 'bcm'}` : null].filter(Boolean).join(' and ')} in an average month, following the ${TL.work ? 'working' : 'calendar'} days of each month.` : ''}` });
+    events.push({ day: 0, type: 'info', msg: `Teams: ${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)} team${TM.count === 1 ? '' : 's'} × ${U.fmtNum(TM.rate, TM.rate % 1 ? 1 : 0)} bcm an operational hour × ${TM.shifts} shift${TM.shifts === 1 ? '' : 's'} of ${U.fmtNum(TM.shiftHours, TM.shiftHours % 1 ? 1 : 0)} operational hours = ${U.fmtNum(TM.day, 0)} bcm a working day for the mining, the ramps and the rehandling.${TL.any ? ` The monthly targets limit it: ${[TL.coal > 0 ? `coal ${U.fmtNum(TL.coal, 0)} t${TL.prod ? ' of washed product' : TL.ar ? ' as received' : ''}` : null, TL.waste > 0 ? `waste ${U.fmtNum(TL.waste, 0)} ${TL.wT ? 't' : 'bcm'}` : null].filter(Boolean).join(' and ')} in an average month, following the ${TL.work ? 'working' : 'calendar'} days of each month.` : ''}` });
     // the first day of mining (the earliest any activity may start: its own date or its pit's) and its month: the start-up waste counts from it
     const mineStart0 = acts.filter(X => X.path.length).reduce((a, X) => Math.min(a, X.startDay), Infinity), mineDay0 = isFinite(mineStart0) ? mineStart0 : 0;
     const suKey0 = (t => t.getUTCFullYear() * 12 + t.getUTCMonth())(U.addDays(start, mineDay0));
@@ -16799,7 +16800,8 @@ const Tabs = (() => {
     draw();
   }
   /* The schedule (Production tab): its start, the working days, the public holidays, how long it may run, and the
-     shifts and operational hours of a working day, which with the teams' bcm an operational hour make the teams' day. */
+     shifts of a working day and the operational hours of a shift, which with the teams' bcm an operational hour make the
+     teams' day. The day's hours (P.calendar.hoursPerDay) are the shifts × those of a shift, at most 24. */
   function scheduleSection(body, wdm) {
     const P = App.P, C = P.calendar, TM = Model.teams(P);
     const startTxt = h('p', { class: 'hint' });
@@ -16811,21 +16813,24 @@ const Tabs = (() => {
       inp.addEventListener('change', () => { C.workDays[i] = inp.checked ? 1 : 0; App.changed('calendar'); UI.renderTab(); });
       days.append(h('label', { for: inp.id }, inp, dn));
     });
-    const si = num(TM.shifts, v => { C.shifts = v > 0 ? U.clamp(Math.round(v), 1, 4) : 2; App.changed('calendar'); UI.renderTab(); }, { min: 1, max: 4, step: 1 });
-    const hi = num(TM.hours, v => { C.hoursPerDay = v > 0 ? U.clamp(Math.round(v * 10) / 10, 0.5, 24) : 20; delete C.hoursByDay; App.changed('calendar'); UI.renderTab(); }, { min: 0.5, max: 24, step: 0.5 });
-    si.setAttribute('aria-label', 'Shifts per day'); hi.setAttribute('aria-label', 'Operational hours per day');
-    body.append(sec('Schedule', h('span', { class: 'chip' }, `${TM.shifts} × ${U.fmtNum(TM.hours / TM.shifts, 1)} h`),
+    // (more shifts keep the hours of a shift, as far as a day's 24 hours allow)
+    const dayOf = (shifts, perShift) => Math.min(24, Math.round(shifts * perShift * 100) / 100);
+    const si = num(TM.shifts, v => { const n = v > 0 ? U.clamp(Math.round(v), 1, 4) : 2; C.hoursPerDay = dayOf(n, TM.shiftHours); C.shifts = n; delete C.hoursByDay; App.changed('calendar'); UI.renderTab(); }, { min: 1, max: 4, step: 1 });
+    const hi = num(Math.round(TM.shiftHours * 100) / 100, v => { C.hoursPerDay = dayOf(TM.shifts, v > 0 ? U.clamp(v, 0.25, 24) : 10); delete C.hoursByDay; App.changed('calendar'); UI.renderTab(); }, { min: 0.25, max: Math.round((24 / TM.shifts) * 100) / 100, step: 0.5 });
+    si.setAttribute('aria-label', 'Shifts per day'); hi.setAttribute('aria-label', 'Operational hours per shift');
+    body.append(sec('Schedule', h('span', { class: 'chip' }, `${TM.shifts} × ${U.fmtNum(TM.shiftHours, TM.shiftHours % 1 ? 1 : 0)} h`),
       h('div', { class: 'grid2' },
         fld('Start date', txt(P.startDate, v => { if (!U.parseISO(v)) return; P.startDate = v; updStart(); App.changed('calendar'); if (App.res) { Timeline.setDay(App.day); Timeline.draw(); } else Timeline.setData(null, P); }, { type: 'date' })),
         h('span')),
       startTxt,
       h('div', { class: 'fld' }, h('span', null, 'Working days'), days),
       chk('Stop on South African public holidays', !!C.saHolidays, v => { C.saHolidays = v; App.changed('calendar'); UI.renderTab(); }),
-      h('div', { class: 'grid2' }, fld('Shifts per day', si), fld('Operational hours per day', hi)),
-      h('div', { class: 'dt', style: { whiteSpace: 'normal', fontSize: 'var(--fs-xs)', color: 'var(--muted)' } }, `${TM.shifts} shift${TM.shifts === 1 ? '' : 's'} of ${U.fmtNum(TM.hours / TM.shifts, 1)} operational hours on each working day; ${U.fmtNum(wdm, 1)} working days in an average month.`),
-      Array.isArray(C.hoursByDay) && C.hoursByDay.some(x => +x > 0 && Math.abs(+x - TM.hours) > 1e-6) ? msg('info', `The hours of each weekday come from the desk (Mining Simulation Project): ${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d, i) => `${d} ${U.fmtNum(+C.hoursByDay[i] || 0, 1)}`).join(', ')}. The schedule takes their average over the working days, ${U.fmtNum(TM.hours, 1)} h; typing the operational hours here sets every working day to them.`) : null,
+      h('div', { class: 'grid2' }, fld('Shifts per day', si), fld('Operational hours per shift', hi)),
+      h('div', { class: 'dt', style: { whiteSpace: 'normal', fontSize: 'var(--fs-xs)', color: 'var(--muted)' } }, `${TM.shifts} shift${TM.shifts === 1 ? '' : 's'} of ${U.fmtNum(TM.shiftHours, 2)} operational hours: ${U.fmtNum(TM.hours, TM.hours % 1 ? 1 : 0)} operational hours on each working day; ${U.fmtNum(wdm, 1)} working days in an average month.`),
+      TM.hours >= 24 - 1e-6 ? msg('warn', `${TM.shifts} shift${TM.shifts === 1 ? '' : 's'} of ${U.fmtNum(TM.shiftHours, 2)} operational hours fill the whole day: a shift has at most ${U.fmtNum(24 / TM.shifts, 2)} hours with ${TM.shifts} shifts.`) : null,
+      Array.isArray(C.hoursByDay) && C.hoursByDay.some(x => +x > 0 && Math.abs(+x - TM.hours) > 1e-6) ? msg('info', `The hours of each weekday come from the desk (Mining Simulation Project): ${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d, i) => `${d} ${U.fmtNum(+C.hoursByDay[i] || 0, 1)}`).join(', ')}. The schedule takes their average over the working days, ${U.fmtNum(TM.hours, 1)} h a day (${U.fmtNum(TM.shiftHours, 2)} h a shift); typing the operational hours of a shift here sets every working day to the shifts × them.`) : null,
       fld('Longest schedule to simulate (years)', num(C.maxYears, v => { C.maxYears = U.clamp(v || 30, 1, 80); App.changed('calendar'); }, { min: 1, max: 80, step: 1 })),
-      hint('The operational hours are the hours a day the teams dig, after shift changes, breaks, refuelling and blasting: a team moves its bcm an hour (Teams, below) for that many hours on every working day, so the working day gives the teams × the rate × these hours and a month its working days × that. The shifts split the day: the teams’ bcm a shift. Dates show as dd/mmm/yyyy on the timeline and in the Excel schedule. The coal losses are in the Reserve tab.')
+      hint('The operational hours of a shift are the hours the teams dig in it, after the shift change, breaks, refuelling and blasting: a team moves its bcm an hour (Teams, below) for that many hours in every shift of every working day, so the working day gives the teams × the rate × the shifts × these hours, and a month its working days × that. More shifts keep the hours of a shift, up to the 24 hours of a day. Dates show as dd/mmm/yyyy on the timeline and in the Excel schedule. The coal losses are in the Reserve tab.')
     ));
   }
   function production(body) {
@@ -16861,15 +16866,15 @@ const Tabs = (() => {
       body.append(sec('Teams', TM.count > 0 ? h('span', { class: 'chip' }, `${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)} × ${U.fmtNum(TM.rate, TM.rate % 1 ? 1 : 0)} bcm/h`) : null,
         h('div', { class: 'grid2' }, fld('Number of teams', ni), fld('bcm per team an operational hour', ri)),
         TM.count > 0 ? h('div', { class: 'kv' },
-          h('span', { class: 'k' }, 'A working day'), h('span', { class: 'v' }, `${U.fmtNum(TM.day, 0)} bcm (${U.fmtNum(TM.hours, TM.hours % 1 ? 1 : 0)} operational hours)`),
-          h('span', { class: 'k' }, 'A shift'), h('span', { class: 'v' }, `${U.fmtNum(TM.shift, 0)} bcm (${TM.shifts} shift${TM.shifts === 1 ? '' : 's'} a day)`),
+          h('span', { class: 'k' }, 'A shift'), h('span', { class: 'v' }, `${U.fmtNum(TM.shift, 0)} bcm (${U.fmtNum(TM.shiftHours, TM.shiftHours % 1 ? 1 : 0)} operational hours)`),
+          h('span', { class: 'k' }, 'A working day'), h('span', { class: 'v' }, `${U.fmtNum(TM.day, 0)} bcm (${TM.shifts} shift${TM.shifts === 1 ? '' : 's'}, ${U.fmtNum(TM.hours, TM.hours % 1 ? 1 : 0)} operational hours)`),
           h('span', { class: 'k' }, 'An average month'), h('span', { class: 'v' }, `${U.fmtNum(TM.day * wdm, 0)} bcm (${U.fmtNum(wdm, 1)} working days)`),
           h('span', { class: 'k' }, 'One team a month'), h('span', { class: 'v' }, `${U.fmtNum(teamMonth, 0)} bcm`),
           coalB + wasteB > 0 ? h('span', { class: 'k' }, !(+T.waste > 0) ? 'The coal target needs' : !(+T.coal > 0) ? 'The waste target needs' : 'The targets need') : null,
           coalB + wasteB > 0 ? h('span', { class: 'v' }, `${U.fmtNum(need, 1)} teams (${U.fmtNum(coalB + wasteB, 0)} bcm a month)`) : null) : msg('error', 'Type how many teams the project can use. Without teams nothing is mined.'),
         planTxt ? h('div', { class: 'dt', style: { whiteSpace: 'normal', fontSize: 'var(--fs-xs)', color: 'var(--muted)' } }, `Teams needed ${planTxt}.`) : null,
         TM.count > 0 && coalB + wasteB > 0 && need > TM.count + 1e-6 ? msg('warn', `The targets need ${U.fmtNum(need, 1)} teams but there are ${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)}: the months stay below the targets.`) : null,
-        hint(`The teams do all the mining — topsoil, waste and coal, the ramps, the highwall batters and the rehandling — in bcm. A team moves its bcm an operational hour for the operational hours of each working day (Schedule, above), so a working day gives the teams × the rate × the hours and a month its working days × that. Every working day the coal gets the teams it needs for its target first; the rest of the teams are shared between the other activities by the bcm in their paths, so the layers keep pace with each other. Without a coal target the coal shares in the same way. With a coal target and no waste target the waste gets only the teams it needs to uncover the coal (Monthly targets below), and the rest stay idle. A priority pit (Sequence tab, Pits) gets the teams first.`)));
+        hint(`The teams do all the mining — topsoil, waste and coal, the ramps, the highwall batters and the rehandling — in bcm. A team moves its bcm an operational hour for the operational hours of each shift (Schedule, above), so a working day gives the teams × the rate × the shifts × the hours of a shift, and a month its working days × that. Every working day the coal gets the teams it needs for its target first; the rest of the teams are shared between the other activities by the bcm in their paths, so the layers keep pace with each other. Without a coal target the coal shares in the same way. With a coal target and no waste target the waste gets only the teams it needs to uncover the coal (Monthly targets below), and the rest stay idle. A priority pit (Sequence tab, Pits) gets the teams first.`)));
     }
     // ---- rain: the waste derated in the wet months
     {
@@ -19845,7 +19850,7 @@ const Report = (() => {
       for (const q of M.rehandles) add(`Rehandling: ${q.name} (${q.from} → ${q.to})`, 'bcm', q.v);
     }
     // the teams: the bcm they moved and how many teams that keeps busy
-    { const TM = M.teams; gap(); title(`TEAMS — ${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)} team${TM.count === 1 ? '' : 's'} × ${U.fmtNum(TM.rate, TM.rate % 1 ? 1 : 0)} bcm an operational hour × ${U.fmtNum(TM.hours, TM.hours % 1 ? 1 : 0)} operational hours (${TM.shifts} shift${TM.shifts === 1 ? '' : 's'}) = ${U.fmtNum(TM.day, 0)} bcm a working day`); }
+    { const TM = M.teams; gap(); title(`TEAMS — ${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)} team${TM.count === 1 ? '' : 's'} × ${U.fmtNum(TM.rate, TM.rate % 1 ? 1 : 0)} bcm an operational hour × ${TM.shifts} shift${TM.shifts === 1 ? '' : 's'} of ${U.fmtNum(TM.shiftHours, TM.shiftHours % 1 ? 1 : 0)} operational hours = ${U.fmtNum(TM.day, 0)} bcm a working day`); }
     add('Mining', 'bcm', M.bcmMine);
     if (M.sum(M.bcmRamp) > 0) add('Ramp excavation', 'bcm', M.bcmRamp);
     if (M.bcmBatter && M.sum(M.bcmBatter) > 0) add('Highwall batters', 'bcm', M.bcmBatter);
@@ -19877,7 +19882,7 @@ const Report = (() => {
     gap();
     title('Tonnes and bcm are what the schedule mines. Average per month = total ÷ days in the schedule × 30.44 (an average month).');
     title('As received = tons in situ × (1 − geological loss) × (1 − mining loss) × (1 + contamination) of each seam (Reserve tab).');
-    title(`Teams used = the bcm moved in the month ÷ (${U.fmtNum(M.teams.rate, M.teams.rate % 1 ? 1 : 0)} bcm an operational hour × ${U.fmtNum(M.teams.hours, M.teams.hours % 1 ? 1 : 0)} operational hours × the working days of the month); the total column is the average over the schedule.`);
+    title(`Teams used = the bcm moved in the month ÷ (${U.fmtNum(M.teams.rate, M.teams.rate % 1 ? 1 : 0)} bcm an operational hour × ${M.teams.shifts} shift${M.teams.shifts === 1 ? '' : 's'} of ${U.fmtNum(M.teams.shiftHours, M.teams.shiftHours % 1 ? 1 : 0)} operational hours × the working days of the month); the total column is the average over the schedule.`);
     if ((T.coal || T.waste) && res.target && res.target.limit) title('The schedule was held to the targets: no month mines more than its target.');
     if (T.coal || T.waste) title(`Targets: the typed average for a month, multiplied by the ${basisTxt} of each month ÷ ${U.fmtNum(T.per, 2)} (${T.basis === 'working' ? 'the working days in an average month' : 'the days in an average month'}). The first and last month count only their days inside the schedule.`);
     if (M.pits) title('By pit: what the activities of each pit mine. Ramp excavation is not split between the pits, so the pits’ waste adds up to the total less the ramp excavation.');
@@ -20127,8 +20132,8 @@ const Report = (() => {
       ['Schedule end date', res ? dayLocal(iso, res.nDays - 1) : 'Simulation not run'],
       ['Report generated', localDate(U.parseISO(U.todayISO()))], ['Prepared with', 'ISAMIQ rollover mine simulator'],
       ['Coordinate system', crsName], ['Working grid', P.grid ? `${P.grid.nx} × ${P.grid.ny} cells of ${P.grid.cell} m` : ''],
-      ['Teams', (() => { const TM = Model.teams(P); return `${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)} team${TM.count === 1 ? '' : 's'} × ${U.fmtNum(TM.rate, TM.rate % 1 ? 1 : 0)} bcm an operational hour × ${U.fmtNum(TM.hours, TM.hours % 1 ? 1 : 0)} operational hours (${TM.shifts} shift${TM.shifts === 1 ? '' : 's'}) = ${U.fmtNum(TM.day, 0)} bcm a working day, for the mining, the ramps, the batters and the rehandling`; })()],
-      ['Shifts and operational hours', (() => { const TM = Model.teams(P); return `${TM.shifts} shift${TM.shifts === 1 ? '' : 's'} a day, ${U.fmtNum(TM.hours, TM.hours % 1 ? 1 : 0)} operational hours on each working day (${U.fmtNum(TM.hours / TM.shifts, 1)} a shift)`; })()],
+      ['Teams', (() => { const TM = Model.teams(P); return `${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)} team${TM.count === 1 ? '' : 's'} × ${U.fmtNum(TM.rate, TM.rate % 1 ? 1 : 0)} bcm an operational hour × ${TM.shifts} shift${TM.shifts === 1 ? '' : 's'} of ${U.fmtNum(TM.shiftHours, TM.shiftHours % 1 ? 1 : 0)} operational hours = ${U.fmtNum(TM.day, 0)} bcm a working day, for the mining, the ramps, the batters and the rehandling`; })()],
+      ['Shifts and operational hours', (() => { const TM = Model.teams(P); return `${TM.shifts} shift${TM.shifts === 1 ? '' : 's'} a day of ${U.fmtNum(TM.shiftHours, TM.shiftHours % 1 ? 1 : 0)} operational hours each: ${U.fmtNum(TM.hours, TM.hours % 1 ? 1 : 0)} operational hours on each working day`; })()],
       ['Losses and contamination', (() => { const q = P.losses || {}; return `geological ${+q.geo || 0}%, mining ${+q.mining || 0}%, contamination ${+q.contam || 0}%; as received = in situ × (1 − geological) × (1 − mining) × (1 + contamination)` + L.filter(x => x.type === 'coal' && x.losses && ['geo', 'mining', 'contam'].some(k => x.losses[k] != null && x.losses[k] !== '')).map(x => { const z = Model.losses(P, x); return `; ${x.name}: ${z.geo}%, ${z.mining}%, ${z.contam}%`; }).join(''); })()],
       ['Working days', ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].filter((d, i) => P.calendar.workDays[i]).join(', ')],
       ['South African public holidays observed', P.calendar.saHolidays ? 'Yes' : 'No'],
@@ -20582,7 +20587,7 @@ const LoM = (() => {
       r++;
       named.romOpen = ro; named.romAdd = ra; named.romSold = rs; named.romClose = rc;
     }
-    // volume moved and the teams it takes (bcm; a team moves Team Assumptions B9 a working day: its bcm an hour × the operational hours)
+    // volume moved and the teams it takes (bcm; a team moves Team Assumptions B9 a working day: its bcm an hour × the hours of a shift × the shifts)
     named.bcm = sumRow('Total Volume (bcm, waste + coal)', 'bcm', byM(rows, q => q.bcm), m => `SUMIFS(${rg(SD, 'W', NS)},${rg(SD, 'B', NS)},${mc(m)}$${MR}${pitCrit(SD, NS)})`);
     const movedParts = [named.bcm];
     if (!pitOnly) {
@@ -20648,7 +20653,7 @@ const LoM = (() => {
     if (named.qASH) { set(0, 8, `LoM Blended ${qb} ASH (%)`); set(1, 8, S.sh[enc(TC, named.qASH - 1)].v, `${TCl}${named.qASH}`, '0.00'); }
     if (named.prod) { set(0, 9, 'Total Product (t)'); set(1, 9, S.sh[enc(TC, named.prod - 1)].v, `${TCl}${named.prod}`, '#,##0'); if (named.yield) { set(3, 9, 'Plant Yield (%)'); set(4, 9, S.sh[enc(TC, named.yield - 1)].v, `${TCl}${named.yield}`, '0.00'); } }
     set(3, 2, 'Method'); set(4, 2, `ISAMIQ schedule: ${T.limit && (T.coal || T.waste) ? 'mined to the monthly targets' : 'mined at the capacity of the teams'}, strip by strip along the mining paths`);
-    set(3, 3, 'Teams'); set(4, 3, `${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)} team${TM.count === 1 ? '' : 's'} × ${U.fmtNum(TM.rate, TM.rate % 1 ? 1 : 0)} bcm an operational hour × ${U.fmtNum(TM.hours, TM.hours % 1 ? 1 : 0)} operational hours (${TM.shifts} shift${TM.shifts === 1 ? '' : 's'}) = ${U.fmtNum(TM.day, 0)} bcm a working day`);
+    set(3, 3, 'Teams'); set(4, 3, `${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)} team${TM.count === 1 ? '' : 's'} × ${U.fmtNum(TM.rate, TM.rate % 1 ? 1 : 0)} bcm an operational hour × ${TM.shifts} shift${TM.shifts === 1 ? '' : 's'} of ${U.fmtNum(TM.shiftHours, TM.shiftHours % 1 ? 1 : 0)} operational hours = ${U.fmtNum(TM.day, 0)} bcm a working day`);
     set(3, 4, 'Pit schedule'); set(4, 4, pitOnly ? pitNm : D.hasPits ? 'All pits' : P.name);
     set(3, 5, 'Total Waste (m³)'); set(4, 5, wasteV, `${TCl}${named.waste}`, '#,##0');
     set(3, 6, 'LoM Strip Ratio (m³/t)'); set(4, 6, coalT > 0 ? wasteV / coalT : 0, `IFERROR(E6/B5,0)`, '0.00');
@@ -20736,9 +20741,9 @@ const LoM = (() => {
     const rows = [
       ['Number of teams', TM.count, null, 'teams', 'The teams the project can use (Production tab)', '0.0'],
       ['bcm per team an operational hour', TM.rate, null, 'bcm / h', 'What one team moves in an operational hour (Production tab, Teams)', '#,##0.0'],
-      ['Operational hours per day', TM.hours, null, 'h / working day', 'The hours a working day the teams dig (Production tab, Schedule)', '0.0'],
+      ['Operational hours per shift', TM.shiftHours, null, 'h / shift', 'The hours of a shift the teams dig (Production tab, Schedule)', '0.00'],
       ['Shifts per day', TM.shifts, null, 'shifts', 'The shifts of a working day (Production tab, Schedule)', '0'],
-      ['bcm per team a working day', TM.perDay, 'B6*B7', 'bcm / working day', 'bcm an hour × operational hours', '#,##0'],
+      ['bcm per team a working day', TM.perDay, 'B6*B7*B8', 'bcm / working day', 'bcm an hour × operational hours a shift × shifts', '#,##0'],
       ['Mine capacity per working day', TM.day, 'B5*B9', 'bcm / working day', 'Number of teams × bcm per team a working day', '#,##0'],
       ['Working days in an average month', wdm, null, 'days', 'From the working days and holidays of the Production tab', '0.00'],
       ['Mine capacity, average month', TM.day * wdm, 'B10*B11', 'bcm / month', 'Capacity per working day × working days', '#,##0'],
@@ -20756,7 +20761,7 @@ const LoM = (() => {
     }
     r++;
     set(0, r++, 'How the teams are used');
-    set(0, r++, 'The teams do all the mining — topsoil, waste and coal — the ramps, the highwall batters and the rehandling, in bcm. A working day gives each team its bcm an operational hour × the operational hours of the day (B9), and a month its working days × that. Every working day the coal gets the teams it needs for its target first; the rest are shared between the other activities by the bcm in their paths, so the layers keep pace. Teams required = the bcm moved in a month ÷ (bcm per team a working day × the working days of the month). The swell of a layer only sizes the dumps and the backfill: a bcm dumped takes that much more room.');
+    set(0, r++, 'The teams do all the mining — topsoil, waste and coal — the ramps, the highwall batters and the rehandling, in bcm. A working day gives each team its bcm an operational hour × the operational hours of a shift × the shifts of the day (B9), and a month its working days × that. Every working day the coal gets the teams it needs for its target first; the rest are shared between the other activities by the bcm in their paths, so the layers keep pace. Teams required = the bcm moved in a month ÷ (bcm per team a working day × the working days of the month). The swell of a layer only sizes the dumps and the backfill: a bcm dumped takes that much more room.');
     set(0, r++, 'As received tons = tons in situ × (1 − geological loss) × (1 − mining loss) × (1 + contamination); tons in situ = the volume of the seam mined × its relative density.');
     return S.done([34, 18, 18, 60, 18, 16, 18, 18], [{ s: { c: 0, r: 0 }, e: { c: 3, r: 0 } }]);
   }
@@ -20770,7 +20775,7 @@ const LoM = (() => {
     const VT = P.voidTip || {}, gate = VT.afterStrips == null || VT.afterStrips === '' ? 2 : Math.max(0, Math.round(+VT.afterStrips || 0));
     const lines = [
       ['Schedule start', U.fmtDay(iso, 0), 'Every activity may start from this date (or its own earliest start date).'],
-      ['Teams', `${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)} team${TM.count === 1 ? '' : 's'} × ${U.fmtNum(TM.rate, TM.rate % 1 ? 1 : 0)} bcm an operational hour × ${U.fmtNum(TM.hours, TM.hours % 1 ? 1 : 0)} operational hours (${TM.shifts} shift${TM.shifts === 1 ? '' : 's'}) = ${U.fmtNum(TM.day, 0)} bcm a working day`, 'All mining, ramp excavation and rehandling is done by the teams; a month never moves more than the teams can.'],
+      ['Teams', `${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)} team${TM.count === 1 ? '' : 's'} × ${U.fmtNum(TM.rate, TM.rate % 1 ? 1 : 0)} bcm an operational hour × ${TM.shifts} shift${TM.shifts === 1 ? '' : 's'} of ${U.fmtNum(TM.shiftHours, TM.shiftHours % 1 ? 1 : 0)} operational hours = ${U.fmtNum(TM.day, 0)} bcm a working day`, 'All mining, ramp excavation and rehandling is done by the teams; a month never moves more than the teams can.'],
       ['Monthly coal target', T.coalAvg ? `${U.fmtNum(T.coalAvg, 0)} t ${T.coalBasis === 'ar' ? 'as received' : T.coalBasis === 'product' ? 'of washed product' : 'in situ'}` : 'none', T.coalAvg ? (T.limit ? 'The coal gets the teams it needs for its target first, as far as coal is exposed; no month mines more than its target.' : 'Only compared with the schedule.') : 'The coal shares the teams with the waste by the volume of its paths.'],
       ...(Monthly.rampMonths(P) && T.coalAvg ? [['Coal ramp-up', `${Monthly.rampMonths(P)} month${Monthly.rampMonths(P) === 1 ? '' : 's'}`, `The coal target steps up over the first ${Monthly.rampMonths(P)} months of the schedule (${Array.from({ length: Monthly.rampMonths(P) }, (_, k) => Math.round(((k + 1) / (Monthly.rampMonths(P) + 1)) * 100) + '%').join(', ')}) and is met in full from then on, so the waste gets ahead and builds up exposed coal first${Model.wasteFollows(P).on ? '; with the waste following the coal it is stripped for the full target meanwhile, and the coal held back stays exposed as inventory' : ''}.`]] : []),
       ['Monthly waste target', T.wasteAvg ? `${U.fmtNum(T.wasteAvg, 0)} ${T.wasteUnit}` : Model.wasteFollows(P).on ? 'none — follows the coal' : 'none', T.wasteAvg ? (T.limit ? 'No month moves more waste than its target.' : 'Only compared with the schedule.') : Model.wasteFollows(P).on ? `Follows the coal: each working day the waste activities move only the waste above the coal the target needs over the next month, keeping ${Model.wasteFollows(P).months} month${Model.wasteFollows(P).months === 1 ? '' : 's'} of coal exposed ahead; teams the coal does not need stay idle.` : 'The waste gets all the teams the coal does not need.'],
