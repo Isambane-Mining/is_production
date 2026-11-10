@@ -3,20 +3,20 @@ const assert = require('node:assert/strict');
 const {renderAnalysis, renderHourDetails, renderMobileAnalysis, renderProductivityTabs,renderMachineMatrix} = require('./hourly_productivity_analysis.js');
 
 function fixture() {
-  const cells = Array.from({length: 24}, (_, i) => ({label: `${(i+6)%24}:00`, category: 'bright_red',
+  const cells = Array.from({length: 24}, (_, i) => ({label: `${(i+6)%24}:00`, category: 'red',
     actual_bcm: 0, target_bcm: 220, has_record: false, record_status: 'missing', excavator_available: 1}));
   return {site: '<Koppie>', warnings: ['Missing <records>'], hours: cells.map(x=>x.label),
     rows: [{date: '2026-09-30', day: 'Wed', month: 'September 2026', month_key: '2026-09', plan_name: 'SEP', cells},
       {date: '2026-10-01', day: 'Thu', month: 'October 2026', month_key: '2026-10', plan_name: 'OCT', cells}],
-    pie: {total_hours: 48, categories: Object.fromEntries(['green','amber','red','bright_red','grey'].map(key=>
-      [key,{hours:key==='bright_red'?48:0,percent:key==='bright_red'?100:0}]))}};
+    pie: {total_hours: 48, categories: Object.fromEntries(['green','amber','red','grey'].map(key=>
+      [key,{hours:key==='red'?48:0,percent:key==='red'?100:0}]))}};
 }
 
 test('matrix renders grouped shifts, 24 hours per row, and month dividers', () => {
   const html = renderAnalysis(fixture());
   assert.ok(html.includes('DAY SHIFT'));
   assert.ok(html.includes('NIGHT SHIFT'));
-  assert.equal((html.match(/class="hpa-cell /g) || []).length, 48);
+  assert.equal((html.match(/class="hpa-cell /g) || []).length, 52);
   assert.equal((html.match(/class="hpa-month-divider"/g) || []).length, 2);
   assert.ok(html.includes('hpa-sticky-date'));
 });
@@ -28,6 +28,44 @@ test('legend uses hour counts and percentages and escapes sources', () => {
   assert.ok(html.includes('aria-expanded="false"'));
 
   assert.ok(html.includes('role="img"'));
+});
+
+
+
+test('Day and Night averages use completed recorded hours and include genuine zero BCM', () => {
+  const data = fixture();
+  const row = data.rows[0];
+
+  row.cells.forEach((cell, index) => {
+    cell.actual_bcm = index + 1;
+    cell.completed = true;
+    cell.has_record = true;
+  });
+
+  row.cells[1].completed = false;
+  row.cells[2].has_record = false;
+  row.cells[3].actual_bcm = 0;
+
+  const html = renderAnalysis(data);
+
+  // Day: (1 + 0 + 5 + ... + 12) / 10 = 6.9
+  // Night: (13 + ... + 24) / 12 = 18.5
+  assert.match(html, /hpa-day-average[^>]*>6[,.]9</);
+  assert.match(html, /hpa-night-average[^>]*>18[,.]5</);
+});
+
+test('Hourly productivity legend appears above the matrix with two shift average columns', () => {
+  const html = renderAnalysis(fixture());
+
+  assert.ok(
+    html.indexOf('aria-label="Proportion of hourly performance categories"') <
+    html.indexOf('<table class="hpa-table')
+  );
+
+  assert.match(html, /Day Avg/);
+  assert.match(html, /Night Avg/);
+  assert.equal((html.match(/colspan="13"/g) || []).length, 2);
+  assert.match(html, /hpa-analysis-scroll/);
 });
 
 test('hover card shows readable production metrics and only saved shift load times', () => {
@@ -75,12 +113,12 @@ test('partial-hour gradient preserves actual BCM and fatigue legend', () => {
   const data = fixture();
   Object.assign(data.rows[0].cells[0], {actual_bcm:123, non_working_minutes:30, segments:[
     {start_percent:0,end_percent:50,category:'grey'},
-    {start_percent:50,end_percent:100,category:'bright_red'}]});
+    {start_percent:50,end_percent:100,category:'red'}]});
   data.pie.categories.grey = {hours:.5,percent:1.04};
   const html = renderAnalysis(data);
   assert.ok(html.includes('linear-gradient(to right,#f5f5f5 0% 50%,#d63c4b 50% 100%)'));
   assert.ok(html.includes('>123'));
-  assert.ok(html.includes('Fatigue / Non-Working Hours'));
+  assert.ok(html.includes('Fatigue / Non-working'));
   assert.ok(html.includes(Number(.5).toLocaleString(undefined,{maximumFractionDigits:2})+' hours'));
 });
 
@@ -95,13 +133,13 @@ test('missing planning is rendered in report without a matrix or pie', () => {
   assert.ok(!html.includes('<table'));
 });
 
-test('phone view shows both shifts, 24 buttons, a small five-category key and date selection', () => {
+test('phone view shows both shifts, 24 buttons, a small four-category key and date selection', () => {
   const data=fixture();
   const before=JSON.stringify(data);
   const html=renderAnalysis(data);
   const mobile=html.match(/<section class="hpa-mobile"[\s\S]*?<\/section>/)?.[0] || '';
   assert.equal((mobile.match(/class="hpa-mobile-cell /g)||[]).length,24);
-  assert.equal((mobile.match(/class="hpa-key-item"/g)||[]).length,5);
+  assert.equal((mobile.match(/class="hpa-key-item"/g)||[]).length,4);
   assert.ok(mobile.includes('Day shift · 06:00–18:00'));
   assert.ok(mobile.includes('Night shift · 18:00–06:00 next day'));
   assert.ok(mobile.includes('class="hpa-mobile-date"'));
@@ -130,7 +168,11 @@ test('approved palette is shared by the matrix, pie and phone key without changi
   const before=JSON.stringify(data.pie);
   const html=renderAnalysis(data);
   assert.ok(html.includes('#ff9f1c'));
-  assert.ok(html.includes('#ffe066'));
+  assert.ok(!html.includes('#ffe066'));
+  assert.ok(!html.includes('Zero production'));
+  assert.ok(html.includes('Green · ≥440 BCM'));
+  assert.ok(html.includes('Orange · ≥400 and &lt;440 BCM'));
+  assert.ok(html.includes('Red · &lt;400 BCM'));
   assert.ok(html.includes('#d63c4b'));
   assert.ok(!html.includes('#ffc000'));
   assert.equal(JSON.stringify(data.pie),before);
@@ -148,7 +190,7 @@ test('mobile preview escapes dates and empty data returns no selectable hours', 
 test('combined page presents Current, Historical and Machines in order with separate labelled panels', () => {
   const html=renderProductivityTabs();
   assert.ok(html.indexOf('Current Productivity Analysis') < html.indexOf('Hourly Productivity Analysis'));
-  assert.ok(html.indexOf('Hourly Productivity Analysis') < html.indexOf('Machine Available vs Utilised'));
+  assert.ok(html.indexOf('Hourly Productivity Analysis') < html.indexOf('Machine Utilised vs Available'));
   assert.match(html, /hpt-machines-panel/);
   assert.equal((html.match(/role="tab"/g)||[]).length,3);
   assert.equal((html.match(/role="tabpanel"/g)||[]).length,3);
@@ -179,4 +221,83 @@ test('machine matrix preserves unknown counts and suppresses pending and missing
   assert.ok(!html.includes('997'));
   assert.ok(html.includes('Unknown, missing or pending'));
   assert.ok(html.includes('—'));
+});
+
+
+test('shift averages remain display-only and excluded from popup events', () => {
+  const data = fixture();
+  const html = renderAnalysis(data);
+
+  const averageCells = [
+    ...html.matchAll(/<td class="hpa-cell hpa-shift-average[^"]*"[^>]*>.*?<\/td>/g)
+  ].map(match => match[0]);
+
+  assert.equal(averageCells.length, data.rows.length * 2);
+
+  for (const cell of averageCells) {
+    assert.doesNotMatch(cell, /data-hpa-row|data-hpa-hour|aria-haspopup|tabindex/);
+  }
+
+  const source = require('node:fs').readFileSync(
+    require.resolve('./hourly_productivity_analysis.js'), 'utf8'
+  );
+
+  assert.equal(
+    (source.match(/\.hpa-analysis-matrix \.hpa-cell:not\(\.hpa-shift-average\)/g) || []).length,
+    5
+  );
+});
+
+
+test('both shift-average tables use the same width as hourly columns', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+
+  const css = fs.readFileSync(
+    path.resolve(__dirname, 'hourly_productivity_analysis.css'),
+    'utf8'
+  );
+
+  const marker = '/* Consistent 64px shift-average columns */';
+  const section = css.slice(css.indexOf(marker));
+
+  for (const selector of [
+    '.hm-availability-matrix .hpa-hour',
+    '.hm-availability-matrix .hpa-cell',
+    '.hpa-analysis-matrix .hpa-hour',
+    '.hpa-analysis-matrix .hpa-cell'
+  ]) {
+    assert.ok(section.includes(selector), selector);
+  }
+
+  assert.match(section, /width: 64px !important/);
+  assert.match(section, /min-width: 64px !important/);
+  assert.match(section, /max-width: 64px !important/);
+});
+
+
+test('Hourly shift-average popup shows magnified BCM average and shift total', () => {
+  const data = fixture();
+  const row = data.rows[0];
+
+  row.cells.forEach((cell,index) => {
+    cell.actual_bcm = index + 1;
+    cell.completed = true;
+    cell.has_record = true;
+  });
+
+  const {renderShiftAverageDetails} = require('./hourly_productivity_analysis.js');
+
+  const day = renderShiftAverageDetails(row,'day');
+  assert.match(day,/Average BCM \/ hour/);
+  assert.match(day,/6[,.]5/);
+  assert.match(day,/78 BCM/);
+
+  const night = renderShiftAverageDetails(row,'night');
+  assert.match(night,/18[,.]5/);
+  assert.match(night,/222 BCM/);
+
+  const html = renderAnalysis(data);
+  assert.match(html,/data-hpa-average-shift="day"/);
+  assert.match(html,/data-hpa-average-shift="night"/);
 });
