@@ -2460,7 +2460,8 @@ const Model = (() => {
     interburden: { label: 'Interburden', density: 2.4, swell: 1.3, color: '#8b9096' },
     parting: { label: 'Parting', density: 2.2, swell: 1.3, color: '#a39883' }
   };
-  const TEAM_LCM = 95000; // loose m³ a team moves in an average month
+  const TEAM_RATE = 140; // bcm one team moves in an operational hour (a new project's)
+  const TEAM_LCM = 95000; // (loose m³ a team a month, as projects counted it before: turned into bcm an hour when they open)
   const ACT_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
   const DUMP_COLORS = ['#c9a86a', '#9fb3c8', '#b5c99a', '#d6a2ad', '#e3c16f', '#a7a0d6'];
 
@@ -2471,11 +2472,11 @@ const Model = (() => {
       created: new Date().toISOString(), modified: new Date().toISOString(),
       startDate: today,
       crs: { preset: 'lo29_neg', proj4: '', axis: 'EN' },
-      calendar: { hoursPerDay: 22, workDays: [1, 1, 1, 1, 1, 1, 1], saHolidays: false, maxYears: 30 },
+      calendar: { hoursPerDay: 20, shifts: 2, workDays: [1, 1, 1, 1, 1, 1, 1], saHolidays: false, maxYears: 30 }, bcm: 1,
       grid: null, source: { folder: '', surfaceFiles: [], dxf: null, attributes: null },
       surfaces: [], layers: [], blocks: [], attrColumns: [], idColumn: '',
       activities: [], fleet: [], roads: [], dumps: [], overlays: [], limits: [], cutoff: { by: 'block', stop: false },
-      targets: { coal: null, waste: null, wasteUnit: 'bcm', basis: 'calendar', mode: 'limit', coalBasis: 'insitu' }, teams: { count: 4, perTeam: TEAM_LCM }, losses: { geo: 0, mining: 0, contam: 0 }, attrReport: {}, voidTip: { on: true, ref: 'top', afterStrips: 2, roads: true },
+      targets: { coal: null, waste: null, wasteUnit: 'bcm', basis: 'calendar', mode: 'limit', coalBasis: 'insitu' }, teams: { count: 4, rate: TEAM_RATE }, losses: { geo: 0, mining: 0, contam: 0 }, attrReport: {}, voidTip: { on: true, ref: 'top', afterStrips: 2, roads: true },
       imagery: { provider: 'google', googleKey: '', customUrl: '', fileName: '', opacity: 1 },
       view: { vex: 3 }, gridVersion: 0
     };
@@ -3251,11 +3252,19 @@ const Model = (() => {
     dozer: { name: 'Track dozer 70 t', qty: 2, prod: 650, avail: 0.82, util: 0.8 }
   };
   // ---------- production: the teams that do the mining, and the coal losses ----------
-  /* P.teams = {count, perTeam}: the number of teams and the loose m³ one team moves in an average month. */
+  /* P.teams = {count, rate}: the number of teams and the bcm one team moves in an operational hour. A working day gives
+     each team its rate × the operational hours of the day (P.calendar.hoursPerDay, Production tab), split over the
+     shifts of the day (P.calendar.shifts); a month, that × its working days. Every volume is bcm. */
   function teams(P) {
-    const T = P.teams || {}, n = +T.count > 0 ? +T.count : 0, per = +T.perTeam > 0 ? +T.perTeam : TEAM_LCM;
-    return { count: n, perTeam: per, cap: n * per };
+    const T = P.teams || {}, C = P.calendar || {}, n = +T.count > 0 ? +T.count : 0, rate = +T.rate > 0 ? +T.rate : TEAM_RATE;
+    const hours = +C.hoursPerDay > 0 ? Math.min(24, +C.hoursPerDay) : 20, shifts = +C.shifts > 0 ? Math.max(1, Math.round(+C.shifts)) : 2;
+    return { count: n, rate, hours, shifts, perDay: rate * hours, day: n * rate * hours, shift: (n * rate * hours) / shifts };
   }
+  /* The swell of spoil, and of topsoil: dumped, a bcm takes that much more room than it did in the ground. Every volume
+     shown is bcm; the swell only sizes the dumps and the backfill (and turns what is dug out of a dump back into bcm). */
+  const avgSwell = (list, d) => (list.length ? list.reduce((a, L) => a + (+L.swell || d), 0) / list.length : d);
+  function spoilSwell(P) { return avgSwell((P.layers || []).filter(L => L.type !== 'coal' && L.type !== 'topsoil'), 1.3); }
+  function soilSwell(P) { return avgSwell((P.layers || []).filter(L => L.type === 'topsoil'), 1.25); }
   /* P.losses = {geo, mining, contam} in %, for all seams; a seam may have its own (layer.losses, empty = the project's).
      As received tons = tons in situ × (1 − geological loss) × (1 − mining loss) × (1 + contamination). */
   function losses(P, L) {
@@ -3266,7 +3275,7 @@ const Model = (() => {
   function arFactor(P, L) { const q = losses(P, L); return Math.max(0, (1 - q.geo / 100) * (1 - q.mining / 100) * (1 + q.contam / 100)); }
   function newEquipment(kind, extra) { return Object.assign({ id: U.uid('eq'), kind, activityId: '' }, U.deepClone(FLEET_DEFAULTS[kind]), extra || {}); }
 
-  return { LAYER_TYPES, ACT_COLORS, DUMP_COLORS, deplete, setDepletion, depletionStats, newProject, autoLayers, seamToken, proposeGrid, rasterExtent, rasterRes, rasterFix, rasterWhere, resample, fillHoles, conformSurfaces, buildWorkspace, applyCutoff, cutTarget, cutTargets, cellXY, cellAt, sampleGrid, cellsInPolygon, rasterizeBlocks, layerIndex, blockVolumes, layerThickness, blockDensity, kindStart, kindOf, rampToeSurf, rampSlopes, RAMP_BATTER, RAMP_FILL, surfaceLabel, rampEnd, actDests, syncActColors, blockLimits, blockDepth, zoneBlocks, stripSource, pathStrips, idStrip, blockPits, pitIndex, pitName, boxCuts, boxDef, boxMonths, boxName, boxTitle, BOX_MONTHS, pitBaseName, fleetHost, actFleet, syncPits, dropActivity, setTopsoilAsWaste, PIT_COLORS, REST, defaultActivities, newEquipment, FLEET_DEFAULTS, niceCell, teams, losses, arFactor, TEAM_LCM, pitStart, bench, wasteFollows, rainDerate, reserveInside, hasReserve, reserveRings, inReserve, rightOverlay, rightRings, rightMask, rightCandidate };
+  return { LAYER_TYPES, ACT_COLORS, DUMP_COLORS, deplete, setDepletion, depletionStats, newProject, autoLayers, seamToken, proposeGrid, rasterExtent, rasterRes, rasterFix, rasterWhere, resample, fillHoles, conformSurfaces, buildWorkspace, applyCutoff, cutTarget, cutTargets, cellXY, cellAt, sampleGrid, cellsInPolygon, rasterizeBlocks, layerIndex, blockVolumes, layerThickness, blockDensity, kindStart, kindOf, rampToeSurf, rampSlopes, RAMP_BATTER, RAMP_FILL, surfaceLabel, rampEnd, actDests, syncActColors, blockLimits, blockDepth, zoneBlocks, stripSource, pathStrips, idStrip, blockPits, pitIndex, pitName, boxCuts, boxDef, boxMonths, boxName, boxTitle, BOX_MONTHS, pitBaseName, fleetHost, actFleet, syncPits, dropActivity, setTopsoilAsWaste, PIT_COLORS, REST, defaultActivities, newEquipment, FLEET_DEFAULTS, niceCell, teams, spoilSwell, soilSwell, losses, arFactor, TEAM_LCM, TEAM_RATE, pitStart, bench, wasteFollows, rainDerate, reserveInside, hasReserve, reserveRings, inReserve, rightOverlay, rightRings, rightMask, rightCandidate };
 })();
 
 /* ===== KML overlays and keep-out zones (DOM-free) =====
@@ -3739,7 +3748,7 @@ const Synth = (() => {
     ib.method = 'mixed'; ib.destMode = 'void'; ib.mixMode = 'backup'; ib.dozeShare = 100;
     P.activities.filter(a => /Seam/.test(a.name)).forEach(a => (a.dests = D('dmp_rom')));
     // the teams that do the mining, the monthly targets and the coal losses
-    P.teams = { count: 18, perTeam: 95000 };
+    P.teams = { count: 18, rate: 130 };
     P.targets = { coal: 390000, waste: 1000000, wasteUnit: 'bcm', basis: 'calendar', mode: 'limit', coalBasis: 'insitu' };
     P.losses = { geo: 5, mining: 5, contam: 3 };
     P.fleet = [];
@@ -3755,7 +3764,7 @@ const Synth = (() => {
         { f: 2, n: 'Farm house', k: 'point', c: ll([[X(1985), Y(1560)]]) }
       ]
     }];
-    P.calendar = { hoursPerDay: 22, workDays: [1, 1, 1, 1, 1, 1, 0], saHolidays: true, maxYears: 30 };
+    P.calendar = { hoursPerDay: 22, shifts: 2, workDays: [1, 1, 1, 1, 1, 1, 0], saHolidays: true, maxYears: 30 }; P.bcm = 1;
     P.imagery = { provider: 'esri', googleKey: '', customUrl: '', fileName: '', opacity: 1 };
     P.view = { vex: 4 };
     return { project: P, surf };
@@ -4833,7 +4842,7 @@ const Sim = (() => {
       if (j.when === 'date' && !U.parseISO(j.start || '')) out.push({ type: 'warn', msg: `Rehandling "${j.name}" starts on a date, but no date is set; it starts when mining finishes.` });
       if (j.to === 'soil' && Water.settings(P).on === false) out.push({ type: 'warn', msg: `Rehandling "${j.name}" puts topsoil onto the backfill, but the final landform is switched off (Rehab tab), so no backfill waits for topsoil; it is skipped.` });
     }
-    if (!(Model.teams(P).cap > 0)) out.push({ type: 'error', msg: 'Set the number of teams in the Production tab: the teams do the mining.' });
+    if (!(Model.teams(P).day > 0)) out.push({ type: 'error', msg: 'Set the number of teams in the Production tab: the teams do the mining.' });
     if (!P.startDate || !U.parseISO(P.startDate)) out.push({ type: 'error', msg: 'Set a schedule start date in the Project tab.' });
     return out;
   }
@@ -5211,21 +5220,21 @@ const Sim = (() => {
       return o;
     }
 
-    /* The teams (P.teams, Production tab) do all the mining. A team moves P.teams.perTeam loose m³ in an average month
-       (95 000 unless set otherwise), so the mine moves teams × that a month: topsoil, waste and coal alike, counted in loose
-       m³ (bcm × the swell of the layer). The monthly targets (P.targets) say how much of it is coal (t, in situ or as
+    /* The teams (P.teams, Production tab) do all the mining. A team moves its rate (P.teams.rate, bcm an operational hour)
+       × the operational hours of a working day (P.calendar.hoursPerDay), so the mine moves teams × that on a working day
+       and the working days of a month × that in the month: topsoil, waste and coal alike, in bcm. The monthly targets (P.targets) say how much of it is coal (t, in situ or as
        received) and how much waste (bcm or t): unless they are only compared ('compare'), the coal and the waste mined in a
        month may not pass them. Each month gets these figures × its days (or working days) ÷ the days in an average month,
        and each working day what is left of the month ÷ the working days left. The day's team volume goes to the coal first,
-       up to its target; the rest is shared between the other activities by the loose volume in their paths, so the layers
+       up to its target; the rest is shared between the other activities by the bcm in their paths, so the layers
        keep pace with each other (without a coal target the coal shares in the same way). What one activity cannot use, the
        others may. Ramp excavation and rehandling are done by the teams too: they are not held back, but the rest of the
        month has that much less. */
     const TG = P.targets || {}, tgLimit = TG.mode !== 'compare', TM = Model.teams(P);
     const PRD = TG.coalBasis === 'product' && typeof Wash !== 'undefined' ? Wash.product(P) : null; // a coal target in washed product (washability, Geological Data tab)
-    const TL = { coal: tgLimit && +TG.coal > 0 ? +TG.coal : 0, waste: tgLimit && +TG.waste > 0 ? +TG.waste : 0, wT: TG.wasteUnit === 't', work: TG.basis === 'working', per: Monthly.daysPerMonth(P), team: TM.cap, ar: TG.coalBasis === 'ar' || !!PRD, prod: PRD };
+    const TL = { coal: tgLimit && +TG.coal > 0 ? +TG.coal : 0, waste: tgLimit && +TG.waste > 0 ? +TG.waste : 0, wT: TG.wasteUnit === 't', work: TG.basis === 'working', per: Monthly.daysPerMonth(P), team: TM.day, ar: TG.coalBasis === 'ar' || !!PRD, prod: PRD };
     TL.any = TL.coal > 0 || TL.waste > 0;
-    events.push({ day: 0, type: 'info', msg: `Teams: ${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)} team${TM.count === 1 ? '' : 's'} × ${U.fmtNum(TM.perTeam, 0)} m³ loose = ${U.fmtNum(TM.cap, 0)} m³ loose in an average month for the mining, the ramps and the rehandling.${TL.any ? ` The monthly targets limit it: ${[TL.coal > 0 ? `coal ${U.fmtNum(TL.coal, 0)} t${TL.prod ? ' of washed product' : TL.ar ? ' as received' : ''}` : null, TL.waste > 0 ? `waste ${U.fmtNum(TL.waste, 0)} ${TL.wT ? 't' : 'bcm'}` : null].filter(Boolean).join(' and ')} in an average month, following the ${TL.work ? 'working' : 'calendar'} days of each month.` : ''}` });
+    events.push({ day: 0, type: 'info', msg: `Teams: ${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)} team${TM.count === 1 ? '' : 's'} × ${U.fmtNum(TM.rate, TM.rate % 1 ? 1 : 0)} bcm an operational hour × ${U.fmtNum(TM.hours, TM.hours % 1 ? 1 : 0)} operational hours in ${TM.shifts} shift${TM.shifts === 1 ? '' : 's'} = ${U.fmtNum(TM.day, 0)} bcm a working day for the mining, the ramps and the rehandling.${TL.any ? ` The monthly targets limit it: ${[TL.coal > 0 ? `coal ${U.fmtNum(TL.coal, 0)} t${TL.prod ? ' of washed product' : TL.ar ? ' as received' : ''}` : null, TL.waste > 0 ? `waste ${U.fmtNum(TL.waste, 0)} ${TL.wT ? 't' : 'bcm'}` : null].filter(Boolean).join(' and ')} in an average month, following the ${TL.work ? 'working' : 'calendar'} days of each month.` : ''}` });
     // the first day of mining (the earliest any activity may start: its own date or its pit's) and its month: the start-up waste counts from it
     const mineStart0 = acts.filter(X => X.path.length).reduce((a, X) => Math.min(a, X.startDay), Infinity), mineDay0 = isFinite(mineStart0) ? mineStart0 : 0;
     const suKey0 = (t => t.getUTCFullYear() * 12 + t.getUTCMonth())(U.addDays(start, mineDay0));
@@ -5239,9 +5248,9 @@ const Sim = (() => {
       X.g = X.L.type === 'coal' ? 0 : 1; X.alloc = 0; X.allocT = 0; X.tgtDays = 0; X.teamDays = 0;
       X.sw = X.L.swell || 1.3; X.arF = X.g === 0 ? Model.arFactor(P, X.L) : 1;
       X.yAvg = TL.prod && X.g === 0 ? (TL.prod.seams.get(X.l) || { yAvg: 1 }).yAvg : 1; // the seam's average yield (a product target)
-      // its weight when the teams are shared out: the loose volume of its path
+      // its weight when the teams are shared out: the bcm of its path
       let v = 0; for (const b of X.path) v += vol0[b][X.l];
-      X.nom = Math.max(1, v * X.sw);
+      X.nom = Math.max(1, v);
     }
     const unitOf = (X, b) => (X.g === 0 ? Model.blockDensity(P, b, X.l) * (TL.ar ? X.arF : 1) * (TL.prod ? Wash.yieldOf(TL.prod, b, X.l) : 1) : TL.wT ? Model.blockDensity(P, b, X.l) : 1); // target units per bcm
     /* Waste that follows the coal: with a coal target and no waste target (scheduled to, not only compared), the waste
@@ -5408,7 +5417,7 @@ const Sim = (() => {
         // (the waste target: the start-up waste over the first months of mining, then the steady target)
         const suM = key - suKey0, wM = TL.waste > 0 ? Monthly.wasteTarget(P, Math.max(0, suM)) : 0;
         tg.su = TL.waste > 0 && suM < Monthly.startMonths(P); // (a start-up month, or before mining)
-        tg.bud = [TL.coal > 0 ? (TL.coal * baseC) / TL.per : Infinity, wM > 0 ? (wM * base) / TL.per : Infinity, (TL.team * base) / TL.per];
+        tg.bud = [TL.coal > 0 ? (TL.coal * baseC) / TL.per : Infinity, wM > 0 ? (wM * base) / TL.per : Infinity, TL.team * tg.wdLeft];
         if (MW) MW.bud = (MW.min * base) / TL.per; // (the month's minimum waste)
         if (SW) SW.bud = (SW.rate * base) / TL.per; // (the month's steady waste, bcm)
       }
@@ -5910,7 +5919,7 @@ const Sim = (() => {
           for (const D of listFor(X)) {
             if (left <= EPS) break;
             const b4 = left; left = fillDump(D, left, X, b); const put = b4 - left;
-            if (put > 0) { dumpDaily[D.k][day] += put; D.received += D.rom ? 0 : put; rec[D.name] = (rec[D.name] || 0) + bank * (put / looseV); }
+            if (put > 0) { dumpDaily[D.k][day] += put; D.received += D.rom ? 0 : put; D.receivedB = (D.receivedB || 0) + (D.rom ? 0 : bank * (put / looseV)); rec[D.name] = (rec[D.name] || 0) + bank * (put / looseV); }
           }
           if (left > EPS) {
             levelFill(dest.v, left, true); overCap += left;
@@ -5940,7 +5949,7 @@ const Sim = (() => {
         left = fillDump(D, left, X, b);
         const put = before - left;
         if (put > 0) {
-          dumpDaily[D.k][day] += put; D.received += D.rom ? 0 : put; rec[D.name] = (rec[D.name] || 0) + bank * (put / looseV);
+          dumpDaily[D.k][day] += put; D.received += D.rom ? 0 : put; D.receivedB = (D.receivedB || 0) + (D.rom ? 0 : bank * (put / looseV)); rec[D.name] = (rec[D.name] || 0) + bank * (put / looseV);
           if (D.rom) romT[D.k][day] += bank * (put / looseV) * Model.blockDensity(P, b, X.l); // tonnes delivered to the ROM tip
         }
       }
@@ -6053,7 +6062,7 @@ const Sim = (() => {
           const dens = Model.blockDensity(P, b, l), sw = X.sw, u = got * unitOf(X, b);
           X.bcm[day] += got; X.t[day] += got * dens;
           records.push({ d: day, a: X.idx, b, v: got, t: got * dens });
-          tg.used[X.g] += u; if (tg.left[X.g] !== Infinity) tg.left[X.g] -= u; tg.used[2] += got * sw; tg.left[2] -= got * sw;
+          tg.used[X.g] += u; if (tg.left[X.g] !== Infinity) tg.left[X.g] -= u; tg.used[2] += got; tg.left[2] -= got;
           // a rollover pushes into its void when that is mined out; otherwise it all goes to the dumps
           const v = X.voidMode ? X.recv.get(b) : -1;
           let dest = null;
@@ -6295,7 +6304,7 @@ const Sim = (() => {
        that followed the mining. Unless switched off (P.rehab.finalVoid), the waste dumps outside the pit are dug back
        into these voids once mining is finished, strip by strip along the mining path, the nearest dump first, until the
        voids are full up to the top of the backfill or the dumps are empty. Not when a rehandling job of the project
-       already fills the voids. Rate: P.rehab.finalRate (loose m³ a working day), or all the teams. */
+       already fills the voids. Rate: P.rehab.finalRate (bcm a working day), or all the teams. */
     const FV = !!RH && RS.finalVoid !== false && !(P.rehandles || []).some(j => j.to === 'voids'), autoJobs = [];
     if (FV) {
       // the last block of the deepest path: the final void lies there
@@ -6349,7 +6358,7 @@ const Sim = (() => {
         vdumps.push(dst); toName = 'the mined-out voids';
       } else if (toSoil) { if (!RH) continue; toName = 'the backfill, as topsoil'; }
       else { dst = dumpById.get(j.to); if (!dst || dst === src || dst.rom) continue; toName = dst.name; }
-      if (!(+j.rate > 0) && !j.auto) { events.push({ day: 0, type: 'warn', msg: `Rehandling "${j.name}" has no rate, so it is skipped. Type the loose cubic metres it moves in a working day.` }); continue; }
+      if (!(+j.rate > 0) && !j.auto) { events.push({ day: 0, type: 'warn', msg: `Rehandling "${j.name}" has no rate, so it is skipped. Type the bcm it moves in a working day.` }); continue; }
       const sd = j.when === 'date' && U.parseISO(j.start || '') ? Math.max(0, U.daysBetween(P.startDate, j.start)) : -1;
       let base = Infinity; if (src.old) base = src.elev; else for (const c of src.cells) base = Math.min(base, Math.max(insitu[c], topo[c]));
       const J = { j, src, dst, toSoil, toName, after: sd < 0, startDay: sd, rate: Math.max(0, +j.rate || 0), qty: +j.qty > 0 ? +j.qty : Infinity, liftH: src.liftH || 10, base,
@@ -6361,7 +6370,7 @@ const Sim = (() => {
     const digFloor = c => Math.max(insitu[c], topo[c]);
     const srcAvail = J => { let v = 0; if (J.old) { const el = J.src.elev; for (const c of J.src.cells) v += Math.max(0, insitu[c] + fill[c] - el); return v * A; } for (const c of J.src.cells) if (fill[c] > 0.01) v += Math.max(0, insitu[c] + fill[c] - digFloor(c)); return v * A; };
     /* An existing dump is part of the original ground: it is loaded out of the ground itself (and of any spoil placed on
-       it), lift by lift from its top down to the elevation set. Its material is counted 1:1, as it is loose already. */
+       it), lift by lift from its top down to the elevation set. It is spoil already: its bcm are its room ÷ the spoil's swell. */
     function digOld(J, V) {
       const cells = J.src.cells, el = J.src.elev;
       let got = 0, guard = 0;
@@ -6421,9 +6430,9 @@ const Sim = (() => {
         log(c);
       }
       let left = bank * 1.3 + loose;
-      for (const D of dumps) { if (left <= EPS) break; if (D.rom || D.kind !== 'waste') continue; const b4 = left; left = fillDump(D, left); const put = b4 - left; if (put > 0) { dumpDaily[D.k][day] += put; D.received += put; } }
+      for (const D of dumps) { if (left <= EPS) break; if (D.rom || D.kind !== 'waste') continue; const b4 = left; left = fillDump(D, left); const put = b4 - left; if (put > 0) { dumpDaily[D.k][day] += put; D.received += put; D.receivedB = (D.receivedB || 0) + put / 1.3; } }
       drainCut = { day, bcm: bank, loose: bank * 1.3 + loose, unplaced: left > 1 ? left : 0 };
-      events.push({ day, type: 'info', msg: `Drains for the flow paths cut through ground that is not mined: ${U.fmtBig(bank, 'bcm')}${loose > 1 ? ` and ${U.fmtBig(loose, 'm³')} of spoil lying over them` : ''}, taken to the waste dumps${left > 1 ? ` (${U.fmtBig(left, 'm³ loose')} found no room)` : ''}.` });
+      events.push({ day, type: 'info', msg: `Drains for the flow paths cut through ground that is not mined: ${U.fmtBig(bank, 'bcm')}${loose > 1 ? ` and ${U.fmtBig(loose / SPW, 'bcm')} of spoil lying over them` : ''}, taken to the waste dumps${left > 1 ? ` (${U.fmtBig(left / 1.3, 'bcm')} found no room)` : ''}.` });
     }
     let rampsFree = false, rampsLast = false;
     function freeRamps() {
@@ -6442,16 +6451,19 @@ const Sim = (() => {
     function endJob(J, why) {
       J.done = true; J.why = why;
       const txt = { empty: J.old ? `${J.src.name} is loaded out down to ${U.fmtNum(J.src.elev, 1)} m` : `${J.src.name} is empty`, full: `${J.toName === 'the backfill, as topsoil' ? 'no more backfill is waiting for topsoil' : J.toName + ' ' + (J.dst && J.dst.virtual ? 'are' : 'is') + ' full'}`, qty: 'the quantity set has been moved' }[why] || why;
-      events.push({ day, type: why === 'full' && J.qty < Infinity && J.moved < J.qty - 1 ? 'warn' : 'info', msg: `Rehandling "${J.j.name}" finished: ${txt}. It moved ${U.fmtBig(J.moved, 'm³ loose')} from ${J.src.name} to ${J.toName}.` });
+      events.push({ day, type: why === 'full' && J.qty < Infinity && J.moved < J.qty - 1 ? 'warn' : 'info', msg: `Rehandling "${J.j.name}" finished: ${txt}. It moved ${U.fmtBig(J.moved, 'bcm')} from ${J.src.name} to ${J.toName}.` });
     }
-    // all the teams, loose m³ a working day (the teams' month ÷ the working days in an average month)
+    // all the teams, bcm a working day
     let wRate = 0;
     function wasteRate() {
       if (wRate > 0) return wRate;
-      const y0 = start.getUTCFullYear();
-      wRate = Math.max(1000, TM.cap / (Monthly.workDaysPerMonth(P, y0, y0 + 3) || Monthly.AVG_MONTH));
+      wRate = Math.max(100, TM.day);
       return wRate;
     }
+    /* what a dump holds is loose: dug out, a bcm of it is its room ÷ the swell of what it holds the most of (the spoil's,
+       when it holds no one layer most: an existing dump, a mix) */
+    const SPW = Model.spoilSwell(P), SLW = Model.soilSwell(P);
+    const swellOf = D => { const m = domMat(D); return m >= 1 && m <= nL ? +P.layers[m - 1].swell || 1.3 : SPW; };
     function rehandleDay() {
       const minesDone = acts.every(X => X.done || X.halted);
       let moved = 0;
@@ -6461,22 +6473,23 @@ const Sim = (() => {
         if (J.prev && J.prev.why === 'full' || (J.prev && J.prev.why === 'not needed')) { J.done = true; J.why = 'not needed'; continue; }
         if (J.autoRate && !(J.rate > 0)) J.rate = wasteRate();
         // the final void without a rate of its own: all the teams, as much as is left of their month (shared out per working day)
+        // (bcm: the rate, the quantity and what is moved; the dumps' room is loose, the bcm × the swell of what is dug)
         const want = Math.min(J.autoRate ? Math.max(0, tg.left[2]) : J.rate, J.qty - J.moved);
         if (J.qty - J.moved <= 1) { endJob(J, 'qty'); continue; }
-        const avail = srcAvail(J);
+        const sw = swellOf(J.src), avail = srcAvail(J) / sw;
         if (avail <= 1) { endJob(J, 'empty'); continue; }
         const V = Math.min(want, avail);
         if (V <= EPS) continue;
         curMat = domMat(J.src); // what is dug out of a dump: what it holds the most of
-        const left = J.toSoil ? placeSoil(V) : fillDump(J.dst, V);
-        const put = V - left;
+        const VL = V * sw, left = J.toSoil ? placeSoil(VL) : fillDump(J.dst, VL);
+        const put = VL - left;
         if (put > EPS) {
-          const got = dig(J, put);
-          J.daily[day] += put; J.moved += put; moved += put; J.last = day;
-          J.src.removed = (J.src.removed || 0) + got;
-          if (J.first < 0) { J.first = day; events.push({ day, type: 'info', msg: `Rehandling "${J.j.name}" starts: ${U.fmtNum(J.rate, 0)} m³ loose a working day from ${J.src.name} to ${J.toName}.` }); }
+          const got = dig(J, put), pb = put / sw;
+          J.daily[day] += pb; J.moved += pb; moved += pb; J.last = day;
+          J.src.removed = (J.src.removed || 0) + got / sw;
+          if (J.first < 0) { J.first = day; events.push({ day, type: 'info', msg: `Rehandling "${J.j.name}" starts: ${U.fmtNum(J.rate, 0)} bcm a working day from ${J.src.name} to ${J.toName}.` }); }
           if (J.toSoil) soilDaily[day] += put;
-          else if (!J.dst.virtual) { dumpDaily[J.dst.k][day] += put; J.dst.received += put; }
+          else if (!J.dst.virtual) { dumpDaily[J.dst.k][day] += put; J.dst.received += put; J.dst.receivedB = (J.dst.receivedB || 0) + pb; }
         }
         /* Nowhere to put it today. Once mining is finished that is the end of the job, unless it puts topsoil back while
            other jobs (the final void, rehandling into the voids) are still backfilling: the backfill they bring up to its
@@ -6517,7 +6530,7 @@ const Sim = (() => {
           B.last = day;
           let left = v * 1.3;
           const cands = [dumpById.get(B.dump)].concat(dumps.filter(D => D.kind === 'waste')).filter(Boolean);
-          for (const D of cands) { if (left <= EPS) break; const b4 = left; left = fillDump(D, left); dumpDaily[D.k][day] += b4 - left; D.received += b4 - left; }
+          for (const D of cands) { if (left <= EPS) break; const b4 = left; left = fillDump(D, left); dumpDaily[D.k][day] += b4 - left; D.received += b4 - left; D.receivedB = (D.receivedB || 0) + (b4 - left) / 1.3; }
           if (left > EPS) unplaced += left / 1.3;
         }
       }
@@ -6560,8 +6573,8 @@ const Sim = (() => {
       }
       if (!rampsFree) for (const R of roads.follows) updateFollow(R);
       if (TL.waste > 0 || MW) tg.used[1] += TL.wT ? rampTDaily[day] : rampDaily[day]; // ramp excavation is waste of this month too
-      if (TL.waste > 0 || MW) tg.used[1] += TL.wT ? batterTDaily[day] : batterDaily[day]; tg.used[2] += batterDaily[day] * 1.3; // and so are the highwall batters
-      tg.used[2] += rampDaily[day] * 1.3; // and the teams do it
+      if (TL.waste > 0 || MW) tg.used[1] += TL.wT ? batterTDaily[day] : batterDaily[day]; tg.used[2] += batterDaily[day]; // and so are the highwall batters
+      tg.used[2] += rampDaily[day]; // and the teams do it
       targetDay(date, w);
       if (w) {
         // a second round: what some activities could not use goes to the ones the targets or the teams stopped
@@ -6575,7 +6588,7 @@ const Sim = (() => {
           if (X.wLeft <= 1e-3) { if (!round && pick(X) >= 0) { X.why = 0; X.wfNow = true; } continue; } // the coal needs no more of its waste today
           let roomG = round === 2 ? X.xNeed : tg.left[X.g] === Infinity ? Infinity : Math.max(0, tg.left[X.g] - tg.resv[X.g]), roomT = Math.max(0, tg.left[2] - tg.resv[2]), guard = 0;
           X.capNow = false;
-          const sw = X.sw, swT = X.g === 1 && RD > 0 ? sw / (1 - RD) : sw; // swT: the teams' loose m³ a bcm (rain: the waste takes them longer; the dumps still take sw)
+          const sw = X.sw, swT = X.g === 1 && RD > 0 ? 1 / (1 - RD) : 1; // swT: the teams' bcm a bcm mined (rain: the waste takes them longer); sw: the room it takes in the dumps
           while (guard++ < 400) {
             const b = pick(X);
             if (b < 0) break;
@@ -6683,7 +6696,7 @@ const Sim = (() => {
         rampsLast = true;
         const r0 = rampDaily[day], t0 = rampTDaily[day];
         if (!rampsFree) for (const R of roads.follows) updateFollow(R);
-        if (TL.waste > 0 || MW) tg.used[1] += TL.wT ? rampTDaily[day] - t0 : rampDaily[day] - r0; tg.used[2] += (rampDaily[day] - r0) * 1.3;
+        if (TL.waste > 0 || MW) tg.used[1] += TL.wT ? rampTDaily[day] - t0 : rampDaily[day] - r0; tg.used[2] += rampDaily[day] - r0;
       }
       // once all mining is finished, ramps that follow the mining are no longer needed: rehandling may fill them
       if (!rampsFree && jobs.length && acts.every(X => X.done || X.halted)) freeRamps();
@@ -6730,8 +6743,8 @@ const Sim = (() => {
     { const ct = rampCoalT.reduce((x, y) => x + y, 0); if (ct > 1) events.push({ day: nDays - 1, type: 'info', msg: `Ramp cuts through blocks that were not mined yet recovered ${U.fmtBig(ct, 't')} of coal, counted with its seam and block.` }); }
     for (const B of batters) if (B.nC) events.push({ day: B.last >= 0 ? B.last : nDays - 1, type: B.done.size < B.groups.size ? 'warn' : 'info', msg: B.first < 0 ? `Highwall batter "${B.bt.name}" was not cut: the blocks beside it were not mined down to ${Model.surfaceLabel(P, B.k)}.` : `Highwall batter "${B.bt.name}": ${U.fmtBig(B.bcm, 'bcm')} cut back at ${U.fmtNum(B.ang, 0)}° from ${U.fmtDay(P.startDate, B.first)} to ${U.fmtDay(P.startDate, B.last)}${B.coalT > 1 ? ` (${U.fmtBig(B.coalT, 't')} of coal in it is counted with its seam)` : ''}${B.done.size < B.groups.size ? `; beside ${B.groups.size - B.done.size} of its ${B.groups.size} blocks it was not cut, as they were not mined down to ${Model.surfaceLabel(P, B.k)}` : ''}.` });
     for (const J of jobs) if (J.old) { let left = 0; for (const c of J.src.cells) left += Math.max(0, insitu[c] - J.src.elev) * A; // (the old dump itself: backfill and topsoil placed there later are not it)
-       if (left > 1000) events.push({ day: nDays - 1, type: 'warn', msg: `Existing dump "${J.src.name}": ${U.fmtBig(left, 'm³')} of it still stands above ${U.fmtNum(J.src.elev, 1)} m when the schedule ends (${U.fmtBig(J.moved, 'm³')} of ${U.fmtBig(J.src.vol, 'm³')} loaded out), although the final landform leaves it out. ${J.why === 'full' ? `${J.toName} has no more room: choose a bigger dump or another one.` : 'Raise its rate or start it earlier.'}` }); }
-    for (const J of jobs) if (!J.done) events.push({ day: nDays - 1, type: 'warn', msg: J.first < 0 ? `Rehandling "${J.j.name}" never started${J.after ? '' : ': its start date is after the end of the schedule'}.` : `Rehandling "${J.j.name}" had not finished when the schedule ended; it moved ${U.fmtBig(J.moved, 'm³ loose')}.` });
+       if (left > 1000) events.push({ day: nDays - 1, type: 'warn', msg: `Existing dump "${J.src.name}": ${U.fmtBig(left / SPW, 'bcm')} of it still stands above ${U.fmtNum(J.src.elev, 1)} m when the schedule ends (${U.fmtBig(J.moved, 'bcm')} of ${U.fmtBig(J.src.vol / SPW, 'bcm')} loaded out), although the final landform leaves it out. ${J.why === 'full' ? `${J.toName} has no more room: choose a bigger dump or another one.` : 'Raise its rate or start it earlier.'}` }); }
+    for (const J of jobs) if (!J.done) events.push({ day: nDays - 1, type: 'warn', msg: J.first < 0 ? `Rehandling "${J.j.name}" never started${J.after ? '' : ': its start date is after the end of the schedule'}.` : `Rehandling "${J.j.name}" had not finished when the schedule ended; it moved ${U.fmtBig(J.moved, 'bcm')}.` });
     // box cuts: how each was opened — when its top seam was exposed across it, when it was mined out, what was done when its priority ended
     const cap1 = s => s.charAt(0).toUpperCase() + s.slice(1);
     const mo = d => { const m = d / Monthly.AVG_MONTH; return m < 1 ? `${Math.max(1, Math.round(d))} day${Math.round(d) === 1 ? '' : 's'}` : `${U.fmtNum(m, 1)} months`; };
@@ -6782,8 +6795,8 @@ const Sim = (() => {
           voidVol += below * A; liftLeft += (room - below) * A; if (below > 0.03) voidArea += A;
         }
       }
-      if (overCap > 1) events.push({ day: nDays - 1, type: 'warn', msg: `${U.fmtBig(overCap, 'm³ loose')} of pushed spoil did not fit below the top of the backfill and was pushed in above it.` });
-      if (soilPlaced > 1 || waiting) events.push({ day: nDays - 1, type: 'info', msg: `Topsoil replacement: ${U.fmtArea(soiled * A)} of backfill has its topsoil back (${U.fmtBig(soilPlaced, 'm³ loose')} placed)${waiting ? `; ${U.fmtArea(waiting * A)} is backfilled and still waits for topsoil` : ''}.` });
+      if (overCap > 1) events.push({ day: nDays - 1, type: 'warn', msg: `${U.fmtBig(overCap / SPW, 'bcm')} of pushed spoil did not fit below the top of the backfill and was pushed in above it.` });
+      if (soilPlaced > 1 || waiting) events.push({ day: nDays - 1, type: 'info', msg: `Topsoil replacement: ${U.fmtArea(soiled * A)} of backfill has its topsoil back (${U.fmtBig(soilPlaced / SLW, 'bcm')} placed)${waiting ? `; ${U.fmtArea(waiting * A)} is backfilled and still waits for topsoil` : ''}.` });
       // the final void: what was dug back into it from the dumps outside the pit, and what is left open
       let finalVoid = { on: FV };
       if (FV) {
@@ -6791,7 +6804,7 @@ const Sim = (() => {
         const first = A2.length ? Math.min(...A2.map(J => J.first)) : -1, last = A2.length ? Math.max(...A2.map(J => J.last)) : -1;
         finalVoid = { on: true, moved, first, last, rate: A2.length ? A2[0].rate : 0, from: A2.map(J => ({ name: J.src.name, moved: J.moved })), sources: autoJobs.length, left: voidVol };
         if (!autoJobs.length) events.push({ day: nDays - 1, type: 'warn', msg: `Final void: ${U.fmtBig(voidVol, 'm³')} of the mined-out pit is left below the top of the backfill, and there is no waste dump outside the pit to fill it from.` });
-        else if (moved > 1) events.push({ day: last >= 0 ? last : nDays - 1, type: voidVol > Math.max(1000, moved * 0.01) ? 'warn' : 'info', msg: `Final void: once mining was finished ${U.fmtBig(moved, 'm³ loose')} was dug back from ${A2.map(J => J.src.name).join(' and ')} into the last strips and the ramp corridor, strip by strip along the mining path, at ${U.fmtNum(A2[0].rate, 0)} m³ loose a working day (${U.fmtDay(P.startDate, first)} to ${U.fmtDay(P.startDate, last)}). ${voidVol > Math.max(1000, moved * 0.01) ? `${U.fmtBig(voidVol, 'm³')} is still left open: the dumps outside the pit are empty.` : 'The voids are now backfilled up to the landform.'}${RH.lift && liftLeft > 1000 && voidVol <= Math.max(1000, moved * 0.01) ? ` The lift above the original ground is ${U.fmtBig(liftLeft, 'm³')} short: the dumps outside the pit are empty.` : !RH.lift && RH.raises.some(q => q.vol > 1) && liftLeft > 1000 && voidVol <= Math.max(1000, moved * 0.01) ? ` The raised areas are ${U.fmtBig(liftLeft, 'm³')} short above the original ground: the dumps outside the pit are empty.` : ''}` });
+        else if (moved > 1) events.push({ day: last >= 0 ? last : nDays - 1, type: voidVol > Math.max(1000, moved * 0.01) ? 'warn' : 'info', msg: `Final void: once mining was finished ${U.fmtBig(moved, 'bcm')} was dug back from ${A2.map(J => J.src.name).join(' and ')} into the last strips and the ramp corridor, strip by strip along the mining path, at ${U.fmtNum(A2[0].rate, 0)} bcm a working day (${U.fmtDay(P.startDate, first)} to ${U.fmtDay(P.startDate, last)}). ${voidVol > Math.max(1000, moved * 0.01) ? `${U.fmtBig(voidVol, 'm³')} is still left open: the dumps outside the pit are empty.` : 'The voids are now backfilled up to the landform.'}${RH.lift && liftLeft > 1000 && voidVol <= Math.max(1000, moved * 0.01) ? ` The lift above the original ground is ${U.fmtBig(liftLeft, 'm³')} short: the dumps outside the pit are empty.` : !RH.lift && RH.raises.some(q => q.vol > 1) && liftLeft > 1000 && voidVol <= Math.max(1000, moved * 0.01) ? ` The raised areas are ${U.fmtBig(liftLeft, 'm³')} short above the original ground: the dumps outside the pit are empty.` : ''}` });
       }
       if (RH.restore && RH.lift && liftLeft > 1000) events.push({ day: nDays - 1, type: 'warn', msg: `Waste above the original topography: ${U.fmtBig(liftLeft, 'm³')} of it is not built: there was not enough waste${voidVol > 1000 ? `, and ${U.fmtBig(voidVol, 'm³')} of the voids below the original ground is still open: the waste above the topography is built strip by strip with the backfill, so the last strips ran short` : ''}. Lower the height above the original topography, or fill from the dumps outside the pit (rehandling into the voids).` });
       else if ((RH.lift || RH.raises.some(q => q.vol > 1)) && liftLeft > 1000 && !(FV && jobs.some(J => J.auto && J.moved > 0))) events.push({ day: nDays - 1, type: 'warn', msg: `${RH.lift ? 'Lifted landform' : 'Raised areas'}: ${U.fmtBig(liftLeft, 'm³')} of the landform above the original ground is not built: ${FV ? 'there is no waste dump outside the pit to build it from' : 'it is built with the final void, which is switched off'}.` });
@@ -6880,7 +6893,7 @@ const Sim = (() => {
       acts: acts.map(X => ({ id: X.a.id, name: X.a.name, color: X.a.color, pit: X.pit, host: X.host.id, fleetOf: X.host !== X.a ? X.host.name : null, layer: X.l, layerName: X.L.name, type: X.L.type, method: X.a.method, bcm: X.bcm, t: X.t, pathLen: X.path.length, done: X.done,
         meth: X.meth, dozBcm: X.dozBcm || null, voidWait: X.voidWait || 0, swell: X.sw, arF: X.arF,
         tgtDays: X.tgtDays || 0, teamDays: X.teamDays || 0, wfDays: X.wfDays || 0, prio: !!X.prio, held: X.held || 0, dep: X.deps.filter(D => !D.bench).map(D => ({ on: D.Y.a.name, lead: D.lead, unit: D.unit, groups: D.groups.length, relaxed: D.extra, held: D.held }))[0] || null, bench: X.deps.filter(D => D.bench).map(D => ({ on: D.Y.a.name, lead: D.lead, groups: D.groups.length, relaxed: D.extra, held: D.held }))[0] || null, maxRate: X.maxRate || 0 })),
-      dumps: dumps.map((D, k) => ({ id: D.d.id, name: D.name, kind: D.kind, daily: cut(dumpDaily[k]), crest: D.toTopo ? null : D.crest, toTopo: !!D.toTopo, received: D.received, inPit: !D.rom && D.blocks ? D.blocks.size > 0 : false, ...(D.fill ? { [D.what === 'raise' ? 'raiseId' : 'fillId']: D.fill.id, startDay: D.startDay, fullDay: D.fullDay, capacity: D.fillCap } : {}), benchHeld: D.benchHeld || 0, removed: D.removed || 0, tDaily: romT[k] ? cut(romT[k]) : null })),
+      dumps: dumps.map((D, k) => ({ id: D.d.id, name: D.name, kind: D.kind, daily: cut(dumpDaily[k]), crest: D.toTopo ? null : D.crest, toTopo: !!D.toTopo, received: D.received, receivedB: D.receivedB || 0, inPit: !D.rom && D.blocks ? D.blocks.size > 0 : false, ...(D.fill ? { [D.what === 'raise' ? 'raiseId' : 'fillId']: D.fill.id, startDay: D.startDay, fullDay: D.fullDay, capacity: D.fillCap } : {}), benchHeld: D.benchHeld || 0, removed: D.removed || 0, tDaily: romT[k] ? cut(romT[k]) : null })),
       // for the coal inventory: which layer of which block the schedule mines, and the floor below which nothing is mined
       scheduled: (() => { const a = new Uint8Array(nB * nL); for (let b = 0; b < nB; b++) for (let l = 0; l < nL; l++) a[b * nL + l] = scheduled[b][l]; return a; })(), floor: roads.rampFloor,
       rehab, rehandles: jobs.filter(J => !(J.auto && J.why === 'not needed' && J.moved <= 0)).map(J => ({ auto: J.auto, id: J.j.id, name: J.j.name, color: J.j.color || '#7fb7d9', from: J.src.name, fromId: J.src.d.id, to: J.toName, toId: J.j.to, daily: cut(J.daily), moved: J.moved, first: J.first, last: J.last, rate: J.rate, why: J.why || (J.first < 0 ? 'not started' : 'unfinished'), old: J.old ? { id: J.j.oldId, elev: J.src.elev, vol: J.src.vol, left: srcAvail(J) } : null })),
@@ -6891,12 +6904,12 @@ const Sim = (() => {
          open; openDay: the first day one opened); parts gives them for each pit when there are pits. */
       voidTip: (() => {
         const live = gates.filter(G => G.total > 0), opened = gates.filter(G => G.open && G.day >= 0).map(G => G.day);
-        return { on: tipOn, ref: tipFloor ? 'floor' : 'top', turnedAway: tipCapped, roads: !(P.voidTip && P.voidTip.roads === false), roadFill: roadFilled, afterStrips: gateNeed, dozeAfterStrips: dozeNeed, dozeDay: (() => { const q = gates.filter(G => G.pushers && G.doze && G.dozeDay >= 0).map(G => G.dozeDay); return dozeNeed > 0 && q.length ? Math.min(...q) : -1; })(), dozeOpened: gates.filter(G => G.pushers && G.total > 0).every(G => G.doze),
+        return { on: tipOn, ref: tipFloor ? 'floor' : 'top', turnedAway: tipCapped / SPW, roads: !(P.voidTip && P.voidTip.roads === false), roadFill: roadFilled / SPW, afterStrips: gateNeed, dozeAfterStrips: dozeNeed, dozeDay: (() => { const q = gates.filter(G => G.pushers && G.doze && G.dozeDay >= 0).map(G => G.dozeDay); return dozeNeed > 0 && q.length ? Math.min(...q) : -1; })(), dozeOpened: gates.filter(G => G.pushers && G.total > 0).every(G => G.doze),
           strips: gates.reduce((n, G) => n + G.total, 0), stripsDone: gates.reduce((n, G) => n + G.done, 0), openDay: gateNeed > 0 && opened.length ? Math.min(...opened) : -1, opened: live.length ? live.every(G => G.open) : gates[0].open,
           parts: nP ? live.map(G => ({ pit: G.pit, strips: G.total, stripsDone: G.done, openDay: G.need > 0 && G.open ? G.day : -1, opened: G.open, pushers: G.pushers, dozeDay: dozeNeed > 0 && G.doze ? G.dozeDay : -1, dozeOpened: G.doze })) : null };
       })(),
       target: { limit: TL.any, coal: TL.coal, waste: TL.waste, wasteUnit: TL.wT ? 't' : 'bcm', basis: TL.work ? 'working' : 'calendar', coalBasis: TL.prod ? 'product' : TL.ar ? 'ar' : 'insitu' },
-      teams: { count: TM.count, perTeam: TM.perTeam, cap: TM.cap },
+      teams: Object.assign({}, TM),
       voidDaily: cut(voidDaily), rampDaily: cut(rampDaily), records, events, unplaced,
       rampFillDaily: cut(rampFillDaily), rampFromWaste: cut(rampFromWaste), rampOwed: rampNeed, rampCoalT: cut(rampCoalT), rampTDaily: cut(rampTDaily), batterDaily: cut(batterDaily), batterTDaily: cut(batterTDaily), batters: batters.map(B => ({ id: B.bt.id, name: B.bt.name, angle: B.ang, surf: Model.surfaceLabel(P, B.k), plan: B.vol, bcm: B.bcm, t: B.t, coalT: B.coalT || 0, first: B.first, last: B.last, blocks: B.groups.size, cut: B.done.size, side: B.side })),
       rampToe: roads.follows.map(R => ({ id: R.road.id, g: R.g, log: R.log, retired: R.retired, why: R.why || '', need: R.need, used: R.used, from: R.from, to: isFinite(R.to) ? R.to : -1, steepDay: R.steepDay >= 0 ? R.steepDay : -1, fillDay: R.fillDay, batter: R.slopes.batter, fill: R.slopes.fill })),
@@ -7130,25 +7143,24 @@ const Monthly = (() => {
     const target = { limit, rampMonths: rampN, coalAvg: +T.coal > 0 ? +T.coal : null, wasteAvg: +T.waste > 0 ? +T.waste : null, coal: coalTg, waste: +T.waste > 0 ? (() => { const a = mk(), m0 = res.mineStart > 0 && res.mineStart < nD ? mOf[res.mineStart] : 0; for (let m = 0; m < nM; m++) a[m] = (wasteTarget(P, Math.max(0, m - m0)) * base[m]) / per; return a; })() : null, wasteStart: startMonths(P) ? { months: startMonths(P), avg: +T.wasteStart } : null, wasteUnit, basis, per, coalBasis: T.coalBasis === 'ar' ? 'ar' : T.coalBasis === 'product' && prod ? 'product' : 'insitu' };
 
     const nDays = sum(days), months = nDays / AVG_MONTH; // length of the schedule in average months
-    // topsoil put back on the backfill, and rehandling, in loose m³ a month
+    // topsoil put back on the backfill (soil: its room, for the area it covers; soilB: bcm), and rehandling (bcm), a month
     const perMonth = daily => { const a = mk(); if (daily) for (let d = 0; d < nD && d < daily.length; d++) a[mOf[d]] += daily[d]; return a; };
-    const soil = res.rehab && res.rehab.on ? perMonth(res.rehab.soilDaily) : null;
+    const soil = res.rehab && res.rehab.on ? perMonth(res.rehab.soilDaily) : null, soilB = soil ? soil.map(v => v / Model.soilSwell(P)) : null;
     const rehandles = (res.rehandles || []).map(J => ({ name: J.name, from: J.from, to: J.to, v: perMonth(J.daily) }));
 
     /* As received coal: the tons mined × (1 − geological loss) × (1 − mining loss) × (1 + contamination) of its seam.
-       The teams: the loose m³ moved in each month (mining, ramps and rehandling) and how many teams that keeps busy: the
-       loose m³ ÷ what one team moves in that month (its average month × the month's days ÷ the days of an average month). */
-    const TM = Model.teams(P), coalAR = mk(), looseMine = mk(), looseRamp = mk(), looseBatter = mk(), looseReh = mk(), loose = mk(), teamsUsed = mk();
+       The teams: the bcm moved in each month (mining, ramps, batters and rehandling) and how many teams that keeps busy:
+       the bcm ÷ what one team moves in the month's working days (its bcm an operational hour × the operational hours). */
+    const TM = Model.teams(P), coalAR = mk(), bcmMine = mk(), bcmRamp = mk(), bcmBatter = mk(), bcmReh = mk(), moved = mk(), teamsUsed = mk();
     for (const a of acts) {
-      const sw = a.A.swell || L[a.A.layer].swell || 1.3; a.loose = mk();
-      for (let m = 0; m < nM; m++) { a.loose[m] = a.bcm[m] * sw; looseMine[m] += a.loose[m]; }
+      for (let m = 0; m < nM; m++) bcmMine[m] += a.bcm[m];
       if (a.coal) { const f = Model.arFactor(P, L[a.A.layer]); a.arF = f; /* the losses as they are now: they do not change the schedule */ a.ar = mk(); for (let m = 0; m < nM; m++) { a.ar[m] = a.t[m] * f; coalAR[m] += a.ar[m]; } }
     }
-    if (pits) for (const q of pits) { q.coalAR = mk(); q.loose = mk(); for (const a of acts) if (a.A.pit === q.pit) for (let m = 0; m < nM; m++) { if (a.coal) q.coalAR[m] += a.ar[m]; q.loose[m] += a.loose[m]; } }
-    for (const J of rehandles) for (let m = 0; m < nM; m++) looseReh[m] += J.v[m];
-    for (let m = 0; m < nM; m++) { looseRamp[m] = rampB[m] * 1.3; looseBatter[m] = batterB[m] * 1.3; loose[m] = looseMine[m] + looseRamp[m] + looseBatter[m] + looseReh[m]; const cap = (TM.perTeam * base[m]) / per; teamsUsed[m] = cap > 0 ? loose[m] / cap : 0; }
-    const teams = { count: TM.count, perTeam: TM.perTeam, cap: TM.cap, avg: months > 0 ? sum(loose) / (TM.perTeam * (basis === 'working' ? sum(work) / per : months)) : 0, peak: Math.max(0, ...teamsUsed) };
-    return { k0, nM, mOf, days, work, nDays, months, acts, pits, rampB, rampT, batterB, batterT, looseBatter, coalT, coalB, coalAR, prod, wasteB, wasteT, adc, adcT, attrs, target, sum, soil, rehandles, loose, looseMine, looseRamp, looseReh, teamsUsed, teams,
+    if (pits) for (const q of pits) { q.coalAR = mk(); for (const a of acts) if (a.A.pit === q.pit && a.coal) for (let m = 0; m < nM; m++) q.coalAR[m] += a.ar[m]; }
+    for (const J of rehandles) for (let m = 0; m < nM; m++) bcmReh[m] += J.v[m];
+    for (let m = 0; m < nM; m++) { bcmRamp[m] = rampB[m]; bcmBatter[m] = batterB[m]; moved[m] = bcmMine[m] + bcmRamp[m] + bcmBatter[m] + bcmReh[m]; const cap = TM.perDay * work[m]; teamsUsed[m] = cap > 0 ? moved[m] / cap : 0; }
+    const teams = Object.assign({}, TM, { avg: sum(work) > 0 ? sum(moved) / (TM.perDay * sum(work)) : 0, peak: Math.max(0, ...teamsUsed) });
+    return { k0, nM, mOf, days, work, nDays, months, acts, pits, rampB, rampT, batterB, batterT, coalT, coalB, coalAR, prod, wasteB, wasteT, adc, adcT, attrs, target, sum, soil, soilB, rehandles, moved, bcmMine, bcmRamp, bcmBatter, bcmReh, teamsUsed, teams,
       label: m => U.MONTHS[(k0 + m) % 12] + '/' + Math.floor((k0 + m) / 12), date: m => new Date(Math.floor((k0 + m) / 12), (k0 + m) % 12, 1) };
   }
 
@@ -7235,14 +7247,14 @@ const Monthly = (() => {
      mined out and backfilled up to the top. */
   function period(P, res, d0, d1) {
     const sumR = (a, f) => { let s = 0; if (a) for (let d = d0; d <= d1 && d < a.length; d++) s += a[d]; return s; };
-    const byAct = res.acts.map(A => { let days = 0; for (let d = d0; d <= d1; d++) if (A.bcm[d] > 0) days++; const L = P.layers[A.layer] || {}, bcm = sumR(A.bcm), t = sumR(A.t); return { name: A.name, color: A.color, layerName: A.layerName, type: A.type, pit: A.pit, bcm, t, days, loose: bcm * (A.swell || L.swell || 1.3), ar: A.type === 'coal' ? t * Model.arFactor(P, L) : 0 }; });
+    const byAct = res.acts.map(A => { let days = 0; for (let d = d0; d <= d1; d++) if (A.bcm[d] > 0) days++; const L = P.layers[A.layer] || {}, bcm = sumR(A.bcm), t = sumR(A.t); return { name: A.name, color: A.color, layerName: A.layerName, type: A.type, pit: A.pit, bcm, t, days, ar: A.type === 'coal' ? t * Model.arFactor(P, L) : 0 }; });
     let working = 0; for (let d = d0; d <= d1; d++) if (res.working[d]) working++;
     const coalT = byAct.filter(a => a.type === 'coal').reduce((s, a) => s + a.t, 0), rampB = sumR(res.rampDaily), batterB = sumR(res.batterDaily);
     const wasteB = byAct.filter(a => a.type !== 'coal').reduce((s, a) => s + a.bcm, 0) + rampB + batterB;
     const inR = d => d >= d0 && d <= d1;
-    const rehandledV = (res.rehandles || []).reduce((s, J) => s + sumR(J.daily), 0), loose = byAct.reduce((s, a) => s + a.loose, 0) + (rampB + batterB) * 1.3 + rehandledV;
-    const TM = Model.teams(P), mos = (d1 - d0 + 1) / AVG_MONTH;
-    return { d0, d1, days: d1 - d0 + 1, working, byAct, coalT, coalAR: byAct.reduce((s, a) => s + a.ar, 0), wasteB, rampB, batterB, loose, teams: mos > 0 ? loose / (TM.perTeam * mos) : 0, ratio: coalT > 0 ? wasteB / coalT : NaN,
+    const rehandledV = (res.rehandles || []).reduce((s, J) => s + sumR(J.daily), 0), moved = byAct.reduce((s, a) => s + a.bcm, 0) + rampB + batterB + rehandledV;
+    const TM = Model.teams(P);
+    return { d0, d1, days: d1 - d0 + 1, working, byAct, coalT, coalAR: byAct.reduce((s, a) => s + a.ar, 0), wasteB, rampB, batterB, moved, teams: working > 0 ? moved / (TM.perDay * working) : 0, ratio: coalT > 0 ? wasteB / coalT : NaN,
       rehandled: (res.rehandles || []).map(J => ({ name: J.name, moved: sumR(J.daily) })).filter(q => q.moved > 0),
       blocksDone: Array.from(res.blockDoneDay).filter(inR).length, backfilled: res.backfillDay ? Array.from(res.backfillDay).filter(inR).length : 0 };
   }
@@ -7288,22 +7300,24 @@ const TargetTest = (() => {
     else for (const a of P.activities) { const l = Model.layerIndex(P, a.layerId); if (l >= 0) for (const id of a.path) { const b = ws.blockIndex.get(id); if (b !== undefined) add(b, l); } }
     return { coal, waste, sr: coal > 0 ? waste / coal : 0, from: on ? 'scheduled' : 'paths' };
   }
-  // what the monthly targets ask of the teams (as the Production tab works it out): coal t → bcm → loose m³, waste → loose m³
+  // what the monthly targets ask of the teams (as the Production tab works it out): coal t → bcm, waste (t → bcm), over
+  // what a team moves in an average month (its bcm an operational hour × the operational hours × the working days)
   // (startUp: the start-up waste counts, when it is more than the waste target)
   function teamsFor(P, coal, waste, startUp = true) {
     const T = P.targets || {}, coalL = P.layers.filter(L => L.type === 'coal'), wasteL = P.layers.filter(L => L.type !== 'coal');
     const avg = (list, k, d) => (list.length ? list.reduce((x, L) => x + (+L[k] || d), 0) / list.length : d);
-    const cD = avg(coalL, 'density', 1.5), cS = avg(coalL, 'swell', 1.3), wD = avg(wasteL, 'density', 2.4), wS = avg(wasteL, 'swell', 1.3);
+    const cD = avg(coalL, 'density', 1.5), wD = avg(wasteL, 'density', 2.4);
     const arF = coalL.length ? coalL.reduce((x, L) => x + Model.arFactor(P, L), 0) / coalL.length : 1;
     const w = Math.max(+waste || 0, startUp && Monthly.startMonths(P) ? +T.wasteStart || 0 : 0);
-    const loose = ((+coal || 0) / (cD * (T.coalBasis === 'ar' || T.coalBasis === 'product' ? arF : 1))) * cS + (T.wasteUnit === 't' ? w / wD : w) * wS;
-    return loose / Model.teams(P).perTeam;
+    const bcm = (+coal || 0) / (cD * (T.coalBasis === 'ar' || T.coalBasis === 'product' ? arF : 1)) + (T.wasteUnit === 't' ? w / wD : w);
+    const y0 = (U.parseISO(P.startDate) || new Date()).getUTCFullYear(), wdm = Monthly.workDaysPerMonth(P, y0, y0 + 3) || Monthly.AVG_MONTH;
+    return bcm / (Model.teams(P).perDay * wdm);
   }
   // a copy of the project for one trial: its targets, teams enough, and (lift) no maximum daily rates
   function trialProject(P, coal, waste, lift) {
     const TM = Model.teams(P), targets = Object.assign({}, P.targets || {}, { coal, waste: waste > 0 ? waste : null, mode: 'limit' });
     const Q = Object.assign({}, P, { targets });
-    Q.teams = { count: Math.max(TM.count, Math.ceil(6 * teamsFor(Q, coal, waste)) + 1), perTeam: TM.perTeam };
+    Q.teams = { count: Math.max(TM.count, Math.ceil(6 * teamsFor(Q, coal, waste)) + 1), rate: TM.rate };
     if (lift) Q.activities = P.activities.map(a => (+a.maxRate > 0 ? Object.assign({}, a, { maxRate: null }) : a));
     return Q;
   }
@@ -7322,7 +7336,7 @@ const TargetTest = (() => {
     const base = T.basis === 'working' ? mo.work : mo.days, per = Monthly.daysPerMonth(P);
     const norm = (a, m) => (base[m] > 0 ? (a[m] * per) / base[m] : NaN);
     // the teams each month keeps busy with the mining, the ramps and the batters (rehandling left out)
-    const TM = Model.teams(P), teamsM = Array.from({ length: nM }, (_, m) => { const cap = (TM.perTeam * base[m]) / per; return cap > 0 ? (mo.looseMine[m] + mo.looseRamp[m] + mo.looseBatter[m]) / cap : 0; });
+    const TM = Model.teams(P), teamsM = Array.from({ length: nM }, (_, m) => { const cap = TM.perDay * mo.work[m]; return cap > 0 ? (mo.bcmMine[m] + mo.bcmRamp[m] + mo.bcmBatter[m]) / cap : 0; });
     let first = -1, firstCoal = -1, lastCoal = -1;
     for (let m = 0; m < nM; m++) { if (first < 0 && (coal[m] > 0 || waste[m] > 0)) first = m; if (coal[m] > 0) { if (firstCoal < 0) firstCoal = m; lastCoal = m; } }
     let m0 = Math.max(firstCoal, Monthly.rampMonths(P), first + Monthly.startMonths(P)), m1 = lastCoal - 1;
@@ -9751,7 +9765,7 @@ const Fin = (() => {
       f('cExpl', 'Explosives and accessories', 'R/kg', 19, { step: 0.5, cur: true }),
       f('cPresplit', 'Presplit', 'R/m² presplit', 0, { step: 1, cur: true }),
       f('presplitW', 'Presplit strip width', 'm', 40, { step: 1, keep: true }),
-      f('cRehandle', 'Rehandling', 'R/m³ loose', 18, { step: 1, cur: true }),
+      f('cRehandle', 'Rehandling', 'R/bcm', 23, { step: 1, cur: true }),
       f('cRehab', 'Rehabilitation (topsoil back, seeding)', 'R/ha', 120000, { step: 5000, cur: true }),
       f('cWater', 'Pumping and treating pit water', 'R/m³', 3, { step: 0.5, cur: true })] },
     { id: 'process', title: 'Processing', fields: [
@@ -9858,7 +9872,7 @@ const Fin = (() => {
       X.days[t] = mo.days[m]; X.rom[t] = rom; X.insitu[t] = mo.coalT[m]; X.topsoil[t] = top[m]; X.dozed[t] = doz[m]; X.waste[t] = Math.max(0, mo.wasteB[m] - top[m] - doz[m]);
       X.drillM[t] = BM ? BM.waste.m[m] + BM.coal.m[m] : 0; X.blastW[t] = BM ? BM.waste.bcm[m] : 0; X.blastC[t] = BM ? BM.coal.bcm[m] : 0; X.blastB[t] = X.blastW[t] + X.blastC[t]; X.explKg[t] = BM ? BM.waste.kg[m] + BM.coal.kg[m] : 0;
       X.presplitM2[t] = BM ? BM.waste.bcm[m] / o.presplitW : 0; // a presplit face per strip, as high as the waste blasted: its bcm ÷ the strip width
-      X.reh[t] = mo.looseReh[m]; X.rehabHa[t] = mo.soil ? mo.soil[m] / soilTh / 1e4 : 0; X.water[t] = HR && HR.M.nM === nM ? HR.M.pumped[m] : 0;
+      X.reh[t] = mo.bcmReh[m]; X.rehabHa[t] = mo.soil ? mo.soil[m] / soilTh / 1e4 : 0; X.water[t] = HR && HR.M.nM === nM ? HR.M.pumped[m] : 0;
       if (o.wash && !(RS && RS.mode === 'all' && RS.by === 'sale')) { // (coal sold straight off the stockpile is not washed)
         // (with the ROM stockpile the plant takes the coal sold; its yield is the month's as mined)
         if (PR) { const feedW = PR.feed[m], pr = PR.T[m] + Math.max(0, rom - feedW) * yF; X.feed[t] = sell; X.product[t] = rom > 0 ? pr * (sell / rom) : sell * yF; }
@@ -13409,26 +13423,8 @@ const Tabs = (() => {
     body.append(sec('Project', null,
       fld('Name', txt(P.name, v => { P.name = v.trim() || 'Untitled'; App.changed('meta'); UI.setProjectName(P.name); })),
       fld('Description', txt(P.description, v => { P.description = v; App.changed('meta'); }, { area: true })),
-      P.isDemo ? hint('This example colliery is built from <b>synthetic data</b>. Explore it, or start your own project from the Projects menu and load your files in the Geological Data tab.') : null
-    ));
-    const startTxt = h('p', { class: 'hint' });
-    const updStart = () => { const d = U.parseISO(P.startDate); startTxt.textContent = d ? `Day 1 of the schedule is ${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][d.getUTCDay()]} ${U.fmtDate(d)}.` : 'Set a start date.'; };
-    updStart();
-    const days = h('div', { class: 'days', role: 'group', 'aria-label': 'Working days' });
-    ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].forEach((dn, i) => {
-      const inp = h('input', { type: 'checkbox', checked: !!P.calendar.workDays[i], id: fid('wd') });
-      inp.addEventListener('change', () => { P.calendar.workDays[i] = inp.checked ? 1 : 0; App.changed('calendar'); });
-      days.append(h('label', { for: inp.id }, inp, dn));
-    });
-    body.append(sec('Schedule', null,
-      h('div', { class: 'grid2' },
-        fld('Start date', txt(P.startDate, v => { if (!U.parseISO(v)) return; P.startDate = v; updStart(); App.changed('calendar'); if (App.res) { Timeline.setDay(App.day); Timeline.draw(); } else Timeline.setData(null, P); }, { type: 'date' })),
-        h('span')),
-      startTxt,
-      h('div', { class: 'fld' }, h('span', null, 'Working days'), days),
-      chk('Stop on South African public holidays', !!P.calendar.saHolidays, v => { P.calendar.saHolidays = v; App.changed('calendar'); }),
-      fld('Longest schedule to simulate (years)', num(P.calendar.maxYears, v => { P.calendar.maxYears = U.clamp(v || 30, 1, 80); App.changed('calendar'); }, { min: 1, max: 80, step: 1 })),
-      hint('Dates show as dd/mmm/yyyy on the timeline and in the Excel schedule. The teams and the monthly targets are in the Production tab, the coal losses in the Reserve tab.')
+      P.isDemo ? hint('This example colliery is built from <b>synthetic data</b>. Explore it, or start your own project from the Projects menu and load your files in the Geological Data tab.') : null,
+      hint('The schedule — its start date, working days, shifts and operational hours — is in the Production tab.')
     ));
     const crsSel = sel(Geo.PRESETS.map(p => [p.id, p.name]), P.crs.preset, v => { P.crs.preset = v; App.changed('meta'); UI.renderTab(); });
     const crsBody = [fld('Coordinate system of the TIFF and DXF files', crsSel)];
@@ -14310,7 +14306,7 @@ const Tabs = (() => {
     });
     return h('div', null, h('div', { class: 'sec-h', style: { marginTop: '4px' } }, h('h3', null, 'Layers')),
       h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', null, ''), h('th', null, 'Layer'), h('th', null, 'Type'), h('th', null, 't/bcm'), h('th', null, 'Swell'), h('th', { class: 'r', title: 'Thinnest block average' }, 'Min m'), h('th', { class: 'r', title: 'Thickest block average' }, 'Max m'), h('th', { class: 'r', title: 'Average over the blocks' }, 'Avg m'), h('th', null, 'Density column'), h('th', null, 'Quality columns'))), h('tbody', null, rows))),
-      hint('Density is used for tonnes; a density column from the attribute file overrides it block by block. Swell converts bank to loose volume, for the dumps and for the loose m³ the teams move. Min, Max and Avg are the thickness of each layer in the blocks: its average thickness in each block where it is present, the thinnest and thickest of those, and their average' + (App.rv().ws && App.rv().ws.blockCells.length ? '.' : ' (once the 3D model and the block layout are loaded).')));
+      hint('Density is used for tonnes; a density column from the attribute file overrides it block by block. Every volume is bcm; the swell is how much more room a bcm takes once dumped, so it sizes the dumps and the backfill. Min, Max and Avg are the thickness of each layer in the blocks: its average thickness in each block where it is present, the thinnest and thickest of those, and their average' + (App.rv().ws && App.rv().ws.blockCells.length ? '.' : ' (once the 3D model and the block layout are loaded).')));
   }
   async function buildModel(cell) {
     const P = App.P;
@@ -15619,10 +15615,11 @@ const Tabs = (() => {
     const P = App.P, ws = App.ws;
     if (!ws) { body.append(h('div', { class: 'empty' }, 'Build the 3D model first.')); return; }
     const kinds = { waste: 'Waste dump', topsoil: 'Topsoil stockpile', rom: 'ROM tip / plant' };
-    const received = id => { if (!App.res) return null; const D = App.res.dumps.find(x => x.id === id); return D ? D.daily.reduce((s, v) => s + v, 0) : null; };
+    const received = id => { if (!App.res) return null; const D = App.res.dumps.find(x => x.id === id); return D ? (D.receivedB != null ? D.receivedB : D.daily.reduce((s, v) => s + v, 0) / Model.spoilSwell(P)) : null; };
+    const SPW = Model.spoilSwell(P); // (a dump's room holds its ÷ this in bcm of spoil)
     const list = h('div', { class: 'list', 'data-viewer': '' }, P.dumps.length ? P.dumps.map(d => h('div', { class: 'item' + (d.id === App.dumpId ? ' sel' : ''), onclick: () => { App.dumpId = d.id; UI.renderTab(); App.refreshOverlays(); } },
       h('span', { class: 'sw', style: { background: d.color } }),
-      h('div', { style: { minWidth: 0 } }, h('div', { class: 't' }, d.name), h('div', { class: 's' }, kinds[d.kind] + (d.kind !== 'rom' && d.fillTo === 'topo' ? ' · to original topography' : '') + (received(d.id) != null ? ` · received ${U.fmtBig(received(d.id), 'm³')}` : ''))),
+      h('div', { style: { minWidth: 0 } }, h('div', { class: 't' }, d.name), h('div', { class: 's' }, kinds[d.kind] + (d.kind !== 'rom' && d.fillTo === 'topo' ? ' · to original topography' : '') + (received(d.id) != null ? ` · received ${U.fmtBig(received(d.id), 'bcm')}` : ''))),
       h('span'))) : h('div', { class: 'empty', style: { border: 0 } }, 'No dumps yet.'));
     {
       // tipping into mined-out voids stays below the bench being mined
@@ -15667,9 +15664,9 @@ const Tabs = (() => {
           : 'With 0 the dozers push into the block in front of them as soon as that block is mined out. Type a number to hold doze-over back until that many strips are completely mined out; until then the material goes to the dumps of its activity.'),
         chk('Not above the height of the bench being mined', VT.on !== false, v => { VT.on = v; App.changed('dumps'); UI.renderTab(); }),
         VT.on !== false ? fld('Bench height taken at', rs) : null,
-        away > 1 ? msg('warn', `In the last run ${U.fmtBig(away, 'm³')} of loose spoil could not be tipped into the pit because of this and went to the next dump of its activity, or waited.`) : null,
+        away > 1 ? msg('warn', `In the last run ${U.fmtBig(away, 'bcm')} of spoil could not be tipped into the pit because of this and went to the next dump of its activity, or waited.`) : null,
         chk('Backfill haul roads and ramps as the voids are filled, to the original topography', VT.roads !== false, v => { VT.roads = v; App.changed('dumps'); UI.renderTab(); }),
-        RV && !App.stale && RV.roads && RV.roadFill > 1 ? msg('info', `In the last run ${U.fmtBig(RV.roadFill, 'm³')} of loose spoil went onto haul roads and into ramps.`) : null,
+        RV && !App.stale && RV.roads && RV.roadFill > 1 ? msg('info', `In the last run ${U.fmtBig(RV.roadFill, 'bcm')} of spoil went onto haul roads and into ramps.`) : null,
         hint(VT.roads !== false ? 'Where a dump lies over the pit, the corridor of a haul road or ramp is backfilled together with the mined-out blocks it runs through, up to the original ground level and never above it. A ramp is filled as the voids are: block by block inside the pit, and the part excavated outside the mining blocks once the void at its foot is being filled. That part is filled by any waste dump, even one whose outline does not reach it: a dump over that void fills both together, and a dump elsewhere tips into the ramp first once spoil has been placed in the void. It is only covered where it has no ground left to excavate. A ramp whose toe follows the mining stays open from its toe up to the surface and is restored behind that, outside the blocks as well. Haul roads on ground outside the pit are left open.' + (Water.settings(P).on !== false ? ' With the final landform on (below), the backfill in the pit stops at the top of the backfill instead, and a road that runs on through the pit is brought back to the landform.' : '') : 'The corridor of a haul road or ramp is never dumped on, so it stays open through the backfilled pit.'),
         hint(VT.on !== false ? `Where a dump lies over the pit, each activity tips no higher than its own bench in the block it is mining: ${VT.ref === 'floor' ? 'the base' : 'the top'} of its layer there, taken as the average over the block. A lower bench therefore fills the void less high than the overburden does. Spoil that does not fit goes to the activity’s next dump. Dumps on ground outside the pit, and spoil pushed over by dozers, are not affected.${VT.ref !== 'floor' && Water.settings(P).on !== false && Water.settings(P).backfillTo !== 'landform' ? ' With the waste backfilled up to the original topography (below), the first bench under the topsoil is mined from the stripped ground, so its trucks tip from the ground: they build the backfill up to the original topography, and the waste above it, as they go.' : ''}` : 'Tipped spoil may rise in a mined-out void as high as the dump’s own limit allows.')));
     }
@@ -15696,9 +15693,9 @@ const Tabs = (() => {
         ed.push(hint('Material is placed only where the ground has been mined below its original level, and never higher than it, so the dump restores the original surface. Drawn over the pit, it backfills the mined-out blocks; on ground that is not mined it takes nothing.'));
         const surf = View.getSurface();
         ed.push(h('div', { class: 'kv' },
-          h('span', { class: 'k' }, 'Pit volume under it'), h('span', { class: 'v' }, U.fmtBig(cap, 'm³')),
-          h('span', { class: 'k' }, `Room left ${App.res && App.day >= 0 ? 'on ' + U.fmtDay(P.startDate, App.day) : 'now'}`), h('span', { class: 'v' }, U.fmtBig(surf ? Sim.dumpCapacity(ws, d, surf) : 0, 'm³')),
-          h('span', { class: 'k' }, 'Received in the simulation'), h('span', { class: 'v' }, rec != null ? U.fmtBig(rec, 'm³ loose') : 'run the simulation')));
+          h('span', { class: 'k' }, 'Pit volume under it'), h('span', { class: 'v' }, `${U.fmtBig(cap, 'm³')} (${U.fmtBig(cap / SPW, 'bcm')} of spoil)`),
+          h('span', { class: 'k' }, `Room left ${App.res && App.day >= 0 ? 'on ' + U.fmtDay(P.startDate, App.day) : 'now'}`), h('span', { class: 'v' }, U.fmtBig(surf ? Sim.dumpCapacity(ws, d, surf) / SPW : 0, 'bcm of spoil')),
+          h('span', { class: 'k' }, 'Received in the simulation'), h('span', { class: 'v' }, rec != null ? U.fmtBig(rec, 'bcm') : 'run the simulation')));
       } else {
         ed.push(h('div', { class: 'grid2' },
           fld('Maximum height above ground (m)', num(d.maxHeight, v => { d.maxHeight = U.clamp(v || 0, 1, 300); App.changed('dumps'); UI.renderTab(); }, { min: 1, step: 1 })),
@@ -15706,8 +15703,8 @@ const Tabs = (() => {
           lift,
           fld('Face angle (°)', num(d.faceAngle, v => { d.faceAngle = U.clamp(v || 30, 5, 89); App.changed('dumps'); UI.renderTab(); }, { min: 5, max: 89, step: 1 }))));
         ed.push(h('div', { class: 'kv' },
-          h('span', { class: 'k' }, 'Capacity from today’s surface'), h('span', { class: 'v' }, U.fmtBig(cap, 'm³ loose')),
-          h('span', { class: 'k' }, 'Received in the simulation'), h('span', { class: 'v' }, rec != null ? U.fmtBig(rec, 'm³ loose') : 'run the simulation')));
+          h('span', { class: 'k' }, 'Capacity from today’s surface'), h('span', { class: 'v' }, `${U.fmtBig(cap / SPW, 'bcm')} of spoil (at a swell of ${U.fmtNum(SPW, 2)})`),
+          h('span', { class: 'k' }, 'Received in the simulation'), h('span', { class: 'v' }, rec != null ? U.fmtBig(rec, 'bcm') : 'run the simulation')));
       }
     } else {
       // ROM stockpile: kept in the coal inventory when the plant takes coal off it at a set rate
@@ -15783,7 +15780,7 @@ const Tabs = (() => {
           h('span', { class: 'k' }, 'Voids left below the backfill'), h('span', { class: 'v' }, e.voidVol > 1 ? `${U.fmtBig(e.voidVol, 'm³')} over ${U.fmtArea(e.voidArea)}` : 'none'),
           ...(RR.restore ? [h('span', { class: 'k' }, 'Waste above the original ground'), h('span', { class: 'v' }, RR.stats.above > 1 ? U.fmtBig(RR.stats.above - (e.liftLeft > 1000 ? e.liftLeft : 0), 'm³') : 'none')] : [h('span', { class: 'k' }, 'Room given up for the landform'), h('span', { class: 'v' }, U.fmtBig(RR.stats.lowered + RR.topsoil * RR.stats.area, 'm³'))])));
         if (e.voidVol > 1) parts.push(msg('warn', `At the end of the last run ${U.fmtBig(e.voidVol, 'm³')} of void is left below the top of the backfill${RR.finalVoid && RR.finalVoid.on && RR.finalVoid.sources ? ': the waste dumps outside the pit ran empty before it was full' : ''}. ${R.finalVoid === false ? 'Switch on filling the final void below, or schedule rehandling from a dump into the voids.' : 'Schedule rehandling into the voids from another dump, or leave it as a final void.'}${RR.restore && RR.above > 0 && RR.lift && RR.lift.vol > 1 ? ` The ${U.fmtBig(RR.lift.vol, 'm³')} of waste above the original topography was built strip by strip as the backfill went, so it used waste the last strips needed: lower the height above the original topography to leave the waste for them.` : ''}`));
-        if (RR.overCap > 1) parts.push(msg('warn', `${U.fmtBig(RR.overCap, 'm³ loose')} of pushed spoil did not fit below the top of the backfill and was pushed in above it. Give the dozing activity a dump for what does not fit.`));
+        if (RR.overCap > 1) parts.push(msg('warn', `${U.fmtBig(RR.overCap / Model.spoilSwell(P), 'bcm')} of pushed spoil did not fit below the top of the backfill and was pushed in above it. Give the dozing activity a dump for what does not fit.`));
       }
       // the final void: the last strips and the ramp corridor, filled from the dumps outside the pit once mining is finished
       if (R.on !== false) { const own = (P.rehandles || []).some(j => j.to === 'voids'), FVr = res && !App.stale && res.rehab && res.rehab.finalVoid ? res.rehab.finalVoid : null;
@@ -15792,8 +15789,8 @@ const Tabs = (() => {
           if (own) parts.push(hint('Your rehandling job into the voids (below) does this instead.'));
           else {
             const fr = num(+R.finalRate > 0 ? R.finalRate : null, v => upd('finalRate', v > 0 ? v : null), { min: 0, step: 1000, allowEmpty: true, placeholder: 'all the teams' }); fr.setAttribute('aria-label', 'Final void fill rate');
-            parts.push(fld('Rate (m³ loose a working day)', fr));
-            if (FVr && FVr.moved > 1) parts.push(msg('info', `In the last run ${U.fmtBig(FVr.moved, 'm³ loose')} was dug back from ${FVr.from.map(q => q.name).join(' and ')} into the final void, ${U.fmtDay(P.startDate, FVr.first)} to ${U.fmtDay(P.startDate, FVr.last)}, at ${U.fmtNum(FVr.rate, 0)} m³ loose a working day.`));
+            parts.push(fld('Rate (bcm a working day)', fr));
+            if (FVr && FVr.moved > 1) parts.push(msg('info', `In the last run ${U.fmtBig(FVr.moved, 'bcm')} was dug back from ${FVr.from.map(q => q.name).join(' and ')} into the final void, ${U.fmtDay(P.startDate, FVr.first)} to ${U.fmtDay(P.startDate, FVr.last)}, at ${U.fmtNum(FVr.rate, 0)} bcm a working day.`));
             else if (FVr && FVr.on && !FVr.sources) parts.push(msg('warn', 'There is no waste dump outside the pit to fill the final void from.'));
           }
         }
@@ -16051,8 +16048,8 @@ const Tabs = (() => {
         h('div', { class: 'grid2' }, fld('Name', txt(j.name, v => upd('name', v.trim() || j.name))), fld('Colour', col),
           fld('Take the material from', fs), fld('Put it into', ts),
           fld('Starts', ws2), j.when === 'date' ? fld('Start date', di) : h('span'),
-          fld('Rate (m³ loose a working day)', ri), fld('Quantity (m³ loose)', qi)),
-        r ? (r.first >= 0 ? msg(r.why === 'unfinished' ? 'warn' : 'info', `In the last run it moved ${U.fmtBig(r.moved, 'm³ loose')} from ${U.fmtDay(P.startDate, r.first)} to ${U.fmtDay(P.startDate, r.last)}${{ empty: ', until the dump was empty', full: ', until there was no more room', qty: ', the quantity set', unfinished: ', and had not finished when the schedule ended' }[r.why] || ''}.`) : msg('warn', 'In the last run it never started.')) : null,
+          fld('Rate (bcm a working day)', ri), fld('Quantity (bcm)', qi)),
+        r ? (r.first >= 0 ? msg(r.why === 'unfinished' ? 'warn' : 'info', `In the last run it moved ${U.fmtBig(r.moved, 'bcm')} from ${U.fmtDay(P.startDate, r.first)} to ${U.fmtDay(P.startDate, r.last)}${{ empty: ', until the dump was empty', full: ', until there was no more room', qty: ', the quantity set', unfinished: ', and had not finished when the schedule ended' }[r.why] || ''}.`) : msg('warn', 'In the last run it never started.')) : null,
         h('div', { class: 'row edit-only' }, btn('Delete', () => { jobs.splice(jobs.indexOf(j), 1); App.rhId = null; App.changed('dumps'); UI.renderTab(); }, 'sm ghost danger'))));
     }
     parts.push(hint('Rehandling digs a dump back down, lift by lift from the top, and hauls it at the rate set on every working day — into the mined-out voids that are left (up to the top of the backfill), onto backfill that waits for topsoil, or into another dump. It runs until its dump is empty, there is no more room, or it has moved the quantity set. The schedule runs on until the rehandling is done; it shows on the Gantt chart and in the Excel schedule.'));
@@ -16085,16 +16082,16 @@ const Tabs = (() => {
         h('div', { class: 'ovl-h' }, h('span', { class: 'sw', style: { background: '#c9a27a', width: '12px', height: '12px', flex: 'none' } }), nm,
           edit() ? btn('Redraw', () => drawOld(od), 'sm ghost') : null,
           edit() ? btn('Remove', () => { list.splice(list.indexOf(od), 1); if (App.oldId === od.id) App.oldId = null; App.changed('dumps'); UI.renderTab(); }, 'sm ghost') : null),
-        h('div', { class: 'grid2', style: { alignItems: 'end' } }, fld('Load it out down to (m)', el), fld('Take it to', ds), fld('Start date', sd), fld('Rate (m³ loose a working day)', ri)),
+        h('div', { class: 'grid2', style: { alignItems: 'end' } }, fld('Load it out down to (m)', el), fld('Take it to', ds), fld('Start date', sd), fld('Rate (bcm a working day)', ri)),
         E && edit() ? h('div', { class: 'row edit-only' }, btn(`Elevation = ground at its edge (${U.fmtNum(E.lo, 1)} m)`, () => upd('elev', r1(E.lo)), 'sm', 'The lowest original ground along the outline')) : null,
-        h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, V ? (V.v > 1 ? `${U.fmtBig(V.v, 'm³')} stands above ${U.fmtNum(+od.elev, 1)} m over ${U.fmtArea(V.area)} (its top at ${U.fmtNum(V.top, 1)} m)${V.inb > 0 ? `; ${U.fmtBig(V.vb, 'm³')} of it over ${U.fmtArea(V.inb)} of mining blocks, loaded out with the dump before those blocks are mined` : ''}` : `Nothing in the polygon stands above ${U.fmtNum(+od.elev, 1)} m.`) : 'Type the elevation to load it out down to.'),
+        h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, V ? (V.v > 1 ? `${U.fmtBig(V.v / Model.spoilSwell(P), 'bcm')} stands above ${U.fmtNum(+od.elev, 1)} m over ${U.fmtArea(V.area)} (its top at ${U.fmtNum(V.top, 1)} m)${V.inb > 0 ? `; ${U.fmtBig(V.vb / Model.spoilSwell(P), 'bcm')} of it over ${U.fmtArea(V.inb)} of mining blocks, loaded out with the dump before those blocks are mined` : ''}` : `Nothing in the polygon stands above ${U.fmtNum(+od.elev, 1)} m.`) : 'Type the elevation to load it out down to.'),
         !od.dest ? msg('warn', 'Choose the dump it goes to.') : null,
         !(+od.rate > 0) ? msg('warn', 'Type the rate it is loaded out at.') : null,
-        r ? (r.first >= 0 ? msg(r.old.left > 1000 ? 'warn' : 'info', `In the last run ${U.fmtBig(r.moved, 'm³')} was loaded out from ${U.fmtDay(P.startDate, r.first)} to ${U.fmtDay(P.startDate, r.last)}${r.old.left > 1000 ? `; ${U.fmtBig(r.old.left, 'm³')} was still standing at the end${r.why === 'full' ? `: ${r.to} had no more room` : ''}` : `, down to ${U.fmtNum(r.old.elev, 1)} m`}.`) : msg('warn', 'In the last run it was never loaded out.')) : null);
+        r ? (r.first >= 0 ? msg(r.old.left > 1000 ? 'warn' : 'info', `In the last run ${U.fmtBig(r.moved, 'bcm')} was loaded out from ${U.fmtDay(P.startDate, r.first)} to ${U.fmtDay(P.startDate, r.last)}${r.old.left > 1000 ? `; ${U.fmtBig(r.old.left / Model.spoilSwell(P), 'bcm')} was still standing at the end${r.why === 'full' ? `: ${r.to} had no more room` : ''}` : `, down to ${U.fmtNum(r.old.elev, 1)} m`}.`) : msg('warn', 'In the last run it was never loaded out.')) : null);
       parts.push(card);
     });
     if (!list.length) parts.push(h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, 'None yet. Draw a polygon around a dump that already stands on the original ground to load it out during the schedule.'));
-    parts.push(hint('Draw a polygon around a dump that is part of the original topography, and type the elevation to load it out down to (the button sets it to the ground along its edge). From its start date it is loaded out at the rate set on every working day, lift by lift from its top, and taken to the dump chosen (or into the mined-out voids, up to the top of the backfill), until it is down to that elevation or there is no more room. The teams do it, like the rehandling. The final landform leaves the old dump out: under the polygon it is the original ground cut down to that elevation. Where it lies over mining blocks it is loaded out with the dump too, not mined with the blocks: their layers start at that elevation there, and those blocks wait until the dump over them is loaded out. Its material is counted 1:1 in loose m³.'));
+    parts.push(hint('Draw a polygon around a dump that is part of the original topography, and type the elevation to load it out down to (the button sets it to the ground along its edge). From its start date it is loaded out at the rate set on every working day, lift by lift from its top, and taken to the dump chosen (or into the mined-out voids, up to the top of the backfill), until it is down to that elevation or there is no more room. The teams do it, like the rehandling. The final landform leaves the old dump out: under the polygon it is the original ground cut down to that elevation. Where it lies over mining blocks it is loaded out with the dump too, not mined with the blocks: their layers start at that elevation there, and those blocks wait until the dump over them is loaded out. It is spoil already: the rate is its bcm (its room ÷ the spoil’s swell).'));
     body.append(sec('Existing dumps to load out', list.length ? h('span', { class: 'chip' }, String(list.length)) : null, ...parts));
   }
   function drawOld(existing) {
@@ -16110,7 +16107,7 @@ const Tabs = (() => {
         if (od.elev == null && App.ws) od.elev = r1(edgeGround(pts).lo);
         App.oldId = od.id; App.changed('dumps', { now: true }); UI.renderTab();
         const V = oldVolume(od);
-        if (V) UI.toast(V.v > 1 ? `${od.name}: ${U.fmtBig(V.v, 'm³')} stands above ${U.fmtNum(+od.elev, 1)} m, the ground along its edge. Set the start date, the rate and where it goes.` : `${od.name}: nothing in it stands above the ground along its edge.`, 8000);
+        if (V) UI.toast(V.v > 1 ? `${od.name}: ${U.fmtBig(V.v / Model.spoilSwell(P), 'bcm')} stands above ${U.fmtNum(+od.elev, 1)} m, the ground along its edge. Set the start date, the rate and where it goes.` : `${od.name}: nothing in it stands above the ground along its edge.`, 8000);
       },
       onCancel: () => hud(null), onError: m => UI.toast(m)
     });
@@ -16801,46 +16798,78 @@ const Tabs = (() => {
     }
     draw();
   }
+  /* The schedule (Production tab): its start, the working days, the public holidays, how long it may run, and the
+     shifts and operational hours of a working day, which with the teams' bcm an operational hour make the teams' day. */
+  function scheduleSection(body, wdm) {
+    const P = App.P, C = P.calendar, TM = Model.teams(P);
+    const startTxt = h('p', { class: 'hint' });
+    const updStart = () => { const d = U.parseISO(P.startDate); startTxt.textContent = d ? `Day 1 of the schedule is ${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][d.getUTCDay()]} ${U.fmtDate(d)}.` : 'Set a start date.'; };
+    updStart();
+    const days = h('div', { class: 'days', role: 'group', 'aria-label': 'Working days' });
+    ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].forEach((dn, i) => {
+      const inp = h('input', { type: 'checkbox', checked: !!C.workDays[i], id: fid('wd') });
+      inp.addEventListener('change', () => { C.workDays[i] = inp.checked ? 1 : 0; App.changed('calendar'); UI.renderTab(); });
+      days.append(h('label', { for: inp.id }, inp, dn));
+    });
+    const si = num(TM.shifts, v => { C.shifts = v > 0 ? U.clamp(Math.round(v), 1, 4) : 2; App.changed('calendar'); UI.renderTab(); }, { min: 1, max: 4, step: 1 });
+    const hi = num(TM.hours, v => { C.hoursPerDay = v > 0 ? U.clamp(Math.round(v * 10) / 10, 0.5, 24) : 20; delete C.hoursByDay; App.changed('calendar'); UI.renderTab(); }, { min: 0.5, max: 24, step: 0.5 });
+    si.setAttribute('aria-label', 'Shifts per day'); hi.setAttribute('aria-label', 'Operational hours per day');
+    body.append(sec('Schedule', h('span', { class: 'chip' }, `${TM.shifts} × ${U.fmtNum(TM.hours / TM.shifts, 1)} h`),
+      h('div', { class: 'grid2' },
+        fld('Start date', txt(P.startDate, v => { if (!U.parseISO(v)) return; P.startDate = v; updStart(); App.changed('calendar'); if (App.res) { Timeline.setDay(App.day); Timeline.draw(); } else Timeline.setData(null, P); }, { type: 'date' })),
+        h('span')),
+      startTxt,
+      h('div', { class: 'fld' }, h('span', null, 'Working days'), days),
+      chk('Stop on South African public holidays', !!C.saHolidays, v => { C.saHolidays = v; App.changed('calendar'); UI.renderTab(); }),
+      h('div', { class: 'grid2' }, fld('Shifts per day', si), fld('Operational hours per day', hi)),
+      h('div', { class: 'dt', style: { whiteSpace: 'normal', fontSize: 'var(--fs-xs)', color: 'var(--muted)' } }, `${TM.shifts} shift${TM.shifts === 1 ? '' : 's'} of ${U.fmtNum(TM.hours / TM.shifts, 1)} operational hours on each working day; ${U.fmtNum(wdm, 1)} working days in an average month.`),
+      Array.isArray(C.hoursByDay) && C.hoursByDay.some(x => +x > 0 && Math.abs(+x - TM.hours) > 1e-6) ? msg('info', `The hours of each weekday come from the desk (Mining Simulation Project): ${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d, i) => `${d} ${U.fmtNum(+C.hoursByDay[i] || 0, 1)}`).join(', ')}. The schedule takes their average over the working days, ${U.fmtNum(TM.hours, 1)} h; typing the operational hours here sets every working day to them.`) : null,
+      fld('Longest schedule to simulate (years)', num(C.maxYears, v => { C.maxYears = U.clamp(v || 30, 1, 80); App.changed('calendar'); }, { min: 1, max: 80, step: 1 })),
+      hint('The operational hours are the hours a day the teams dig, after shift changes, breaks, refuelling and blasting: a team moves its bcm an hour (Teams, below) for that many hours on every working day, so the working day gives the teams × the rate × these hours and a month its working days × that. The shifts split the day: the teams’ bcm a shift. Dates show as dd/mmm/yyyy on the timeline and in the Excel schedule. The coal losses are in the Reserve tab.')
+    ));
+  }
   function production(body) {
     const P = App.P, TM = Model.teams(P), per = Monthly.daysPerMonth(P);
     const T = P.targets || (P.targets = { coal: null, waste: null, wasteUnit: 'bcm', basis: 'calendar', mode: 'limit', coalBasis: 'insitu' });
-    const PT = P.teams || (P.teams = { count: 4, perTeam: Model.TEAM_LCM });
+    const PT = P.teams || (P.teams = { count: 4, rate: Model.TEAM_RATE });
     const y0 = (U.parseISO(P.startDate) || new Date()).getUTCFullYear(), wdm = Monthly.workDaysPerMonth(P, y0, y0 + 3) || Monthly.AVG_MONTH;
+    scheduleSection(body, wdm);
     // ---- teams
     {
       const ni = num(+PT.count > 0 ? PT.count : null, v => { PT.count = v > 0 ? Math.round(v * 10) / 10 : 0; App.changed('sim'); UI.renderTab(); }, { min: 0, step: 1, allowEmpty: true, placeholder: '0' });
-      const pi = num(PT.perTeam || Model.TEAM_LCM, v => { PT.perTeam = v > 0 ? v : Model.TEAM_LCM; App.changed('sim'); UI.renderTab(); }, { min: 1000, step: 1000 });
-      ni.setAttribute('aria-label', 'Number of teams'); pi.setAttribute('aria-label', 'Loose m³ per team a month');
-      // what the targets ask of the teams: coal t → bcm (density) → loose m³ (swell); waste bcm (or t) → loose m³
+      const ri = num(TM.rate, v => { PT.rate = v > 0 ? Math.round(v * 10) / 10 : Model.TEAM_RATE; App.changed('sim'); UI.renderTab(); }, { min: 1, step: 5 });
+      ni.setAttribute('aria-label', 'Number of teams'); ri.setAttribute('aria-label', 'bcm per team an operational hour');
+      // what the targets ask of the teams a month: coal t → bcm (density); waste bcm (or t → bcm)
       const coalL = P.layers.filter(L => L.type === 'coal'), wasteL = P.layers.filter(L => L.type !== 'coal');
       const avg = (list, k, d) => (list.length ? list.reduce((x, L) => x + (+L[k] || d), 0) / list.length : d);
-      const cD = avg(coalL, 'density', 1.5), cS = avg(coalL, 'swell', 1.3), wD = avg(wasteL, 'density', 2.4), wS = avg(wasteL, 'swell', 1.3);
+      const cD = avg(coalL, 'density', 1.5), wD = avg(wasteL, 'density', 2.4);
       const PRD = T.coalBasis === 'product' ? Wash.product(P) : null;
       const arF = coalL.length ? coalL.reduce((x, L) => x + Model.arFactor(P, L) * (PRD ? (PRD.seams.get(P.layers.indexOf(L)) || { yAvg: 1 }).yAvg : 1), 0) / coalL.length : 1;
-      let coalLoose = +T.coal > 0 ? (+T.coal / (cD * (T.coalBasis === 'ar' || PRD ? arF : 1))) * cS : 0, wasteLoose = +T.waste > 0 ? (T.wasteUnit === 't' ? +T.waste / wD : +T.waste) * wS : 0;
+      let coalB = +T.coal > 0 ? +T.coal / (cD * (T.coalBasis === 'ar' || PRD ? arF : 1)) : 0, wasteB = +T.waste > 0 ? (T.wasteUnit === 't' ? +T.waste / wD : +T.waste) : 0;
       /* With one target only, the other part follows from the whole plan: the waste that has to be stripped for the coal
          (or the coal that comes with the waste), from the volumes of the blocks in the mining paths. */
       let planTxt = '';
-      if (App.ws && (coalLoose > 0) !== (wasteLoose > 0)) {
+      if (App.ws && (coalB > 0) !== (wasteB > 0)) {
         const vols = App.res ? App.res.vol0 : Model.blockVolumes(App.ws); let cl = 0, wl = 0, ct = 0;
-        vols.forEach(v => v.forEach((x, l) => { const Ly = P.layers[l]; if (!Ly) return; if (Ly.type === 'coal') { cl += x * (+Ly.swell || 1.3); ct += x * (+Ly.density || 1.5); } else wl += x * (+Ly.swell || 1.3); }));
+        vols.forEach(v => v.forEach((x, l) => { const Ly = P.layers[l]; if (!Ly) return; if (Ly.type === 'coal') { cl += x; ct += x * (+Ly.density || 1.5); } else wl += x; }));
         if (cl > 0 && wl > 0) {
-          if (coalLoose > 0) { wasteLoose = (coalLoose * wl) / cl; planTxt = `with the waste stripped for that coal: ${U.fmtNum((cl + wl) / ct, 2)} m³ loose moved for every ton of coal over the whole plan`; }
-          else { coalLoose = (wasteLoose * cl) / wl; planTxt = 'with the coal that comes with that waste over the whole plan'; }
+          if (coalB > 0) { wasteB = (coalB * wl) / cl; planTxt = `with the waste stripped for that coal: ${U.fmtNum((cl + wl) / ct, 2)} bcm moved for every ton of coal over the whole plan`; }
+          else { coalB = (wasteB * cl) / wl; planTxt = 'with the coal that comes with that waste over the whole plan'; }
         }
       }
-      const need = (coalLoose + wasteLoose) / (TM.perTeam || Model.TEAM_LCM);
-      body.append(sec('Teams', TM.count > 0 ? h('span', { class: 'chip' }, `${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)} × ${U.fmtNum(TM.perTeam / 1000, 0)}k m³`) : null,
-        h('div', { class: 'grid2' }, fld('Number of teams', ni), fld('Loose m³ per team a month', pi)),
+      const teamMonth = TM.perDay * wdm, need = (coalB + wasteB) / teamMonth;
+      body.append(sec('Teams', TM.count > 0 ? h('span', { class: 'chip' }, `${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)} × ${U.fmtNum(TM.rate, TM.rate % 1 ? 1 : 0)} bcm/h`) : null,
+        h('div', { class: 'grid2' }, fld('Number of teams', ni), fld('bcm per team an operational hour', ri)),
         TM.count > 0 ? h('div', { class: 'kv' },
-          h('span', { class: 'k' }, 'The mine moves a month'), h('span', { class: 'v' }, `${U.fmtNum(TM.cap, 0)} m³ loose`),
-          h('span', { class: 'k' }, 'A working day'), h('span', { class: 'v' }, `${U.fmtNum(TM.cap / wdm, 0)} m³ loose`),
-          h('span', { class: 'k' }, 'Working days a month'), h('span', { class: 'v' }, U.fmtNum(wdm, 1)),
-          coalLoose + wasteLoose > 0 ? h('span', { class: 'k' }, !(+T.waste > 0) ? 'The coal target needs' : !(+T.coal > 0) ? 'The waste target needs' : 'The targets need') : null,
-          coalLoose + wasteLoose > 0 ? h('span', { class: 'v' }, `${U.fmtNum(need, 1)} teams`) : null) : msg('error', 'Type how many teams the project can use. Without teams nothing is mined.'),
+          h('span', { class: 'k' }, 'A working day'), h('span', { class: 'v' }, `${U.fmtNum(TM.day, 0)} bcm (${U.fmtNum(TM.hours, TM.hours % 1 ? 1 : 0)} operational hours)`),
+          h('span', { class: 'k' }, 'A shift'), h('span', { class: 'v' }, `${U.fmtNum(TM.shift, 0)} bcm (${TM.shifts} shift${TM.shifts === 1 ? '' : 's'} a day)`),
+          h('span', { class: 'k' }, 'An average month'), h('span', { class: 'v' }, `${U.fmtNum(TM.day * wdm, 0)} bcm (${U.fmtNum(wdm, 1)} working days)`),
+          h('span', { class: 'k' }, 'One team a month'), h('span', { class: 'v' }, `${U.fmtNum(teamMonth, 0)} bcm`),
+          coalB + wasteB > 0 ? h('span', { class: 'k' }, !(+T.waste > 0) ? 'The coal target needs' : !(+T.coal > 0) ? 'The waste target needs' : 'The targets need') : null,
+          coalB + wasteB > 0 ? h('span', { class: 'v' }, `${U.fmtNum(need, 1)} teams (${U.fmtNum(coalB + wasteB, 0)} bcm a month)`) : null) : msg('error', 'Type how many teams the project can use. Without teams nothing is mined.'),
         planTxt ? h('div', { class: 'dt', style: { whiteSpace: 'normal', fontSize: 'var(--fs-xs)', color: 'var(--muted)' } }, `Teams needed ${planTxt}.`) : null,
-        TM.count > 0 && coalLoose + wasteLoose > 0 && need > TM.count + 1e-6 ? msg('warn', `The targets need ${U.fmtNum(need, 1)} teams but there are ${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)}: the months stay below the targets.`) : null,
-        hint(`The teams do all the mining: topsoil, waste and coal, the ramps and the rehandling, counted in loose m³ (bcm × the swell of the layer). Each month gets the teams × the loose m³ of a team × its ${T.basis === 'working' ? 'working days ÷ ' + U.fmtNum(per, 1) : 'days ÷ 30.44'}. Every working day the coal gets the teams it needs for its target first; the rest of the teams are shared between the other activities by the volume of their paths, so the layers keep pace with each other. Without a coal target the coal shares in the same way. With a coal target and no waste target the waste gets only the teams it needs to uncover the coal (Monthly targets below), and the rest stay idle. A priority pit (Sequence tab, Pits) gets the teams first.`)));
+        TM.count > 0 && coalB + wasteB > 0 && need > TM.count + 1e-6 ? msg('warn', `The targets need ${U.fmtNum(need, 1)} teams but there are ${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)}: the months stay below the targets.`) : null,
+        hint(`The teams do all the mining — topsoil, waste and coal, the ramps, the highwall batters and the rehandling — in bcm. A team moves its bcm an operational hour for the operational hours of each working day (Schedule, above), so a working day gives the teams × the rate × the hours and a month its working days × that. Every working day the coal gets the teams it needs for its target first; the rest of the teams are shared between the other activities by the bcm in their paths, so the layers keep pace with each other. Without a coal target the coal shares in the same way. With a coal target and no waste target the waste gets only the teams it needs to uncover the coal (Monthly targets below), and the rest stay idle. A priority pit (Sequence tab, Pits) gets the teams first.`)));
     }
     // ---- rain: the waste derated in the wet months
     {
@@ -16904,7 +16933,7 @@ const Tabs = (() => {
         h('div', { class: 'grid2' }, fld(Monthly.startMonths(P) ? 'Waste target, steady state (per month)' : 'Waste target (per month)', wi), fld('Waste target in', us)),
         +T.waste > 0 ? h('div', { class: 'grid2' }, fld(`Start-up waste (${wu} per month)`, wsi), fld('For the first (months)', wsm)) : null,
         +T.waste > 0 && (+T.wasteStart > 0 || +T.wasteStartMonths > 0) ? h('div', { class: 'dt', style: { whiteSpace: 'normal', fontSize: 'var(--fs-xs)', color: 'var(--muted)' } }, Monthly.startMonths(P) ? `The waste target is ${U.fmtNum(+T.wasteStart, 0)} ${wu} a month over the first ${Monthly.startMonths(P)} month${Monthly.startMonths(P) === 1 ? '' : 's'} of mining (from the month the first pit or activity starts), then ${U.fmtNum(+T.waste, 0)} ${wu} a month.${!(+T.coal > 0) ? ' With no coal target the waste gets the teams first in those months; the coal gets what is left.' : ''}${+T.wasteStart < +T.waste ? ' (The start-up figure is below the steady state.)' : ''}` : 'Type both the start-up waste and its months.') : null,
-        +T.waste > 0 && Monthly.startMonths(P) && wu === 'bcm' ? (() => { const wl = P.layers.filter(L => L.type !== 'coal'), sw = wl.length ? wl.reduce((a, L) => a + (+L.swell || 1.3), 0) / wl.length : 1.3, need = (+T.wasteStart * sw) / (TM.perTeam || Model.TEAM_LCM); return need > TM.count + 1e-6 ? msg('warn', `The start-up waste needs about ${U.fmtNum(need, 1)} teams for the waste alone (${U.fmtNum(+T.wasteStart, 0)} bcm × a swell of ${U.fmtNum(sw, 2)}), but there are ${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)}: the start-up months stay below it. Add teams (above) or lower the start-up waste.`) : null; })() : null,
+        +T.waste > 0 && Monthly.startMonths(P) && wu === 'bcm' ? (() => { const need = +T.wasteStart / (TM.perDay * wdm); return need > TM.count + 1e-6 ? msg('warn', `The start-up waste needs about ${U.fmtNum(need, 1)} teams for the waste alone (${U.fmtNum(+T.wasteStart, 0)} bcm a month ÷ ${U.fmtNum(TM.perDay * wdm, 0)} bcm a team), but there are ${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)}: the start-up months stay below it. Add teams (above) or lower the start-up waste.`) : null; })() : null,
         limit ? h('div', { class: 'grid2' }, fld(`Minimum waste (${wu} per month)`, mi), h('div', { class: 'dt', style: { whiteSpace: 'normal', alignSelf: 'end' } }, +T.wasteMin > 0 ? `At least ${eg(+T.wasteMin, wu)}.` : 'The schedule moves at least this much waste every month.')) : null,
         limit && +T.wasteMin > 0 && +T.waste > 0 && +T.wasteMin > +T.waste ? msg('warn', `The minimum waste (${U.fmtNum(+T.wasteMin, 0)} ${wu}) is more than the waste target (${U.fmtNum(+T.waste, 0)} ${wu}), which is the most a month may move: the target wins.`) : null,
         h('div', { class: 'grid2' }, fld('Each month follows its', bs), fld('Use the targets to', ms)),
@@ -17400,12 +17429,12 @@ const Tabs = (() => {
   function landformResults(body, res) {
     const kp = (k, v) => h('div', { class: 'kpi' }, h('span', { class: 'k' }, k), h('span', { class: 'v' }, v));
     if (res.rehab && res.rehab.on) {
-      const R = res.rehab, e = R.end, soilL = R.soilDaily.reduce((x, y) => x + y, 0);
+      const R = res.rehab, e = R.end, soilL = R.soilDaily.reduce((x, y) => x + y, 0) / Model.soilSwell(App.rv().P);
       body.append(sec('Final landform and topsoil', null, h('div', { class: 'kpis' },
         kp('Topsoil replaced', U.fmtArea(e.soiled)), kp('Waiting for topsoil', U.fmtArea(e.waiting)),
-        kp('Topsoil placed on the backfill', U.fmtBig(soilL, 'm³ loose')), kp('Voids left below the backfill', e.voidVol > 1 ? U.fmtBig(e.voidVol, 'm³') : 'none'),
+        kp('Topsoil placed on the backfill', U.fmtBig(soilL, 'bcm')), kp('Voids left below the backfill', e.voidVol > 1 ? U.fmtBig(e.voidVol, 'm³') : 'none'),
         R.drainCut ? kp('Drains cut outside the pit', U.fmtBig(R.drainCut.bcm, 'bcm')) : null,
-        R.finalVoid && R.finalVoid.moved > 1 ? kp('Final void filled from the dumps', U.fmtBig(R.finalVoid.moved, 'm³ loose')) : null,
+        R.finalVoid && R.finalVoid.moved > 1 ? kp('Final void filled from the dumps', U.fmtBig(R.finalVoid.moved, 'bcm')) : null,
         R.lift && R.restore ? kp('Waste above the original ground', `${U.fmtBig(R.lift.vol - (e.liftLeft > 1000 ? e.liftLeft : 0), 'm³')} · up to ${U.fmtNum(R.above, 1)} m`) : R.lift ? kp('Landform lifted', `${U.fmtNum(R.lift.avg, 2)} m avg · ${Math.round(R.lift.kept * 100)}% flow kept`) : null,
         R.raises && R.raises.some(q => q.vol > 1) ? kp('Raised areas', `${R.raises.filter(q => q.vol > 1).length} · ${U.fmtBig(R.raises.reduce((x, q) => x + q.vol, 0), 'm³')} more spoil`) : null,
         R.restore ? null : kp('Room given up for the landform', U.fmtBig(R.stats.lowered + R.topsoil * R.stats.area, 'm³'))),
@@ -17461,7 +17490,7 @@ const Tabs = (() => {
       // lowest and highest target of the full months (the first and last month may be part months)
       const lohi = (t, u) => { let lo = Infinity, hi = -Infinity; for (let m = 1; m < mo.nM - 1; m++) { lo = Math.min(lo, t[m]); hi = Math.max(hi, t[m]); } return isFinite(lo) ? `${U.fmtBig(lo, u)} – ${U.fmtBig(hi, u)}` : U.fmtBig(t[0], u); };
       const cAct = G.coalBasis === 'ar' ? mo.coalAR : G.coalBasis === 'product' && mo.prod ? mo.prod.T : mo.coalT;
-      const tiles = [kp('Coal mined, average month', U.fmtBig(avg(mo.coalT), 't')), kp('Coal as received, average month', U.fmtBig(avg(mo.coalAR), 't')), kp('Waste moved, average month', U.fmtBig(avg(wAct), wUnit)), kp('Loose m³ moved, average month', U.fmtBig(avg(mo.loose), 'm³'))];
+      const tiles = [kp('Coal mined, average month', U.fmtBig(avg(mo.coalT), 't')), kp('Coal as received, average month', U.fmtBig(avg(mo.coalAR), 't')), kp('Waste moved, average month', U.fmtBig(avg(wAct), wUnit)), kp('Moved by the teams, average month', U.fmtBig(avg(mo.moved), 'bcm'))];
       if (mo.prod) tiles.push(kp('Washed product, average month', U.fmtBig(avg(mo.prod.T), 't')));
       if (mo.adcT) tiles.push(kp('ADC tons, average month', U.fmtBig(avg(mo.adcT), 't')), kp('ADC tons, total', U.fmtBig(mo.sum(mo.adcT), 't')));
       if (G.coal) tiles.push(kp('Coal target by month' + (G.coalBasis === 'ar' ? ' (as received)' : G.coalBasis === 'product' ? ' (washed product)' : ''), lohi(G.coal, 't')), kp('Months below coal target', `${short(cAct, G.coal)} of ${mo.nM}`));
@@ -17477,7 +17506,7 @@ const Tabs = (() => {
         res.minWaste ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `Minimum waste ${U.fmtNum(res.minWaste.min, 0)} ${res.minWaste.unit} in an average month: ` + (res.minWaste.short.length ? `not met in ${res.minWaste.short.length} month${res.minWaste.short.length === 1 ? '' : 's'} (${res.minWaste.short.slice(0, 6).map(q => `${q.label}: ${U.fmtNum(q.used, 0)} of ${U.fmtNum(q.bud, 0)}`).join(', ')}${res.minWaste.short.length > 6 ? ', …' : ''}); the teams, a dependency, a void or a dump held the waste back.` : 'met in every month while there was waste to move.')) : null,
         res.steadyWaste ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `The waste was smoothed to ${U.fmtNum(res.steadyWaste.rate, 0)} bcm in an average month${res.steadyWaste.auto ? ' (the average of the schedule)' : ''}; the exposed coal ran short, so the waste moved faster, on ${U.fmtNum(res.steadyWaste.over, 0)} of ${U.fmtNum(res.steadyWaste.days, 0)} working days${res.steadyWaste.over > res.steadyWaste.days / 4 ? ' (a dependency in whole strips, or little exposed coal kept ahead, keeps the waste from getting ahead: see the Production tab)' : ''}.`) : null,
         res.wasteFollows ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `The waste followed the coal, keeping ${U.fmtNum(res.wasteFollows.months, res.wasteFollows.months % 1 ? 1 : 0)} month${res.wasteFollows.months === 1 ? '' : 's'} of coal exposed ahead.` + (res.acts.some(A => A.wfDays > 0) ? ' Held to what the coal needed: ' + res.acts.filter(A => A.wfDays > 0).map(A => `${A.name} on ${U.fmtNum(A.wfDays, 0)} working days`).join(', ') + '.' : '')) : null,
-        hint(`${G.coal || G.waste ? `The targets and the teams are set in the Production tab. ${ran ? 'This run mined no more than the target of each month.' : G.limit ? 'Run the simulation again to schedule to them.' : 'The targets are only compared with the schedule.'} The charts below show the target as a line; the Excel monthly summary lists it against every month.` : 'Type a coal and a waste target for an average month in the Production tab to schedule to them.'} Teams used: the loose m³ moved in a month (mining, ramps and rehandling) ÷ what one team moves in that month.`)));
+        hint(`${G.coal || G.waste ? `The targets and the teams are set in the Production tab. ${ran ? 'This run mined no more than the target of each month.' : G.limit ? 'Run the simulation again to schedule to them.' : 'The targets are only compared with the schedule.'} The charts below show the target as a line; the Excel monthly summary lists it against every month.` : 'Type a coal and a waste target for an average month in the Production tab to schedule to them.'} Teams used: the bcm moved in a month (mining, ramps, batters and rehandling) ÷ what one team moves in the month’s working days (its bcm an operational hour × the operational hours).`)));
     }
     if (mo.pits) {
       const parts = res.voidTip && res.voidTip.parts ? res.voidTip.parts : [];
@@ -17586,7 +17615,7 @@ const Tabs = (() => {
       const trs = res.rehandles.map(J => h('tr', null, h('td', null, h('span', { class: 'sw', style: { background: J.color, display: 'inline-block', width: '10px', height: '10px', marginRight: '6px', verticalAlign: '-1px' } }), J.name),
         h('td', null, `${J.from} → ${J.to}`), h('td', { class: 'r num' }, U.fmtBig(J.moved)), h('td', { class: 'num' }, J.first >= 0 ? U.fmtDay(P.startDate, J.first) : '–'), h('td', { class: 'num' }, J.last >= 0 ? U.fmtDay(P.startDate, J.last) : '–'),
         h('td', null, { empty: 'dump empty', full: 'no more room', qty: 'quantity moved', unfinished: 'not finished', 'not started': 'never started' }[J.why] || J.why)));
-      body.append(sec('Rehandling', null, h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', null, 'Job'), h('th', null, 'From → to'), h('th', { class: 'r' }, 'm³ loose'), h('th', null, 'Start'), h('th', null, 'Finish'), h('th', null, 'Ended'))), h('tbody', null, trs)))));
+      body.append(sec('Rehandling', null, h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', null, 'Job'), h('th', null, 'From → to'), h('th', { class: 'r' }, 'bcm'), h('th', null, 'Start'), h('th', null, 'Finish'), h('th', null, 'Ended'))), h('tbody', null, trs)))));
     }
     // blocks stopped by the seam cut-off (no seam below passes) are reported with the cut-off, not with the drawn limits
     const byCut = b => !!(res.limitCut && res.limitCut[b]);
@@ -17666,10 +17695,12 @@ const Tabs = (() => {
     const anyOut = res.dumps.some(D => D.removed > 0);
     const dr = res.dumps.map(D => {
       const dd = P.dumps.find(x => x.id === D.id); const cap = dd ? Sim.dumpCapacity(App.ws, dd) : D.capacity != null ? D.capacity : Infinity; const got = D.daily.reduce((s, v) => s + v, 0);
-      return h('tr', null, h('td', null, D.name), h('td', { class: 'r num' }, isFinite(cap) ? U.fmtBig(cap) : '–'), h('td', { class: 'r num' }, U.fmtBig(got)), h('td', { class: 'r num' }, isFinite(cap) && cap > 0 ? Math.round((got / cap) * 100) + '%' : '–'), anyOut ? h('td', { class: 'r num' }, D.removed > 0 ? U.fmtBig(D.removed) : '–') : null);
+      // (bcm: what it received; its room in bcm of spoil; the share used, room against room)
+      const SPW = Model.spoilSwell(P), gotB = D.receivedB != null ? D.receivedB : got / SPW;
+      return h('tr', null, h('td', null, D.name), h('td', { class: 'r num' }, isFinite(cap) ? U.fmtBig(cap / SPW) : '–'), h('td', { class: 'r num' }, U.fmtBig(gotB)), h('td', { class: 'r num' }, isFinite(cap) && cap > 0 ? Math.round((got / cap) * 100) + '%' : '–'), anyOut ? h('td', { class: 'r num' }, D.removed > 0 ? U.fmtBig(D.removed) : '–') : null);
     });
-    body.append(sec('Dumps (m³ loose)', null, h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', null, 'Dump'), h('th', { class: 'r' }, 'Capacity'), h('th', { class: 'r' }, 'Received'), h('th', { class: 'r' }, 'Used'), anyOut ? h('th', { class: 'r' }, 'Rehandled out') : null)), h('tbody', null, dr))),
-      hint('Capacity is measured from the original surface; in-pit dumps gain space as the pit is mined, so they can exceed 100%. For a dump filled to the original topography, capacity is the pit volume under it once mined out.')));
+    body.append(sec('Dumps (bcm)', null, h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', null, 'Dump'), h('th', { class: 'r' }, 'Capacity'), h('th', { class: 'r' }, 'Received'), h('th', { class: 'r' }, 'Used'), anyOut ? h('th', { class: 'r' }, 'Rehandled out') : null)), h('tbody', null, dr))),
+      hint('Capacity is the bcm of spoil a dump’s room holds at the spoil’s swell, measured from the original surface; in-pit dumps gain space as the pit is mined, so they can exceed 100%. For a dump filled to the original topography, capacity is the pit volume under it once mined out. Received is the bcm placed on it.')));
     const evs = res.events.filter(e => e.type !== 'info' || true).slice(0, 80);
     if (evs.length) body.append(sec('Events & warnings', null, ...evs.map(e => msg(e.type, e.msg, e.day))));
   }
@@ -19626,7 +19657,7 @@ const Report = (() => {
     row('Days in the month', 'days', 'days');
     title('PRODUCTION'); row('Coal mined (as received)', 't', 'rom'); if (o.wash) { row('Plant feed', 't', 'feed'); row('Product', 't', 'product'); row('Discard', 't', 'discard'); } else row('Coal sold (as mined)', 't', 'product');
     row('Exported', 't', 'expT'); row('Sold at home', 't', 'domT'); if (o.byCV || o.domBasis === 'mj') row('CV of the coal sold', 'MJ/kg', 'cv', { dp: true, total: cvAll });
-    row('Topsoil', 'bcm', 'topsoil'); row('Waste hauled', 'bcm', 'waste'); row('Waste dozed', 'bcm', 'dozed'); row('Drilled and blasted', 'bcm', 'blastB'); row('Waste drilled and blasted', 'bcm', 'blastW'); row('Coal drilled and blasted', 'bcm', 'blastC'); row('Drill metres', 'm', 'drillM'); row('Explosives', 'kg', 'explKg'); row('Presplit', 'm²', 'presplitM2'); row('Rehandled', 'm³ loose', 'reh'); row('Rehabilitated', 'ha', 'rehabHa', { dp: true }); if (F.hydro) row('Water pumped from the pit', 'm³', 'water');
+    row('Topsoil', 'bcm', 'topsoil'); row('Waste hauled', 'bcm', 'waste'); row('Waste dozed', 'bcm', 'dozed'); row('Drilled and blasted', 'bcm', 'blastB'); row('Waste drilled and blasted', 'bcm', 'blastW'); row('Coal drilled and blasted', 'bcm', 'blastC'); row('Drill metres', 'm', 'drillM'); row('Explosives', 'kg', 'explKg'); row('Presplit', 'm²', 'presplitM2'); row('Rehandled', 'bcm', 'reh'); row('Rehabilitated', 'ha', 'rehabHa', { dp: true }); if (F.hydro) row('Water pumped from the pit', 'm³', 'water');
     gap(); title(`CASH FLOW (${cur})`);
     row('Revenue, export', cur, 'revExp'); row('Revenue, domestic', cur, 'revDom'); row('Revenue', cur, 'rev');
     row('Logistics (rail, port, transport)', cur, 'logi', { sign: -1 }); row('Marketing and commission', cur, 'mkt', { sign: -1 });
@@ -19810,16 +19841,17 @@ const Report = (() => {
     }
     if ((M.soil && M.sum(M.soil) > 0) || M.rehandles.length) {
       gap(); title('BACKFILL, TOPSOIL AND REHANDLING');
-      if (M.soil && M.sum(M.soil) > 0) add('Topsoil placed on the backfill', 'm³ loose', M.soil);
-      for (const q of M.rehandles) add(`Rehandling: ${q.name} (${q.from} → ${q.to})`, 'm³ loose', q.v);
+      if (M.soil && M.sum(M.soil) > 0) add('Topsoil placed on the backfill', 'bcm', M.soilB);
+      for (const q of M.rehandles) add(`Rehandling: ${q.name} (${q.from} → ${q.to})`, 'bcm', q.v);
     }
-    // the teams: loose m³ moved and how many teams that keeps busy
-    gap(); title(`TEAMS — ${U.fmtNum(M.teams.count, M.teams.count % 1 ? 1 : 0)} × ${U.fmtNum(M.teams.perTeam, 0)} m³ loose a month`);
-    add('Mining', 'm³ loose', M.looseMine);
-    if (M.sum(M.looseRamp) > 0) add('Ramp excavation', 'm³ loose', M.looseRamp);
-    if (M.looseBatter && M.sum(M.looseBatter) > 0) add('Highwall batters', 'm³ loose', M.looseBatter);
-    if (M.sum(M.looseReh) > 0) add('Rehandling and final void', 'm³ loose', M.looseReh);
-    add('Total moved', 'm³ loose', M.loose);
+    // the teams: the bcm they moved and how many teams that keeps busy
+    { const TM = M.teams; gap(); title(`TEAMS — ${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)} team${TM.count === 1 ? '' : 's'} × ${U.fmtNum(TM.rate, TM.rate % 1 ? 1 : 0)} bcm an operational hour × ${U.fmtNum(TM.hours, TM.hours % 1 ? 1 : 0)} operational hours (${TM.shifts} shift${TM.shifts === 1 ? '' : 's'}) = ${U.fmtNum(TM.day, 0)} bcm a working day`); }
+    add('Mining', 'bcm', M.bcmMine);
+    if (M.sum(M.bcmRamp) > 0) add('Ramp excavation', 'bcm', M.bcmRamp);
+    if (M.bcmBatter && M.sum(M.bcmBatter) > 0) add('Highwall batters', 'bcm', M.bcmBatter);
+    if (M.sum(M.bcmReh) > 0) add('Rehandling and final void', 'bcm', M.bcmReh);
+    add('Total moved', 'bcm', M.moved);
+    add('Working days', 'days', M.work, { dp: 0 });
     add('Teams used', 'teams', M.teamsUsed, { dp: 1, total: M.teams.avg, avg: M.teams.avg });
     add('Teams available', 'teams', Array.from({ length: nM }, () => M.teams.count), { dp: 1, total: null, noAvg: true });
     gap();
@@ -19845,7 +19877,7 @@ const Report = (() => {
     gap();
     title('Tonnes and bcm are what the schedule mines. Average per month = total ÷ days in the schedule × 30.44 (an average month).');
     title('As received = tons in situ × (1 − geological loss) × (1 − mining loss) × (1 + contamination) of each seam (Reserve tab).');
-    title(`Teams used = the loose m³ moved in the month ÷ (${U.fmtNum(M.teams.perTeam, 0)} m³ × the ${basisTxt} of the month ÷ ${U.fmtNum(T.per, 2)}); the total column is the average over the schedule.`);
+    title(`Teams used = the bcm moved in the month ÷ (${U.fmtNum(M.teams.rate, M.teams.rate % 1 ? 1 : 0)} bcm an operational hour × ${U.fmtNum(M.teams.hours, M.teams.hours % 1 ? 1 : 0)} operational hours × the working days of the month); the total column is the average over the schedule.`);
     if ((T.coal || T.waste) && res.target && res.target.limit) title('The schedule was held to the targets: no month mines more than its target.');
     if (T.coal || T.waste) title(`Targets: the typed average for a month, multiplied by the ${basisTxt} of each month ÷ ${U.fmtNum(T.per, 2)} (${T.basis === 'working' ? 'the working days in an average month' : 'the days in an average month'}). The first and last month count only their days inside the schedule.`);
     if (M.pits) title('By pit: what the activities of each pit mine. Ramp excavation is not split between the pits, so the pits’ waste adds up to the total less the ramp excavation.');
@@ -19992,7 +20024,7 @@ const Report = (() => {
 
     if (res) {
       // 2. Activity schedule
-      const a2 = [['Activity', ...(pitOf ? ['Pit'] : []), 'Seq #', 'Block ID', 'Layer', 'Method', 'Start', 'Finish', 'Duration (days)', 'Volume (bcm)', 'Tonnes (t)', 'As received (t)', 'Loose (m³)', 'Destination', 'Status']];
+      const a2 = [['Activity', ...(pitOf ? ['Pit'] : []), 'Seq #', 'Block ID', 'Layer', 'Method', 'Start', 'Finish', 'Duration (days)', 'Volume (bcm)', 'Tonnes (t)', 'As received (t)', 'Destination', 'Status']];
       P.activities.forEach(a => {
         const l = Model.layerIndex(P, a.layerId);
         if (l < 0) return;
@@ -20000,7 +20032,7 @@ const Report = (() => {
           const b = ws.blockIndex.get(id); if (b === undefined) return;
           if (pitOf && pitOf[b] !== Model.pitIndex(P, a)) return; // a block of another pit: mined by that pit's activity
           const rec = res.bl[b][l];
-          a2.push([a.name, ...(pitOf ? [pitNm(pitOf[b])] : []), k + 1, id, L[l].name, a.method === 'dozer_push' ? 'Dozer push' : a.method === 'mixed' ? 'Dozer push + truck & shovel' : 'Truck & shovel', dayLocal(iso, rec.s), rec.e >= 0 ? dayLocal(iso, rec.e) : null, rec.e >= 0 && rec.s >= 0 ? rec.e - rec.s + 1 : null, r0(rec.v), r0(rec.t), L[l].type === 'coal' ? r0(rec.t * Model.arFactor(P, L[l])) : null, r0(rec.v * (L[l].swell || 1.3)), Object.keys(rec.dest).join('; '), rec.e >= 0 ? 'Complete' : rec.s >= 0 ? 'Started' : 'Not mined']);
+          a2.push([a.name, ...(pitOf ? [pitNm(pitOf[b])] : []), k + 1, id, L[l].name, a.method === 'dozer_push' ? 'Dozer push' : a.method === 'mixed' ? 'Dozer push + truck & shovel' : 'Truck & shovel', dayLocal(iso, rec.s), rec.e >= 0 ? dayLocal(iso, rec.e) : null, rec.e >= 0 && rec.s >= 0 ? rec.e - rec.s + 1 : null, r0(rec.v), r0(rec.t), L[l].type === 'coal' ? r0(rec.t * Model.arFactor(P, L[l])) : null, Object.keys(rec.dest).join('; '), rec.e >= 0 ? 'Complete' : rec.s >= 0 ? 'Started' : 'Not mined']);
         });
       });
       XLSX.utils.book_append_sheet(wb, sheet(a2), 'Activity Schedule');
@@ -20020,9 +20052,10 @@ const Report = (() => {
       const rcoal = res.rampCoalT && res.rampCoalT.some(v => v > 0) ? res.rampCoalT : null;
       const mixA = res.acts.filter(A => A.dozBcm), btD = res.batterDaily && res.batterDaily.some(v => v > 0) ? res.batterDaily : null;
       const soilD = res.rehab && res.rehab.on && res.rehab.soilDaily.some(v => v > 0) ? res.rehab.soilDaily : null, rh = (res.rehandles || []).filter(J => J.moved > 0);
-      const dh = ['Date', 'Working day', ...res.acts.map(A => `${A.name} (bcm)`), ...mixA.map(A => `${A.name}: pushed into the void (bcm)`), 'Ramp excavation, waste (bcm)', ...(btD ? ['Highwall batters, waste (bcm)'] : []), ...(rcoal ? ['Coal from ramp cuts (t, included in its seam)'] : []), ...(rfill ? ['Spoil placed in ramp (m³ loose)'] : []), 'Rollover into voids (m³ loose)', ...(soilD ? ['Topsoil placed on the backfill (m³ loose)'] : []), ...rh.map(J => `Rehandling: ${J.name} (m³ loose)`)];
+      const dh = ['Date', 'Working day', ...res.acts.map(A => `${A.name} (bcm)`), ...mixA.map(A => `${A.name}: pushed into the void (bcm)`), 'Ramp excavation, waste (bcm)', ...(btD ? ['Highwall batters, waste (bcm)'] : []), ...(rcoal ? ['Coal from ramp cuts (t, included in its seam)'] : []), ...(rfill ? ['Spoil placed in ramp (bcm)'] : []), 'Rollover into voids (bcm)', ...(soilD ? ['Topsoil placed on the backfill (bcm)'] : []), ...rh.map(J => `Rehandling: ${J.name} (bcm)`)];
+      const SPW = Model.spoilSwell(P), SLW = Model.soilSwell(P); // (what was placed is loose: its room ÷ the swell, in bcm)
       const drows = [dh];
-      for (let d = 0; d < res.nDays; d++) drows.push([dayLocal(iso, d), res.working[d] ? 'Yes' : 'No', ...res.acts.map(A => r0(A.bcm[d])), ...mixA.map(A => r0(A.dozBcm[d])), r0(res.rampDaily[d]), ...(btD ? [r0(btD[d])] : []), ...(rcoal ? [r0(rcoal[d])] : []), ...(rfill ? [r0(rfill[d])] : []), r0(res.voidDaily[d]), ...(soilD ? [r0(soilD[d])] : []), ...rh.map(J => r0(J.daily[d]))]);
+      for (let d = 0; d < res.nDays; d++) drows.push([dayLocal(iso, d), res.working[d] ? 'Yes' : 'No', ...res.acts.map(A => r0(A.bcm[d])), ...mixA.map(A => r0(A.dozBcm[d])), r0(res.rampDaily[d]), ...(btD ? [r0(btD[d])] : []), ...(rcoal ? [r0(rcoal[d])] : []), ...(rfill ? [r0(rfill[d] / SPW)] : []), r0(res.voidDaily[d] / SPW), ...(soilD ? [r0(soilD[d] / SLW)] : []), ...rh.map(J => r0(J.daily[d]))]);
       XLSX.utils.book_append_sheet(wb, sheet(drows), 'Daily Production');
 
       // 4b. Moving ramps: where the toe is, each time it moves or deepens
@@ -20038,12 +20071,12 @@ const Report = (() => {
       }
 
       // 5. Dumps
-      const dmp = [['Dump', 'Type', 'Capacity at start (m³ loose)', 'Received (m³ loose)', 'Used (%)', 'First tipping', 'Last tipping', 'Filled up to', 'Crest elevation (m)']];
+      const dmp = [['Dump', 'Type', 'Capacity at start (bcm of spoil)', 'Received (bcm)', 'Used (%)', 'First tipping', 'Last tipping', 'Filled up to', 'Crest elevation (m)']], SPWd = Model.spoilSwell(P);
       res.dumps.forEach(D => {
         const dd = P.dumps.find(x => x.id === D.id);
         const cap = dd ? Sim.dumpCapacity(ws, dd) : D.capacity != null ? D.capacity : null; // (a depression fill or raised area: the room above the original ground)
         let tot = 0, f = -1, l = -1; D.daily.forEach((v, i) => { if (v > 0) { tot += v; if (f < 0) f = i; l = i; } });
-        dmp.push([D.name, D.kind === 'rom' ? 'ROM tip / plant' : D.kind === 'topsoil' ? 'Topsoil stockpile' : D.kind === 'fill' ? `Depression fill, from ${U.fmtDay(iso, D.startDay)}` : D.kind === 'raise' ? `Raised area, from ${U.fmtDay(iso, D.startDay)}` : 'Waste dump', isFinite(cap) ? r0(cap) : null, r0(tot), isFinite(cap) && cap > 0 ? r2((tot / cap) * 100) : null, dayLocal(iso, f), dayLocal(iso, l), D.kind === 'rom' ? '' : D.kind === 'fill' || D.kind === 'raise' ? 'The final landform' : D.toTopo ? 'Original topography (capacity = pit volume under it)' : 'Crest', D.crest != null && isFinite(D.crest) ? r2(D.crest) : null]);
+        dmp.push([D.name, D.kind === 'rom' ? 'ROM tip / plant' : D.kind === 'topsoil' ? 'Topsoil stockpile' : D.kind === 'fill' ? `Depression fill, from ${U.fmtDay(iso, D.startDay)}` : D.kind === 'raise' ? `Raised area, from ${U.fmtDay(iso, D.startDay)}` : 'Waste dump', isFinite(cap) ? r0(cap / SPWd) : null, r0(D.receivedB != null ? D.receivedB : tot / SPWd), isFinite(cap) && cap > 0 ? r2((tot / cap) * 100) : null, dayLocal(iso, f), dayLocal(iso, l), D.kind === 'rom' ? '' : D.kind === 'fill' || D.kind === 'raise' ? 'The final landform' : D.toTopo ? 'Original topography (capacity = pit volume under it)' : 'Crest', D.crest != null && isFinite(D.crest) ? r2(D.crest) : null]);
       });
       XLSX.utils.book_append_sheet(wb, sheet(dmp), 'Dumps');
 
@@ -20051,8 +20084,8 @@ const Report = (() => {
       { const W = typeof Timeline !== 'undefined' ? Timeline.period : null;
         if (W && W.on && W.d1 < res.nDays) {
           const Q = Monthly.period(P, res, W.d0, W.d1);
-          const pr = [['Period', `${U.fmtDay(iso, W.d0)} to ${U.fmtDay(iso, W.d1)}`], ['Days', Q.days], ['Working days', Q.working], ['Coal mined (t)', r0(Q.coalT)], ['Coal as received (t)', r0(Q.coalAR)], ['Waste moved (bcm, with ramp excavation)', r0(Q.wasteB)], ['Moved (m³ loose, with ramps and rehandling)', r0(Q.loose)], ['Teams used (average)', r2(Q.teams)], ['Strip ratio (bcm/t)', Q.ratio === Q.ratio ? r2(Q.ratio) : null], ['Blocks mined out', Q.blocksDone], ['Blocks backfilled up to the top', Q.backfilled], [],
-            ['Activity', 'Volume (bcm)', 'Tonnes (t)', 'Days active'], ...Q.byAct.map(a => [a.name, r0(a.bcm), r0(a.t), a.days]), ...(Q.rampB > 0 ? [['Ramp excavation', r0(Q.rampB), null, null]] : []), ...(Q.batterB > 0 ? [['Highwall batters', r0(Q.batterB), null, null]] : []), ...Q.rehandled.map(q => [`Rehandling: ${q.name} (m³ loose)`, r0(q.moved), null, null])];
+          const pr = [['Period', `${U.fmtDay(iso, W.d0)} to ${U.fmtDay(iso, W.d1)}`], ['Days', Q.days], ['Working days', Q.working], ['Coal mined (t)', r0(Q.coalT)], ['Coal as received (t)', r0(Q.coalAR)], ['Waste moved (bcm, with ramp excavation)', r0(Q.wasteB)], ['Moved by the teams (bcm, with ramps, batters and rehandling)', r0(Q.moved)], ['Teams used (average)', r2(Q.teams)], ['Strip ratio (bcm/t)', Q.ratio === Q.ratio ? r2(Q.ratio) : null], ['Blocks mined out', Q.blocksDone], ['Blocks backfilled up to the top', Q.backfilled], [],
+            ['Activity', 'Volume (bcm)', 'Tonnes (t)', 'Days active'], ...Q.byAct.map(a => [a.name, r0(a.bcm), r0(a.t), a.days]), ...(Q.rampB > 0 ? [['Ramp excavation', r0(Q.rampB), null, null]] : []), ...(Q.batterB > 0 ? [['Highwall batters', r0(Q.batterB), null, null]] : []), ...Q.rehandled.map(q => [`Rehandling: ${q.name} (bcm)`, r0(q.moved), null, null])];
           XLSX.utils.book_append_sheet(wb, sheet(pr, [40, 18, 16, 12]), 'Period');
         } }
 
@@ -20094,7 +20127,8 @@ const Report = (() => {
       ['Schedule end date', res ? dayLocal(iso, res.nDays - 1) : 'Simulation not run'],
       ['Report generated', localDate(U.parseISO(U.todayISO()))], ['Prepared with', 'ISAMIQ rollover mine simulator'],
       ['Coordinate system', crsName], ['Working grid', P.grid ? `${P.grid.nx} × ${P.grid.ny} cells of ${P.grid.cell} m` : ''],
-      ['Teams', (() => { const TM = Model.teams(P); return `${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)} × ${r0(TM.perTeam)} m³ loose a month = ${r0(TM.cap)} m³ loose a month for the mining, the ramps and the rehandling`; })()],
+      ['Teams', (() => { const TM = Model.teams(P); return `${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)} team${TM.count === 1 ? '' : 's'} × ${U.fmtNum(TM.rate, TM.rate % 1 ? 1 : 0)} bcm an operational hour × ${U.fmtNum(TM.hours, TM.hours % 1 ? 1 : 0)} operational hours (${TM.shifts} shift${TM.shifts === 1 ? '' : 's'}) = ${U.fmtNum(TM.day, 0)} bcm a working day, for the mining, the ramps, the batters and the rehandling`; })()],
+      ['Shifts and operational hours', (() => { const TM = Model.teams(P); return `${TM.shifts} shift${TM.shifts === 1 ? '' : 's'} a day, ${U.fmtNum(TM.hours, TM.hours % 1 ? 1 : 0)} operational hours on each working day (${U.fmtNum(TM.hours / TM.shifts, 1)} a shift)`; })()],
       ['Losses and contamination', (() => { const q = P.losses || {}; return `geological ${+q.geo || 0}%, mining ${+q.mining || 0}%, contamination ${+q.contam || 0}%; as received = in situ × (1 − geological) × (1 − mining) × (1 + contamination)` + L.filter(x => x.type === 'coal' && x.losses && ['geo', 'mining', 'contam'].some(k => x.losses[k] != null && x.losses[k] !== '')).map(x => { const z = Model.losses(P, x); return `; ${x.name}: ${z.geo}%, ${z.mining}%, ${z.contam}%`; }).join(''); })()],
       ['Working days', ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].filter((d, i) => P.calendar.workDays[i]).join(', ')],
       ['South African public holidays observed', P.calendar.saHolidays ? 'Yes' : 'No'],
@@ -20116,13 +20150,13 @@ const Report = (() => {
       ['Final landform', (() => { const R = Water.settings(P); if (R.on === false) return 'off: the voids are backfilled as high as each dump allows'; const rr = res && res.rehab && res.rehab.on ? res.rehab : null;
         return (R.backfillTo !== 'landform' ? `waste backfilled up to the original topography${+R.above > 0 ? `, and ${+R.above} m above it (${+R.liftTie || 5}% tie-in slope at the edge; water from outside crosses it in channels left at the original ground)` : ''}, with ${+R.topsoil} m of topsoil on top; ${R.soilDirect !== false ? 'stripped topsoil goes onto ready backfill first' : 'topsoil only by rehandling'}` + (rr && rr.lift ? `: ${r0(rr.lift.vol)} m³ of waste above the original ground` : '') : `backfill up to the original topography, or the average of the ground within ${r0(+R.radius)} m where that is lower, less ${+R.topsoil} m for topsoil; ${R.soilDirect !== false ? 'stripped topsoil goes onto ready backfill first' : 'topsoil only by rehandling'}`) + (R.lift && R.backfillTo === 'landform' ? `; lifted ${+R.liftMax || 2} m above the original topography across the whole mining area (${+R.liftTie || 5}% tie-in slope at the edge; water from outside crosses it in channels left at the original ground, banks at ${+R.liftBank || 25}%)` + (rr && rr.lift ? `: ${r0(rr.lift.vol)} m³ more room, ${rr.lift.avg.toFixed(2)} m on average, ${Math.round(rr.lift.kept * 100)}% of the lifted ground drains to the same place as before mining` : '') : '') + (rr ? `; at the end ${U.fmtArea(rr.end.soiled)} topsoiled, ${U.fmtArea(rr.end.waiting)} waiting for topsoil, ${r0(rr.end.voidVol)} m³ of void left below the backfill${rr.end.liftLeft > 1000 ? `, ${r0(rr.end.liftLeft)} m³ of the lift not built` : ''}` : ''); })()],
       ['Final void', (() => { const R = Water.settings(P), f = res && res.rehab && res.rehab.finalVoid; if (R.finalVoid === false) return 'left open: not filled from the dumps at the end'; if ((P.rehandles || []).some(j => j.to === 'voids')) return 'filled by the rehandling job into the voids';
-        return `filled once mining is finished from the waste dumps outside the pit, the nearest first, strip by strip along the mining path, at ${+R.finalRate > 0 ? r0(+R.finalRate) + ' m³ loose a working day' : 'the rate of all the teams'}` + (f && f.moved > 1 ? `: ${r0(f.moved)} m³ loose from ${f.from.map(q => q.name).join(' and ')}, ${U.fmtDay(iso, f.first)} to ${U.fmtDay(iso, f.last)}` : ''); })()],
+        return `filled once mining is finished from the waste dumps outside the pit, the nearest first, strip by strip along the mining path, at ${+R.finalRate > 0 ? r0(+R.finalRate) + ' bcm a working day' : 'the rate of all the teams'}` + (f && f.moved > 1 ? `: ${r0(f.moved)} bcm from ${f.from.map(q => q.name).join(' and ')}, ${U.fmtDay(iso, f.first)} to ${U.fmtDay(iso, f.last)}` : ''); })()],
       ...P.dumps.filter(d => d.kind === 'rom' && +d.plantFeed > 0).map(d => [`ROM stockpile — ${d.name}`, `plant feed ${r0(+d.plantFeed)} t a working day; opening stock ${r0(+d.openingStock || 0)} t; kept in the coal inventory`]),
       ['Coal inventory', 'exposed coal = coal the schedule still has to mine with the waste above it stripped; covered = still under waste; months of production at ' + (+(P.targets || {}).coal > 0 ? 'the monthly coal target' : 'the schedule’s average rate of coal mining')],
       ...(P.drains || []).map(d => { const q = res && res.rehab && res.rehab.paths ? res.rehab.paths.find(x => x.id === d.id) : null; return [`Flow path — ${d.name}`, `${r0(Geo.length(d.pts))} m; drain falls at least ${+Water.settings(P).pathFall}%, ${+Water.settings(P).bank} m below its banks, cut at most ${+Water.settings(P).cutDepth} m into ground that is not mined` + (q ? `; in the landform it falls ${(q.z0 - q.z1).toFixed(1)} m${q.rise > 0.1 ? `, but has to climb ${q.rise.toFixed(1)} m ${r0(q.riseAt)} m along it` : ''}` : '')]; }),
       ...(P.raises || []).map(f => { const q = res && res.rehab && res.rehab.raises ? res.rehab.raises.find(x => x.id === f.id) : null; return [`Raised landform — ${f.name}`, `${U.fmtArea(Math.abs(Geo.area(f.pts)))}; raised by ${f.height == null ? Water.RAISE_DEF.height : +f.height} m, coming down at ${f.slope == null ? Water.RAISE_DEF.slope : +f.slope}% side slopes inside the polygon; ${f.start && U.parseISO(f.start) ? `built first from ${U.fmtDate(U.parseISO(f.start))} with the waste hauled to the dumps (waste only, no topsoil)` : 'built at the end, with the final void'}` + (q ? (q.vol > 1 ? `; up to ${q.top.toFixed(1)} m in this run, ${r0(q.vol)} m³ more spoil${q.volOut > 1 ? ` (${r0(q.volOut)} m³ on ground that is not mined)` : ''}` : '; nothing raised') : '')]; }),
       ...(P.fills || []).map(f => { const q = res && res.rehab && res.rehab.fills ? res.rehab.fills.find(x => x.id === f.id) : null; return [`Depression fill — ${f.name}`, `${U.fmtArea(Math.abs(Geo.area(f.pts)))}; the landform inside is carried across from the original ground around it, so the hollow is filled up to that level; ${f.start && U.parseISO(f.start) ? `filled first from ${U.fmtDate(U.parseISO(f.start))} with the waste hauled to the dumps (waste only, no topsoil)` : 'filled at the end, with the final void'}` + (q ? (q.vol > 1 ? `; raised up to ${q.depth.toFixed(1)} m above the original ground, ${r0(q.vol)} m³ of spoil above it${q.volOut > 1 ? ` (${r0(q.volOut)} m³ on ground that is not mined)` : ''}` : '; nothing below the level around it') : '')]; }),
-      ...(P.rehandles || []).map(j => { const J = res && res.rehandles ? res.rehandles.find(x => x.id === j.id) : null; const src = P.dumps.find(d => d.id === j.from); return [`Rehandling — ${j.name}`, `${src ? src.name : '?'} → ${j.to === 'voids' ? 'the mined-out voids' : j.to === 'soil' ? 'the backfill, as topsoil' : (P.dumps.find(d => d.id === j.to) || {}).name || '?'}; ${r0(+j.rate || 0)} m³ loose a working day ${j.when === 'date' && j.start ? 'from ' + U.fmtDate(U.parseISO(j.start)) : 'once mining is finished'}${+j.qty > 0 ? `; at most ${r0(+j.qty)} m³` : ''}` + (J ? `; moved ${r0(J.moved)} m³${J.first >= 0 ? ` from ${U.fmtDay(iso, J.first)} to ${U.fmtDay(iso, J.last)}` : ''}` : '')]; }),
+      ...(P.rehandles || []).map(j => { const J = res && res.rehandles ? res.rehandles.find(x => x.id === j.id) : null; const src = P.dumps.find(d => d.id === j.from); return [`Rehandling — ${j.name}`, `${src ? src.name : '?'} → ${j.to === 'voids' ? 'the mined-out voids' : j.to === 'soil' ? 'the backfill, as topsoil' : (P.dumps.find(d => d.id === j.to) || {}).name || '?'}; ${r0(+j.rate || 0)} bcm a working day ${j.when === 'date' && j.start ? 'from ' + U.fmtDate(U.parseISO(j.start)) : 'once mining is finished'}${+j.qty > 0 ? `; at most ${r0(+j.qty)} bcm` : ''}` + (J ? `; moved ${r0(J.moved)} bcm${J.first >= 0 ? ` from ${U.fmtDay(iso, J.first)} to ${U.fmtDay(iso, J.last)}` : ''}` : '')]; }),
       ...(Monthly.attrPlan(P).some(q => q.mode) ? [['Block attributes in the monthly summary', Monthly.attrPlan(P).filter(q => q.mode).map(q => `${q.col} (${q.mode === 'adc' ? 'ADC tons' : q.mode === 'sum' ? 'total' : 'average'}, ${Monthly.layerLabel(P, q.layer)})`).join('; ')]] : []),
       ...cutL.map(q => [`Seam cut-off — ${L[q.l].name}`, `thinner than ${q.min} m is mined as waste with ${L[q.target].name}; tested ${CUT.by === 'cell' ? 'per grid cell' : 'per block (average thickness)'}; ${q.whole + q.part} blocks, ${r0(q.t)} t not mined as coal, ${r0(q.vol)} bcm to waste`]),
       ...(cutL.length ? [['Seam cut-off — bottom seam', P.cutoff && P.cutoff.stop ? 'mining stops at the lowest seam that passes; what lies below is left in the ground' : 'a cut-off bottom seam and the waste above it are still mined']] : []),
@@ -20262,10 +20296,10 @@ const LoM = (() => {
       q.v += r.v; q.t += r.t; if (r.d < q.s) q.s = r.d; if (r.d > q.e) q.e = r.d;
     }
     const rows = Array.from(agg.values()).sort((x, y) => x.s - y.s || x.a - y.a || x.b - y.b).map((q, i) => {
-      const A = res.acts[q.a], l = A.layer, Ly = L[l], coal = Ly.type === 'coal', sw = A.swell || Ly.swell || 1.3, arF = coal ? Model.arFactor(P, Ly) : 1;
+      const A = res.acts[q.a], l = A.layer, Ly = L[l], coal = Ly.type === 'coal', arF = coal ? Model.arFactor(P, Ly) : 1;
       return { id: i + 1, m: q.m, pit: pitName(hasPits ? pitOf[q.b] : -1), pitK: hasPits ? pitOf[q.b] : -1, seq: seq[q.a].get(q.b) || null, fid: q.b + 1, strip: strip[q.a].get(q.b) || '', block: P.blocks[q.b].id,
         layer: Ly.name, l, coal, unit: coal ? 't' : 'm3', qty: r2(coal ? q.t : q.v), s: q.s, e: q.e, q: coal ? qOf(q.b, l) : {}, srcRow: q.b + 2, status: inBox[q.b] ? 'Box cut' : 'Strip mining',
-        ar: coal ? r2(q.t * arF) : null, adc: coal ? r2(q.t * QB.factor(q.b, l)) : null, loose: r2(q.v * sw), bcm: r2(q.v), t: q.t, dest: Object.keys(res.bl[q.b][l].dest).join('; '), act: A.name, b: q.b,
+        ar: coal ? r2(q.t * arF) : null, adc: coal ? r2(q.t * QB.factor(q.b, l)) : null, bcm: r2(q.v), t: q.t, dest: Object.keys(res.bl[q.b][l].dest).join('; '), act: A.name, b: q.b,
         ...(coal && PR && PR.seams.get(l) ? (() => { const s = PR.seams.get(l), y = s.y[q.b], pq = {}; for (const k of PK) if (s.q[k]) pq[k] = r2(s.q[k][q.b]); return { yld: Math.round(y * 10000) / 100, prod: r2(q.t * arF * y), pq }; })() : {}) };
     });
     // drill and blast (Drill and Blast tab): the drill metres, holes and explosives of each row, at its block and layer's rates
@@ -20295,7 +20329,7 @@ const LoM = (() => {
     // the target basis: calendar or working days, and the days of each month on it
     const T = M.target, base = Array.from(T.basis === 'working' ? M.work : M.days);
     // the columns of the detail that hold the drill and blast (after the washability ones)
-    const DB0 = 26 + (PR ? 2 + PK.length : 0);
+    const DB0 = 25 + (PR ? 2 + PK.length : 0);
     return { P, ws, res, iso, L, nL, M, nM, rows, expo, qc, QB, TM, T, base, per: T.per, hasPits, pits, pitName, coalIdx, boxes, PR, PK, BO, blast: !!BR, DB0 };
   }
 
@@ -20316,8 +20350,8 @@ const LoM = (() => {
 
   // ---------- Schedule Detail ----------
   function detailSheet(D) {
-    // (with washability: the yield, the product tons and the product qualities of each coal row, from column AA)
-    const S = Sheet(), head = ['Event ID', 'Month', 'Pit', 'Seq', 'FID', 'Strip', 'Block', 'Activity', 'Type', 'Unit', 'Quantity', 'Activity Start', 'Activity End', 'CV', 'ASH', 'IM', 'TS', 'VM', 'Layer No.', 'Source Row', 'Mining Status', 'As Received (t)', 'Loose (m³)', 'Volume (bcm)', 'Destination', 'Mining activity'].concat(D.PR ? ['Yield (%)', 'Product (t)', ...D.PK.map(k => 'Product ' + k)] : [], D.blast ? ['Drilled and blasted', 'Drill metres (m)', 'Holes', 'Explosives (kg)'] : []);
+    // (with washability: the yield, the product tons and the product qualities of each coal row, from column Z)
+    const S = Sheet(), head = ['Event ID', 'Month', 'Pit', 'Seq', 'FID', 'Strip', 'Block', 'Activity', 'Type', 'Unit', 'Quantity', 'Activity Start', 'Activity End', 'CV', 'ASH', 'IM', 'TS', 'VM', 'Layer No.', 'Source Row', 'Mining Status', 'As Received (t)', 'Volume (bcm)', 'Destination', 'Mining activity'].concat(D.PR ? ['Yield (%)', 'Product (t)', ...D.PK.map(k => 'Product ' + k)] : [], D.blast ? ['Drilled and blasted', 'Drill metres (m)', 'Holes', 'Explosives (kg)'] : []);
     head.forEach((h, c) => S.set(c, 0, h));
     D.rows.forEach((q, i) => {
       const r = i + 1;
@@ -20325,8 +20359,8 @@ const LoM = (() => {
       QK.forEach((k, j) => { if (q.q[k] != null) S.set(13 + j, r, q.q[k], null, '0.00'); });
       S.set(18, r, q.l + 1); S.set(19, r, q.srcRow); S.set(20, r, q.status);
       if (q.ar != null) S.set(21, r, q.ar, null, '#,##0');
-      S.set(22, r, q.loose, null, '#,##0'); S.set(23, r, q.bcm, null, '#,##0'); S.set(24, r, q.dest); S.set(25, r, q.act);
-      if (q.prod != null) { S.set(26, r, q.yld, null, '0.00'); S.set(27, r, q.prod, null, '#,##0'); D.PK.forEach((k, j) => { if (q.pq[k] != null) S.set(28 + j, r, q.pq[k], null, '0.00'); }); }
+      S.set(22, r, q.bcm, null, '#,##0'); S.set(23, r, q.dest); S.set(24, r, q.act);
+      if (q.prod != null) { S.set(25, r, q.yld, null, '0.00'); S.set(26, r, q.prod, null, '#,##0'); D.PK.forEach((k, j) => { if (q.pq[k] != null) S.set(27 + j, r, q.pq[k], null, '0.00'); }); }
       if (D.blast) { const c = D.DB0; S.set(c, r, q.db ? (q.db.coal ? 'coal' : 'waste') : 'no'); if (q.db) { S.set(c + 1, r, q.db.m, null, '#,##0'); S.set(c + 2, r, q.db.holes, null, '#,##0'); S.set(c + 3, r, q.db.kg, null, '#,##0'); } }
     });
     const sh = S.done([9, 10, 16, 6, 7, 10, 12, 24, 7, 6, 13, 13, 13, 8, 8, 8, 8, 8, 9, 10, 14, 14, 13, 13, 26, 28].concat(D.PR ? [10, 12, ...D.PK.map(() => 12)] : [], D.blast ? [12, 14, 10, 14] : []));
@@ -20436,10 +20470,10 @@ const LoM = (() => {
         r++;
         D.PK.forEach((k, j) => {
           if (!D.PR.seams.get(l).q[k]) return;
-          const col = colL(28 + j), cond = m => `(${rg(SD, 'B', NS)}=${mc(m)}$${MR})*(${rg(SD, 'H', NS)}="${xs(Ly.name)}")${pitMul(SD, NS)}`;
+          const col = colL(27 + j), cond = m => `(${rg(SD, 'B', NS)}=${mc(m)}$${MR})*(${rg(SD, 'H', NS)}="${xs(Ly.name)}")${pitMul(SD, NS)}`;
           const num_ = byM(rows, q => (q.pq && q.pq[k] != null ? q.prod * q.pq[k] : 0), q => q.l === l), den = byM(rows, q => (q.pq && q.pq[k] != null ? q.prod : 0), q => q.l === l);
           set(0, r, QUNIT[k]); set(1, r, `${sh} ${k}_Product`);
-          for (let m = 0; m < nM; m++) set(C0 + m, r, den[m] > 0 ? num_[m] / den[m] : '', `IFERROR(SUMPRODUCT(${cond(m)}*${rg(SD, 'AB', NS)}*${rg(SD, col, NS)})/SUMPRODUCT(${cond(m)}*${rg(SD, 'AB', NS)}*ISNUMBER(${rg(SD, col, NS)})),"")`, '0.00');
+          for (let m = 0; m < nM; m++) set(C0 + m, r, den[m] > 0 ? num_[m] / den[m] : '', `IFERROR(SUMPRODUCT(${cond(m)}*${rg(SD, 'AA', NS)}*${rg(SD, col, NS)})/SUMPRODUCT(${cond(m)}*${rg(SD, 'AA', NS)}*ISNUMBER(${rg(SD, col, NS)})),"")`, '0.00');
           set(TC, r, M.sum(den) > 0 ? M.sum(num_) / M.sum(den) : '', `IFERROR(SUMPRODUCT(${mc(0)}${pRow}:${mc(nM - 1)}${pRow},${mc(0)}${r + 1}:${mc(nM - 1)}${r + 1})/SUMPRODUCT(${mc(0)}${pRow}:${mc(nM - 1)}${pRow}*(${mc(0)}${r + 1}:${mc(nM - 1)}${r + 1}<>"")),"")`, '0.00');
           pqRows[k] = ++r;
         });
@@ -20548,22 +20582,22 @@ const LoM = (() => {
       r++;
       named.romOpen = ro; named.romAdd = ra; named.romSold = rs; named.romClose = rc;
     }
-    // volume moved and the teams it takes
-    named.bcm = sumRow('Total Volume (bcm, waste + coal)', 'bcm', byM(rows, q => q.bcm), m => `SUMIFS(${rg(SD, 'X', NS)},${rg(SD, 'B', NS)},${mc(m)}$${MR}${pitCrit(SD, NS)})`);
-    named.looseMine = sumRow('Mining (m³ loose)', 'm³ loose', byM(rows, q => q.loose), m => `SUMIFS(${rg(SD, 'W', NS)},${rg(SD, 'B', NS)},${mc(m)}$${MR}${pitCrit(SD, NS)})`);
-    const looseParts = [named.looseMine];
+    // volume moved and the teams it takes (bcm; a team moves Team Assumptions B9 a working day: its bcm an hour × the operational hours)
+    named.bcm = sumRow('Total Volume (bcm, waste + coal)', 'bcm', byM(rows, q => q.bcm), m => `SUMIFS(${rg(SD, 'W', NS)},${rg(SD, 'B', NS)},${mc(m)}$${MR}${pitCrit(SD, NS)})`);
+    const movedParts = [named.bcm];
     if (!pitOnly) {
-      if (M.sum(M.looseRamp) > 0) looseParts.push(named.looseRamp = sumRow('Ramp excavation (m³ loose)', 'm³ loose', Array.from(M.looseRamp)));
-      if (M.looseBatter && M.sum(M.looseBatter) > 0) looseParts.push(named.looseBatter = sumRow('Highwall batters (m³ loose)', 'm³ loose', Array.from(M.looseBatter)));
-      if (M.sum(M.looseReh) > 0) looseParts.push(named.looseReh = sumRow('Rehandling and final void (m³ loose)', 'm³ loose', Array.from(M.looseReh)));
+      if (M.sum(M.bcmRamp) > 0) movedParts.push(named.bcmRamp = sumRow('Ramp excavation (bcm)', 'bcm', Array.from(M.bcmRamp)));
+      if (M.bcmBatter && M.sum(M.bcmBatter) > 0) movedParts.push(named.bcmBatter = sumRow('Highwall batters (bcm)', 'bcm', Array.from(M.bcmBatter)));
+      if (M.sum(M.bcmReh) > 0) movedParts.push(named.bcmReh = sumRow('Rehandling and final void (bcm)', 'bcm', Array.from(M.bcmReh)));
     }
-    named.loose = sumRow('Total Volume (m³ loose)', 'm³ loose', valsOf(looseParts), sumOf(looseParts));
+    named.moved = sumRow('Moved by the teams (bcm)', 'bcm', valsOf(movedParts), sumOf(movedParts));
     named.days = sumRow(T.basis === 'working' ? 'Working days in the month' : 'Days in the month', 'days', D.base.slice(0, nM));
-    { const lv = valsOf([named.loose]);
+    named.wd = T.basis === 'working' ? named.days : sumRow('Working days in the month', 'days', Array.from(M.work).slice(0, nM));
+    { const lv = valsOf([named.moved]), wd = Array.from(M.work);
       set(0, r, 'teams'); set(1, r, 'Teams required');
-      for (let m = 0; m < nM; m++) set(C0 + m, r, D.base[m] > 0 ? lv[m] / ((TM.perTeam * D.base[m]) / D.per) : 0, `IFERROR(${mc(m)}${named.loose}/(${TA}!$B$6*${mc(m)}${named.days}/${TA}!$B$7),0)`, '0.0');
-      const tot = M.sum(lv), months = M.sum(D.base) / D.per;
-      set(TC, r, months > 0 ? tot / (TM.perTeam * months) : 0, `IFERROR(${colL(TC)}${named.loose}/(${TA}!$B$6*${colL(TC)}${named.days}/${TA}!$B$7),0)`, '0.0');
+      for (let m = 0; m < nM; m++) set(C0 + m, r, wd[m] > 0 ? lv[m] / (TM.perDay * wd[m]) : 0, `IFERROR(${mc(m)}${named.moved}/(${TA}!$B$9*${mc(m)}${named.wd}),0)`, '0.0');
+      const tot = M.sum(lv), wdT = M.sum(wd);
+      set(TC, r, wdT > 0 ? tot / (TM.perDay * wdT) : 0, `IFERROR(${colL(TC)}${named.moved}/(${TA}!$B$9*${colL(TC)}${named.wd}),0)`, '0.0');
       named.teams = ++r; }
     set(0, r, 'teams'); set(1, r, 'Teams available');
     for (let m = 0; m < nM; m++) set(C0 + m, r, TM.count, `${TA}!$B$5`, '0.0');
@@ -20583,11 +20617,11 @@ const LoM = (() => {
       named.dbWk = sumRow('Explosives — Waste', 't', of('waste', 'kg', 0.001), dbf(cK, 'waste', 0.001), '#,##0.0');
       named.dbCk = sumRow('Explosives — Coal', 't', of('coal', 'kg', 0.001), dbf(cK, 'coal', 0.001), '#,##0.0');
       named.dbK = sumRow('Total Explosives', 't', valsOf([named.dbWk, named.dbCk]), sumOf([named.dbWk, named.dbCk]), '#,##0.0');
-      named.dbWb = sumRow('Waste Blasted', 'bcm', of('waste', 'bcm'), m => `SUMIFS(${rg(SD, 'X', NS)},${rg(SD, 'B', NS)},${mc(m)}$${MR},${rg(SD, cKind, NS)},"waste"${pitCrit(SD, NS)})`);
+      named.dbWb = sumRow('Waste Blasted', 'bcm', of('waste', 'bcm'), m => `SUMIFS(${rg(SD, 'W', NS)},${rg(SD, 'B', NS)},${mc(m)}$${MR},${rg(SD, cKind, NS)},"waste"${pitCrit(SD, NS)})`);
       // presplit (Finance tab): a face per strip, as high as the waste blasted, so the waste blasted ÷ the strip width
       const PW = Fin.settings(P).presplitW;
       named.dbPs = sumRow(`Presplit (Waste Blasted ÷ ${U.fmtNum(PW, 0)} m strip width)`, 'm²', Float64Array.from(valsOf([named.dbWb]), v => v / PW), m => `IFERROR(${mc(m)}${named.dbWb}/${PW},0)`);
-      sumRow('Coal Blasted', 'bcm', of('coal', 'bcm'), m => `SUMIFS(${rg(SD, 'X', NS)},${rg(SD, 'B', NS)},${mc(m)}$${MR},${rg(SD, cKind, NS)},"coal"${pitCrit(SD, NS)})`);
+      sumRow('Coal Blasted', 'bcm', of('coal', 'bcm'), m => `SUMIFS(${rg(SD, 'W', NS)},${rg(SD, 'B', NS)},${mc(m)}$${MR},${rg(SD, cKind, NS)},"coal"${pitCrit(SD, NS)})`);
       // the drill rigs needed: the metres ÷ (the drill rate × the drilling hours × the month's working days)
       for (const [kind, row, nm] of [['waste', named.dbWm, 'Waste'], ['coal', named.dbCm, 'Coal']]) {
         const Dk = BO[kind]; if (!Dk.rate) continue;
@@ -20614,7 +20648,7 @@ const LoM = (() => {
     if (named.qASH) { set(0, 8, `LoM Blended ${qb} ASH (%)`); set(1, 8, S.sh[enc(TC, named.qASH - 1)].v, `${TCl}${named.qASH}`, '0.00'); }
     if (named.prod) { set(0, 9, 'Total Product (t)'); set(1, 9, S.sh[enc(TC, named.prod - 1)].v, `${TCl}${named.prod}`, '#,##0'); if (named.yield) { set(3, 9, 'Plant Yield (%)'); set(4, 9, S.sh[enc(TC, named.yield - 1)].v, `${TCl}${named.yield}`, '0.00'); } }
     set(3, 2, 'Method'); set(4, 2, `ISAMIQ schedule: ${T.limit && (T.coal || T.waste) ? 'mined to the monthly targets' : 'mined at the capacity of the teams'}, strip by strip along the mining paths`);
-    set(3, 3, 'Teams'); set(4, 3, `${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)} team${TM.count === 1 ? '' : 's'} × ${U.fmtNum(TM.perTeam, 0)} m³ loose a month`);
+    set(3, 3, 'Teams'); set(4, 3, `${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)} team${TM.count === 1 ? '' : 's'} × ${U.fmtNum(TM.rate, TM.rate % 1 ? 1 : 0)} bcm an operational hour × ${U.fmtNum(TM.hours, TM.hours % 1 ? 1 : 0)} operational hours (${TM.shifts} shift${TM.shifts === 1 ? '' : 's'}) = ${U.fmtNum(TM.day, 0)} bcm a working day`);
     set(3, 4, 'Pit schedule'); set(4, 4, pitOnly ? pitNm : D.hasPits ? 'All pits' : P.name);
     set(3, 5, 'Total Waste (m³)'); set(4, 5, wasteV, `${TCl}${named.waste}`, '#,##0');
     set(3, 6, 'LoM Strip Ratio (m³/t)'); set(4, 6, coalT > 0 ? wasteV / coalT : 0, `IFERROR(E6/B5,0)`, '0.00');
@@ -20650,17 +20684,17 @@ const LoM = (() => {
     const pitOf = res.blockPit, qOf = (b, l) => { const o = {}, A = P.blocks[b].attrs || {}; if (D.qc[l]) for (const key of QK) if (D.qc[l][key]) { const v = parseFloat(A[D.qc[l][key]]); if (isFinite(v)) o[key] = v; } return o; };
     // what was mined in each week, by layer
     const mk = () => new Float64Array(nW);
-    const vol = L.map(() => mk()), ton = L.map(() => mk()), ar = L.map(() => mk()), loose = mk(), qn = L.map(() => ({})), qd = L.map(() => ({}));
+    const vol = L.map(() => mk()), ton = L.map(() => mk()), ar = L.map(() => mk()), moved = mk(), qn = L.map(() => ({})), qd = L.map(() => ({}));
     for (const r of res.records) {
       if (r.d >= end || (pitOnly && pitOf[r.b] !== k)) continue;
       const w = wOf[r.d], A = res.acts[r.a], l = A.layer, Ly = L[l];
-      vol[l][w] += r.v; ton[l][w] += r.t; loose[w] += r.v * (A.swell || Ly.swell || 1.3);
+      vol[l][w] += r.v; ton[l][w] += r.t; moved[w] += r.v;
       if (Ly.type === 'coal') {
         ar[l][w] += r.t * Model.arFactor(P, Ly);
         const q = qOf(r.b, l), wt = r.t * D.QB.factor(r.b, l); for (const key in q) { (qn[l][key] || (qn[l][key] = mk()))[w] += wt * D.QB.q(l, key.toLowerCase(), q[key]); (qd[l][key] || (qd[l][key] = mk()))[w] += wt; } // (ADC, else raw)
       }
     }
-    if (!pitOnly) for (let d = 0; d < end; d++) { if (wOf[d] < 0) continue; loose[wOf[d]] += ((res.rampDaily[d] || 0) + (res.batterDaily ? res.batterDaily[d] || 0 : 0)) * 1.3; for (const J of res.rehandles || []) loose[wOf[d]] += J.daily[d] || 0; }
+    if (!pitOnly) for (let d = 0; d < end; d++) { if (wOf[d] < 0) continue; moved[wOf[d]] += (res.rampDaily[d] || 0) + (res.batterDaily ? res.batterDaily[d] || 0 : 0); for (const J of res.rehandles || []) moved[wOf[d]] += J.daily[d] || 0; }
     set(0, 0, title);
     set(0, 2, 'Period'); set(1, 2, 'Units / Metric');
     set(0, 3, 'Week Start');
@@ -20685,9 +20719,9 @@ const LoM = (() => {
     row('Total Coal (in situ)', 't', ct); row('Total As Received', 't', at);
     r++;
     set(0, r++, 'VOLUME AND TEAMS');
-    row(pitOnly ? 'Mining (m³ loose)' : 'Mining, ramps and rehandling (m³ loose)', 'm³ loose', loose);
-    // teams: the loose m³ of the week ÷ what one team moves in that many days (its month ÷ the days in an average month)
-    row('Teams required', 'teams', weeks.map((w, i) => { const n = (w.d1 - w.d0 + 1) * (D.T.basis === 'working' ? res.working.slice(w.d0, w.d1 + 1).reduce((x, y) => x + y, 0) / (w.d1 - w.d0 + 1) : 1); return n > 0 ? loose[i] / ((D.TM.perTeam * n) / D.per) : 0; }), '0.0');
+    row(pitOnly ? 'Mining (bcm)' : 'Mining, ramps and rehandling (bcm)', 'bcm', moved);
+    // teams: the bcm of the week ÷ what one team moves in its working days (its bcm an hour × the operational hours)
+    row('Teams required', 'teams', weeks.map((w, i) => { const n = res.working.slice(w.d0, w.d1 + 1).reduce((x, y) => x + y, 0); return n > 0 ? moved[i] / (D.TM.perDay * n) : 0; }), '0.0');
     return S.done([34, 14, ...Array.from({ length: nW }, () => 15)], [{ s: { c: 0, r: 0 }, e: { c: Math.max(5, nW + 1), r: 0 } }]);
   }
 
@@ -20695,19 +20729,23 @@ const LoM = (() => {
   function teamSheet(D) {
     const { P, TM, L, per } = D, S = Sheet(), set = S.set;
     const y0 = (U.parseISO(P.startDate) || new Date()).getUTCFullYear(), wdm = Monthly.workDaysPerMonth(P, y0, y0 + 3) || Monthly.AVG_MONTH;
-    set(0, 0, `TEAMS — ${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)} × ${U.fmtNum(TM.perTeam, 0)} m³ LOOSE A MONTH`);
+    set(0, 0, `TEAMS — ${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)} × ${U.fmtNum(TM.rate, TM.rate % 1 ? 1 : 0)} BCM AN OPERATIONAL HOUR`);
     set(0, 2, 'Editable assumptions');
     ['Parameter', 'Value', 'Unit', 'Notes'].forEach((h, c) => set(c, 3, h));
+    // (rows 5 to 13: the Schedule Detail's Teams required reads B9, its Teams available B5)
     const rows = [
       ['Number of teams', TM.count, null, 'teams', 'The teams the project can use (Production tab)', '0.0'],
-      ['Loose m³ per team', TM.perTeam, null, 'm³ loose / month', 'What one team moves in an average month', '#,##0'],
-      ['Days in an average month', per, null, D.T.basis === 'working' ? 'working days' : 'days', D.T.basis === 'working' ? 'Working days in an average month: the month of the targets and the teams follows its working days' : '365.25 ÷ 12: the month of the targets and the teams follows its calendar days', '0.00'],
-      ['Mine capacity, average month', TM.cap, 'B5*B6', 'm³ loose / month', 'Number of teams × loose m³ per team', '#,##0'],
-      ['Working days in an average month', wdm, null, 'days', 'From the working days and holidays of the Project tab', '0.00'],
-      ['Mine capacity per working day', TM.cap / wdm, 'B8/B9', 'm³ loose / day', 'Capacity ÷ working days', '#,##0']
+      ['bcm per team an operational hour', TM.rate, null, 'bcm / h', 'What one team moves in an operational hour (Production tab, Teams)', '#,##0.0'],
+      ['Operational hours per day', TM.hours, null, 'h / working day', 'The hours a working day the teams dig (Production tab, Schedule)', '0.0'],
+      ['Shifts per day', TM.shifts, null, 'shifts', 'The shifts of a working day (Production tab, Schedule)', '0'],
+      ['bcm per team a working day', TM.perDay, 'B6*B7', 'bcm / working day', 'bcm an hour × operational hours', '#,##0'],
+      ['Mine capacity per working day', TM.day, 'B5*B9', 'bcm / working day', 'Number of teams × bcm per team a working day', '#,##0'],
+      ['Working days in an average month', wdm, null, 'days', 'From the working days and holidays of the Production tab', '0.00'],
+      ['Mine capacity, average month', TM.day * wdm, 'B10*B11', 'bcm / month', 'Capacity per working day × working days', '#,##0'],
+      ['Mine capacity per shift', TM.shift, 'B10/B8', 'bcm / shift', 'Capacity per working day ÷ shifts', '#,##0']
     ];
     rows.forEach((q, i) => { set(0, 4 + i, q[0]); set(1, 4 + i, q[1], q[2], q[5]); set(2, 4 + i, q[3]); set(3, 4 + i, q[4]); });
-    let r = 11;
+    let r = 14;
     set(0, r++, 'Layers');
     ['Layer', 'Type', 'Density (t/bcm)', 'Swell', 'Geological loss (%)', 'Mining loss (%)', 'Contamination (%)', 'As received factor'].forEach((h, c) => set(c, r, h)); r++;
     for (const Ly of L) {
@@ -20718,7 +20756,7 @@ const LoM = (() => {
     }
     r++;
     set(0, r++, 'How the teams are used');
-    set(0, r++, 'The teams do all the mining — topsoil, waste and coal — the ramps and the rehandling, counted in loose m³ (bcm × the swell of the layer). Each month gets the teams × the loose m³ of a team × its days ÷ the days in an average month. Every working day the coal gets the teams it needs for its target first; the rest are shared between the other activities by the loose volume in their paths, so the layers keep pace. Teams required = the loose m³ of a month ÷ (loose m³ per team × the days of the month ÷ the days in an average month).');
+    set(0, r++, 'The teams do all the mining — topsoil, waste and coal — the ramps, the highwall batters and the rehandling, in bcm. A working day gives each team its bcm an operational hour × the operational hours of the day (B9), and a month its working days × that. Every working day the coal gets the teams it needs for its target first; the rest are shared between the other activities by the bcm in their paths, so the layers keep pace. Teams required = the bcm moved in a month ÷ (bcm per team a working day × the working days of the month). The swell of a layer only sizes the dumps and the backfill: a bcm dumped takes that much more room.');
     set(0, r++, 'As received tons = tons in situ × (1 − geological loss) × (1 − mining loss) × (1 + contamination); tons in situ = the volume of the seam mined × its relative density.');
     return S.done([34, 18, 18, 60, 18, 16, 18, 18], [{ s: { c: 0, r: 0 }, e: { c: 3, r: 0 } }]);
   }
@@ -20732,7 +20770,7 @@ const LoM = (() => {
     const VT = P.voidTip || {}, gate = VT.afterStrips == null || VT.afterStrips === '' ? 2 : Math.max(0, Math.round(+VT.afterStrips || 0));
     const lines = [
       ['Schedule start', U.fmtDay(iso, 0), 'Every activity may start from this date (or its own earliest start date).'],
-      ['Teams', `${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)} × ${U.fmtNum(TM.perTeam, 0)} m³ loose a month = ${U.fmtNum(TM.cap, 0)} m³ loose`, 'All mining, ramp excavation and rehandling is done by the teams; a month never moves more than the teams can.'],
+      ['Teams', `${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)} team${TM.count === 1 ? '' : 's'} × ${U.fmtNum(TM.rate, TM.rate % 1 ? 1 : 0)} bcm an operational hour × ${U.fmtNum(TM.hours, TM.hours % 1 ? 1 : 0)} operational hours (${TM.shifts} shift${TM.shifts === 1 ? '' : 's'}) = ${U.fmtNum(TM.day, 0)} bcm a working day`, 'All mining, ramp excavation and rehandling is done by the teams; a month never moves more than the teams can.'],
       ['Monthly coal target', T.coalAvg ? `${U.fmtNum(T.coalAvg, 0)} t ${T.coalBasis === 'ar' ? 'as received' : T.coalBasis === 'product' ? 'of washed product' : 'in situ'}` : 'none', T.coalAvg ? (T.limit ? 'The coal gets the teams it needs for its target first, as far as coal is exposed; no month mines more than its target.' : 'Only compared with the schedule.') : 'The coal shares the teams with the waste by the volume of its paths.'],
       ...(Monthly.rampMonths(P) && T.coalAvg ? [['Coal ramp-up', `${Monthly.rampMonths(P)} month${Monthly.rampMonths(P) === 1 ? '' : 's'}`, `The coal target steps up over the first ${Monthly.rampMonths(P)} months of the schedule (${Array.from({ length: Monthly.rampMonths(P) }, (_, k) => Math.round(((k + 1) / (Monthly.rampMonths(P) + 1)) * 100) + '%').join(', ')}) and is met in full from then on, so the waste gets ahead and builds up exposed coal first${Model.wasteFollows(P).on ? '; with the waste following the coal it is stripped for the full target meanwhile, and the coal held back stays exposed as inventory' : ''}.`]] : []),
       ['Monthly waste target', T.wasteAvg ? `${U.fmtNum(T.wasteAvg, 0)} ${T.wasteUnit}` : Model.wasteFollows(P).on ? 'none — follows the coal' : 'none', T.wasteAvg ? (T.limit ? 'No month moves more waste than its target.' : 'Only compared with the schedule.') : Model.wasteFollows(P).on ? `Follows the coal: each working day the waste activities move only the waste above the coal the target needs over the next month, keeping ${Model.wasteFollows(P).months} month${Model.wasteFollows(P).months === 1 ? '' : 's'} of coal exposed ahead; teams the coal does not need stay idle.` : 'The waste gets all the teams the coal does not need.'],
@@ -21776,7 +21814,7 @@ const App = {
 };
 
 function migrate(P) {
-  P.calendar = Object.assign({ hoursPerDay: 22, workDays: [1, 1, 1, 1, 1, 1, 1], saHolidays: false, maxYears: 30 }, P.calendar || {});
+  P.calendar = Object.assign({ hoursPerDay: 22, shifts: 2, workDays: [1, 1, 1, 1, 1, 1, 1], saHolidays: false, maxYears: 30 }, P.calendar || {});
   P.imagery = Object.assign({ provider: 'google', googleKey: '', customUrl: '', fileName: '', opacity: 1 }, P.imagery || {});
   P.view = Object.assign({ vex: 3 }, P.view || {});
   P.source = P.source || {};
@@ -21785,15 +21823,34 @@ function migrate(P) {
   P.cutoff = Object.assign({ by: 'block', stop: false }, P.cutoff || {});
   P.targets = Object.assign({ coal: null, waste: null, wasteUnit: 'bcm', basis: 'calendar', mode: 'limit', coalBasis: 'insitu' }, P.targets || {});
   /* The teams that do the mining (they replace the equipment of the Fleet tab). A project made with a fleet gets as many
-     teams as its loading equipment moved: excavators and dozers, loose m³ an average month of 26 working days. */
+     teams as its loading equipment moves: excavators (their buckets loose, ÷ 1.3) and dozers, bcm an operational hour. */
   if (!P.teams) {
-    let v = 0; const H = +P.calendar.hoursPerDay || 22;
+    let v = 0;
     for (const e of P.fleet || []) {
       const q = +e.qty || 0, au = (+e.avail || 0.85) * (+e.util || 0.8);
-      if (e.kind === 'excavator') v += (e.prodMode === 'direct' ? +e.prod || 0 : ((+e.bucket || 0) * (+e.fill || 0.85) * 3600) / Math.max(5, +e.cycle || 30)) * q * H * au * 26;
-      else if (e.kind === 'dozer') v += (+e.prod || 0) * 1.3 * q * H * au * 26;
+      if (e.kind === 'excavator') v += ((e.prodMode === 'direct' ? +e.prod || 0 : ((+e.bucket || 0) * (+e.fill || 0.85) * 3600) / Math.max(5, +e.cycle || 30)) / 1.3) * q * au;
+      else if (e.kind === 'dozer') v += (+e.prod || 0) * q * au;
     }
-    P.teams = { count: v > 0 ? Math.max(1, Math.round(v / Model.TEAM_LCM)) : 4, perTeam: Model.TEAM_LCM };
+    P.teams = { count: v > 0 ? Math.max(1, Math.round(v / Model.TEAM_RATE)) : 4, rate: Model.TEAM_RATE };
+    P.bcm = 1;
+  }
+  /* Every volume is bcm (P.bcm). A project from before counted the teams, the rehandling and the loading out of existing
+     dumps in loose m³: its team (loose m³ an average month) becomes bcm an operational hour (÷ the spoil's swell ÷ the
+     operational hours ÷ the working days of an average month), so it moves what it did; the rates and quantities of its
+     rehandling, final void and existing dumps (loose m³) ÷ the swell of what they dig; its rehandling cost (R/m³ loose)
+     × the spoil's swell. Once. */
+  if (!P.bcm) {
+    const sw = Model.spoilSwell(P), ss = Model.soilSwell(P), H = +P.calendar.hoursPerDay > 0 ? +P.calendar.hoursPerDay : 22;
+    const y0 = (U.parseISO(P.startDate) || new Date()).getUTCFullYear(), wdm = Monthly.workDaysPerMonth(P, y0, y0 + 3) || Monthly.AVG_MONTH;
+    const T = P.teams || (P.teams = { count: 4 });
+    if (!(+T.rate > 0)) T.rate = Math.round(((+T.perTeam > 0 ? +T.perTeam : Model.TEAM_LCM) / sw / (H * wdm)) * 10) / 10;
+    delete T.perTeam;
+    const swOf = id => { const d = (P.dumps || []).find(x => x.id === id); return d && d.kind === 'topsoil' ? ss : sw; };
+    for (const j of P.rehandles || []) { const k = swOf(j.from); if (+j.rate > 0) j.rate = Math.round(+j.rate / k); if (+j.qty > 0) j.qty = Math.round(+j.qty / k); }
+    for (const od of P.oldDumps || []) if (+od.rate > 0) od.rate = Math.round(+od.rate / sw);
+    if (P.rehab && +P.rehab.finalRate > 0) P.rehab.finalRate = Math.round(+P.rehab.finalRate / sw);
+    if (P.fin && P.fin.cRehandle != null && P.fin.cRehandle !== '' && isFinite(+P.fin.cRehandle)) P.fin.cRehandle = Math.round(+P.fin.cRehandle * sw * 100) / 100;
+    P.bcm = 1;
   }
   P.losses = Object.assign({ geo: 0, mining: 0, contam: 0 }, P.losses || {});
   P.voidTip = Object.assign({ on: true, ref: 'top', afterStrips: 2, roads: true, dozeAfterStrips: 0 }, P.voidTip || {});

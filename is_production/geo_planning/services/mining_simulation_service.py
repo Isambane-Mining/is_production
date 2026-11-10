@@ -43,6 +43,7 @@ HEADER_MAP = [
 	("calendar", "hours", "weekhours"),
 	("calendar.saHolidays", "sa_holidays", "bool"),
 	("calendar.maxYears", "max_years", "int"),
+	("calendar.shifts", "shifts_per_day", "int"),
 	("grid.x0", "grid_x0", "float"),
 	("grid.y0", "grid_y0", "float"),
 	("grid.nx", "grid_nx", "int"),
@@ -59,7 +60,8 @@ HEADER_MAP = [
 	("targets.rampMonths", "ramp_up_months", "int"),
 	("targets.exposedMonths", "exposed_coal_months", "float"),
 	("teams.count", "team_count", "float"),
-	("teams.perTeam", "volume_per_team", "float"),
+	("teams.rate", "team_rate", "float"),
+	("teams.perTeam", "volume_per_team", "float"),  # (projects from before the teams were rated in bcm an hour)
 	("losses.geo", "geological_loss", "float"),
 	("losses.mining", "mining_loss", "float"),
 	("losses.contam", "contamination", "float"),
@@ -112,7 +114,7 @@ HEADER_MAP = [
 	("accTable", "accumulation_table", "json"),
 ]
 # Working hours for each weekday (Monday first, as the simulator's calendar.workDays). The simulator's engine
-# takes one figure, calendar.hoursPerDay: it gets the average over the working days, so the hours of a week are
+# takes one figure, calendar.hoursPerDay (its operational hours a day, with the teams' bcm an hour their day): it gets the average over the working days, so the hours of a week are
 # the same. The list itself goes along as calendar.hoursByDay, for a simulator that reads it.
 HOUR_FIELDS = ["hours_monday", "hours_tuesday", "hours_wednesday", "hours_thursday", "hours_friday", "hours_saturday", "hours_sunday"]
 PRODUCTION_EQUIPMENT_KINDS = {"ADT": "truck", "Rigid": "truck", "Excavator": "excavator", "Dozer": "dozer"}

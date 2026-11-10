@@ -152,6 +152,17 @@ class IntegrationTestMiningSimulationProject(IntegrationTestCase):
 
 		self.assertEqual(svc.build_project(doc), project)
 
+	def test_teams_in_bcm_an_hour(self):
+		"""The teams rated in bcm an operational hour and the shifts of a day: real fields, and back to the simulator."""
+		project = sample_project(self.pid)
+		project["teams"] = {"count": 6, "rate": 450}
+		project["calendar"]["shifts"] = 3
+		project["bcm"] = 1
+		svc.save_from_project(copy.deepcopy(project), name=self.pid, insert=True)
+		doc = frappe.get_doc(svc.DOCTYPE, self.pid)
+		self.assertEqual((doc.team_count, doc.team_rate, doc.shifts_per_day, doc.volume_per_team), (6, 450, 3, 0))
+		self.assertEqual(svc.build_project(doc), project)
+
 	def test_weekday_hours(self):
 		svc.save_from_project(sample_project(self.pid), name=self.pid, insert=True)
 		doc = frappe.get_doc(svc.DOCTYPE, self.pid)

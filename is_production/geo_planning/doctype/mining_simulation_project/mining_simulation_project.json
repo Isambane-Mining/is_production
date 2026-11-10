@@ -24,6 +24,7 @@
   "tab_settings",
   "section_break_calendar",
   "hours_per_day",
+  "shifts_per_day",
   "max_years",
   "sa_holidays",
   "column_break_calendar",
@@ -134,6 +135,7 @@
   "batters",
   "tab_fleet",
   "team_count",
+  "team_rate",
   "volume_per_team",
   "column_break_team_settings",
   "team_rows",
@@ -268,11 +270,19 @@
    "label": "Calendar"
   },
   {
-   "description": "What the simulator works with: the hours of the week over its working days",
+   "description": "The hours a working day the teams dig (the simulator's operational hours): the hours of the week over its working days",
    "fieldname": "hours_per_day",
    "fieldtype": "Float",
-   "label": "Average Hours per Working Day",
+   "label": "Operational Hours per Working Day",
    "read_only": 1
+  },
+  {
+   "default": "2",
+   "description": "The shifts of a working day: the simulator splits the operational hours over them (the teams' bcm a shift)",
+   "fieldname": "shifts_per_day",
+   "fieldtype": "Int",
+   "label": "Shifts per Day",
+   "non_negative": 1
   },
   {
    "fieldname": "max_years",
@@ -614,7 +624,7 @@
   {
    "fieldname": "final_void_rate",
    "fieldtype": "Float",
-   "label": "Final Void Fill Rate (m\u00b3 loose / working day)"
+   "label": "Final Void Fill Rate (m³ loose / working day)"
   },
   {
    "fieldname": "column_break_rehab_2",
@@ -859,9 +869,19 @@
    "label": "Teams"
   },
   {
+   "description": "What one team moves in an operational hour (bcm); a working day gives it this × the operational hours",
+   "fieldname": "team_rate",
+   "fieldtype": "Float",
+   "label": "bcm per Team per Operational Hour",
+   "non_negative": 1
+  },
+  {
+   "depends_on": "eval:doc.volume_per_team",
+   "description": "Only projects saved before the teams were rated in bcm an hour: the simulator turns it into the bcm an hour when it opens them.",
    "fieldname": "volume_per_team",
    "fieldtype": "Float",
-   "label": "Loose m\u00b3 per Team per Month"
+   "label": "Loose m³ per Team per Month (before bcm)",
+   "read_only": 1
   },
   {
    "fieldname": "column_break_team_settings",
@@ -1032,7 +1052,7 @@
   }
  ],
  "links": [],
- "modified": "2026-10-20 13:36:58.313736",
+ "modified": "2026-11-10 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Geo Planning",
  "name": "Mining Simulation Project",
