@@ -78,21 +78,39 @@ class TestHourlyDashboard(unittest.TestCase):
             ("c", "Koppie", "2026-09-30", "6:00-7:00"),
             ("d", "Koppie", "2026-09-30", "5:00-6:00"),
             ("e", "Koppie", "2026-09-29", "unknown"),
-            ("previous-night", "Koppie", "2026-09-29", "5:00-6:00"),
+            ("night-00", "Koppie", "2026-09-29", "0:00-1:00"),
+            ("night-01", "Koppie", "2026-09-29", "1:00-2:00"),
+            ("night-02", "Koppie", "2026-09-29", "2:00-3:00"),
+            ("night-03", "Koppie", "2026-09-29", "3:00-4:00"),
+            ("night-04", "Koppie", "2026-09-29", "4:00-5:00"),
+            ("night-05", "Koppie", "2026-09-29", "5:00-6:00"),
         ])
         db.executemany('INSERT INTO "tabTruck Loads" VALUES (?, ?, ?)', [
             ("a", "EX-1", 100), ("a", "EX-1", 130), ("a", "EX-2", 50),
             ("b", "EX-1", 70), ("c", "EX-1", 900), ("d", "EX-1", 40),
             ("e", "EX-1", 999),
-            ("previous-night", "EX-1", 777),
+            ("night-00", "EX-1", 366),
+            ("night-01", "EX-1", 0),
+            ("night-02", "EX-1", 440),
+            ("night-03", "EX-1", 457),
+            ("night-04", "EX-1", 446),
+            ("night-05", "EX-1", 247),
         ])
         def sql(query, dates, **kwargs):
             return [frappe._dict(dict(row)) for row in db.execute(query.replace("%s", "?"), tuple(map(str, dates)))]
         with patch.object(frappe.local, "db", create=True) as frappe_db:
             frappe_db.sql.side_effect = sql
             result = dashboard.get_all_hourly_data(date(2026, 9, 29))
-        self.assertEqual(result, {"Koppie": {"EX-1": {"1": 230, "24": 40}, "EX-2": {"1": 50}},
-                                  "Gwab": {"EX-1": {"1": 70}}})
+        self.assertEqual(result, {
+            "Koppie": {
+                "EX-1": {
+                    "1": 230, "19": 366, "20": 0, "21": 440,
+                    "22": 457, "23": 446, "24": 247
+                },
+                "EX-2": {"1": 50}
+            },
+            "Gwab": {"EX-1": {"1": 70}}
+        })
 
 
 if __name__ == "__main__":
