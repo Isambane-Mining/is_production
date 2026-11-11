@@ -529,6 +529,16 @@
   },
   {
    "hidden": 0,
+   "is_query_report": 0,
+   "label": "Diesel Cap",
+   "link_count": 0,
+   "link_to": "diesel-cap",
+   "link_type": "Page",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
    "is_query_report": 1,
    "label": "Diesel Cap Report",
    "link_count": 0,
