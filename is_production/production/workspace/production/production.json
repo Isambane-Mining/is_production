@@ -540,16 +540,6 @@
   {
    "hidden": 0,
    "is_query_report": 1,
-   "label": "Diesel Cap Report",
-   "link_count": 0,
-   "link_to": "Diesel Cap Report",
-   "link_type": "Report",
-   "onboard": 0,
-   "type": "Link"
-  },
-  {
-   "hidden": 0,
-   "is_query_report": 1,
    "label": "Number of ADT's",
    "link_count": 0,
    "link_to": "Number of ADT's",
@@ -608,7 +598,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-10-26 09:18:49.575686",
+ "modified": "2026-11-11 20:50:44.237887",
  "modified_by": "Administrator",
  "module": "Production",
  "name": "Production",
