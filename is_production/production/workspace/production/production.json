@@ -529,11 +529,11 @@
   },
   {
    "hidden": 0,
-   "is_query_report": 1,
-   "label": "Diesel Cap Report",
+   "is_query_report": 0,
+   "label": "Diesel Cap",
    "link_count": 0,
-   "link_to": "Diesel Cap Report",
-   "link_type": "Report",
+   "link_to": "diesel-cap",
+   "link_type": "Page",
    "onboard": 0,
    "type": "Link"
   },
@@ -598,7 +598,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-10-26 09:18:49.575686",
+ "modified": "2026-11-11 20:50:44.237887",
  "modified_by": "Administrator",
  "module": "Production",
  "name": "Production",

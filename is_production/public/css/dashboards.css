@@ -3727,3 +3727,85 @@ tbody td:first-child {
 .hpa-shift-average {
   cursor: pointer;
 }
+
+/* Diesel Cap page styles */
+.diesel-cap-page {
+	--dc-navy: #062344;
+	--dc-border: #dfe6ed;
+	padding: 8px 0 24px;
+	color: var(--text-color);
+}
+.diesel-cap-page .dc-panel,
+.diesel-cap-page .dc-kpi {
+	background: var(--card-bg, #fff);
+	border: 1px solid var(--dc-border);
+	border-radius: 14px;
+	box-shadow: 0 2px 6px rgb(6 35 68 / 3%);
+}
+.diesel-cap-page .dc-hero {
+	display: flex;
+	align-items: center;
+	gap: 22px;
+	padding: 28px;
+	margin-bottom: 16px;
+	border-radius: 16px;
+	background: linear-gradient(115deg, #082d53, #031a38);
+	color: #fff;
+}
+.diesel-cap-page .dc-hero-icon {
+	padding: 16px 24px 16px 0;
+	border-right: 1px solid #ffffff45;
+}
+.diesel-cap-page .dc-hero-icon .icon { width: 38px; height: 38px; stroke: #fff; }
+.diesel-cap-page .dc-brand { font-size: 10px; font-weight: 600; letter-spacing: 1.5px; color: #b4cee5; }
+.diesel-cap-page h1 { margin: 6px 0 8px; font-size: 30px; font-weight: 700; color: #fff; }
+.diesel-cap-page .dc-hero p { margin: 0; font-size: 15px; color: #edf4fc; }
+.diesel-cap-page .dc-filters {
+	display: grid;
+	grid-template-columns: 1fr 1fr 1.2fr auto;
+	align-items: end;
+	gap: 24px;
+	padding: 20px 24px;
+	margin-bottom: 16px;
+}
+.diesel-cap-page .dc-filters .frappe-control,
+.diesel-cap-page .dc-filters .form-group { margin-bottom: 0; }
+.diesel-cap-page .dc-filters .help-box { display: none; }
+.diesel-cap-page .dc-refresh { min-height: 36px; padding: 8px 18px; white-space: nowrap; }
+.diesel-cap-page .dc-kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.diesel-cap-page .dc-kpi { display: flex; align-items: center; gap: 12px; padding: 20px 16px; min-width: 0; }
+.diesel-cap-page .dc-kpi-icon { padding: 12px; border-radius: 10px; background: #e2f0ff; color: #164777; flex-shrink: 0; }
+.diesel-cap-page .dc-kpi-icon .icon { stroke: #164777; }
+.diesel-cap-page .dc-kpi-label { font-size: 12px; font-weight: 500; margin-bottom: 10px; }
+.diesel-cap-page .dc-kpi-value { font-size: clamp(18px, 1.45vw, 25px); font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.diesel-cap-page .dc-kpi-value small { font-size: 11px; font-weight: 500; white-space: nowrap; color: var(--text-muted); }
+.diesel-cap-page .dc-results { padding: 22px; min-width: 0; }
+.diesel-cap-page .dc-table-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+.diesel-cap-page .dc-table-heading h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.diesel-cap-page .dc-row-count { font-size: 12px; }
+.diesel-cap-page .dc-status { padding: 48px 16px; text-align: center; color: var(--text-muted); }
+.diesel-cap-page .dc-table { min-width: 0; }
+.diesel-cap-page .datatable { border: 0; font-size: 12px; }
+.diesel-cap-page .dt-scrollable { max-height: 560px; }
+.diesel-cap-page .dt-cell { border-color: var(--dc-border); font-variant-numeric: tabular-nums; }
+.diesel-cap-page .dt-cell--header { background: var(--subtle-fg, #f1f4f7); font-weight: 600; }
+.diesel-cap-page .dt-row:nth-child(even) .dt-cell { background: var(--subtle-fg, #f7f9fb); }
+.diesel-cap-page .dc-report-message:empty { display: none; }
+.diesel-cap-page .dc-report-message { margin-top: 16px; }
+.diesel-cap-page .dc-footer { display: flex; justify-content: space-between; gap: 24px; border-top: 1px solid var(--dc-border); margin-top: 20px; padding-top: 16px; color: var(--text-muted); font-size: 11px; }
+.diesel-cap-page .dc-execution { white-space: nowrap; }
+@media (max-width: 1200px) {
+	.diesel-cap-page .dc-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+	.diesel-cap-page .dc-filters { gap: 14px; }
+}
+@media (max-width: 767px) {
+	.diesel-cap-page .dc-hero { padding: 22px 18px; gap: 16px; }
+	.diesel-cap-page .dc-hero-icon { display: none; }
+	.diesel-cap-page h1 { font-size: 26px; }
+	.diesel-cap-page .dc-filters { grid-template-columns: 1fr 1fr; padding: 18px; }
+	.diesel-cap-page .dc-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	.diesel-cap-page .dc-kpi { padding: 16px 12px; gap: 8px; }
+	.diesel-cap-page .dc-kpi-icon { display: none; }
+	.diesel-cap-page .dc-results { padding: 16px; }
+	.diesel-cap-page .dc-footer { flex-direction: column; gap: 8px; }
+}
