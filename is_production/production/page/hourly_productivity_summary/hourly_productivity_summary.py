@@ -252,8 +252,28 @@ def build_summary(date, shift, site, plan, assets, breakdowns, documents, *, now
                 pie={"achieved": min(max(completed_actual, 0), completed_target),
                      "availability_estimate": estimate_total, "remaining": shortfall - estimate_total,
                      "target": completed_target})
+    planned_shift_hours = None
+    if plan:
+        field = "shift_day_hours" if shift == "Day" else "shift_night_hours"
+        for planned_day in plan.get("month_prod_days") or []:
+            if planned_day.get("shift_start_date") and getdate(planned_day["shift_start_date"]) == date:
+                raw_hours = planned_day.get(field)
+                if raw_hours is not None:
+                    planned_shift_hours = float(raw_hours)
+                    if not isfinite(planned_shift_hours) or planned_shift_hours < 0:
+                        raise ValueError("Invalid MPP planned shift hours")
+                break
+
+    shift_target_bcm = (
+        count * planned_shift_hours * 220
+        if count is not None and planned_shift_hours is not None
+        else None
+    )
+
     data["summary"].update(actual_bcm=sum(h["actual_bcm"] for h in data["hours"]),
                            target_bcm=sum(h["target_bcm"] for h in data["hours"]) if count is not None else None,
+                           shift_target_bcm=shift_target_bcm,
+                           planned_shift_hours=planned_shift_hours,
                            completed_target_bcm=completed_target if count is not None else None,
                            completed_actual_bcm=completed_actual,
                            achievement=completed_actual / completed_target * 100 if completed_target else None,

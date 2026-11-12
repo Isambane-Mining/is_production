@@ -50,19 +50,109 @@ class TestHourlyProductivityAnalysis(TestCase):
 
         self.assertEqual(sum(c["actual_bcm"] for c in cells), 1500)
 
-    def test_colour_thresholds_bright_red_precedence_and_missing_status(self):
-        docs = [self.f.doc("06:00-07:00", rows=[self.f.row(bcm=110)]),
-                self.f.doc("07:00-08:00", rows=[self.f.row(bcm=374)]),
-                self.f.doc("08:00-09:00", rows=[self.f.row(bcm=373)]), self.f.doc("09:00-10:00")]
+    def test_colour_thresholds_and_zero_missing_status(self):
+        docs = [self.f.doc("06:00-07:00", rows=[self.f.row(bcm=220)]),
+                self.f.doc("07:00-08:00", rows=[self.f.row(bcm=800)]),
+                self.f.doc("08:00-09:00", rows=[self.f.row(bcm=799)]), self.f.doc("09:00-10:00")]
         data = self.build(docs)
         cells = data["rows"][0]["cells"]
-        self.assertEqual([c["category"] for c in cells[:5]], ["green", "amber", "red", "bright_red", "bright_red"])
+        self.assertEqual([c["category"] for c in cells[:5]], ["green", "amber", "red", "red", "red"])
         self.assertTrue(cells[3]["has_record"])
         self.assertFalse(cells[4]["has_record"])
         self.assertEqual(data["pie"]["total_hours"], 24)
         self.assertEqual(data["pie"]["categories"]["green"]["hours"], 1)
         self.assertAlmostEqual(data["pie"]["categories"]["green"]["percent"], 100 / 24)
         self.assertAlmostEqual(sum(v["percent"] for v in data["pie"]["categories"].values()), 100)
+
+
+    def test_combined_threshold_boundaries_for_one_two_three_excavators(self):
+        for count, green, orange, below in ((1, 220, 200, 199), (2, 440, 400, 399), (3, 660, 600, 599)):
+            plan = dict(self.plan, num_excavators=count)
+            for actual, expected in ((green, "green"), (green - 1, "amber"), (orange, "amber"), (below, "red"), (0, "red")):
+                with self.subTest(count=count, actual=actual):
+                    doc = self.f.doc("07:00-08:00", rows=[self.f.row(bcm=actual)])
+                    cell = self.build([doc], plans=[plan])["rows"][0]["cells"][1]
+                    self.assertEqual(cell["target_bcm"], count * 220)
+                    self.assertEqual(cell["category"], expected)
+
+    def test_spare_fleet_and_pbm_availability_do_not_change_bcm_thresholds(self):
+        # Saved MPP production count stays 2 even when many spare identities exist.
+        docs = [self.f.doc("07:00-08:00", rows=[self.f.row(bcm=880)]),
+                self.f.doc("08:00-09:00", rows=[self.f.row(bcm=800)]),
+                self.f.doc("09:00-10:00", rows=[self.f.row(bcm=799)])]
+        baseline = self.build(docs)
+        assets = self.f.assets + [{"name": f"SPARE{i}", "asset_name": f"SPARE{i}",
+                                   "location": "Koppie", "asset_category": "Excavator"} for i in range(12)]
+        plan = dict(self.plan, excavator_truck_assignments=self.plan["excavator_truck_assignments"] + [
+            {"excavator": f"SPARE{i}", "truck": None} for i in range(12)])
+        pbm = [{"asset_name": name, "breakdown_start_datetime": "2026-10-12 06:00:00",
+                "resolved_datetime": "2026-10-13 06:00:00"} for name in ("EX1", "EX2", "T1", "T2", "T3")]
+        changed = report.build_analysis("2026-10-12", "2026-10-12", "Koppie", [plan], assets, pbm, docs,
+                                        now=datetime(2026, 11, 2))
+        for data in (baseline, changed):
+            cells = data["rows"][0]["cells"]
+            self.assertEqual([cell["category"] for cell in cells[1:4]], ["green", "amber", "red"])
+            self.assertEqual([cell["target_bcm"] for cell in cells[1:4]], [440, 440, 440])
+        self.assertEqual(baseline["rows"][0]["cells"][1]["available"], 3)
+        self.assertEqual(changed["rows"][0]["cells"][1]["available"], 0)
+        self.assertEqual(baseline["rows"][0]["cells"][1]["excavator_available"], 2)
+        self.assertEqual(changed["rows"][0]["cells"][1]["excavator_available"], 0)
+
+    def test_adt_scope_does_not_change_production_bcm_threshold(self):
+        plan = dict(self.plan, excavator_truck_assignments=self.plan["excavator_truck_assignments"] + [
+            {"excavator": None, "truck": "T4"}])
+        assets = self.f.assets + [{"name": "T4", "asset_name": "T4", "asset_category": "ADT", "location": "Koppie"}]
+        docs = [self.f.doc("07:00-08:00", rows=[self.f.row(bcm=880)])]
+        available = []
+        for scope in ("all", "production", "spare"):
+            data = report.build_analysis("2026-10-12", "2026-10-12", "Koppie", [plan], assets, [], docs,
+                                         now=datetime(2026, 11, 2), machine_scope=scope)
+            cell = data["rows"][0]["cells"][1]
+            available.append(cell["available"])
+            self.assertEqual(cell["target_bcm"], 440)
+            self.assertEqual(cell["category"], "green")
+        self.assertEqual(available, [4, 3, 1])
+
+    def test_missing_production_excavator_count_has_no_invented_bcm_threshold(self):
+        for missing in (None, "", "invalid", -1, 1.5, float("nan"), float("inf")):
+            with self.subTest(count=missing):
+                plan = dict(self.plan, num_excavators=missing)
+                data = self.build(plans=[plan])
+                self.assertEqual(data["rows"], [])
+                self.assertIn("Production Excavator Count", data["configuration_error"]["title"])
+
+    def test_one_excavator_compensates_for_another(self):
+        for amounts, expected in (((700, 180), "green"), ((700, 100), "amber"), ((600, 199), "red")):
+            with self.subTest(amounts=amounts):
+                doc = self.f.doc("07:00-08:00", rows=[self.f.row(bcm=amounts[0]), self.f.row("EX2", "T3", bcm=amounts[1])])
+                cell = self.build([doc])["rows"][0]["cells"][1]
+                self.assertEqual(cell["actual_bcm"], sum(amounts))
+                self.assertEqual(cell["category"], expected)
+
+    def test_partial_first_last_hours_scale_both_thresholds(self):
+        for count in (1, 2, 3):
+            plan = dict(self.plan, num_excavators=count)
+            for slot, index, base_target, green, orange in (
+                ("06:00-07:00", 0, 55, 55, 50),
+                ("17:00-18:00", 11, 165, 165, 150),
+                ("18:00-19:00", 12, 55, 55, 50),
+                ("05:00-06:00", 23, 165, 165, 150),
+            ):
+                for actual, expected in ((green * count, "green"), (green * count - .01, "amber"),
+                                         (orange * count, "amber"), (orange * count - .01, "red")):
+                    with self.subTest(count=count, slot=slot, actual=actual):
+                        doc = self.f.doc(slot, "2026-10-13" if index == 23 else "2026-10-12", [self.f.row(bcm=actual)])
+                        cell = self.build([doc], plans=[plan])["rows"][0]["cells"][index]
+                        self.assertEqual(cell["target_bcm"], base_target * count)
+                        self.assertEqual(cell["category"], expected)
+
+    def test_zero_and_fatigue_use_only_four_categories(self):
+        fatigue = [{"site": "Koppie", "shift": "Day", "day_type": "Weekday", "fatigue_start": "13:00", "fatigue_end": "13:30"}]
+        data = self.build([self.f.doc()], fatigue=fatigue)
+        self.assertEqual(set(data["pie"]["categories"]), {"green", "amber", "red", "grey"})
+        self.assertEqual(data["pie"]["categories"]["red"]["hours"], 23.5)
+        self.assertEqual(data["pie"]["categories"]["grey"]["hours"], .5)
+        self.assertEqual(data["rows"][0]["cells"][0]["category"], "red")
 
     def test_zero_during_full_excavator_pbm_is_ordinary_red_and_target_fixed(self):
         pbm = [{"asset_name": exc, "breakdown_start_datetime": "2026-10-12 06:00:00",
@@ -71,7 +161,7 @@ class TestHourlyProductivityAnalysis(TestCase):
         self.assertEqual(cell["category"], "red")
         self.assertEqual(cell["target_bcm"], 110)
 
-    def test_unknown_production_identities_cannot_support_bright_red(self):
+    def test_unknown_production_identities_keep_zero_red(self):
         self.plan["num_excavators"] = 3
         data = self.build([self.f.doc()])
         cell = data["rows"][0]["cells"][0]
@@ -109,7 +199,7 @@ class TestHourlyProductivityAnalysis(TestCase):
         doc["dozer_production"] = [{"bcm_hour": 999}]
         data = self.build([doc, dict(doc)])
         self.assertEqual(data["rows"][0]["cells"][0]["actual_bcm"], 110)
-        self.assertEqual(data["rows"][0]["cells"][0]["category"], "green")
+        self.assertEqual(data["rows"][0]["cells"][0]["category"], "red")
 
     def test_pending_hours_are_not_claimed_zero_with_verified_availability(self):
         data = self.build(now=datetime(2026, 10, 12, 7))
@@ -173,19 +263,19 @@ class TestHourlyProductivityAnalysis(TestCase):
             {"shift_start_date": "2026-10-12", "shift_day_hours": 0, "shift_night_hours": 12}]
         data = self.build(start="2026-10-11", end="2026-10-12")
         sunday, monday = data["rows"]
-        self.assertEqual(sunday["cells"][0]["category"], "bright_red")
+        self.assertEqual(sunday["cells"][0]["category"], "red")
         self.assertEqual(sunday["cells"][12]["category"], "grey")
         self.assertEqual(monday["cells"][0]["category"], "grey")
-        self.assertEqual(monday["cells"][12]["category"], "bright_red")
+        self.assertEqual(monday["cells"][12]["category"], "red")
         self.assertEqual(data["pie"]["categories"]["grey"]["hours"], 24)
         self.assertEqual(monday["cells"][0]["target_bcm"], 110)
 
     def test_partial_fatigue_preserves_bcm_target_and_weights_pie(self):
         fatigue = [{"site": "Koppie", "shift": "Day", "day_type": "Weekday",
                     "fatigue_start": "13:00", "fatigue_end": "13:30"}]
-        data = self.build([self.f.doc("13:00-14:00", rows=[self.f.row(bcm=440)])], fatigue=fatigue)
+        data = self.build([self.f.doc("13:00-14:00", rows=[self.f.row(bcm=880)])], fatigue=fatigue)
         cell = data["rows"][0]["cells"][7]
-        self.assertEqual(cell["actual_bcm"], 440)
+        self.assertEqual(cell["actual_bcm"], 880)
         self.assertEqual(cell["target_bcm"], 440)
         self.assertEqual(cell["non_working_minutes"], 30)
         self.assertEqual(cell["segments"], [
@@ -286,7 +376,7 @@ class TestHourlyProductivityAnalysis(TestCase):
                 report.get_analysis("Koppie", "2026-09-01", "2026-10-02")
 
     def test_endpoint_passes_loaded_fatigue_to_analysis(self):
-        docs = [self.f.doc("13:00-14:00", rows=[self.f.row(bcm=440)])]
+        docs = [self.f.doc("13:00-14:00", rows=[self.f.row(bcm=880)])]
         fatigue = [{"site": "Koppie", "shift": "Day", "day_type": "Weekday",
                     "fatigue_start": "13:00", "fatigue_end": "13:30"}]
         with patch.object(report.frappe, "session", report.frappe._dict(user="user@example.com")), \

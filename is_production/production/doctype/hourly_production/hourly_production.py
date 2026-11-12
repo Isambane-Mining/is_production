@@ -5,7 +5,7 @@ from frappe.model.document import Document
 import frappe
 from frappe import _
 from html import escape
-from frappe.utils import getdate, add_to_date, nowdate, formatdate
+from frappe.utils import getdate, add_to_date, nowdate, formatdate, flt
 
 # MTD summary fields copied from Monthly Production Planning onto the hour for reports
 MPP_MTD_FIELDS = [
@@ -14,6 +14,88 @@ MPP_MTD_FIELDS = [
     'monthly_act_tally_survey_variance', 'month_actual_bcm',
     'mtd_bcm_day', 'mtd_bcm_hour', 'month_forecated_bcm'
 ]
+
+
+
+
+def validate_excavator_boundary_load_times(
+    shift, shift_num_hour, shift_system,
+    total_working_hours, total_working_hour, truck_loads
+):
+    """Require load times only for excavators producing in boundary hours."""
+    if shift not in ("Day", "Night") or not shift_num_hour:
+        return
+
+    try:
+        shift_label, hour_text = str(shift_num_hour).rsplit("-", 1)
+        hour_index = int(hour_text)
+    except (ValueError, AttributeError):
+        return
+
+    if shift_label != shift or hour_index < 1:
+        return
+
+    if shift == "Day":
+        total_hours = int(flt(total_working_hours) or 12)
+    else:
+        total_hours = int(
+            flt(total_working_hour)
+            or (12 if shift_system == "2x12Hour" else 8)
+        )
+
+    required_fields = []
+
+    if hour_index == 1:
+        required_fields.append(
+            ("exc_start_load_time", "First Load Time")
+        )
+
+    if hour_index == total_hours:
+        required_fields.append(
+            ("exc_end_load_time", "Last Load Time")
+        )
+
+    if not required_fields:
+        return
+
+    excavators = {}
+
+    for row in truck_loads or []:
+        excavator = row.get("asset_name_shoval")
+        if not excavator:
+            continue
+
+        item = excavators.setdefault(
+            excavator,
+            {
+                "label": row.get("excavator_plant_no") or excavator,
+                "loads": 0,
+                "times": set(),
+            }
+        )
+
+        item["loads"] += flt(row.get("loads") or 0)
+
+        for field, field_label in required_fields:
+            if row.get(field):
+                item["times"].add(field)
+
+    missing = []
+
+    for item in excavators.values():
+        if item["loads"] <= 0:
+            continue
+
+        for field, label in required_fields:
+            if field not in item["times"]:
+                missing.append(f"{item['label']}: {label}")
+
+    if missing:
+        frappe.throw(
+            _("Load times are required for excavators with production "
+              "loads in this hour:<br><br>{0}")
+            .format("<br>".join(missing))
+        )
 
 
 class HourlyProduction(Document):
@@ -309,6 +391,16 @@ class HourlyProduction(Document):
 
         # v16 migration safety: ensure Link fields store Asset.name (primary key)
         self.normalize_asset_links()
+
+        validate_excavator_boundary_load_times(
+            shift=self.shift,
+            shift_num_hour=self.shift_num_hour,
+            shift_system=self.shift_system,
+            total_working_hours=self.total_working_hours,
+            total_working_hour=self.total_working_hour,
+            truck_loads=self.get("truck_loads") or [],
+        )
+
         self.validate_hourly_machine_exclusions()
         self.populate_truck_material_types()
         self.apply_planning_tub_factors()

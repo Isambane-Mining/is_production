@@ -103,7 +103,7 @@
     const notAchieved = Math.max(pie.target - pie.achieved, 0);
     const cards = [
       ['Actual BCM', number(s.actual_bcm, 1), 'All recorded excavator output'],
-      ['Shift target BCM', number(s.target_bcm), `${number(data.production_excavator_count)} MPP excavators × 2,420`],
+      ['Shift target BCM', number(s.shift_target_bcm), `${number(data.production_excavator_count)} MPP excavators × ${number(s.planned_shift_hours)} planned hours × 220`],
       ['Achievement', s.achievement == null ? '—' : `${number(s.achievement, 2)}%`,
         `${number(s.completed_actual_bcm, 1)} / ${number(s.completed_target_bcm)} · completed hours`],
       ['ADTs available / utilised', `${number(s.average_available, 2)} / ${number(s.adts_utilised)}`,

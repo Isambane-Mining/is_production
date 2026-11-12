@@ -13,7 +13,7 @@ const fixture = JSON.parse(fs.readFileSync(process.env.HPA_FIXTURE, 'utf8'));
     page.setDefaultTimeout(5000);
     const errors = [];
     page.on('pageerror',e=>errors.push(e.message));
-    await page.setContent('<html><body style="margin:0;padding:12px;font-family:Arial"><main id="main"></main></body></html>');
+    await page.setContent('<html><head><base href="https://lab.test/"></head><body style="margin:0;padding:12px;font-family:Arial"><main id="main"></main></body></html>');
     await page.addScriptTag({path:path.resolve(__dirname,'../../../../../frappe/node_modules/jquery/dist/jquery.js')});
     await page.evaluate(data => {
       window.fixture=data;window.wrapper={};window.calls=[];
@@ -28,15 +28,39 @@ const fixture = JSON.parse(fs.readFileSync(process.env.HPA_FIXTURE, 'utf8'));
           return {message:request.method.endsWith('get_defaults')?{from_date:fixture.from_date,to_date:fixture.to_date}:fixture};
         }};
     },fixture);
-    await page.addStyleTag({path:path.join(__dirname,'hourly_productivity_analysis.css')});
+    await page.addStyleTag({path:path.join(__dirname, '../../../../public/css/dashboards.css')});
     await page.evaluate(()=>{window.module={exports:{}};});
     await page.addScriptTag({path:path.join(__dirname,'hourly_productivity_analysis.js')});
     await page.evaluate(()=>{wrapper.hourlyProductivityAnalysis=new module.exports.HourlyProductivityAnalysisPage(wrapper);delete window.module;});
     await page.waitForFunction(()=>wrapper.hourlyProductivityAnalysis.initializing===false);
     await page.evaluate(()=>wrapper.hourlyProductivityAnalysis.site.set_value('Koppie'));
     assert.equal(await page.locator('.hpa-cell').count(),fixture.rows.length*24);
-    assert.equal(await page.locator('.hpa-legend>div').count(),5);
+    assert.equal(await page.locator('.hpa-legend>div').count(),4);
     assert.equal(await page.locator('.hpa-hour').count(),24);
+    if (process.env.HPA_WORKBOOK_FIXTURE) {
+      const workbook = fs.readFileSync(process.env.HPA_WORKBOOK_FIXTURE);
+      let requested;
+      await page.route('**/api/method/**export_excel?**', async route => {
+        requested = new URL(route.request().url());
+        await route.fulfill({status:200, body:workbook, headers:{
+          'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'Content-Disposition':'attachment; filename="Hourly_Productivity.xlsx"'
+        }});
+      });
+      const downloadPromise = page.waitForEvent('download');
+      await page.locator('.hpa-export').click();
+      const download = await downloadPromise;
+      assert.equal(await download.failure(), null);
+      assert.equal(download.suggestedFilename(), 'Hourly_Productivity.xlsx');
+      assert.equal(requested.pathname, '/api/method/is_production.production.page.hourly_productivity_analysis.hourly_productivity_analysis.export_excel');
+      assert.equal(requested.searchParams.get('site'), 'Koppie');
+      assert.equal(requested.searchParams.get('from_date'), fixture.from_date);
+      assert.equal(requested.searchParams.get('to_date'), fixture.to_date);
+      assert.equal(requested.searchParams.get('machine_scope'), 'all');
+      assert.deepEqual(fs.readFileSync(await download.path()), workbook);
+      console.log('PASS: Export Excel button requests the existing endpoint and downloads the generated workbook intact (synthetic endpoint response).');
+    }
+
     for (const width of [390,768,1280]) {
       await page.setViewportSize({width,height:1000});
       assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
@@ -44,7 +68,7 @@ const fixture = JSON.parse(fs.readFileSync(process.env.HPA_FIXTURE, 'utf8'));
         assert.ok(await page.locator('.hpa-mobile').isVisible());
         assert.equal(await page.locator('.hpa-mobile-cell').count(),24);
         assert.equal(await page.locator('.hpa-mobile-grid').count(),2);
-        assert.equal(await page.locator('.hpa-key-item').count(),5);
+        assert.equal(await page.locator('.hpa-key-item').count(),4);
       } else {
         const before=await page.locator('tbody .hpa-sticky-date').first().boundingBox();
         await page.locator('.hpa-scroll').evaluate(el=>{el.scrollLeft=700;});
@@ -128,6 +152,6 @@ const fixture = JSON.parse(fs.readFileSync(process.env.HPA_FIXTURE, 'utf8'));
     assert.equal(await page.locator('.hpa-cell').count(),0);
     assert.ok((await page.locator('.hpa-message').innerText()).includes('Unable to load'));
     assert.deepEqual(errors,[]);
-    console.log('PASS: desktop 24-hour matrix, phone Day/Night heatmap and inline details, 5-category pie/key, responsive 390/768/1280px, frozen date column, hover/tap/keyboard, partial-hour gradient/BCM, missing-month message, invalid range, stale response, access-error clearing');
+    console.log('PASS: desktop 24-hour matrix, phone Day/Night heatmap and inline details, 4-category pie/key, responsive 390/768/1280px, frozen date column, hover/tap/keyboard, partial-hour gradient/BCM, missing-month message, invalid range, stale response, access-error clearing');
   } finally {await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});
