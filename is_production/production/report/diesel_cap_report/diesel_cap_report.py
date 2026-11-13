@@ -11,87 +11,129 @@ from frappe.utils import getdate
 
 
 def execute(filters: dict | None = None):
-	filters = frappe._dict(filters or {})
-	validate_filters(filters)
+    filters = frappe._dict(filters or {})
+    validate_filters(filters)
 
-	start_date = getdate(filters.start_date)
-	end_date = getdate(filters.end_date)
-	site = filters.get("site")
+    start_date = getdate(filters.start_date)
+    end_date = getdate(filters.end_date)
+    month_start = end_date.replace(day=1)
+    site = filters.get("site")
 
-	columns = get_columns()
+    columns = get_columns()
 
-	production_rows = get_production_totals_by_site_and_date(start_date, end_date, site)
-	survey_map = get_latest_survey_by_site(end_date, site)
-	diesel_map = get_diesel_totals_by_site(start_date, end_date, site)
-	tallies_cube_map = get_tallies_cubes_by_site(start_date, end_date, site)
+    production_rows = get_production_totals_by_site_and_date(
+        min(start_date, month_start), end_date, site
+    )
+    survey_map = get_latest_survey_by_site(end_date, site)
+    diesel_map = get_diesel_totals_by_site(start_date, end_date, site)
+    tallies_cube_map = get_tallies_cubes_by_site(start_date, end_date, site)
 
-	production_map: dict[str, dict[date, float]] = {}
-	for row in production_rows:
-		row_site = row.get("site")
-		row_date = getdate(row.get("prod_date"))
-		total_bcm = row.get("total_bcm") or 0
+    mtd_map = {}
+    period_map = {}
 
-		if not row_site:
-			continue
+    for row in production_rows:
+        row_site = row.get("site")
+        row_date = getdate(row.get("prod_date"))
+        bcm = row.get("total_bcm") or 0
 
-		if row_site not in production_map:
-			production_map[row_site] = {}
+        if not row_site:
+            continue
 
-		production_map[row_site][row_date] = total_bcm
+        if row_date >= month_start:
+            mtd_map.setdefault(row_site, {})[row_date] = bcm
 
-	if site:
-		sites = [site]
-	else:
-		sites = sorted(set(production_map.keys()) | set(diesel_map.keys()) | set(tallies_cube_map.keys()))
+        if row_date >= start_date:
+            period_map.setdefault(row_site, {})[row_date] = bcm
 
-	data = []
-	for row_site in sites:
-		site_daily_totals = production_map.get(row_site, {})
-		survey_info = survey_map.get(row_site)
+    if site:
+        sites = [site]
+    else:
+        sites = sorted(
+            set(mtd_map) | set(period_map)
+            | set(diesel_map) | set(tallies_cube_map)
+        )
 
-		survey_base_bcm = 0
-		hourly_after_survey_bcm = 0
-		survey_date_used = None
+    data = []
 
-		if survey_info:
-			survey_dt = survey_info["survey_date"]
-			if start_date <= survey_dt <= end_date:
-				survey_base_bcm = (survey_info.get("total_ts_bcm") or 0) + (survey_info.get("total_dozing_bcm") or 0)
-				hourly_after_survey_bcm = sum(
-					value for prod_dt, value in site_daily_totals.items() if prod_dt > survey_dt
-				)
-				actual_bcm = survey_base_bcm + hourly_after_survey_bcm
-				survey_date_used = survey_info.get("survey_datetime")
-			else:
-				actual_bcm = sum(site_daily_totals.values())
-				hourly_after_survey_bcm = actual_bcm
-		else:
-			actual_bcm = sum(site_daily_totals.values())
-			hourly_after_survey_bcm = actual_bcm
+    for row_site in sites:
+        survey_info = survey_map.get(row_site)
 
-		total_diesel_litres = diesel_map.get(row_site, 0)
-		diesel_cap = (total_diesel_litres / actual_bcm) if actual_bcm else 0
+        survey_base_bcm, hourly_after_survey_bcm, month_to_date_bcm, survey_date_used = (
+            _calculate_production_bcm(
+                mtd_map.get(row_site, {}),
+                survey_info,
+                month_start,
+                end_date,
+            )
+        )
 
-		total_tallies_cubes = tallies_cube_map.get(row_site, 0)
-		tallies_fuel_cap = (total_diesel_litres / total_tallies_cubes) if total_tallies_cubes else 0
+        _, _, selected_period_bcm, _ = _calculate_production_bcm(
+            period_map.get(row_site, {}),
+            survey_info,
+            start_date,
+            end_date,
+        )
 
-		data.append(
-			{
-				"site": row_site,
-				"start_date": start_date,
-				"end_date": end_date,
-				"survey_base_bcm": survey_base_bcm,
-				"hourly_after_survey_bcm": hourly_after_survey_bcm,
-				"actual_bcm": actual_bcm,
-				"total_tallies_cubes": total_tallies_cubes,
-				"total_diesel_litres": total_diesel_litres,
-				"diesel_cap": diesel_cap,
-				"tallies_fuel_cap": tallies_fuel_cap,
-				"survey_date_used": survey_date_used,
-			}
-		)
+        total_diesel_litres = diesel_map.get(row_site, 0)
+        total_tallies_cubes = tallies_cube_map.get(row_site, 0)
 
-	return columns, data
+        diesel_cap = (
+            total_diesel_litres / selected_period_bcm
+            if selected_period_bcm else 0
+        )
+
+        tallies_fuel_cap = (
+            total_diesel_litres / total_tallies_cubes
+            if total_tallies_cubes else 0
+        )
+
+        data.append({
+            "site": row_site,
+            "start_date": start_date,
+            "end_date": end_date,
+            "survey_base_bcm": survey_base_bcm,
+            "hourly_after_survey_bcm": hourly_after_survey_bcm,
+            "month_to_date_bcm": month_to_date_bcm,
+            "selected_period_bcm": selected_period_bcm,
+            "total_tallies_cubes": total_tallies_cubes,
+            "total_diesel_litres": total_diesel_litres,
+            "diesel_cap": diesel_cap,
+            "tallies_fuel_cap": tallies_fuel_cap,
+            "survey_date_used": survey_date_used,
+        })
+
+    return columns, data
+
+
+def _calculate_production_bcm(daily_totals, survey_info, start_date, end_date):
+    """Calculate production using the latest applicable survey base."""
+    survey_base_bcm = 0
+    hourly_after_survey_bcm = 0
+    survey_date_used = None
+
+    if survey_info and start_date <= survey_info["survey_date"] <= end_date:
+        survey_base_bcm = (
+            (survey_info.get("total_ts_bcm") or 0)
+            + (survey_info.get("total_dozing_bcm") or 0)
+        )
+
+        hourly_after_survey_bcm = sum(
+            value for prod_dt, value in daily_totals.items()
+            if prod_dt > survey_info["survey_date"]
+        )
+
+        actual_bcm = survey_base_bcm + hourly_after_survey_bcm
+        survey_date_used = survey_info.get("survey_datetime")
+    else:
+        actual_bcm = sum(daily_totals.values())
+        hourly_after_survey_bcm = actual_bcm
+
+    return (
+        survey_base_bcm,
+        hourly_after_survey_bcm,
+        actual_bcm,
+        survey_date_used,
+    )
 
 
 def validate_filters(filters):
@@ -145,10 +187,18 @@ def get_columns() -> list[dict]:
 		},
 		{
 			"label": _("Total Month to Date BCM"),
-			"fieldname": "actual_bcm",
+			"fieldname": "month_to_date_bcm",
 			"fieldtype": "Float",
 			"precision": 2,
 			"width": 170,
+		},
+		{
+			"label": _("Selected Period BCM"),
+			"fieldname": "selected_period_bcm",
+			"fieldtype": "Float",
+			"precision": 2,
+			"hidden": 1,
+			"width": 1,
 		},
 		{
 			"label": _("Total Tallies Cubes"),
