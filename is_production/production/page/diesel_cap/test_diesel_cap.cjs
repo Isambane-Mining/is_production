@@ -12,11 +12,12 @@ const Page = context.frappe.DieselCapPage;
 test('summaries use returned totals and volume-weighted fuel ratios', () => {
   assert.ok(Page, 'Diesel Cap page must exist');
   const summary = Page.prototype.summarize([
-    {actual_bcm: 100, total_tallies_cubes: 50, total_diesel_litres: 200, diesel_cap: 2},
-    {actual_bcm: 900, total_tallies_cubes: 450, total_diesel_litres: 900, diesel_cap: 1},
+    {month_to_date_bcm: 600, selected_period_bcm: 100, total_tallies_cubes: 50, total_diesel_litres: 200},
+    {month_to_date_bcm: 1400, selected_period_bcm: 900, total_tallies_cubes: 450, total_diesel_litres: 900},
   ]);
   assert.deepEqual(JSON.parse(JSON.stringify(summary)), {
-    actual_bcm: 1000, total_tallies_cubes: 500, total_diesel_litres: 1100,
+    month_to_date_bcm: 2000, selected_period_bcm: 1000,
+    total_tallies_cubes: 500, total_diesel_litres: 1100,
     diesel_cap: 1.1, tallies_fuel_cap: 2.2,
   });
   assert.equal(Page.prototype.summarize([]).diesel_cap, 0);
