@@ -329,7 +329,16 @@ function hodNumber(value, decimals = 0, signed = false) {
         minimumFractionDigits: decimals, maximumFractionDigits: decimals
     });
 }
-function hodPercent(value) { return hodValue(value) === null ? '—' : `${hodNumber(value, 1)}%`; }
+// HOD_AU_DISPLAY_CAP_100_V1
+// Cap displayed A&U percentages only; preserve source calculations.
+function hodCapAuPercent(value) {
+    const number = hodValue(value);
+    return number === null ? null : Math.max(0, Math.min(100, number));
+}
+function hodPercent(value) {
+    const capped = hodCapAuPercent(value);
+    return capped === null ? '—' : `${hodNumber(capped, 1)}%`;
+}
 function hodBand(metric, value) {
     value = hodValue(value);
     if (value === null) return 'neutral';
@@ -351,10 +360,12 @@ function hodGauge(category, metric, averages) {
     const swingValue = hodValue(averages?.swing?.[metric]);
     const availableValues = [productionValue, swingValue]
         .filter(value => value !== null);
-    const value = availableValues.length
-        ? Math.max(...availableValues)
-        : null;
-    const progress = Math.min(100, Math.max(0, value ?? 0));
+    const value = hodCapAuPercent(
+        availableValues.length
+            ? Math.max(...availableValues)
+            : null
+    );
+    const progress = value ?? 0;
     const band = hodBand(metric, value);
     const stroke = {red:'#e02f43',amber:'#f1a900',green:'#19a557',neutral:'#a0a8b2'}[band];
     const text = {red:'#b42131',amber:'#a16a00',green:'#167743',neutral:'#677489'}[band];
@@ -420,7 +431,7 @@ function hodProduction(row) {
         ['Waste variance','waste_variance_bcm','BCM',0,true], ['Coal variance','coal_variance_tons',"TON's",0,true],
         ['Actual BCMs','actual_bcm','BCM'], ['Actual coal','actual_coal_tons',"TON's"],
         ['Daily required','daily_required_bcm','BCM/D',1], ['Daily achieved','daily_achieved_bcm','BCM/D',1],
-        ['Average BCM/hour','average_bcm_h','BCM/H',1], ['Days worked / left',null,'Days',1],
+        ['Average BCM/Hour','average_bcm_h','BCM/H',1], ['Days worked / left',null,'Days',1],
         ['Strip ratio','strip_ratio','BCM/T',1], ['Forecast delivery','forecast_delivery_percent','%',1],
         // HOD_BCM_PER_MAN_V1
         ['BCM/Man','bcm_per_man','BCM',1]
@@ -431,7 +442,7 @@ function hodProduction(row) {
         <table class="hod-production-table"><tbody>${metrics.map(([label,field,unit,decimals=0,signed=false]) => {
             const value = field ? row[field] : null;
             // HOD_AVERAGE_BCM_COLOUR_V1
-            // Original HOD thresholds: Green >=220, Orange >=200, Red <200.
+            // HOD thresholds: Green >=220, Orange >=210, Red <210.
             let colour = signed && hodValue(value) !== null
                 ? (Number(value) >= 0 ? 'hod-positive' : 'hod-negative')
                 : '';
@@ -439,10 +450,33 @@ function hodProduction(row) {
             if (field === 'average_bcm_h' && hodValue(value) !== null) {
                 colour = Number(value) >= 220
                     ? 'hod-positive'
-                    : Number(value) >= 200
+                    : Number(value) >= 210
                         ? 'hod-average-bcm-amber'
                         : 'hod-negative';
             }
+            // HOD_PRODUCTION_VALUE_COLOURS_V1
+            if (field === 'forecast_delivery_percent') {
+                const percent = hodValue(value);
+                colour = percent === null
+                    ? ''
+                    : Number(percent) >= 100
+                        ? 'hod-production-value-green'
+                        : Number(percent) >= 95
+                            ? 'hod-production-value-orange'
+                            : 'hod-production-value-red';
+            }
+
+            if (field === 'average_bcm_h') {
+                const rate = hodValue(value);
+                colour = rate === null
+                    ? ''
+                    : Number(rate) >= 220
+                        ? 'hod-production-value-green'
+                        : Number(rate) >= 210
+                            ? 'hod-production-value-orange'
+                            : 'hod-production-value-red';
+            }
+
             return `<tr data-production-field="${field || 'days_worked_left'}"><th scope="row">${label}</th><td>${unit}</td><td class="${colour}">${field ? hodNumber(value,decimals,signed)+(unit==='%' && hodValue(value)!==null ? '%' : '') : `${hodNumber(row.days_worked,1)} / ${hodNumber(row.days_left,1)}`}</td></tr>`;
         }).join('')}</tbody></table>`;
 }
@@ -808,58 +842,30 @@ function hodPopupPrintReport(dialog, classification) {
         `Breakdown Reasons - ${classification}`
     );
 
+    const printCssUrl = [...document.querySelectorAll(
+        'link[rel="stylesheet"]'
+    )].find(link =>
+        link.href.includes("/is_production/css/dashboards.css")
+        && !link.disabled
+    )?.href;
+
+    if (!printCssUrl) {
+        printWindow.close();
+        frappe.msgprint(
+            "Shared dashboard stylesheet is unavailable for printing."
+        );
+        return;
+    }
+
     const documentHtml = `
         <!doctype html>
         <html>
         <head>
             <meta charset="utf-8">
             <title>${title}</title>
-            <style>
-                @page {
-                    size: A4 landscape;
-                    margin: 10mm;
-                }
-                body {
-                    font-family: Arial, sans-serif;
-                    color: #111;
-                    margin: 0;
-                    font-size: 10px;
-                }
-                h2 {
-                    margin: 0 0 14px;
-                    font-size: 17px;
-                    color: #111;
-                }
-                table {
-                    border-collapse: collapse !important;
-                    width: 100% !important;
-                    min-width: 0 !important;
-                    font-size: 9px !important;
-                }
-                th, td {
-                    padding: 6px !important;
-                    border: 1px solid #aaa !important;
-                    color: #111 !important;
-                    background: #fff !important;
-                    vertical-align: top;
-                }
-                thead th {
-                    background: #ddd !important;
-                    font-weight: bold !important;
-                }
-                tbody tr:last-child td {
-                    background: #ddd !important;
-                    font-weight: bold !important;
-                }
-                thead {
-                    display: table-header-group;
-                }
-                tr {
-                    break-inside: avoid;
-                }
-            </style>
+            <link rel="stylesheet" href="${printCssUrl}">
         </head>
-        <body>
+        <body class="hod-breakdown-print">
             <h2>${title}</h2>
             ${table.outerHTML}
         </body>
@@ -1505,8 +1511,110 @@ function hodReliabilityPanel(engineering) {
     `;
 }
 
+// HOD_HR_STATS_V2
+// Blue workforce overview - dynamic Employee data.
+// This styling is limited to the HOD presentation.
+function hodHrStats(row) {
+    const stats = row.hr_stats || {};
+
+    const icons = {
+        employees: `<svg viewBox="0 0 24 24" width="24" height="24"
+            fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round"
+            aria-hidden="true">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+            <circle cx="9" cy="7" r="4"/>
+            <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+        </svg>`,
+
+        terminations: `<svg viewBox="0 0 24 24" width="24" height="24"
+            fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round"
+            aria-hidden="true">
+            <path d="M10 17l5-5-5-5"/>
+            <path d="M15 12H3"/>
+            <path d="M12 3h7a2 2 0 0 1 2 2v14
+                a2 2 0 0 1-2 2h-7"/>
+        </svg>`,
+
+        recruitment: `<svg viewBox="0 0 24 24" width="24" height="24"
+            fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round"
+            aria-hidden="true">
+            <circle cx="11" cy="11" r="8"/>
+            <circle cx="11" cy="9" r="2"/>
+            <path d="M6.5 16a5 5 0 0 1 9 0"/>
+            <path d="m17 17 5 5"/>
+        </svg>`
+    };
+
+    const groups = [
+        {
+            label: "TOTAL EMPLOYEES",
+            icon: icons.employees,
+            values: stats.total_employees
+        },
+        {
+            label: "TERMINATIONS",
+            icon: icons.terminations,
+            values: stats.terminations
+        },
+        {
+            label: "RECRUITMENT",
+            icon: icons.recruitment,
+            values: stats.recruitment
+        }
+    ];
+
+    const safeCount = value => {
+        const number = Number(value);
+        return Number.isFinite(number) && number >= 0
+            ? Math.floor(number)
+            : 0;
+    };
+
+    return `
+        <div class="hod-hr-stats"
+           >
+
+            <div class="hod-hr-header">
+                <div class="hod-hr-title">HR STATS</div>
+
+                <div class="hod-hr-subtitle">WORKFORCE OVERVIEW</div>
+            </div>
+
+            ${groups.map(group => `
+                <div class="hod-hr-card">
+                    <div class="hod-hr-card-heading">
+                        <span class="hod-hr-icon">${group.icon}</span>
+
+                        <span class="hod-hr-card-label">${group.label}</span>
+                    </div>
+
+                    <div class="hod-hr-card-values">
+                        ${(group.values?.genders || []).map(item => `
+                            <span>${hodEscape(item.label)} = <strong class="hod-hr-count">${safeCount(item.count)}</strong></span>
+                        `).join(`<span class="hod-hr-separator">|</span>`) || `<span>None = 0</span>`}
+                    </div>
+                </div>
+            `).join("")}
+        </div>
+    `;
+}
+
 function hodDashboard(row) {
     const engineering = row.engineering;
+
+    const averageBcm = hodValue(row.average_bcm_h);
+    const averageBcmClass = averageBcm === null
+        ? "hod-production-kpi-neutral"
+        : averageBcm >= 220
+            ? "hod-production-kpi-green"
+            : averageBcm >= 210
+                ? "hod-production-kpi-orange"
+                : "hod-production-kpi-red";
+
     return `<article class="hod-performance-dashboard" data-site="${hodEscape(row.site)}">
         <header class="hod-brand"><img src="/files/ISAMBANE-WHITE.png" alt="Isambane Mining"><h2>${hodEscape(hodGetComplexName(row.site))} · Production Performance</h2></header>
         <div class="hod-period"><strong>${hodEscape(row.site)}</strong><span>${hodEscape(row.period)}</span></div>
@@ -1545,8 +1653,25 @@ function hodDashboard(row) {
 ${hodProblemMachinesPanel(engineering)}
             </section>
             <section class="hod-domain-panel hod-production-panel">
-                <div class="hod-domain-heading"><div><h3>Production</h3><span>Production performance</span></div></div>
-                <div class="hod-domain-main" style="height:auto;min-height:360px;overflow:visible;box-sizing:border-box;padding-bottom:10px">${hodProduction(row)}</div>
+                ${hodHrStats(row)}
+                <!-- HOD_PRODUCTION_HEADER_KPIS_V1 -->
+                <div class="hod-domain-heading hod-production-title">
+                    <div class="hod-production-title-text">
+                        <h3>Production</h3>
+                        <span>Production performance</span>
+                    </div>
+                    <div class="hod-production-header-kpis">
+                        <div class="hod-production-header-kpi">
+                            <span>Average BCM/Hour =</span>
+                            <strong class="${averageBcmClass}">${hodNumber(row.average_bcm_h, 1)}</strong>
+                        </div>
+                        <div class="hod-production-header-kpi">
+                            <span>BCM/Man =</span>
+                            <strong>${hodNumber(row.bcm_per_man, 1)}</strong>
+                        </div>
+                    </div>
+                </div>
+                <div class="hod-domain-main hod-production-main">${hodProduction(row)}</div>
                 ${hodDowntimeContributorsPanel(engineering)}
             </section>
         </div>
@@ -1571,7 +1696,33 @@ function alignHodDomainHeadings(root) {
             '.hod-domain-heading:first-child'
         );
 
-        if (!productionHeading) return;
+        if (!machineSummary || !hrSummary ||
+            !engineeringHeading || !productionHeading) return;
+
+        // Remove previous adjustments before measuring natural sizes.
+        machineSummary.style.height = "auto";
+        hrSummary.style.height = "auto";
+        engineeringPanel.style.paddingTop = "0px";
+        productionPanel.style.paddingTop = "0px";
+
+
+        // Match heights without changing the card contents.
+        const height = Math.ceil(Math.max(
+            machineSummary.getBoundingClientRect().height,
+            hrSummary.getBoundingClientRect().height
+        ));
+
+        machineSummary.style.height = height + "px";
+        hrSummary.style.height = height + "px";
+
+        // Match vertical spacing below both summary boxes.
+        const machineMargin = parseFloat(
+            getComputedStyle(machineSummary).marginBottom
+        ) || 0;
+
+        const hrMargin = parseFloat(
+            getComputedStyle(hrSummary).marginBottom
+        ) || 0;
 
         const difference =
             engineering.getBoundingClientRect().top -
@@ -1585,6 +1736,155 @@ function alignHodDomainHeadings(root) {
 
 // HOD_DOWNTIME_SECTION_ALIGNMENT_V1
 // Align Engineering and Production downtime section headings.
+// HOD_MAIN_PANEL_HEIGHT_ALIGNMENT_V1
+// Keep Engineering gauges and Production KPIs equal in height.
+// HOD_GAUGE_FILL_SPACE_V1
+// Fill the Engineering panel without changing gauge calculations.
+function fillHodGaugeSpace(root) {
+    root.find(".hod-performance-dashboard").each(function () {
+        const board = this;
+
+        const engineering = board.querySelector(
+            ".hod-engineering-panel > .hod-engineering-main"
+        );
+
+        const production = board.querySelector(
+            ".hod-production-panel > .hod-domain-main"
+        );
+
+        if (!engineering || !production) return;
+
+        const rows = Array.from(
+            engineering.querySelectorAll(
+                ":scope > .hod-gauge-row"
+            )
+        );
+
+        if (rows.length !== 2) return;
+
+        // Main panel heights have already been aligned.
+        const height = Math.ceil(Math.max(
+            engineering.getBoundingClientRect().height,
+            production.getBoundingClientRect().height
+        ));
+
+        engineering.style.height = height + "px";
+        engineering.style.minHeight = height + "px";
+
+        // HOD_GAUGE_ROW_FILL_FIX_V2
+        // Share the available height between both gauge rows.
+        // Keep the original gauges, text and calculations.
+        rows.forEach(row => {
+            row.style.flex = "1 1 0";
+            row.style.minHeight = "0";
+
+            row.querySelectorAll(".hod-gauge").forEach(card => {
+                card.style.display = "flex";
+                card.style.flexDirection = "column";
+                card.style.justifyContent = "center";
+                card.style.minHeight = "0";
+            });
+        });
+    });
+}
+
+function alignHodMainPanels(root) {
+    root.find(".hod-performance-dashboard").each(function () {
+        const board = this;
+
+        const engineering = board.querySelector(
+            ".hod-engineering-panel > .hod-engineering-main"
+        );
+
+        const production = board.querySelector(
+            ".hod-production-panel > .hod-domain-main"
+        );
+
+        if (!engineering || !production) return;
+
+        // Preserve the original minimum heights for repeat calls.
+        for (const panel of [engineering, production]) {
+            if (!panel.hasAttribute("data-hod-base-min-height")) {
+                panel.setAttribute(
+                    "data-hod-base-min-height",
+                    panel.style.minHeight || ""
+                );
+            }
+
+            panel.style.minHeight = panel.getAttribute(
+                "data-hod-base-min-height"
+            );
+        }
+
+        // Use the larger rendered height; never shrink content.
+        const targetHeight = Math.ceil(Math.max(
+            engineering.getBoundingClientRect().height,
+            production.getBoundingClientRect().height
+        ));
+
+        for (const panel of [engineering, production]) {
+            panel.style.minHeight = targetHeight + "px";
+        }
+    });
+}
+
+// HOD_DOWNTIME_EQUAL_HEIGHT_V1
+// Match the outer heights of the two downtime panels.
+// Preserve table rows, graph bars and existing heading alignment.
+function alignHodDowntimePanelHeights(root) {
+    root.find(".hod-performance-dashboard").each(function () {
+        const board = this;
+
+        const engineering = board.querySelector(
+            ".hod-engineering-panel .hod-problem-machines"
+        );
+
+        const production = board.querySelector(
+            ".hod-production-panel .hod-downtime-contributors"
+        );
+
+        if (!engineering || !production) return;
+
+        const panels = [engineering, production];
+
+        // Reset previous height adjustments before measuring.
+        panels.forEach(panel => {
+            if (!panel.hasAttribute("data-hod-downtime-base-min")) {
+                panel.setAttribute(
+                    "data-hod-downtime-base-min",
+                    panel.style.minHeight || ""
+                );
+            }
+
+            panel.style.minHeight = panel.getAttribute(
+                "data-hod-downtime-base-min"
+            );
+        });
+
+        const bounds = panels.map(panel =>
+            panel.getBoundingClientRect()
+        );
+
+        // Both bottom borders should finish on the same line.
+        const targetBottom = Math.ceil(Math.max(
+            bounds[0].bottom,
+            bounds[1].bottom
+        ));
+
+        panels.forEach((panel, index) => {
+            const requiredHeight = Math.ceil(
+                targetBottom - bounds[index].top
+            );
+
+            panel.style.minHeight =
+                Math.max(
+                    bounds[index].height,
+                    requiredHeight
+                ) + "px";
+        });
+    });
+}
+
 function alignHodDowntimeSections(root) {
     const dashboards = root.find(".hod-performance-dashboard");
 
@@ -1760,6 +2060,60 @@ function bindHodDetailButtons(view) {
 
 }
 
+// HOD_DOWNTIME_FILL_SPACE_V1
+// Distribute two-column graph bars over the available panel height.
+function fillHodDowntimeGraphSpace(root) {
+    root.find(".hod-performance-dashboard").each(function () {
+        const board = this;
+
+        const leftPanel = board.querySelector(
+            ".hod-engineering-panel .hod-problem-machines"
+        );
+
+        const rightPanel = board.querySelector(
+            ".hod-production-panel .hod-downtime-contributors"
+        );
+
+        const bars = rightPanel?.querySelector(
+            ".hod-breakdown-bars"
+        );
+
+        if (!leftPanel || !rightPanel || !bars) return;
+
+        const rows = Array.from(bars.children);
+
+        if (!rows.length || !rows.every(row =>
+            row.classList.contains("hod-breakdown-bar-row")
+        )) return;
+
+        const rowsPerColumn = Math.ceil(rows.length / 2);
+
+        // Use the aligned left-panel bottom as the target.
+        const bottom = leftPanel.getBoundingClientRect().bottom;
+        const top = bars.getBoundingClientRect().top;
+
+        const paddingBottom = parseFloat(
+            getComputedStyle(rightPanel).paddingBottom
+        ) || 0;
+
+        const availableHeight = Math.max(
+            bars.getBoundingClientRect().height,
+            bottom - top - paddingBottom - 2
+        );
+
+        // Keep both existing columns and classification order.
+        bars.classList.add("hod-breakdown-bars-expanded");
+        bars.style.gridTemplateRows =
+            `repeat(${rowsPerColumn}, minmax(0, 1fr))`;
+        bars.style.height = Math.ceil(availableHeight) + "px";
+
+        // Use the available row space instead of leaving
+        // one large blank block below the graph.
+        rows.forEach(row => {
+        });
+    });
+}
+
 async function renderHodPresentationLayout(view) {
     view.page.main.html(view.data.map(hodDashboard).join(''));
     bindHodDetailButtons(view);
@@ -1836,6 +2190,66 @@ async function downloadHodPresentation(view) {
                 clone.querySelectorAll(
                     '.hod-view-au-detail, .hod-view-plant-detail, .hod-view-breakdown-detail'
                 ).forEach(button => button.remove());
+
+                // HOD_RESTORED_ADAPTIVE_LANDSCAPE_V1
+                // Restore full-width export sizing without altering
+                // the live ERPNext dashboard.
+                //
+                // Keep the canvas as close to 16:9 as practical,
+                // allowing the dashboard to reflow naturally.
+
+                for (let attempt = 0; attempt < 4; attempt++) {
+                    const currentHeight = Math.max(
+                        clone.scrollHeight,
+                        clone.offsetHeight,
+                        1
+                    );
+
+                    const desiredWidth = Math.max(
+                        2000,
+                        Math.min(
+                            2400,
+                            Math.ceil(currentHeight * 16 / 9)
+                        )
+                    );
+
+                    root.style.setProperty(
+                        'width', `${desiredWidth}px`, 'important'
+                    );
+
+                    clone.style.setProperty(
+                        'width', `${desiredWidth}px`, 'important'
+                    );
+
+                    clone.style.setProperty(
+                        'max-width', 'none', 'important'
+                    );
+
+                    // Force the browser to recalculate its layout.
+                    void clone.offsetHeight;
+
+                    const measuredWidth = clone.offsetWidth;
+                    const measuredHeight = clone.scrollHeight;
+
+                    if (
+                        measuredHeight > 0 &&
+                        Math.abs(
+                            measuredWidth / measuredHeight - 16 / 9
+                        ) < 0.01
+                    ) {
+                        break;
+                    }
+                }
+
+                // Re-align after the final export width is applied.
+                // Recalculate main panels after export resizing.
+                alignHodMainPanels($(root));
+                fillHodGaugeSpace($(root));
+
+                alignHodDowntimeSections($(root));
+                alignHodDowntimePanelHeights($(root));
+                fillHodDowntimeGraphSpace($(root));
+
                 const siteRow = (view.data || []).find(
                     row => row.site === board.dataset.site
                 );
@@ -1845,7 +2259,7 @@ async function downloadHodPresentation(view) {
                     start_date:siteRow?.start_date || '',
                     end_date:siteRow?.end_date || '',
 
-                    image_data:await captureHodSection(clone,{width:1600,pixelRatio:1.0,quality:0.85})});
+                    image_data:await captureHodSection(clone,{pixelRatio:1.0})});
             } finally { root.remove(); }
         }
         const response = await frappe.call({
@@ -1882,7 +2296,7 @@ async function captureHodSection(element, options = {}) {
     );
 
     const capturePromise =
-        window.htmlToImage.toJpeg(
+        /* HOD_LOSSLESS_PNG_EXPORT_V2 */ window.htmlToImage.toPng(
             element,
             {
                 quality:

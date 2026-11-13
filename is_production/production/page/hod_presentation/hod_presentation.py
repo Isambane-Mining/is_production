@@ -5,6 +5,74 @@ from is_production.production.report.hod_presentation import hod_presentation as
 from is_production.production.report.hod_presentation.hod_presentation import build_grid_data, render_grids
 
 
+# HOD_HR_STATS_V3_DYNAMIC_GENDERS
+def get_hod_hr_stats(site, start_date, end_date):
+    """Return active headcount and period activity for every recorded gender."""
+    report.check_hod_site_access(site)
+
+    records = frappe.db.sql(
+        """
+        SELECT
+            COALESCE(NULLIF(TRIM(gender), ''), 'Not specified') AS gender,
+            SUM(CASE WHEN status = 'Active' THEN 1 ELSE 0 END)
+                AS total_employees,
+            SUM(
+                CASE WHEN relieving_date BETWEEN %(start)s AND %(end)s
+                THEN 1 ELSE 0 END
+            ) AS terminations,
+            SUM(
+                CASE WHEN date_of_joining BETWEEN %(start)s AND %(end)s
+                THEN 1 ELSE 0 END
+            ) AS recruitment
+        FROM `tabEmployee`
+        WHERE branch = %(site)s
+        GROUP BY COALESCE(NULLIF(TRIM(gender), ''), 'Not specified')
+        ORDER BY gender
+        """,
+        {
+            "site": site,
+            "start": start_date,
+            "end": end_date,
+        },
+        as_dict=True,
+    )
+
+    categories = (
+        "total_employees",
+        "terminations",
+        "recruitment",
+    )
+
+    stats = {
+        category: {"total": 0, "genders": []}
+        for category in categories
+    }
+
+    for record in records:
+        gender = str(record.get("gender") or "Not specified")
+
+        for category in categories:
+            count = int(record.get(category) or 0)
+            stats[category]["total"] += count
+
+            if count:
+                stats[category]["genders"].append({
+                    "label": gender,
+                    "count": count,
+                })
+
+    # Same branch/status population as BCM/Man.
+    stats["total_employees"]["total"] = frappe.db.count(
+        "Employee",
+        filters={
+            "branch": site,
+            "status": "Active",
+        },
+    )
+
+    return stats
+
+
 @frappe.whitelist()
 def get_data(filters=None):
     report.check_report_access()
@@ -133,6 +201,13 @@ def get_data(filters=None):
                 )
                 if active_employees > 0
                 else None
+            )
+
+            # HOD_HR_STATS_V1: site and reporting-period statistics.
+            row["hr_stats"] = get_hod_hr_stats(
+                site=row["site"],
+                start_date=row["start_date"],
+                end_date=row["end_date"],
             )
 
             row['fleet_summary_html'] = render_grids(fleet)

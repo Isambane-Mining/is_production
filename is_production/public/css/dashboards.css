@@ -1201,7 +1201,7 @@
 .hod-page-filters .help-box { font-size:10px; margin:2px 0; }
 .hod-page-status { padding:4px 0; }
 .hod-page-content { min-width:0; }
-.hod-performance-dashboard { container-type:inline-size; box-sizing:border-box; width:100%; max-width:1700px;
+.hod-performance-dashboard { container-type:inline-size; box-sizing:border-box; width:100%; max-width:2000px;
     margin:0 auto 18px; background:white; color:#183251; border:1px solid #c9d4df; border-radius:5px;
     font:13px/1.18 Arial,sans-serif; overflow:hidden; }
 .hod-performance-dashboard * { box-sizing:border-box; }
@@ -2121,3 +2121,732 @@ tbody td:first-child {
               grid-row:auto;
             }
           }
+
+
+/* HOD_STATIC_JS_CLEANUP_PR99_V1 */
+
+.hod-performance-dashboard .hod-breakdown-bars {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-flow: column;
+    column-gap: 12px;
+    row-gap: 4px;
+    align-items: start;
+    box-sizing: border-box;
+}
+
+.hod-performance-dashboard .hod-breakdown-bars-expanded {
+    align-items: stretch;
+}
+
+.hod-performance-dashboard .hod-engineering-summary-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.hod-performance-dashboard .hod-production-main {
+    height: auto;
+    min-height: 360px;
+    overflow: visible;
+    box-sizing: border-box;
+    padding-bottom: 10px;
+}
+
+/* HOD_EXPORT_STATIC_CSS_PR99_V1 */
+
+.hod-export-root {
+    position: fixed;
+    left: -20000px;
+    top: 0;
+    width: 2000px;
+    background: white;
+}
+
+.hod-export-root .hod-export-dashboard {
+    width: 2000px;
+    border-left: 24px solid #050505;
+    border-bottom: 24px solid #050505;
+    border-right: 0;
+    border-radius: 0;
+    box-sizing: border-box;
+}
+
+.hod-export-root .hod-export-dashboard .hod-brand {
+    height: 96px;
+    min-height: 96px;
+    padding: 5px 12px;
+    align-items: center;
+    overflow: hidden;
+}
+
+.hod-export-root .hod-export-dashboard .hod-brand img {
+    width: 300px;
+    height: 85px;
+    max-width: none;
+    object-fit: contain;
+    object-position: left center;
+    flex-shrink: 0;
+    transform: none;
+    margin: 0;
+}
+
+
+/* HOD_BREAKDOWN_PRINT_CSS_PR99_V1 */
+@page hod-breakdown-print {
+                    size: A4 landscape;
+                    margin: 10mm;
+                }
+body.hod-breakdown-print {
+    page: hod-breakdown-print;
+}
+
+                body.hod-breakdown-print {
+                    font-family: Arial, sans-serif;
+                    color: #111;
+                    margin: 0;
+                    font-size: 10px;
+                }
+                body.hod-breakdown-print h2 {
+                    margin: 0 0 14px;
+                    font-size: 17px;
+                    color: #111;
+                }
+                body.hod-breakdown-print table {
+                    border-collapse: collapse !important;
+                    width: 100% !important;
+                    min-width: 0 !important;
+                    font-size: 9px !important;
+                }
+                body.hod-breakdown-print th,
+body.hod-breakdown-print td {
+                    padding: 6px !important;
+                    border: 1px solid #aaa !important;
+                    color: #111 !important;
+                    background: #fff !important;
+                    vertical-align: top;
+                }
+                body.hod-breakdown-print thead th {
+                    background: #ddd !important;
+                    font-weight: bold !important;
+                }
+                body.hod-breakdown-print tbody tr:last-child td {
+                    background: #ddd !important;
+                    font-weight: bold !important;
+                }
+                body.hod-breakdown-print thead {
+                    display: table-header-group;
+                }
+                body.hod-breakdown-print tr {
+                    break-inside: avoid;
+                }
+
+/* HOD_FIXED_LAYOUT_CSS_PR99_V1 */
+
+/* Compact summary boxes */
+.hod-performance-dashboard
+.hod-engineering-panel > .hod-domain-heading:first-child,
+.hod-performance-dashboard
+.hod-production-panel > .hod-hr-stats {
+    box-sizing: border-box;
+}
+
+/* Engineering gauge container */
+.hod-performance-dashboard
+.hod-engineering-panel > .hod-engineering-main {
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Engineering gauge rows */
+.hod-performance-dashboard
+.hod-engineering-main > .hod-gauge-row {
+    flex: 1 1 0;
+    min-height: 0;
+    align-items: stretch;
+}
+
+/* Engineering gauge cards */
+.hod-performance-dashboard
+.hod-engineering-main > .hod-gauge-row .hod-gauge {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-height: 0;
+}
+
+/* Breakdown Reasons graph rows */
+.hod-performance-dashboard
+.hod-breakdown-bars-expanded > .hod-breakdown-bar-row {
+    height: 100%;
+    min-height: 0;
+    box-sizing: border-box;
+    align-items: center;
+}
+
+/* HOD_PRODUCTION_TABLE_NO_GRIDLINES_V1 */
+/* Remove internal gridlines without changing row colours or spacing. */
+.hod-performance-dashboard .hod-production-table,
+.hod-performance-dashboard .hod-production-table tr,
+.hod-performance-dashboard .hod-production-table th,
+.hod-performance-dashboard .hod-production-table td {
+    border: none !important;
+}
+
+/* HOD_PRODUCTION_FULL_ROW_SHADING_V1 */
+/* Full-width alternating rows without table gridlines. */
+.hod-performance-dashboard
+.hod-production-table tbody tr:nth-child(odd) > th,
+.hod-performance-dashboard
+.hod-production-table tbody tr:nth-child(odd) > td {
+    background-color: #ffffff !important;
+}
+
+.hod-performance-dashboard
+.hod-production-table tbody tr:nth-child(even) > th,
+.hod-performance-dashboard
+.hod-production-table tbody tr:nth-child(even) > td {
+    background-color: #edf2f7 !important;
+}
+
+/* HOD_FINAL_BOX_SIZING_PR99_V1 */
+/* Static panel sizing belongs in shared CSS. */
+.hod-performance-dashboard
+.hod-production-panel > .hod-domain-main,
+.hod-performance-dashboard
+.hod-engineering-panel .hod-problem-machines,
+.hod-performance-dashboard
+.hod-production-panel .hod-downtime-contributors {
+    box-sizing: border-box;
+}
+
+/* HOD_PRODUCTION_HEADER_KPIS_V1 */
+.hod-performance-dashboard .hod-production-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.hod-performance-dashboard .hod-production-header-kpis {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 3px;
+    min-width: 0;
+    margin-left: auto;
+    font: 600 11px/1.2 Arial, sans-serif;
+    color: #ffffff;
+}
+
+.hod-performance-dashboard .hod-production-header-kpi {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 5px;
+    white-space: nowrap;
+}
+
+.hod-performance-dashboard .hod-production-header-kpi strong {
+    font-weight: 700;
+}
+
+.hod-performance-dashboard .hod-production-kpi-green {
+    color: #46f4a1;
+}
+
+.hod-performance-dashboard .hod-production-kpi-orange {
+    color: #ffca65;
+}
+
+.hod-performance-dashboard .hod-production-kpi-red {
+    color: #ff8080;
+}
+
+.hod-performance-dashboard .hod-production-kpi-neutral {
+    color: #ffffff;
+}
+
+@media (max-width: 700px) {
+    .hod-performance-dashboard .hod-production-title {
+        flex-wrap: wrap;
+    }
+
+    .hod-performance-dashboard .hod-production-header-kpis {
+        align-items: flex-start;
+        margin-left: 0;
+    }
+}
+
+/* HOD_PRODUCTION_HEADER_FONT_V1 */
+/* Match KPI labels to Production Performance and make both bold. */
+.hod-performance-dashboard
+.hod-production-title .hod-production-title-text > span {
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.hod-performance-dashboard
+.hod-production-title .hod-production-header-kpis {
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.hod-performance-dashboard
+.hod-production-title .hod-production-header-kpi strong {
+    font-size: inherit;
+    font-weight: 700;
+}
+
+/* HOD_PRODUCTION_TABLE_TEXT_BLACK_V1 */
+/* Make the normal Production table text black, while keeping
+   explicit KPI colour classes such as positive/negative/amber. */
+.hod-production-table th,
+.hod-production-table td:nth-child(2),
+.hod-production-table td:last-child:not(.hod-positive):not(.hod-negative):not(.hod-average-bcm-amber) {
+    color: #050505;
+}
+
+/* HOD_PRODUCTION_BOLD_BLACK_TEXT_V1 */
+/* Match the bold black text used in Engineering tables. */
+.hod-performance-dashboard .hod-production-table th,
+.hod-performance-dashboard .hod-production-table td:nth-child(2) {
+    color: #050505;
+    font-weight: 700;
+}
+
+/* Keep ordinary production values bold black. */
+.hod-performance-dashboard
+.hod-production-table td:last-child:not(.hod-positive):not(.hod-negative):not(.hod-average-bcm-amber) {
+    color: #050505;
+    font-weight: 700;
+}
+
+/* HOD_PRODUCTION_VALUE_COLOURS_V1 */
+/* Colour only the numeric Production KPI cells. */
+.hod-performance-dashboard
+.hod-production-table td.hod-production-value-green {
+    color: #087d42 !important;
+    font-weight: 700;
+}
+
+.hod-performance-dashboard
+.hod-production-table td.hod-production-value-orange {
+    color: #d18400 !important;
+    font-weight: 700;
+}
+
+.hod-performance-dashboard
+.hod-production-table td.hod-production-value-red {
+    color: #cf2536 !important;
+    font-weight: 700;
+}
+
+/* HOD_PRODUCTION_BOLD_KPI_VALUES_V1 */
+/* Bold coloured Average BCM/hour and Forecast Delivery values. */
+.hod-performance-dashboard
+.hod-production-table td.hod-production-value-green,
+.hod-performance-dashboard
+.hod-production-table td.hod-production-value-orange,
+.hod-performance-dashboard
+.hod-production-table td.hod-production-value-red {
+    font-weight: 800 !important;
+}
+
+/* HOD_PRODUCTION_KPI_MATCH_TITLE_SIZE_V1 */
+/* Match KPI font size to the main Production heading. */
+.hod-performance-dashboard
+.hod-production-title .hod-production-header-kpis {
+    font-size: 12px;
+    font-weight: 700;
+    gap: 2px;
+}
+
+.hod-performance-dashboard
+.hod-production-title .hod-production-header-kpi {
+    font-size: inherit;
+    font-weight: 700;
+}
+
+.hod-performance-dashboard
+.hod-production-title .hod-production-header-kpi strong {
+    font-size: inherit;
+    font-weight: 700;
+}
+
+/* =========================================================
+   HOD_LANDSCAPE_COMPACT_LAYOUT_V1
+   Reduce unnecessary vertical space on the HOD dashboard.
+   Keep all existing content and both dashboard columns.
+   ========================================================= */
+
+/* Compact the main branded heading. */
+.hod-performance-dashboard .hod-brand {
+    min-height: 60px;
+    padding-top: 5px;
+    padding-bottom: 5px;
+}
+
+/* Reduce reporting-period spacing. */
+.hod-performance-dashboard .hod-period {
+    padding-top: 6px;
+    padding-bottom: 6px;
+}
+
+/* Preserve side-by-side Engineering and Production. */
+.hod-performance-dashboard .hod-columns {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px;
+    padding-left: 8px;
+    padding-right: 8px;
+}
+
+/* Compact section headings without changing KPI font sizes. */
+.hod-performance-dashboard .hod-domain-heading {
+    min-height: 48px;
+    padding: 6px 10px;
+}
+
+/* Reduce unused space between major sections. */
+.hod-performance-dashboard .hod-domain-panel {
+    gap: 5px;
+}
+
+/* Compact Engineering category cards. */
+.hod-performance-dashboard .hod-gauge {
+    padding: 2px 3px;
+}
+
+.hod-performance-dashboard .hod-gauge-category img {
+    height: 25px;
+    width: 43px;
+}
+
+/* Compact the Production table while retaining all rows. */
+.hod-performance-dashboard .hod-production-table th,
+.hod-performance-dashboard .hod-production-table td {
+    padding-top: 3px;
+    padding-bottom: 3px;
+}
+
+/* HOD_WIDER_LANDSCAPE_CARDS_V1 */
+
+/* HOD_LANDSCAPE_READABILITY_V1 */
+/* Improve Production and Downtime text readability. */
+
+/* Production table labels and values. */
+.hod-performance-dashboard .hod-production-table th,
+.hod-performance-dashboard .hod-production-table td {
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.15;
+}
+
+/* HOD_LANDSCAPE_READABILITY_V2 */
+/* Slightly improve text readability without changing card sizes. */
+
+.hod-performance-dashboard .hod-ranking table {
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.hod-performance-dashboard .hod-breakdown-bar-row strong {
+    font-size: 12px;
+    font-weight: 900;
+}
+
+.hod-performance-dashboard .hod-gauge-category {
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.hod-performance-dashboard .hod-gauge-average {
+    font-size: 12px;
+    font-weight: 700;
+}
+
+/* HOD_FULL_SLIDE_FIT_V2 */
+/* Improve text readability specifically in PowerPoint export. */
+
+.hod-export-root .hod-production-table th,
+.hod-export-root .hod-production-table td {
+    font-size: 18px !important;
+    font-weight: 700;
+}
+
+.hod-export-root .hod-ranking table {
+    font-size: 18px !important;
+    font-weight: 700;
+}
+
+.hod-export-root .hod-gauge-category {
+    font-size: 17px !important;
+    font-weight: 800;
+}
+
+.hod-export-root .hod-gauge-average {
+    font-size: 18px !important;
+    font-weight: 700;
+}
+
+.hod-export-root .hod-breakdown-bar-row {
+    font-size: 16px !important;
+    font-weight: 700;
+}
+
+.hod-export-root .hod-breakdown-bar-row strong {
+    font-size: 17px !important;
+    font-weight: 900;
+}
+
+/* HOD_EXPORT_DOWNTIME_TABLE_REDESIGN_V1 */
+/* Downloaded presentation only. Live dashboard unchanged. */
+
+.hod-export-root .hod-new-problem-table {
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: collapse;
+    border: 0 !important;
+}
+
+/* Balanced column widths. */
+.hod-export-root .hod-new-problem-table th:nth-child(1) {
+    width: 5%;
+}
+
+.hod-export-root .hod-new-problem-table th:nth-child(2) {
+    width: 15%;
+}
+
+.hod-export-root .hod-new-problem-table th:nth-child(3) {
+    width: 17%;
+}
+
+.hod-export-root .hod-new-problem-table th:nth-child(4) {
+    width: 48%;
+}
+
+.hod-export-root .hod-new-problem-table th:nth-child(5) {
+    width: 15%;
+}
+
+/* Clean heading row. */
+.hod-export-root .hod-new-problem-table thead th {
+    background: #e5edf5 !important;
+    color: #123a5a !important;
+    font-size: 15px !important;
+    font-weight: 800 !important;
+    padding: 7px 8px !important;
+    border: 0 !important;
+    border-bottom: 2px solid #b5c7d8 !important;
+    text-align: left;
+}
+
+/* Body rows: simple alternating backgrounds. */
+.hod-export-root .hod-new-problem-table tbody td {
+    background: #ffffff !important;
+    color: #15263b !important;
+    font-size: 15px !important;
+    font-weight: 600;
+    line-height: 1.12 !important;
+    padding: 6px 8px !important;
+    border: 0 !important;
+    border-bottom: 1px solid #e1e8ef !important;
+    vertical-align: middle !important;
+    overflow-wrap: anywhere;
+}
+
+.hod-export-root
+.hod-new-problem-table tbody tr:nth-child(even) td {
+    background: #f2f6fa !important;
+}
+
+/* Fleet numbers and machine categories. */
+.hod-export-root
+.hod-new-problem-table tbody td:nth-child(2) {
+    font-weight: 800 !important;
+}
+
+.hod-export-root
+.hod-new-problem-table tbody td:nth-child(3) {
+    font-weight: 700 !important;
+}
+
+/* Keep Swing/Spare identification without purple blocks. */
+.hod-export-root
+.hod-new-problem-table tbody td.hod-spare-highlight {
+    color: #42306d !important;
+}
+
+.hod-export-root
+.hod-new-problem-table tbody td:nth-child(2).hod-spare-highlight {
+    box-shadow: inset 4px 0 0 #8e55d8;
+}
+
+/* Breakdown classification and explanatory reason. */
+.hod-export-root
+.hod-new-problem-table tbody td:nth-child(4) {
+    font-size: 15px !important;
+    font-weight: 800 !important;
+}
+
+.hod-export-root
+.hod-new-problem-table .hod-reason-detail {
+    display: block !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    line-height: 1.12 !important;
+    color: #506176 !important;
+    margin-top: 2px;
+    white-space: normal !important;
+}
+
+/* Lost hours stand out, aligned consistently. */
+.hod-export-root .hod-new-problem-table
+thead th:last-child,
+.hod-export-root .hod-new-problem-table
+tbody td:last-child {
+    text-align: right !important;
+    font-variant-numeric: tabular-nums;
+}
+
+.hod-export-root
+.hod-new-problem-table tbody td:last-child {
+    font-size: 16px !important;
+    font-weight: 800 !important;
+    color: #143d5b !important;
+}
+
+/* Keep the table subtitle legible. */
+.hod-export-root .hod-breakdown-table-section > h4 {
+    font-size: 16px !important;
+    font-weight: 800 !important;
+    margin-bottom: 5px !important;
+}
+
+/* HOD_EXPORT_REFINEMENT_V4 */
+/* Larger Engineering values and breakdown descriptions. */
+
+.hod-export-root .hod-gauge-value {
+    font-size: 30px;
+    font-weight: 800;
+}
+
+.hod-export-root .hod-ranking-bottom .hod-explanation {
+    font-size: 14px;
+    line-height: 1.15;
+    font-weight: 600;
+}
+
+.hod-export-root .hod-breakdown-class-text {
+    font-size: 14px;
+    line-height: 1.15;
+    font-weight: 800;
+}
+
+
+/* HOD_SHARP_EXPORT_ALIGNED_V1 */
+/* Allow longer classification names to wrap more naturally. */
+.hod-export-root .hod-breakdown-bar-row {
+    grid-template-columns:
+        minmax(0, 165px) minmax(0, 1fr) 56px;
+    gap: 6px;
+}
+
+.hod-export-root .hod-breakdown-class-text {
+    overflow-wrap: break-word;
+    line-height: 1.15;
+}
+
+/* HOD_EXPORT_LOGO_HEADER_MATCH_V1 */
+
+/* HOD_KPI_SIZE_AND_LIVE_BORDER_FIX_V1 */
+/* Increase Production header KPI size slightly on live dashboard and export. */
+.hod-production-title .hod-header-kpis,
+.hod-production-title .hod-production-header-kpis,
+.hod-export-root .hod-export-dashboard .hod-production-title .hod-header-kpis,
+.hod-export-root .hod-export-dashboard .hod-production-title .hod-production-header-kpis {
+    font-size: 16px;
+    line-height: 1.15;
+    font-weight: 700;
+}
+
+.hod-production-title .hod-header-kpis strong,
+.hod-production-title .hod-production-header-kpis strong,
+.hod-export-root .hod-export-dashboard .hod-production-title .hod-header-kpis strong,
+.hod-export-root .hod-export-dashboard .hod-production-title .hod-production-header-kpis strong {
+    font-size: 16px;
+    line-height: 1.15;
+    font-weight: 700;
+}
+
+.hod-production-title .hod-header-kpis span,
+.hod-production-title .hod-production-header-kpis span,
+.hod-export-root .hod-export-dashboard .hod-production-title .hod-header-kpis span,
+.hod-export-root .hod-export-dashboard .hod-production-title .hod-production-header-kpis span {
+    font-size: 16px;
+    line-height: 1.15;
+    font-weight: 700;
+}
+
+/* Extra safety: no export-only black frame on live dashboard. */
+body .hod-performance-dashboard:not(.hod-export-dashboard)::before,
+body .hod-performance-dashboard:not(.hod-export-dashboard)::after {
+    border: 0 !important;
+    box-shadow: none !important;
+}
+
+/* HOD_LIVE_BLACK_FRAME_V1 */
+/* Match the black left and bottom frame used in PowerPoint. */
+body .hod-performance-dashboard:not(.hod-export-dashboard) {
+    border-left: 24px solid #050505 !important;
+    border-bottom: 24px solid #050505 !important;
+    border-top: 1px solid #c9d4df !important;
+    border-right: 1px solid #c9d4df !important;
+    border-radius: 0 !important;
+}
+
+/* HOD_VARIANCE_COLOUR_AND_KPI_TEXT_MATCH_V1 */
+/* Signed Production variance colours. */
+
+.hod-performance-dashboard
+.hod-production-table tr[data-production-field="waste_variance_bcm"] td.hod-positive,
+.hod-performance-dashboard
+.hod-production-table tr[data-production-field="coal_variance_tons"] td.hod-positive {
+    color: #087d42 !important;
+    font-weight: 700 !important;
+}
+
+.hod-performance-dashboard
+.hod-production-table tr[data-production-field="waste_variance_bcm"] td.hod-negative,
+.hod-performance-dashboard
+.hod-production-table tr[data-production-field="coal_variance_tons"] td.hod-negative {
+    color: #cf2536 !important;
+    font-weight: 700 !important;
+}
+
+/* Match the wording and number sizes in both KPI rows. */
+
+.hod-performance-dashboard
+.hod-production-title .hod-production-header-kpi {
+    font-size: 14px !important;
+    line-height: 1.15 !important;
+    font-weight: 700 !important;
+}
+
+.hod-performance-dashboard
+.hod-production-title .hod-production-header-kpi span,
+.hod-performance-dashboard
+.hod-production-title .hod-production-header-kpi strong,
+.hod-export-root .hod-export-dashboard
+.hod-production-title .hod-production-header-kpi span,
+.hod-export-root .hod-export-dashboard
+.hod-production-title .hod-production-header-kpi strong {
+    font-size: 14px !important;
+    line-height: 1.15 !important;
+    font-weight: 700 !important;
+}
+
+/* Preserve the existing KPI value status colours. */
