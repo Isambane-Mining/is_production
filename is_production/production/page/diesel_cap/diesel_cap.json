@@ -1,0 +1,32 @@
+{
+ "doctype": "Page",
+ "name": "diesel-cap",
+ "page_name": "diesel-cap",
+ "title": "Diesel Cap",
+ "module": "Production",
+ "standard": "Yes",
+ "system_page": 0,
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Production Manager"
+  },
+  {
+   "role": "Production User"
+  },
+  {
+   "role": "Engineering Manager"
+  },
+  {
+   "role": "Engineering User"
+  },
+  {
+   "role": "Auditor"
+  }
+ ],
+ "content": null,
+ "script": null,
+ "style": null
+}

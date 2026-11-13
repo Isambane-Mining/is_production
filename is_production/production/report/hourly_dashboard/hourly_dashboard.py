@@ -244,7 +244,6 @@ def get_all_excavators():
 def get_all_hourly_data(prod_date):
     """Load one operational production day: 06:00 through 05:59 next calendar day."""
     prod_date = getdate(prod_date)
-    next_date = prod_date + timedelta(days=1)
 
     rows = frappe.db.sql("""
         SELECT
@@ -255,14 +254,14 @@ def get_all_hourly_data(prod_date):
             SUM(tl.bcms) AS bcm
         FROM `tabHourly Production` hp
         JOIN `tabTruck Loads` tl ON tl.parent = hp.name
-        WHERE hp.prod_date IN (%s, %s)
+        WHERE hp.prod_date = %s
           AND tl.asset_name_shoval IS NOT NULL
         GROUP BY
             hp.prod_date,
             hp.location,
             tl.asset_name_shoval,
             hp.hour_slot
-    """, (prod_date, next_date), as_dict=True)
+    """, (prod_date,), as_dict=True)
 
     data = {}
 
@@ -271,14 +270,9 @@ def get_all_hourly_data(prod_date):
         if not slot:
             continue
 
-        start_hour = int(str(row.hour_slot).split("-", 1)[0].split(":", 1)[0])
-
-        # Operational production day is 06:00 -> 05:59 next calendar day.
-        operational_date = (
-            getdate(row.prod_date) - timedelta(days=1)
-            if start_hour < 6
-            else getdate(row.prod_date)
-        )
+        # Hourly Production.prod_date is already the operational date
+        # for all 24 hours, including Night shift hours after midnight.
+        operational_date = getdate(row.prod_date)
 
         if operational_date != prod_date:
             continue
