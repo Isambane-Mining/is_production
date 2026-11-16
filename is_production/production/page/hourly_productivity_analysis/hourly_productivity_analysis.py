@@ -128,6 +128,32 @@ def mpp_adt_scope(plan, machine_scope):
     return production if machine_scope == "production" else spare
 
 
+
+
+def get_mpp_daily_target(plan, date):
+    """Read the authoritative saved daily target from Monthly Production Days."""
+    matching = [
+        row for row in (plan.get("month_prod_days") or [])
+        if row.get("shift_start_date")
+        and getdate(row["shift_start_date"]) == date
+    ]
+
+    if len(matching) != 1:
+        return None
+
+    value = matching[0].get("bcm_per_day")
+
+    try:
+        target = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    if not isfinite(target) or target < 0:
+        return None
+
+    return target
+
+
 def build_analysis(from_date, to_date, site, plans, assets, breakdowns, documents, *, now=None, fatigue=(), machine_scope="all", include_machine_targets=False):
     first, last = validate_range(from_date, to_date)
     error = planning_error(first, last, site, plans)
@@ -173,6 +199,18 @@ def build_analysis(from_date, to_date, site, plans, assets, breakdowns, document
     for offset in range((last - first).days + 1):
         date = first + timedelta(days=offset)
         plan = summary.select_plan(plans, site, date)
+
+        mpp_daily_target = (
+            None if include_machine_targets
+            else get_mpp_daily_target(plan, date)
+        )
+
+        if not include_machine_targets and mpp_daily_target is None:
+            warnings.append(
+                f"MPP daily target unavailable for {date}; "
+                "check Monthly Production Days."
+            )
+
         adt_scope = mpp_adt_scope(plan, machine_scope)
         fleet_total = len(adt_scope)
         production_scope = mpp_adt_scope(plan, "production") if include_machine_targets else None
@@ -207,7 +245,8 @@ def build_analysis(from_date, to_date, site, plans, assets, breakdowns, document
 
         rows.append({"date": date.isoformat(), "day": date.strftime("%a"), "month": date.strftime("%B %Y"),
                      "month_key": date.strftime("%Y-%m"), "plan_name": plan["name"],
-                     "fleet_total": fleet_total, "cells": cells, "load_times": load_times})
+                     "fleet_total": fleet_total, "cells": cells, "load_times": load_times,
+                     "mpp_daily_target_bcm": mpp_daily_target})
         if include_machine_targets:
             rows[-1]["production_fleet_total"] = (
                 len(production_scope) if plan.get("excavator_truck_assignments") is not None else None)
@@ -288,6 +327,17 @@ def export_excel(site, from_date, to_date, machine_scope="all"):
     data = get_analysis(site, from_date, to_date, machine_scope=machine_scope)
     if not data.get("rows"):
         frappe.throw("No exportable analysis. Check planning and configuration access.")
+
+    missing_targets = [
+        row["date"] for row in data["rows"]
+        if row.get("mpp_daily_target_bcm") is None
+    ]
+
+    if missing_targets:
+        frappe.throw(
+            "MPP daily targets unavailable for: "
+            + ", ".join(missing_targets)
+        )
 
     safe_site = "".join(
         character if character.isalnum() or character in "-_" else "_"
@@ -830,16 +880,20 @@ def make_workbook(data):
             sheet.write(excel_row, 1, row["day"], text)
             sheet.write(excel_row, 2, row["month"], text)
 
+            daily_target = row.get("mpp_daily_target_bcm")
+            if daily_target is None:
+                raise ValueError(f"MPP daily target missing for {row['date']}")
+
+            totals["target"] += float(daily_target)
+
             for hour_index, cell in enumerate(row["cells"]):
-                col = hour_index + 3
+                col = hour_index + 3 + (1 if hour_index >= 12 else 0)
                 category = cell["category"]
                 if category not in COLOURS:
                     category = "red"
 
                 actual = float(cell["actual_bcm"] or 0)
-                target = float(cell["target_bcm"] or 0)
                 totals["actual"] += actual
-                totals["target"] += target
 
                 segments = cell.get("segments") or []
                 if segments:
