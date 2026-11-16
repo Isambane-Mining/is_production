@@ -39,15 +39,15 @@ const reportDefinition = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../
       window.report={columns:[
         {fieldname:'site',label:'Site',fieldtype:'Link',options:'Location',width:180},
         ...['start_date','end_date'].map(fieldname=>({fieldname,label:fieldname,fieldtype:'Date',width:110})),
-        ...['survey_base_bcm','hourly_after_survey_bcm','actual_bcm','total_tallies_cubes','total_diesel_litres','diesel_cap','tallies_fuel_cap'].map(fieldname=>({fieldname,label:fieldname,fieldtype:'Float',precision:fieldname==='total_diesel_litres'?1:2,width:150})),
+        ...['survey_base_bcm','hourly_after_survey_bcm','month_to_date_bcm','selected_period_bcm','total_tallies_cubes','total_diesel_litres','diesel_cap','tallies_fuel_cap'].map(fieldname=>({fieldname,label:fieldname,fieldtype:'Float',precision:fieldname==='total_diesel_litres'?1:2,width:150,hidden:fieldname==='selected_period_bcm'?1:0})),
         {fieldname:'survey_date_used',label:'Survey Date Used',fieldtype:'Datetime',width:160}],
-        result:[{site:'Koppie',actual_bcm:100,total_tallies_cubes:50,total_diesel_litres:200,diesel_cap:2,tallies_fuel_cap:4,survey_date_used:'2026-11-01 06:00:00'},
-          {site:'Kriel',actual_bcm:900,total_tallies_cubes:450,total_diesel_litres:900,diesel_cap:1,tallies_fuel_cap:2}],execution_time:0.123};
+        result:[{site:'Koppie',month_to_date_bcm:600,selected_period_bcm:100,total_tallies_cubes:50,total_diesel_litres:200,diesel_cap:2,tallies_fuel_cap:4,survey_date_used:'2026-11-01 06:00:00'},
+          {site:'Kriel',month_to_date_bcm:1400,selected_period_bcm:900,total_tallies_cubes:450,total_diesel_litres:900,diesel_cap:1,tallies_fuel_cap:2}],execution_time:0.123};
     });
     await page.addScriptTag({path:path.join(__dirname,'diesel_cap.js')});
     await page.evaluate(async()=>{window.wrapper={};frappe.pages['diesel-cap'].on_page_load(wrapper);const render=wrapper.diesel_cap.render.bind(wrapper.diesel_cap);wrapper.diesel_cap.render=(...args)=>{try{return render(...args);}catch(error){window.renderError=error.stack;throw error;}};await wrapper.diesel_cap.ready;});
     assert.equal(await page.evaluate(()=>window.renderError||null),null);
-    assert.equal(await page.locator('[data-kpi="actual_bcm"]').textContent(),'1,000.00');
+    assert.equal(await page.locator('[data-kpi="month_to_date_bcm"]').textContent(),'2,000.00');
     assert.equal(await page.locator('[data-kpi="diesel_cap"]').textContent(),'1.10');
     assert.equal(await page.locator('[data-kpi="total_diesel_litres"]').textContent(),'1,100.0');
     assert.equal(await page.locator('[data-field="start_date"]').inputValue(),'2026-11-01');
@@ -71,7 +71,7 @@ const reportDefinition = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../
     if(process.env.DIESEL_REPORT_FIXTURE) {
       const fixture=JSON.parse(fs.readFileSync(process.env.DIESEL_REPORT_FIXTURE));
       await page.evaluate(async data=>{report=data;await wrapper.diesel_cap.controls.start_date.set_value('2026-01-01');},fixture);
-      assert.deepEqual(await page.evaluate(()=>wrapper.diesel_cap.datatable.options.data),fixture.result.map(row=>fixture.columns.map(column=>row[column.fieldname]??null)));
+      assert.deepEqual(await page.evaluate(()=>wrapper.diesel_cap.datatable.options.data),fixture.result.map(row=>fixture.columns.filter(column=>!column.hidden).map(column=>row[column.fieldname]??null)));
     }
     const pageDefinition=JSON.parse(fs.readFileSync(path.join(__dirname,'diesel_cap.json')));
     assert.deepEqual(pageDefinition.roles,reportDefinition.roles);
