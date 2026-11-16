@@ -223,6 +223,14 @@ table.tbl { border-collapse: collapse; width: 100%; font-size: var(--fs-s); }
 .tbl.ttest tbody tr { cursor: pointer; }
 .tbl.ttest tbody tr:hover td { background: var(--line-2); }
 .tbl.ttest tbody tr.on td { background: var(--accent-soft); }
+.tbl.boq td { white-space: nowrap; }
+.tbl.boq td.d { white-space: normal; min-width: 230px; }
+.tbl.boq td .src { display: block; color: var(--muted); font-size: var(--fs-xs); margin-top: 1px; }
+.tbl.boq tr.boq-sec td { font-weight: 600; background: var(--panel); }
+.tbl.boq tr.boq-sub td { color: var(--muted); font-size: var(--fs-xs); font-weight: 600; }
+.tbl.boq tr.nil td { color: var(--muted); }
+.tbl.boq tr.tot td { font-weight: 600; border-top: 1px solid var(--line); }
+.tbl.boq input { width: 86px; text-align: right; }
 .tt-bar { height: 6px; background: var(--line-2); border-radius: 3px; overflow: hidden; }
 .tt-bar > span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
 .drop { border: 1.5px dashed var(--line); border-radius: var(--r); padding: 16px; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; background: var(--field); }
@@ -551,7 +559,7 @@ canvas.chart { width: 100%; display: block; }
             <optgroup label="Resource"><option value="resource">Resource</option><option value="reserve">Reserve</option><option value="rank">Block Margin Rank</option><option value="strip">Strip Ratio</option></optgroup>
             <optgroup label="Mining"><option value="production">Production</option><option value="blast">Drill and Blast</option><option value="geotech">Geotechnical</option><option value="dumps">Dumps</option><option value="roads">Roads</option><option value="sequence">Sequence</option></optgroup>
             <optgroup label="Water and rehabilitation"><option value="hydro">Hydrogeological</option><option value="rehab">Rehab</option></optgroup>
-            <optgroup label="Outcomes"><option value="finance">Finance</option><option value="recon">Recon</option><option value="results">Results</option></optgroup>
+            <optgroup label="Outcomes"><option value="finance">Finance</option><option value="boq">Bill of Quantities</option><option value="recon">Recon</option><option value="results">Results</option></optgroup>
           </select>
         </label>
       </nav>
@@ -10012,6 +10020,276 @@ const Fin = (() => {
   return { GROUPS, FIELDS, DEF, settings, unitOf, netPrice, priceParts, domWords, cvMonthly, run, irrOf };
 })();
 
+/* ===== Bill of quantities (Bill of Quantities tab; DOM-free) =====
+   Laid out like the South Witbank BOQ workbook (BOQ South Witbank - Isambane Rates, revised 2 October 2026): the fixed
+   costs (site establishment and de-establishment, the monthly P&Gs of the mining and of the drilling and blasting), the
+   variable costs (topsoil, softs, hard overburden, hard midburden, dump rehandling and coal, each by haul distance band,
+   and dozing) and the drilling and blasting (hard overburden, hard midburden, coal and presplit). Two sets of rates, as
+   the workbook's two sheets: Isambane Contract Rates and Isambane Rates (Actual Costs). A line costs its quantity × the
+   dry rate, × the fuel cap (litres a unit) × the fuel price, and × the powder factor (kg a unit) × the explosive rate.
+   The quantities come from the last run: the months of the schedule (first to last month of mining); the bcm of each
+   layer, topsoil and softs as the running totals group them, the other waste above the first seam as hard overburden
+   and below it as hard midburden, with the ramps and batters in the overburden; what the activities doze (out of their
+   load and haul); the bcm rehandled out of dumps; the coal tons (as received or in situ); and the drilling and blasting
+   of the Drill and Blast tab: the bcm and tons blasted and their explosives (their kg, so the powder factor shown is
+   the kg ÷ the quantity), and the presplit of the Finance tab (the waste blasted ÷ the strip width) at the powder factor
+   of the rates. Each material is put into one haul distance band (chosen; the workbook's own by default).
+   P.boq = {option, months, coalBasis, deduct, band: {material: band index}, rates: {contract | actual: {fuel, expl,
+   items: {key: [dry rate, fuel cap, powder factor]}, from}}} (the rates as edited or loaded; the workbook's otherwise). */
+const Boq = (() => {
+  const OPTIONS = [['contract', 'Isambane Contract Rates'], ['actual', 'Isambane Rates (Actual Costs)']];
+  const SHORT = { contract: 'Contract rates', actual: 'Actual costs' };
+  const BANDS = Array.from({ length: 10 }, (_, i) => `${i * 500}-${(i + 1) * 500}m`);
+  const LH = 'LOAD, HAUL, DUMP, LEVEL AND MAINTAIN';
+  const MATS = [
+    { k: 'topsoil', name: 'Topsoil', heads: [['2.1', 'TOPSOIL'], ['', 'TOPSOIL STRIPPING AND PLACEMENT']], word: 'TOPSOIL', uom: 'BCM', tail: 'LOAD,HAUL,PLACE AND LEVEL', band: 1 },
+    { k: 'softs', name: 'Softs', heads: [['', 'SOFTS'], ['', 'SOFTS STRIPPING AND PLACEMENT']], word: 'SOFTS', uom: 'BCM', tail: 'LOAD,HAUL,PLACE AND LEVEL', band: 1 },
+    { k: 'hardOB', name: 'Hard overburden', heads: [['2.2', 'BURDEN REMOVAL AND PLACEMENT'], ['', LH], ['', 'HARD OVERBURDEN']], word: 'HARD', uom: 'BCM', tail: 'LOAD,HAUL,PLACE AND LEVEL', band: 1 },
+    { k: 'hardMB', name: 'Hard midburden', heads: [['2.3', 'BURDEN REMOVAL AND PLACEMENT'], ['', LH], ['', 'HARD MIDBURDEN']], word: 'HARD', uom: 'BCM', tail: 'LOAD,HAUL,PLACE AND LEVEL', band: 1 },
+    { k: 'dump', name: 'Dump rehandling', heads: [['2.4', 'DUMP REMOVAL AND PLACEMENT'], ['', LH], ['', 'DUMP']], word: 'DUMP', uom: 'BCM', tail: 'LOAD,HAUL,PLACE AND LEVEL', band: 1 },
+    { k: 'coal', name: 'Coal', heads: [['2.7', 'COALING']], word: 'COAL', uom: 'TON', tail: 'LOAD,HAUL,PLACE', band: 4 }
+  ];
+  // the rates of the workbook: [dry rate, fuel cap (l a unit), powder factor (kg a unit)] (the actual sheet carries the
+  // contract's presplit explosives: its powder factor is the contract's)
+  const DEF = {"contract":{"fuel":23.45,"expl":16.52,"items":{"est":[0,0,0],"dest":[0,0,0],"pg":[5943663.200000001,35257.5,0],"pgDB":[551670,0,0],"doze":[22.56,0.6,0],"dbOB":[15.92,0.2,0.84],"dbMB":[15.92,0.2,0.84],"dbCoal":[9.45,0.09,0.27],"dbPS":[67.2066646337,1.09,0.91],"topsoil.0":[23.42,0.5,0],"topsoil.1":[25.94,0.55,0],"topsoil.2":[28.46,0.6,0],"topsoil.3":[30.98,0.65,0],"topsoil.4":[33.5,0.7,0],"topsoil.5":[36.02,0.75,0],"topsoil.6":[38.54,0.8,0],"topsoil.7":[41.06,0.85,0],"topsoil.8":[43.58,0.9,0],"topsoil.9":[46.1,0.95,0],"topsoil.xo":[2.52,0.05,0],"softs.0":[24.01,0.55,0],"softs.1":[26.66,0.6,0],"softs.2":[29.31,0.65,0],"softs.3":[31.96,0.75,0],"softs.4":[34.61,0.8,0],"softs.5":[37.26,0.85,0],"softs.6":[39.91,0.9,0],"softs.7":[42.56,0.95,0],"softs.8":[45.21,1,0],"softs.9":[47.86,1.05,0],"softs.xo":[2.65,0.05,0],"hardOB.0":[32.71,0.7,0],"hardOB.1":[36.26,0.75,0],"hardOB.2":[39.81,0.8,0],"hardOB.3":[43.36,0.85,0],"hardOB.4":[46.91,0.9,0],"hardOB.5":[50.46,0.95,0],"hardOB.6":[54.01,1.0,0],"hardOB.7":[57.56,1.05,0],"hardOB.8":[61.11,1.1,0],"hardOB.9":[64.66,1.15,0],"hardOB.xo":[3.55,0.05,0],"hardMB.0":[32.71,0.7,0],"hardMB.1":[36.26,0.75,0],"hardMB.2":[39.81,0.8,0],"hardMB.3":[43.36,0.85,0],"hardMB.4":[46.91,0.9,0],"hardMB.5":[50.46,0.95,0],"hardMB.6":[54.01,1.0,0],"hardMB.7":[57.56,1.05,0],"hardMB.8":[61.11,1.1,0],"hardMB.9":[64.66,1.15,0],"hardMB.xo":[3.55,0.05,0],"dump.0":[24.01,0.55,0],"dump.1":[26.66,0.6,0],"dump.2":[29.31,0.65,0],"dump.3":[31.96,0.7,0],"dump.4":[34.61,0.75,0],"dump.5":[37.26,0.8,0],"dump.6":[39.91,0.85,0],"dump.7":[42.56,0.9,0],"dump.8":[45.21,0.95,0],"dump.9":[47.86,1.0,0],"dump.xo":[2.65,0.05,0],"coal.0":[20.53,0.37,0],"coal.1":[23.05,0.4,0],"coal.2":[25.57,0.43,0],"coal.3":[28.09,0.46,0],"coal.4":[30.61,0.49,0],"coal.5":[33.13,0.52,0],"coal.6":[35.65,0.55,0],"coal.7":[38.17,0.58,0],"coal.8":[40.69,0.61,0],"coal.9":[43.21,0.64,0],"coal.xo":[2.52,0.03,0]}},"actual":{"fuel":18.76,"expl":16.52,"items":{"est":[0,0,0],"dest":[0,0,0],"pg":[4163647.7775,35257.5,0],"pgDB":[320000,0,0],"doze":[19.64562,0.6,0],"dbOB":[18.55,0.2,0],"dbMB":[18.55,0.2,0],"dbCoal":[8.77,0.09,0],"dbPS":[65.9,1.09,0.91],"topsoil.0":[21.2268,0.5,0],"topsoil.1":[23.49027,0.55,0],"topsoil.2":[25.75374,0.6,0],"topsoil.3":[28.01721,0.65,0],"topsoil.4":[30.29151,0.7,0],"topsoil.5":[32.55498,0.75,0],"topsoil.6":[34.81845,0.8,0],"topsoil.7":[37.08192,0.85,0],"topsoil.8":[39.34539,0.9,0],"topsoil.9":[41.60886,0.95,0],"topsoil.xo":[2.26347,0.05,0],"softs.0":[22.2015,0.55,0],"softs.1":[24.46497,0.6,0],"softs.2":[26.72844,0.65,0],"softs.3":[28.99191,0.75,0],"softs.4":[31.25538,0.8,0],"softs.5":[33.51885,0.85,0],"softs.6":[35.78232,0.9,0],"softs.7":[38.04579,0.95,0],"softs.8":[40.30926,1,0],"softs.9":[42.57273,1.05,0],"softs.xo":[2.26347,0.05,0],"hardOB.0":[25.32054,0.7,0],"hardOB.1":[27.88054,0.75,0],"hardOB.2":[30.44054,0.8,0],"hardOB.3":[33.00054,0.85,0],"hardOB.4":[35.56054,0.9,0],"hardOB.5":[38.12054,0.95,0],"hardOB.6":[40.68054,1.0,0],"hardOB.7":[43.24054,1.05,0],"hardOB.8":[45.80054,1.1,0],"hardOB.9":[48.36054,1.15,0],"hardOB.xo":[2.56,0.05,0],"hardMB.0":[26.44686,0.7,0],"hardMB.1":[29.07686,0.75,0],"hardMB.2":[31.70686,0.8,0],"hardMB.3":[34.33686,0.85,0],"hardMB.4":[36.96686,0.9,0],"hardMB.5":[39.59686,0.95,0],"hardMB.6":[42.22686,1.0,0],"hardMB.7":[44.85686,1.05,0],"hardMB.8":[47.48686,1.1,0],"hardMB.9":[50.11686,1.15,0],"hardMB.xo":[2.63,0.05,0],"dump.0":[24.01,0.55,0],"dump.1":[26.66,0.6,0],"dump.2":[29.31,0.65,0],"dump.3":[31.96,0.7,0],"dump.4":[34.61,0.75,0],"dump.5":[37.26,0.8,0],"dump.6":[39.91,0.85,0],"dump.7":[42.56,0.9,0],"dump.8":[45.21,0.95,0],"dump.9":[47.86,1.0,0],"dump.xo":[2.65,0.05,0],"coal.0":[18.75756,0.37,0],"coal.1":[20.42538,0.4,0],"coal.2":[22.0932,0.43,0],"coal.3":[23.75019,0.46,0],"coal.4":[27.075,0.49,0],"coal.5":[28.74282,0.52,0],"coal.6":[30.41064,0.55,0],"coal.7":[32.07846,0.58,0],"coal.8":[33.74628,0.61,0],"coal.9":[35.4141,0.64,0],"coal.xo":[1.66782,0.03,0]}}};
+  const KEYS = Object.keys(DEF.contract.items);
+  const num = (v, d) => (v != null && v !== '' && isFinite(+v) ? +v : d);
+
+  function settings(P) {
+    const B = P && P.boq ? P.boq : {}, band = {}, rates = {};
+    for (const M of MATS) band[M.k] = U.clamp(Math.round(num(B.band && B.band[M.k], M.band)), 0, BANDS.length - 1);
+    for (const [id] of OPTIONS) {
+      const d = DEF[id], s = (B.rates && B.rates[id]) || {}, items = {};
+      for (const k of KEYS) { const a = d.items[k], b = (s.items && s.items[k]) || []; items[k] = a.map((v, i) => Math.max(0, num(b[i], v))); }
+      rates[id] = { fuel: Math.max(0, num(s.fuel, d.fuel)), expl: Math.max(0, num(s.expl, d.expl)), items, from: s.from || null, edited: !!(s.items && Object.keys(s.items).length) || s.fuel != null || s.expl != null };
+    }
+    const months = num(B.months, 0);
+    return { option: OPTIONS.some(o => o[0] === B.option) ? B.option : 'contract', months: months > 0 ? months : null, coalBasis: B.coalBasis === 'insitu' ? 'insitu' : 'ar', deduct: U.clamp(num(B.deduct, 7), 0, 100), band, rates };
+  }
+
+  /* The quantities of the last run. ext: {mo (Monthly.build), blast (Blast.compute)} — worked out here when not given */
+  function quantities(P, ws, res, ext = {}) {
+    if (!ws || !res) return null;
+    const o = settings(P), mo = ext.mo || Monthly.build(P, ws, res), B = ext.blast !== undefined ? ext.blast : typeof Blast !== 'undefined' ? Blast.compute(P, ws, res) : null;
+    const L = P.layers, first = L.findIndex(q => q.type === 'coal'), sum = a => { let s = 0; if (a) for (let i = 0; i < a.length; i++) s += a[i]; return s; };
+    const groupOf = l => { const Ly = L[l]; if (!Ly || Ly.type === 'coal') return 'coal'; const g = Monthly.wasteGroup(P, Ly); return g === 'topsoil' || g === 'softs' ? g : first >= 0 && l > first ? 'hardMB' : 'hardOB'; };
+    const Q = { topsoil: 0, softs: 0, hardOB: 0, hardMB: 0, dump: 0, coal: 0, coalBcm: 0, doze: 0, ramps: 0, dbOB: 0, dbMB: 0, dbCoal: 0, dbPS: 0, kgOB: 0, kgMB: 0, kgCoal: 0, names: { topsoil: new Set(), softs: new Set(), hardOB: new Set(), hardMB: new Set(), coal: new Set(), doze: new Set(), dbOB: new Set(), dbMB: new Set(), dbCoal: new Set() } };
+    for (const A of res.acts) {
+      const g = groupOf(A.layer), v = sum(A.bcm), dz = A.meth === 'dozer' ? v : A.dozBcm ? Math.min(v, sum(A.dozBcm)) : 0, nm = L[A.layer] ? L[A.layer].name : '';
+      if (g === 'coal') { if (v > 0) Q.names.coal.add(nm); continue; }
+      Q[g] += v - dz; Q.doze += dz;
+      if (v - dz > 0) Q.names[g].add(nm); if (dz > 0) Q.names.doze.add(nm);
+    }
+    Q.ramps = sum(mo.rampB) + sum(mo.batterB); Q.hardOB += Q.ramps;
+    const cT = sum(mo.coalT), cAR = sum(mo.coalAR), arF = cT > 0 && cAR > 0 ? cAR / cT : 1;
+    Q.coalT = cT; Q.coalAR = cAR; Q.coal = o.coalBasis === 'ar' ? cAR : cT; Q.coalBcm = sum(mo.coalB);
+    Q.dump = sum(mo.bcmReh);
+    Q.blastOn = !!(B && B.o && B.o.on);
+    if (Q.blastOn) for (const y of B.layers) {
+      if (!(y.bcm > 0)) continue;
+      if (y.coal) { Q.dbCoal += y.t * (o.coalBasis === 'ar' ? arF : 1); Q.kgCoal += y.kg; Q.names.dbCoal.add(y.name); }
+      else if (first >= 0 && y.l > first) { Q.dbMB += y.bcm; Q.kgMB += y.kg; Q.names.dbMB.add(y.name); }
+      else { Q.dbOB += y.bcm; Q.kgOB += y.kg; Q.names.dbOB.add(y.name); }
+    }
+    Q.psW = typeof Fin !== 'undefined' ? Fin.settings(P).presplitW : 40; Q.dbPS = (Q.dbOB + Q.dbMB) / Q.psW;
+    let m0 = -1, m1 = -1; for (let m = 0; m < mo.nM; m++) if (mo.moved[m] > 0 || mo.coalT[m] > 0) { if (m0 < 0) m0 = m; m1 = m; }
+    Q.monthsRun = m0 >= 0 ? m1 - m0 + 1 : 0; Q.months = o.months || Q.monthsRun; Q.from = m0 >= 0 ? mo.label(m0) : ''; Q.to = m1 >= 0 ? mo.label(m1) : '';
+    Q.coalBasis = o.coalBasis;
+    for (const k of Object.keys(Q.names)) Q.names[k] = Array.from(Q.names[k]);
+    return Q;
+  }
+
+  // where each quantity comes from, in words
+  function source(Q, key) {
+    if (!Q) return '';
+    const n = k => (Q.names[k] && Q.names[k].length ? Q.names[k].join(', ') : 'no layer'), t = Q.coalBasis === 'ar' ? 'as received' : 'in situ';
+    switch (key) {
+      case 'pg': case 'pgDB': return Q.months === Q.monthsRun ? `the months of the schedule (${Q.from} to ${Q.to})` : `${Q.months} months as typed (the schedule: ${Q.monthsRun}, ${Q.from} to ${Q.to})`;
+      case 'topsoil': case 'softs': case 'hardMB': return `bcm mined: ${n(key)}`;
+      case 'hardOB': return `bcm mined: ${n('hardOB')}${Q.ramps > 0 ? `, with ${U.fmtNum(Q.ramps, 0)} bcm of ramps and batters` : ''}`;
+      case 'dump': return 'bcm rehandled out of the dumps';
+      case 'coal': return `coal tons ${t}: ${n('coal')}`;
+      case 'doze': return Q.doze > 0 ? `bcm dozed: ${n('doze')}` : 'nothing is dozed';
+      case 'dbOB': case 'dbMB': return Q.blastOn ? `bcm drilled and blasted: ${n(key)} (Drill and Blast tab), ${U.fmtNum(key === 'dbOB' ? Q.kgOB : Q.kgMB, 0)} kg of explosives` : 'drill and blast is off (Drill and Blast tab)';
+      case 'dbCoal': return Q.blastOn ? `coal tons ${t} drilled and blasted: ${n('dbCoal')}, ${U.fmtNum(Q.kgCoal, 0)} kg of explosives` : 'drill and blast is off (Drill and Blast tab)';
+      case 'dbPS': return Q.blastOn ? `the waste drilled and blasted ÷ the ${U.fmtNum(Q.psW, 0)} m strip width (Finance tab): one presplit face per strip` : 'drill and blast is off (Drill and Blast tab)';
+      default: return '';
+    }
+  }
+
+  /* The bill of one set of rates (id: contract | actual) on the quantities Q (null: none, before a run): its rows
+     ({sec} headings, {sub} sub-headings and lines {key, no, text, uom, qty, dry, fuel, pf, pfSim, totDry, totFuel, totExpl,
+     mat, band, on, remark, src}), the totals and the summary as the workbook works it out */
+  function bill(P, Q, id) {
+    const o = settings(P), R = o.rates[id], it = R.items, rows = [];
+    const head = (no, text, sub) => rows.push(sub ? { sub: true, no, text } : { sec: true, no, text });
+    const line = (key, no, text, uom, qty, more = {}) => {
+      const [dry, fuel, pf0] = it[key], q = qty > 0 ? qty : 0, sim = more.kg != null, pf = sim ? (q > 0 ? more.kg / q : 0) : pf0;
+      const r = Object.assign({ key, no, text, uom, qty: q, dry, fuel, pf, pfSim: sim, on: true, remark: '', src: '' }, more);
+      r.totDry = q * dry; r.totFuel = q * fuel * R.fuel; r.totExpl = sim ? more.kg * R.expl : q * pf * R.expl;
+      rows.push(r); return r;
+    };
+    const q = k => (Q ? Q[k] : 0);
+    head('1', 'FIXED COST');
+    line('est', '1.1', 'SITE ESTABLISHMENT', 'Once off', 1, { remark: 'TBC' });
+    line('dest', '1.2', 'SITE DE-ESTABLISHMENT', 'Once off', 1, { remark: 'TBC' });
+    line('pg', '1.3', 'MINING SERVICES - MONTHLY P&Gs (except D&B)', 'Monthly', q('months'), { src: source(Q, 'pg') });
+    line('pgDB', '1.4', 'DRILLING & BLASTING SERVICES - MONTHLY P&Gs', 'Monthly', q('months'), { remark: 'No fuel required', src: source(Q, 'pgDB') });
+    head('2', 'VARIABLE COST');
+    for (const M of MATS) {
+      M.heads.forEach(([no, text], i) => head(no, text, i > 0 || !no));
+      const b = o.band[M.k];
+      for (let i = 0; i <= BANDS.length; i++) {
+        const xo = i === BANDS.length, on = i === b;
+        line(`${M.k}.${xo ? 'xo' : i}`, '', `${M.word},${xo ? 'EXTRA OVER 500M' : BANDS[i]},${M.tail}`, M.uom, on ? q(M.k) : 0, { mat: M.k, band: xo ? 'xo' : i, on, src: on ? source(Q, M.k) : '' });
+      }
+    }
+    head('2.9', 'DOZING - HARDS INTERBURDEN');
+    line('doze', '', 'DOZER, 50-150m,LOAD, HAUL, PLACE', 'BCM', q('doze'), { src: source(Q, 'doze') });
+    head('3', 'DRILLING AND BLASTING');
+    line('dbOB', '3.1', 'DRILLING AND BLASTING - HARDS OVERBURDEN', 'BCM', q('dbOB'), { kg: q('kgOB'), src: source(Q, 'dbOB') });
+    line('dbMB', '3.2', 'DRILLING AND BLASTING - HARDS MIDBURDEN', 'BCM', q('dbMB'), { kg: q('kgMB'), src: source(Q, 'dbMB') });
+    line('dbCoal', '3.3', 'DRILLING AND BLASTING - COALING', 'TON', q('dbCoal'), { kg: q('kgCoal'), src: source(Q, 'dbCoal') });
+    line('dbPS', '3.4', 'DRILLING AND BLASTING PRE SPLIT', 'Sqm', q('dbPS'), { src: source(Q, 'dbPS') });
+    const lines = rows.filter(r => r.key), S = k => lines.reduce((s, r) => s + r[k], 0);
+    const tot = { dry: S('totDry'), fuel: S('totFuel'), expl: S('totExpl') };
+    tot.total = tot.dry + tot.fuel + tot.expl; tot.litres = lines.reduce((s, r) => s + r.qty * r.fuel, 0);
+    const burden = q('topsoil') + q('softs') + q('hardOB') + q('hardMB') + q('doze'), coal = q('coal'), net = coal * (1 - o.deduct / 100), bcm = burden + q('coalBcm'), months = q('months');
+    const sum = { burden, coal, deduct: o.deduct, net, coalBcm: q('coalBcm'), bcm, months, perTDry: net > 0 ? (tot.dry + tot.expl) / net : NaN, perTWet: net > 0 ? tot.total / net : NaN, sr: coal > 0 ? burden / coal : NaN,
+      lPerBcm: bcm > 0 ? tot.litres / bcm : NaN, perMonth: months > 0 ? tot.total / months : NaN, fuelMonth: months > 0 ? tot.fuel / months : NaN, explMonth: months > 0 ? tot.expl / months : NaN };
+    return { id, label: OPTIONS.find(x => x[0] === id)[1], short: SHORT[id], fuelPrice: R.fuel, explRate: R.expl, from: R.from, edited: R.edited, rows, tot, sum, Q };
+  }
+
+  /* The bill as a sheet laid out like the workbook's: the fuel price in F8 and the explosive rate in F9, the header in
+     row 11, the lines from row 12 with H = D × E, I = D × F × $F$8 and J = D × G × $F$9, the totals and the summary
+     (formulas, with their values) */
+  function sheet(P, b) {
+    const sh = {}, enc = (c, r) => XLSX.utils.encode_cell({ c, r }); let maxR = 0;
+    const set = (c, r, v, f, z) => {
+      if (v == null && !f) return;
+      const cell = typeof v === 'number' ? (isFinite(v) ? { t: 'n', v } : { t: 's', v: '' }) : { t: 's', v: v == null ? '' : String(v) };
+      if (f) cell.f = f; if (z && cell.t === 'n') cell.z = z;
+      sh[enc(c, r)] = cell; if (r > maxR) maxR = r;
+    };
+    const Z0 = '#,##0', Z2 = '#,##0.00', Q = b.Q;
+    set(0, 0, `Pricing ${P.name || ''}`.trim()); set(2, 0, 'Bill of quantities from the ISAMIQ simulator');
+    set(0, 2, b.label);
+    set(0, 5, Q ? `Quantities: the last run of the schedule, ${Q.from} to ${Q.to} (${Q.monthsRun} months); coal tons ${Q.coalBasis === 'ar' ? 'as received' : 'in situ'}` : 'No quantities: run the simulation');
+    set(0, 6, b.from ? `Rates: ${b.from}` : `Rates: BOQ South Witbank - Isambane Rates (Revised 2 October 2026), sheet "${b.label}"${b.edited ? ', as edited' : ''}`);
+    set(4, 7, 'Fuel Base Price (R/Litre)'); set(5, 7, b.fuelPrice, null, Z2);
+    set(4, 8, 'Explosive Rate'); set(5, 8, b.explRate, null, Z2); set(6, 8, 'R/Kg');
+    const H = ['Item', 'Description', 'UoM', ' Estimate Quantity ', 'Dry Rate \n(R/ UoM)', 'Fuel cap (Litres/ UoM) ', 'Powder Factor (Kg/UoM) ', 'Total Dry cost', 'Total Fuel Cost', 'Total Explosive Costs', "Supplier's Remarks", 'Quantity from the simulator'];
+    H.forEach((x, c) => set(c, 10, x));
+    // (blank rows where the workbook has them, so that every line, the totals (row 116) and the summary sit in its rows)
+    const GAP = { '2': 1, SOFTS: 1, '2.2': 3, '2.3': 1, '2.4': 1, '2.7': 1, '2.9': 2, '3': 1 };
+    let r = 11; const at = {}, first = r + 1;
+    for (const x of b.rows) {
+      if (x.sec || x.sub) r += GAP[x.no || x.text] || 0;
+      if (x.sec || x.sub) { set(0, r, x.no ? +x.no || x.no : null); set(1, r, x.text); r++; continue; }
+      const R1 = r + 1;
+      set(0, r, x.no ? +x.no || x.no : null); set(1, r, x.text); set(2, r, x.uom); set(3, r, x.qty, null, Z0); set(4, r, x.dry, null, Z2); set(5, r, x.fuel, null, Z2);
+      if (x.pfSim || x.pf > 0 || /^db/.test(x.key)) set(6, r, x.pf, null, '0.000');
+      set(7, r, x.totDry, `D${R1}*E${R1}`, Z0); set(8, r, x.totFuel, `D${R1}*F${R1}*$F$8`, Z0); set(9, r, x.totExpl, `D${R1}*G${R1}*$F$9`, Z0);
+      if (x.remark) set(10, r, x.remark); if (x.src) set(11, r, x.src);
+      (at[x.mat || x.key] = at[x.mat || x.key] || []).push(R1);
+      r++;
+    }
+    const last = r, T = r + 1, sumOf = k => (at[k] || []).map(n => `D${n}`).join('+') || '0';
+    set(1, r, 'Total Amount'); set(7, r, b.tot.dry, `SUM(H${first}:H${last})`, Z0); set(8, r, b.tot.fuel, `SUM(I${first}:I${last})`, Z0); set(9, r, b.tot.expl, `SUM(J${first}:J${last})`, Z0);
+    set(10, r, 'Dry + fuel + explosives'); set(11, r, b.tot.total, `H${T}+I${T}+J${T}`, Z0);
+    r++; set(7, r, 'Diesel (litres)'); set(8, r, b.tot.litres, `I${T}/$F$8`, Z0); set(9, r, b.sum.explMonth, b.sum.months > 0 ? `J${T}/${b.sum.months}` : null, Z0); set(10, r, 'Explosives a month');
+    const S = b.sum, rB = r + 2, rC = r + 3, rT = r + 4;
+    r++; set(3, r, 'Burden'); set(4, r, S.burden, ['topsoil', 'softs', 'hardOB', 'hardMB', 'doze'].map(sumOf).join('+'), Z0); set(5, r, 'bcm: topsoil, softs, hard overburden and midburden, dozing');
+    set(8, r, S.lPerBcm, `I${T + 1}/E${rT}`, Z2); set(9, r, 'litres a bcm (burden and coal)');
+    r++; set(3, r, 'Coal'); set(4, r, S.coal, sumOf('coal'), Z0); set(5, r, S.coal * S.deduct / 100, `E${rC}*${S.deduct / 100}`, Z0); set(6, r, S.net, `E${rC}-F${rC}`, Z0);
+    set(7, r, `t (${Q && Q.coalBasis === 'insitu' ? 'in situ' : 'as received'}); less ${U.fmtNum(S.deduct, S.deduct % 1 ? 1 : 0)}%; the coal the rates a ton are on`);
+    r++; set(3, r, 'Total'); set(4, r, S.bcm, `E${rB}+F${rT}`, Z0); set(5, r, S.coalBcm, null, Z0); set(6, r, 'bcm: the burden and the coal (its bcm from the schedule, in F)');
+    set(8, r, S.fuelMonth, S.months > 0 ? `I${T}/${S.months}` : null, Z0); set(9, r, 'Fuel a month');
+    r++; set(3, r, 'Rand per Ton (Dry)'); set(4, r, S.perTDry, `IFERROR((H${T}+J${T})/G${rC},0)`, Z2);
+    set(10, r, 'Total a month'); set(11, r, S.perMonth, S.months > 0 ? `L${T}/${S.months}` : null, Z0);
+    r++; set(3, r, 'Rand per Ton (Wet)'); set(4, r, S.perTWet, `IFERROR((H${T}+I${T}+J${T})/G${rC},0)`, Z2);
+    r++; set(3, r, 'Strip Ratio'); set(4, r, S.sr, `IFERROR(E${rB}/E${rC},0)`, Z2); set(5, r, 'bcm a ton');
+    sh['!ref'] = XLSX.utils.encode_range({ s: { c: 0, r: 0 }, e: { c: H.length - 1, r: maxR } });
+    sh['!cols'] = [8, 52, 10, 16, 14, 14, 14, 18, 18, 18, 22, 70].map(w => ({ wch: w }));
+    sh.__freeze = { x: 2, y: 11 };
+    return { sh, totalRow: T, coalRow: rC, burdenRow: rB };
+  }
+  const SHEETS = { contract: 'BOQ - Contract Rates', actual: 'BOQ - Actual Costs' };
+  // the workbook: a sheet for each set of rates, and the two side by side
+  function workbook(P, Q) {
+    const wb = XLSX.utils.book_new(), B = OPTIONS.map(([id]) => bill(P, Q, id)), at = {};
+    for (const b of B) { const s = sheet(P, b); at[b.id] = s; XLSX.utils.book_append_sheet(wb, s.sh, SHEETS[b.id]); }
+    const ref = (id, c) => `'${SHEETS[id]}'!${c}`, [C, A] = B;
+    const rows = [['', C.short, A.short, 'Actual − contract', 'Actual ÷ contract']];
+    const line = (label, cv, av, cf, af, z) => rows.push({ label, cv, av, cf, af, z });
+    line('Total dry cost', C.tot.dry, A.tot.dry, ref('contract', `H${at.contract.totalRow}`), ref('actual', `H${at.actual.totalRow}`));
+    line('Total fuel cost', C.tot.fuel, A.tot.fuel, ref('contract', `I${at.contract.totalRow}`), ref('actual', `I${at.actual.totalRow}`));
+    line('Total explosive costs', C.tot.expl, A.tot.expl, ref('contract', `J${at.contract.totalRow}`), ref('actual', `J${at.actual.totalRow}`));
+    line('Total', C.tot.total, A.tot.total, ref('contract', `L${at.contract.totalRow}`), ref('actual', `L${at.actual.totalRow}`));
+    line('Rand per ton (dry)', C.sum.perTDry, A.sum.perTDry, ref('contract', `E${at.contract.coalRow + 2}`), ref('actual', `E${at.actual.coalRow + 2}`), '#,##0.00');
+    line('Rand per ton (wet)', C.sum.perTWet, A.sum.perTWet, ref('contract', `E${at.contract.coalRow + 3}`), ref('actual', `E${at.actual.coalRow + 3}`), '#,##0.00');
+    const sh = {}, enc = (c, r) => XLSX.utils.encode_cell({ c, r });
+    rows.forEach((x, r) => {
+      if (Array.isArray(x)) { x.forEach((v, c) => { if (v) sh[enc(c, r)] = { t: 's', v }; }); return; }
+      const z = x.z || '#,##0', R1 = r + 1, n = v => (isFinite(v) ? v : 0);
+      sh[enc(0, r)] = { t: 's', v: x.label };
+      sh[enc(1, r)] = { t: 'n', v: n(x.cv), f: x.cf, z }; sh[enc(2, r)] = { t: 'n', v: n(x.av), f: x.af, z };
+      sh[enc(3, r)] = { t: 'n', v: n(x.av) - n(x.cv), f: `C${R1}-B${R1}`, z }; sh[enc(4, r)] = { t: 'n', v: n(x.cv) ? n(x.av) / n(x.cv) : 0, f: `IFERROR(C${R1}/B${R1},0)`, z: '0.000' };
+    });
+    sh['!ref'] = XLSX.utils.encode_range({ s: { c: 0, r: 0 }, e: { c: 4, r: rows.length - 1 } });
+    sh['!cols'] = [26, 20, 20, 20, 18].map(w => ({ wch: w }));
+    XLSX.utils.book_append_sheet(wb, sh, 'BOQ - Comparison');
+    return wb;
+  }
+
+  /* Rates read from a BOQ workbook laid out like the South Witbank one: the sheet's header row (the one with "Dry Rate")
+     gives the columns; the fuel price and the explosive rate are the numbers beside their labels above it; the lines are
+     found by their description under the headings (topsoil, softs, hard overburden and midburden, dump, coaling, dozing,
+     drilling and blasting), a band by its distance ("500-1000m") or "EXTRA OVER". Returns {fuel, expl, items, n} or null. */
+  function readSheet(sh) {
+    const R = XLSX.utils.sheet_to_json(sh, { header: 1, raw: true, defval: null });
+    const hr = R.findIndex(r => r && r.some(c => typeof c === 'string' && /dry\s*rate/i.test(c)));
+    if (hr < 0) return null;
+    const H = R[hr].map(c => String(c == null ? '' : c).toLowerCase()), col = re => H.findIndex(c => re.test(c));
+    const cD = col(/desc/), cU = col(/uom|unit/), cE = col(/dry\s*rate/), cF = col(/fuel/), cG = col(/powder/);
+    if (cD < 0 || cE < 0) return null;
+    const val = v => { if (typeof v === 'number') return v; const x = parseFloat(String(v == null ? '' : v).replace(/[R\s,]/g, '')); return isFinite(x) ? x : 0; };
+    let fuel = null, expl = null;
+    for (const r of R.slice(0, hr)) if (r) r.forEach((c, i) => { if (typeof c !== 'string') return; const v = r.slice(i + 1).find(x => typeof x === 'number'); if (v == null) return; if (/fuel/i.test(c) && /price/i.test(c)) fuel = v; else if (/explosive/i.test(c) && /rate/i.test(c)) expl = v; });
+    const items = {}; let mat = null;
+    for (const r of R.slice(hr + 1)) {
+      if (!r) continue;
+      const d = String(r[cD] == null ? '' : r[cD]).trim().toUpperCase(), u = cU >= 0 ? String(r[cU] == null ? '' : r[cU]).trim() : '';
+      if (!d) continue;
+      if (!u) {
+        if (/^TOTAL/.test(d)) break;
+        if (/TOPSOIL/.test(d)) mat = 'topsoil'; else if (/SOFTS/.test(d)) mat = 'softs'; else if (/MIDBURDEN/.test(d)) mat = 'hardMB'; else if (/OVERBURDEN/.test(d)) mat = 'hardOB';
+        else if (/^DUMP$/.test(d)) mat = 'dump'; else if (/^COALING/.test(d)) mat = 'coal'; else if (/DOZING/.test(d)) mat = 'doze'; else if (/^DRILLING AND BLASTING$/.test(d)) mat = 'db';
+        continue;
+      }
+      const v = [val(r[cE]), cF >= 0 ? val(r[cF]) : 0, cG >= 0 ? val(r[cG]) : 0];
+      let key = null;
+      if (/DE-?\s?ESTABLISHMENT/.test(d)) key = 'dest'; else if (/ESTABLISHMENT/.test(d)) key = 'est';
+      else if (/P&G/.test(d)) key = /DRILLING/.test(d) ? 'pgDB' : 'pg';
+      else if (/DRILLING AND BLASTING/.test(d)) key = /PRE\s*-?\s*SPLIT/.test(d) ? 'dbPS' : /MIDBURDEN/.test(d) ? 'dbMB' : /OVERBURDEN/.test(d) ? 'dbOB' : /COAL/.test(d) ? 'dbCoal' : null;
+      else if (/^DOZER/.test(d)) key = 'doze';
+      else if (mat && MATS.some(M => M.k === mat)) {
+        if (/EXTRA\s*OVER/.test(d)) key = mat + '.xo';
+        else { const m = /(\d+)\s*-\s*(\d+)\s*M/.exec(d); if (m && +m[2] - +m[1] === 500 && +m[1] % 500 === 0 && +m[1] / 500 < BANDS.length) key = mat + '.' + (+m[1] / 500); }
+      }
+      if (key && !items[key]) items[key] = v;
+    }
+    return { fuel, expl, items, n: Object.keys(items).length };
+  }
+  // the sheets of a workbook that hold rates, and which of them is likely each set's
+  function readBook(wb) {
+    const found = wb.SheetNames.map(name => ({ name, R: readSheet(wb.Sheets[name]) })).filter(s => s.R && s.R.n >= 10);
+    const pick = re => (found.find(s => re.test(s.name)) || {}).name || null;
+    return { found, guess: { contract: pick(/isambane.*contract|contract.*rate/i) || (found[0] || {}).name || null, actual: pick(/isambane.*actual/i) || pick(/actual/i) || null } };
+  }
+  return { OPTIONS, SHORT, BANDS, MATS, DEF, KEYS, settings, quantities, source, bill, sheet, workbook, readSheet, readBook };
+})();
+
 /* ===== Survey reconciliation (Recon tab; DOM-free) =====
    Survey DTMs come as point files (XYZ, CSV or TXT: X, Y and Z columns, in the coordinate system of the model). Their
    points are averaged onto the grid of the model: each cell takes the mean elevation of the points in it, and the small
@@ -13431,7 +13709,7 @@ const Tabs = (() => {
 
   function render(tab, body) {
     if (!App.P) { body.append(h('div', { class: 'empty' }, 'Loading…')); return; }
-    ({ project, data, layers: featureLayers, sequence, roads, dumps, production, blast: drillBlast, geotech, resource, reserve, rank, strip, hydro, rehab, finance, recon, results })[tab](body);
+    ({ project, data, layers: featureLayers, sequence, roads, dumps, production, blast: drillBlast, geotech, resource, reserve, rank, strip, hydro, rehab, finance, boq, recon, results })[tab](body);
     if (!App.canEdit) body.querySelectorAll('input,select,textarea').forEach(i => { if (!i.closest('[data-viewer]')) i.disabled = true; });
   }
   function hud(title, sub, buttons) {
@@ -17140,6 +17418,142 @@ const Tabs = (() => {
       body.append(sec(G.title, null, ...parts));
     }
     if (edit() && P.fin && Object.keys(P.fin).length) body.append(h('div', { class: 'row' }, btn('Back to the default inputs', () => { P.fin = {}; save(); }, 'sm ghost')));
+  }
+  /* The Bill of Quantities tab: the South Witbank BOQ (Boq) with the contract rates or the actual costs, on the quantities
+     of the last run. BV: what a viewer picks (the rates shown, every haul band), kept for the session only. */
+  const BV = { option: null, all: false };
+  function boq(body) {
+    const P = App.P, o = Boq.settings(P), B0 = () => P.boq || (P.boq = {});
+    const save = () => { App.changed('boq'); UI.renderTab(); };
+    const opt = (!edit() && BV.option) || o.option, otherId = opt === 'contract' ? 'actual' : 'contract';
+    const res = App.res && !App.stale ? App.res : null, Q = res ? App.boqQ() : null;
+    const b = Boq.bill(P, Q, opt), bo = Boq.bill(P, Q, otherId), C = opt === 'contract' ? b : bo, A = opt === 'contract' ? bo : b;
+    const money = v => (v === v && v != null ? `R ${U.fmtBig(v)}` : '–'), perT = v => (v === v && v != null ? `R ${U.fmtNum(v, 2)}/t` : '–');
+    const kp = (k, v) => h('div', { class: 'kpi' }, h('span', { class: 'k' }, k), h('span', { class: 'v' }, v));
+    // the rates shown (a viewer's pick is kept for the session)
+    const rs = sel(Boq.OPTIONS, opt, v => { if (edit()) { B0().option = v; save(); } else { BV.option = v; UI.renderTab(); } });
+    rs.setAttribute('aria-label', 'BOQ rates');
+    const top = [h('div', { 'data-viewer': '' }, fld('Rates', rs))];
+    if (!res) top.push(msg('warn', App.res ? 'Run the simulation again: the schedule has changed since the last run, and the quantities come from it.' : 'Run the simulation: the quantities (tons, volumes, drilling and blasting) come from the schedule. The rates are shown below.'));
+    if (Q) {
+      const S = b.sum;
+      top.push(h('div', { class: 'kpis' },
+        kp('Total: dry, fuel and explosives', money(b.tot.total)), kp('Rand a ton (wet)', perT(S.perTWet)),
+        kp('Dry cost', money(b.tot.dry)), kp('Rand a ton (dry)', perT(S.perTDry)),
+        kp('Fuel', `${money(b.tot.fuel)} · ${U.fmtBig(b.tot.litres, 'l')}`), kp('Explosives', money(b.tot.expl)),
+        kp('A month', `${money(S.perMonth)} · ${S.months} months`), kp('Diesel a bcm', S.lPerBcm === S.lPerBcm ? `${U.fmtNum(S.lPerBcm, 2)} l/bcm` : '–'),
+        kp('Burden', U.fmtBig(S.burden, 'bcm')), kp('Strip ratio', S.sr === S.sr ? `${U.fmtNum(S.sr, 2)} bcm/t` : '–'),
+        kp(`Coal (${Q.coalBasis === 'ar' ? 'as received' : 'in situ'})`, U.fmtBig(S.coal, 't')), kp(`Coal less ${U.fmtNum(S.deduct, S.deduct % 1 ? 1 : 0)}% (the rates a ton)`, U.fmtBig(S.net, 't'))));
+      // the two sets of rates side by side
+      const cr = (label, cv, av, f) => h('tr', null, h('td', null, label), h('td', { class: 'r num' }, f(cv)), h('td', { class: 'r num' }, f(av)), h('td', { class: 'r num' }, cv === cv && av === av ? f(av - cv) : '–'), h('td', { class: 'r num' }, cv > 0 && av === av ? U.fmtNum(av / cv, 3) : '–'));
+      top.push(h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl', 'aria-label': 'Contract rates and actual costs compared' },
+        h('thead', null, h('tr', null, h('th', null, ''), h('th', { class: 'r' }, 'Contract rates'), h('th', { class: 'r' }, 'Actual costs'), h('th', { class: 'r' }, 'Actual − contract'), h('th', { class: 'r' }, 'Actual ÷ contract'))),
+        h('tbody', null, cr('Dry cost', C.tot.dry, A.tot.dry, money), cr('Fuel', C.tot.fuel, A.tot.fuel, money), cr('Explosives', C.tot.expl, A.tot.expl, money), cr('Total', C.tot.total, A.tot.total, money),
+          cr('Rand a ton (dry)', C.sum.perTDry, A.sum.perTDry, perT), cr('Rand a ton (wet)', C.sum.perTWet, A.sum.perTWet, perT)))));
+      if (!Q.blastOn) top.push(msg('warn', 'Drill and blast is off (Drill and Blast tab), so the drilling and blasting lines have no quantities. The D&B monthly P&Gs are still charged: set their rate to 0 below if there is no drilling and blasting.'));
+    }
+    top.push(h('div', { class: 'row' }, btn('Download the BOQ (Excel)', () => download(), 'sm primary', 'A workbook laid out like the South Witbank BOQ: a sheet with the contract rates, one with the actual costs, and the two compared (live formulas)'),
+      btn('Open full width', () => UI.modal(`Bill of quantities: ${b.label}`, billTable(b, false), [], { wide: true }), 'sm', 'The whole bill in a wide window')));
+    body.append(sec('Bill of quantities', h('span', { class: 'chip' }, b.short), ...top));
+
+    // the bill, as the workbook lays it out
+    const allC = chk('Show every haul distance band', BV.all, v => { BV.all = v; UI.renderTab(); });
+    body.append(sec('The bill', h('span', { class: 'chip' }, `${b.short}${b.edited ? ', edited' : ''}`), h('div', { 'data-viewer': '' }, allC), billTable(b, edit()),
+      hint(`A line costs its quantity × the dry rate, plus the quantity × the fuel cap (litres a unit) × the fuel price (R ${U.fmtNum(b.fuelPrice, 2)}/l), plus the explosives × the explosive rate (R ${U.fmtNum(b.explRate, 2)}/kg). The drilling and blasting of the hard overburden, the midburden and the coal take the kg of explosives of the Drill and Blast tab, so their powder factor is those kg ÷ the quantity; the presplit takes the powder factor of the rates (kg a m²). Each material is in one haul distance band (Quantities, below).${edit() ? ' Type a rate to change it for these rates.' : ''}`)));
+
+    // the quantities: the coal basis, the months and the haul distance band of each material
+    const parts = [];
+    {
+      const cb = sel([['ar', 'As received'], ['insitu', 'In situ']], o.coalBasis, v => { B0().coalBasis = v; save(); }); cb.setAttribute('aria-label', 'BOQ coal tons');
+      const mi = num(o.months, v => { B0().months = v > 0 ? Math.round(v) : null; save(); }, { min: 1, step: 1, allowEmpty: true, placeholder: Q ? String(Q.monthsRun) : 'the schedule' }); mi.setAttribute('aria-label', 'BOQ months');
+      const di = num(o.deduct, v => { B0().deduct = v == null ? null : U.clamp(v, 0, 100); save(); }, { min: 0, max: 100, step: 0.5, allowEmpty: true, placeholder: '7' }); di.setAttribute('aria-label', 'BOQ coal deduction');
+      parts.push(h('div', { class: 'grid3' }, fld('Coal tons', cb), fld('Months of P&Gs', mi), fld('Coal less (%)', di)));
+      const band = M => { const s = sel(Boq.BANDS.map((x, i) => [String(i), x.replace('-', ' – ').replace('m', ' m')]), String(o.band[M.k]), v => { (B0().band || (B0().band = {}))[M.k] = +v; save(); }); s.setAttribute('aria-label', `${M.name} haul distance`); return s; };
+      parts.push(h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl', 'aria-label': 'Haul distance of each material' },
+        h('thead', null, h('tr', null, h('th', null, 'Material'), h('th', { class: 'r' }, 'Quantity'), h('th', null, 'Haul distance'))),
+        h('tbody', null, Boq.MATS.map(M => h('tr', null, h('td', null, M.name, h('span', { class: 'dt', style: { display: 'block', whiteSpace: 'normal' } }, Q ? Boq.source(Q, M.k) : '')), h('td', { class: 'r num' }, Q ? `${U.fmtNum(Q[M.k], 0)} ${M.uom === 'TON' ? 't' : 'bcm'}` : '–'), h('td', null, band(M))))))));
+      parts.push(hint(`The months of P&Gs are the schedule's, first to last month of mining${Q ? ` (${Q.monthsRun}: ${Q.from} to ${Q.to})` : ''}, unless typed. Topsoil and softs are the layers the running totals put there (Timeline, the table's settings); the other waste above the first seam is hard overburden and below it hard midburden; the ramps and batters are with the hard overburden. Dozed bcm are dozing, not load and haul. The coal less the percentage is what the rates a ton are worked out on, as in the workbook (7%). The haul distance band of each material picks its line in the bill: the schedule has no haul distances, so set the band of the average haul.`));
+    }
+    body.append(sec('Quantities', Q ? h('span', { class: 'chip' }, `${Q.from} – ${Q.to}`) : null, ...parts));
+
+    // the rates: the fuel price and the explosive rate of these rates, where they come from, and loading new ones
+    const R = o.rates[opt], fi = num(R.fuel, v => { setRate('fuel', v); }, { min: 0, step: 0.01, allowEmpty: true, placeholder: String(Boq.DEF[opt].fuel) }), ei = num(R.expl, v => { setRate('expl', v); }, { min: 0, step: 0.01, allowEmpty: true, placeholder: String(Boq.DEF[opt].expl) });
+    fi.setAttribute('aria-label', 'BOQ fuel price'); ei.setAttribute('aria-label', 'BOQ explosive rate');
+    const fileIn = h('input', { type: 'file', accept: '.xlsx,.xlsm,.xls', hidden: true }); fileIn.setAttribute('aria-label', 'BOQ workbook');
+    fileIn.addEventListener('change', async () => { const f = fileIn.files[0]; fileIn.value = ''; if (f) await importRates(f); });
+    body.append(sec(`Rates: ${b.label}`, R.edited ? h('span', { class: 'chip' }, R.from ? 'loaded' : 'edited') : null,
+      h('div', { class: 'grid2' }, fld('Fuel price (R/litre)', fi), fld('Explosive rate (R/kg)', ei)),
+      h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, R.from ? `From ${R.from}.` : `From BOQ South Witbank - Isambane Rates (Revised 2 October 2026), sheet “${b.label}”${R.edited ? ', as edited' : ''}.${opt === 'contract' ? ' Its fuel price is the Nov ’25 rate R 18.76 × 1.25.' : ''}`),
+      edit() ? h('div', { class: 'row' }, btn('Load rates from a BOQ workbook…', () => fileIn.click(), 'sm', 'Read the rates from a workbook laid out like the South Witbank BOQ: its contract and actual sheets'), fileIn,
+        R.edited ? btn('Back to the workbook’s rates', () => { if (P.boq && P.boq.rates) delete P.boq.rates[opt]; save(); }, 'sm ghost', `The rates of BOQ South Witbank (2 October 2026) for ${b.short.toLowerCase()}`) : null) : null,
+      hint('The monthly P&Gs are the P&G sheets’ monthly totals (P&G (Contract Rates) and P&G (Actual Costs)). The workbook’s actual sheet gives no powder factors and carries the contract’s explosive costs, so the actual presplit takes the contract’s powder factor; the other explosives are the Drill and Blast tab’s. In the workbook the softs’ fuel cost is the litres only (not × the fuel price): here it is × the fuel price, like the other lines.')));
+
+    function setRate(k, v) { const RR = B0().rates || (B0().rates = {}), S = RR[opt] || (RR[opt] = {}); if (v == null) delete S[k]; else S[k] = Math.max(0, v); save(); }
+    function setItem(key, i, v) {
+      const RR = B0().rates || (B0().rates = {}), S = RR[opt] || (RR[opt] = {}), it = S.items || (S.items = {});
+      const a = (it[key] || o.rates[opt].items[key]).slice(); a[i] = v == null ? Boq.DEF[opt].items[key][i] : Math.max(0, v); it[key] = a; save();
+    }
+    // the bill as a table (ed: the rates can be typed)
+    function billTable(B, ed) {
+      const f0 = v => U.fmtNum(v, 0), f2 = v => U.fmtNum(v, 2), rows = [];
+      const inp = (v, fn, label, step) => { const e = num(v, fn, { min: 0, step, allowEmpty: true }); e.setAttribute('aria-label', label); return e; };
+      for (const x of B.rows) {
+        if (x.sec || x.sub) { rows.push(h('tr', { class: x.sec ? 'boq-sec' : 'boq-sub' }, h('td', null, x.no), h('td', { colspan: 10 }, x.text))); continue; }
+        if (x.mat && !x.on && !BV.all) continue;
+        const pf = x.pfSim ? h('span', { title: x.qty > 0 ? `${U.fmtNum(x.qty * x.pf, 0)} kg of explosives (Drill and Blast tab) ÷ the quantity` : '' }, x.qty > 0 ? U.fmtNum(x.pf, 3) : '–')
+          : x.key === 'dbPS' ? (ed ? inp(x.pf, v => setItem(x.key, 2, v), `${x.text} powder factor`, 0.01) : U.fmtNum(x.pf, 2)) : '';
+        rows.push(h('tr', { class: x.qty > 0 ? '' : 'nil' },
+          h('td', null, x.no), h('td', { class: 'd' }, x.text, x.src ? h('span', { class: 'src' }, x.src) : null), h('td', null, x.uom),
+          h('td', { class: 'r num' }, x.qty > 0 ? f0(x.qty) : '–'),
+          h('td', { class: 'r num' }, ed ? inp(x.dry, v => setItem(x.key, 0, v), `${x.text} dry rate`, 0.01) : f2(x.dry)),
+          h('td', { class: 'r num' }, ed ? inp(x.fuel, v => setItem(x.key, 1, v), `${x.text} fuel cap`, 0.01) : f2(x.fuel)),
+          h('td', { class: 'r num' }, pf),
+          h('td', { class: 'r num' }, f0(x.totDry)), h('td', { class: 'r num' }, f0(x.totFuel)), h('td', { class: 'r num' }, f0(x.totExpl)), h('td', null, x.remark)));
+      }
+      const S = B.sum, T = B.tot, kv = (k, v) => h('tr', null, h('td', null, ''), h('td', { colspan: 2 }, k), h('td', { class: 'r num' }, v), h('td', { colspan: 7 }));
+      rows.push(h('tr', { class: 'tot' }, h('td', null, ''), h('td', { colspan: 6 }, 'Total Amount'), h('td', { class: 'r num' }, f0(T.dry)), h('td', { class: 'r num' }, f0(T.fuel)), h('td', { class: 'r num' }, f0(T.expl)), h('td', { class: 'r num' }, `R ${f0(T.total)}`)));
+      rows.push(kv('Burden (bcm)', f0(S.burden)), kv(`Coal (t, ${B.Q && B.Q.coalBasis === 'insitu' ? 'in situ' : 'as received'})`, f0(S.coal)), kv(`Coal less ${U.fmtNum(S.deduct, S.deduct % 1 ? 1 : 0)}% (t)`, f0(S.net)), kv('Total (bcm, with the coal)', f0(S.bcm)),
+        kv('Rand per ton (dry)', S.perTDry === S.perTDry ? f2(S.perTDry) : '–'), kv('Rand per ton (wet)', S.perTWet === S.perTWet ? f2(S.perTWet) : '–'), kv('Strip ratio (bcm/t)', S.sr === S.sr ? f2(S.sr) : '–'),
+        kv('Diesel (litres)', f0(T.litres)), kv('Total a month', S.perMonth === S.perMonth ? f0(S.perMonth) : '–'));
+      return h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl boq', 'aria-label': `Bill of quantities: ${B.label}` },
+        h('thead', null, h('tr', null, h('th', null, 'Item'), h('th', null, 'Description'), h('th', null, 'UoM'), h('th', { class: 'r' }, 'Estimate quantity'), h('th', { class: 'r' }, 'Dry rate (R/UoM)'), h('th', { class: 'r' }, 'Fuel cap (l/UoM)'), h('th', { class: 'r' }, 'Powder factor (kg/UoM)'),
+          h('th', { class: 'r' }, 'Total dry cost'), h('th', { class: 'r' }, 'Total fuel cost'), h('th', { class: 'r' }, 'Total explosive costs'), h('th', null, 'Remarks'))),
+        h('tbody', null, rows)));
+    }
+    async function download() {
+      if (typeof XLSX === 'undefined') { UI.toast('The Excel library did not load. Check your internet connection.'); return; }
+      try { await App.saveFile(`${U.slug(P.name) || 'project'}_boq_${U.todayISO().replace(/-/g, '')}.xlsx`, Report.toBytes(Boq.workbook(P, Q))); }
+      catch (e) { console.error(e); UI.toast(`The BOQ workbook could not be made: ${e.message}`); }
+    }
+    async function importRates(f) {
+      if (typeof XLSX === 'undefined') { UI.toast('The Excel library did not load. Check your internet connection.'); return; }
+      let wb; try { wb = XLSX.read(new Uint8Array(await f.arrayBuffer()), { type: 'array' }); } catch (e) { UI.toast('That file could not be read as a workbook.'); return; }
+      const RB = Boq.readBook(wb);
+      if (!RB.found.length) { UI.toast('No sheet of rates was found in it: a BOQ sheet has a header row with “Dry Rate” and its lines described as in the South Witbank BOQ.', 8000); return; }
+      const pick = Object.assign({}, RB.guess), opts = [['', '— keep the rates as they are —']].concat(RB.found.map(s => [s.name, `${s.name} (${s.R.n} lines)`]));
+      const sc = sel(opts, pick.contract || '', v => (pick.contract = v || null)), sa = sel(opts, pick.actual || '', v => (pick.actual = v || null));
+      sc.setAttribute('aria-label', 'Contract rates sheet'); sa.setAttribute('aria-label', 'Actual costs sheet');
+      UI.modal('Load BOQ rates', h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
+        hint(`${f.name}: ${RB.found.length} sheet${RB.found.length === 1 ? '' : 's'} with rates. Choose the sheet of each set of rates.`),
+        fld('Isambane Contract Rates from', sc), fld('Isambane Rates (Actual Costs) from', sa),
+        hint('Each line is found by its description under its heading (topsoil, softs, hard overburden and midburden, dump, coaling, dozing, drilling and blasting) and its haul distance; the fuel price and the explosive rate by their labels above the table. A line not found keeps the rate of the South Witbank workbook.')),
+      [btn('Load the rates', () => {
+        const RR = B0().rates || (B0().rates = {}), said = [];
+        for (const id of ['contract', 'actual']) {
+          const nm = pick[id]; if (!nm) continue;
+          const S = RB.found.find(s => s.name === nm).R, items = {};
+          for (const k of Boq.KEYS) if (S.items[k]) items[k] = S.items[k].slice();
+          RR[id] = { items, from: `${f.name}, sheet “${nm}” (loaded ${U.fmtDate(new Date())})` };
+          if (S.fuel != null) RR[id].fuel = S.fuel;
+          if (S.expl != null) RR[id].expl = S.expl;
+          said.push(`${Boq.SHORT[id].toLowerCase()}: ${Object.keys(items).length} of ${Boq.KEYS.length} lines from “${nm}”`);
+        }
+        // (the actual costs carry the contract's presplit explosives: a powder factor of 0 there takes the contract's)
+        const ps = id => (RR[id] && RR[id].items && RR[id].items.dbPS) || null, pa = ps('actual');
+        if (pa && !(pa[2] > 0)) { const c = (ps('contract') || Boq.settings(P).rates.contract.items.dbPS)[2]; if (c > 0) { pa[2] = c; said.push(`the actual presplit takes the contract's ${U.fmtNum(c, 2)} kg/m²`); } }
+        UI.closeModal(); save(); UI.toast(said.length ? `Rates loaded — ${said.join('; ')}.` : 'No sheet chosen: the rates are as they were.', 9000);
+      }, 'primary')]);
+    }
   }
   // the model year by year: the main lines
   function finTable(F, money) {
@@ -21534,6 +21948,16 @@ const App = {
       this._fin = { res: this.res, ws: this.ws, key, F };
     }
     return this._fin.F;
+  },
+  /* The quantities of the bill of quantities (Boq) of the last run, kept for that run and those settings */
+  boqQ() {
+    if (!this.P || !this.res || !this.ws) return null;
+    const P = this.P, b = P.boq || {}, key = JSON.stringify([b.coalBasis, b.months, P.blast || {}, P.accTable && P.accTable.groups, P.layers.map(L => [L.type, L.name]), (P.fin || {}).presplitW]);
+    if (!this._boq || this._boq.res !== this.res || this._boq.ws !== this.ws || this._boq.key !== key) {
+      let Q = null; try { Q = Boq.quantities(P, this.ws, this.res, { blast: this.blast() }); } catch (e) { console.error(e); }
+      this._boq = { res: this.res, ws: this.ws, key, Q };
+    }
+    return this._boq.Q;
   },
   /* The groundwater and the surface water of the last run (Hydro), worked out when first wanted and kept for that run
      and those settings */
