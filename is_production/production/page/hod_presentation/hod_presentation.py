@@ -73,6 +73,105 @@ def get_hod_hr_stats(site, start_date, end_date):
     return stats
 
 
+
+# HOD_MONTH_END_GAUGE_SCOPE_V2
+def get_hod_month_end_gauge_averages(
+    site, start_date, end_date,
+    au_target_filter, asset_ownership
+):
+    """Read Production and Overall totals from Month End."""
+    import math
+
+    from engineering.engineering.report.availability_and_utilisation_month_end_report import (
+        availability_and_utilisation_month_end_report as month_end
+    )
+
+    filters = {
+        "location": site,
+        "from_date": str(start_date),
+        "to_date": str(end_date),
+        "machine_scope": "Production + Swing/Spare Machines",
+        "asset_ownership": asset_ownership,
+        "au_target_filter": au_target_filter,
+    }
+
+    result = month_end.execute(filters)
+
+    if (
+        not isinstance(result, (tuple, list))
+        or len(result) < 2
+        or not isinstance(result[1], (list, tuple))
+    ):
+        frappe.throw("Invalid Month End A&U response.")
+
+    categories = ("Excavator", "Dozer", "ADT")
+
+    averages = {
+        category: {
+            "excluding": {"avail": None, "util": None},
+            "including": {"avail": None, "util": None},
+        }
+        for category in categories
+    }
+
+    scope_map = {
+        "production": "excluding",
+        "overall": "including",
+    }
+
+    seen = set()
+
+    for row in result[1]:
+        if not hasattr(row, "get"):
+            continue
+
+        category = row.get("asset_category")
+        scope = row.get("summary_scope")
+
+        if category not in averages:
+            continue
+
+        if scope not in scope_map:
+            continue
+
+        if not row.get("is_scope_total"):
+            continue
+
+        if row.get("asset_name"):
+            continue
+
+        key = (category, scope)
+
+        if key in seen:
+            frappe.throw(
+                "Duplicate Month End scope total: "
+                f"{category} / {scope}"
+            )
+
+        seen.add(key)
+
+        destination = averages[category][scope_map[scope]]
+
+        for metric, field in (
+            ("avail", "avail_percent"),
+            ("util", "util_percent"),
+        ):
+            raw = row.get(field)
+
+            if raw is None or raw == "":
+                continue
+
+            try:
+                number = float(raw)
+            except (TypeError, ValueError):
+                continue
+
+            if math.isfinite(number):
+                destination[metric] = number
+
+    return averages
+
+
 @frappe.whitelist()
 def get_data(filters=None):
     report.check_report_access()
@@ -103,6 +202,24 @@ def get_data(filters=None):
             row['engineering'] = build_dashboard(
                 module, fleet, row['site'],
                 excluded_machine_keys=excluded_keys,
+            )
+
+            # HOD_MONTH_END_GAUGE_SCOPE_V2
+            # Only the Engineering gauges use Month End totals.
+            row["engineering"]["month_end_category_averages"] = (
+                get_hod_month_end_gauge_averages(
+                    site=row["site"],
+                    start_date=row["start_date"],
+                    end_date=row["end_date"],
+                    au_target_filter=(
+                        filters.get("au_target_filter")
+                        or report.DEFAULT_AU_TARGET_FILTER
+                    ),
+                    asset_ownership=(
+                        filters.get("asset_ownership")
+                        or report.DEFAULT_ASSET_OWNERSHIP
+                    ),
+                )
             )
             # Excluded machines must not contribute to the
             # HOD downtime rankings or contributor summaries.

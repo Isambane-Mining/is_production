@@ -344,18 +344,18 @@ function hodAveragePair(averages, metric) {
         return `<span class="hod-${colour}">${hodPercent(value)}</span>`;
     }).join(' / ');
 }
-function hodGauge(category, metric, averages) {
+function hodGauge(category, metric, averages, swingAverages) {
     // HOD_GAUGE_MAX_SCOPE_V1
-    // Display the higher Production or Swing percentage.
+    // Display the higher Month End Production or Overall percentage.
     // Keep underlying A&U calculations unchanged.
     const productionValue = hodValue(averages?.excluding?.[metric]);
-    const swingValue = hodValue(averages?.swing?.[metric]);
-    const availableValues = [productionValue, swingValue]
+    const overallValue = hodValue(averages?.including?.[metric]);
+    const availableValues = [productionValue, overallValue]
         .filter(value => value !== null);
     const value = availableValues.length
-        ? Math.max(...availableValues)
+        ? Math.min(100, Math.max(0, Math.max(...availableValues)))
         : null;
-    const progress = Math.min(100, Math.max(0, value ?? 0));
+    const progress = value ?? 0;
     const band = hodBand(metric, value);
     const stroke = {red:'#e02f43',amber:'#f1a900',green:'#19a557',neutral:'#a0a8b2'}[band];
     const text = {red:'#b42131',amber:'#a16a00',green:'#167743',neutral:'#677489'}[band];
@@ -374,7 +374,7 @@ function hodGauge(category, metric, averages) {
             </div>
             <div>
                 <small class="hod-gauge-scope-label">Swing Machines</small>
-                <strong class="hod-gauge-scope-value">${hodPercent(averages?.swing?.[metric])}</strong>
+                <strong class="hod-gauge-scope-value">${hodPercent(swingAverages?.swing?.[metric])}</strong>
             </div>
         </div>
     </div>`;
@@ -1625,7 +1625,7 @@ function hodDashboard(row) {
                         <span>Fleet averages · all filtered machines</span>
                         <button type="button" class="hod-view-au-detail" data-site="${hodEscape(row.site)}" data-from="${hodEscape(row.start_date)}" data-to="${hodEscape(row.end_date)}">View Detail</button>
                     </h4>
-                    ${['avail','util'].map(metric=>`<div class="hod-gauge-row"><strong class="hod-gauge-label">${metric==='avail'?'Availability':'Utilisation'}</strong>${['Excavator','Dozer','ADT'].map(category=>hodGauge(category,metric,engineering.category_averages[category])).join('')}</div>`).join('')}
+                    ${['avail','util'].map(metric=>`<div class="hod-gauge-row"><strong class="hod-gauge-label">${metric==='avail'?'Availability':'Utilisation'}</strong>${['Excavator','Dozer','ADT'].map(category=>hodGauge(category,metric,engineering.month_end_category_averages?.[category],engineering.category_averages?.[category])).join('')}</div>`).join('')}
                     </div>
 ${hodProblemMachinesPanel(engineering)}
             </section>
