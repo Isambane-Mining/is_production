@@ -3492,43 +3492,10 @@ def build_hod_presentation(
     ]
 
 
-    # HOD_ONE_PAGE_ASPECT_RATIO_V1
-    # Match slide proportions to the tallest dashboard.
-    # One dashboard remains one PowerPoint slide.
+    # HOD_FIXED_LANDSCAPE_16_9_V1
+    # Keep every PowerPoint slide at standard widescreen size.
+    # Dashboard images are fitted without cropping.
     from PIL import Image as _HodExportImage
-
-    dashboard_ratios = []
-
-    for captured in captured_slides:
-        if captured.get("heading_style") != "dashboard":
-            continue
-
-        decoded = _decode_image_data(
-            captured.get("image_data")
-        )
-
-        if not decoded:
-            continue
-
-        with _HodExportImage.open(BytesIO(decoded)) as image:
-            if image.width and image.height:
-                dashboard_ratios.append(
-                    image.height / image.width
-                )
-
-    if dashboard_ratios:
-        slide_height_inches = (
-            SLIDE_WIDTH * max(dashboard_ratios)
-        )
-
-        if slide_height_inches > 30:
-            raise ValueError(
-                "Dashboard is too tall for one slide."
-            )
-
-        prs.slide_height = Inches(
-            slide_height_inches
-        )
 
     if not captured_slides:
         _add_error_slide(
@@ -3571,35 +3538,66 @@ def build_hod_presentation(
                         source_image.convert("RGB")
                     )
 
-                target_height = round(
-                    dashboard_image.width
-                    * prs.slide_height
-                    / prs.slide_width
+                                # HOD_POWERPOINT_BLACK_CANVAS_V1
+# HOD_LANDSCAPE_IMAGE_FIT_V1
+                # Preserve the complete image within a 16:9 canvas.
+                # HOD_SHARP_EXPORT_ALIGNED_V1
+                # Preserve native resolution in a 16:9 canvas.
+                target_width = max(1600, dashboard_image.width)
+                target_height = round(target_width * 9 / 16)
+
+                if dashboard_image.height > target_height:
+                    target_height = dashboard_image.height
+                    target_width = round(target_height * 16 / 9)
+
+                if target_width * target_height > 16000000:
+                    raise ValueError(
+                        "PowerPoint capture exceeds image safety limits."
+                    )
+
+                scale = min(
+                    target_width / dashboard_image.width,
+                    target_height / dashboard_image.height,
                 )
 
-                if dashboard_image.height < target_height:
-                    padded = _HodExportImage.new(
-                        "RGB",
-                        (
-                            dashboard_image.width,
-                            target_height,
-                        ),
-                        "white",
-                    )
+                fitted_width = max(
+                    1, round(dashboard_image.width * scale)
+                )
+                fitted_height = max(
+                    1, round(dashboard_image.height * scale)
+                )
 
-                    padded.paste(
-                        dashboard_image,
-                        (0, 0),
-                    )
+                fitted_image = dashboard_image.resize(
+                    (fitted_width, fitted_height),
+                    _HodExportImage.Resampling.LANCZOS,
+                )
 
-                    padded_output = BytesIO()
-                    padded.save(
-                        padded_output,
-                        format="JPEG",
-                        quality=92,
-                    )
+                padded = _HodExportImage.new(
+                    "RGB",
+                    (target_width, target_height),
+                    "#050505",
+                )
 
-                    image_bytes = padded_output.getvalue()
+                # HOD_NO_RIGHT_BLACK_FRAME_V1
+                # Keep dashboard flush with the right and top edges.
+                # Any remaining canvas padding stays left/bottom.
+                padded.paste(
+                    fitted_image,
+                    (
+                        target_width - fitted_width,
+                        0,
+                    ),
+                )
+
+                padded_output = BytesIO()
+                # HOD_LOSSLESS_PNG_EXPORT_V2
+                padded.save(
+                    padded_output,
+                    format="PNG",
+                    optimize=True,
+                )
+
+                image_bytes = padded_output.getvalue()
 
                 _add_image_fitted(
                     slide,

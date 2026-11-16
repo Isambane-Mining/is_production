@@ -330,7 +330,16 @@ function hodNumber(value, decimals = 0, signed = false) {
         minimumFractionDigits: decimals, maximumFractionDigits: decimals
     });
 }
-function hodPercent(value) { return hodValue(value) === null ? '—' : `${hodNumber(value, 1)}%`; }
+// HOD_AU_DISPLAY_CAP_100_V1
+// Cap displayed A&U percentages only; preserve source calculations.
+function hodCapAuPercent(value) {
+    const number = hodValue(value);
+    return number === null ? null : Math.max(0, Math.min(100, number));
+}
+function hodPercent(value) {
+    const capped = hodCapAuPercent(value);
+    return capped === null ? '—' : `${hodNumber(capped, 1)}%`;
+}
 function hodBand(metric, value) {
     value = hodValue(value);
     if (value === null) return 'neutral';
@@ -352,10 +361,12 @@ function hodGauge(category, metric, averages) {
     const swingValue = hodValue(averages?.swing?.[metric]);
     const availableValues = [productionValue, swingValue]
         .filter(value => value !== null);
-    const value = availableValues.length
-        ? Math.max(...availableValues)
-        : null;
-    const progress = Math.min(100, Math.max(0, value ?? 0));
+    const value = hodCapAuPercent(
+        availableValues.length
+            ? Math.max(...availableValues)
+            : null
+    );
+    const progress = value ?? 0;
     const band = hodBand(metric, value);
     const stroke = {red:'#e02f43',amber:'#f1a900',green:'#19a557',neutral:'#a0a8b2'}[band];
     const text = {red:'#b42131',amber:'#a16a00',green:'#167743',neutral:'#677489'}[band];
@@ -411,7 +422,7 @@ function hodProduction(row) {
         ['Waste variance','waste_variance_bcm','BCM',0,true], ['Coal variance','coal_variance_tons',"TON's",0,true],
         ['Actual BCMs','actual_bcm','BCM'], ['Actual coal','actual_coal_tons',"TON's"],
         ['Daily required','daily_required_bcm','BCM/D',1], ['Daily achieved','daily_achieved_bcm','BCM/D',1],
-        ['Average BCM/hour','average_bcm_h','BCM/H',1], ['Days worked / left',null,'Days',1],
+        ['Average BCM/Hour','average_bcm_h','BCM/H',1], ['Days worked / left',null,'Days',1],
         ['Strip ratio','strip_ratio','BCM/T',1], ['Forecast delivery','forecast_delivery_percent','%',1],
         // HOD_BCM_PER_MAN_V1
         ['BCM/Man','bcm_per_man','BCM',1]
@@ -422,7 +433,7 @@ function hodProduction(row) {
         <table class="hod-production-table"><tbody>${metrics.map(([label,field,unit,decimals=0,signed=false]) => {
             const value = field ? row[field] : null;
             // HOD_AVERAGE_BCM_COLOUR_V1
-            // Original HOD thresholds: Green >=220, Orange >=200, Red <200.
+            // HOD thresholds: Green >=220, Orange >=210, Red <210.
             let colour = signed && hodValue(value) !== null
                 ? (Number(value) >= 0 ? 'hod-positive' : 'hod-negative')
                 : '';
@@ -430,10 +441,33 @@ function hodProduction(row) {
             if (field === 'average_bcm_h' && hodValue(value) !== null) {
                 colour = Number(value) >= 220
                     ? 'hod-positive'
-                    : Number(value) >= 200
+                    : Number(value) >= 210
                         ? 'hod-average-bcm-amber'
                         : 'hod-negative';
             }
+            // HOD_PRODUCTION_VALUE_COLOURS_V1
+            if (field === 'forecast_delivery_percent') {
+                const percent = hodValue(value);
+                colour = percent === null
+                    ? ''
+                    : Number(percent) >= 100
+                        ? 'hod-production-value-green'
+                        : Number(percent) >= 95
+                            ? 'hod-production-value-orange'
+                            : 'hod-production-value-red';
+            }
+
+            if (field === 'average_bcm_h') {
+                const rate = hodValue(value);
+                colour = rate === null
+                    ? ''
+                    : Number(rate) >= 220
+                        ? 'hod-production-value-green'
+                        : Number(rate) >= 210
+                            ? 'hod-production-value-orange'
+                            : 'hod-production-value-red';
+            }
+
             return `<tr data-production-field="${field || 'days_worked_left'}"><th scope="row">${label}</th><td>${unit}</td><td class="${colour}">${field ? hodNumber(value,decimals,signed)+(unit==='%' && hodValue(value)!==null ? '%' : '') : `${hodNumber(row.days_worked,1)} / ${hodNumber(row.days_left,1)}`}</td></tr>`;
         }).join('')}</tbody></table>`;
 }
@@ -802,58 +836,30 @@ function hodPopupPrintReport(dialog, classification) {
         `Breakdown Reasons - ${classification}`
     );
 
+    const printCssUrl = [...document.querySelectorAll(
+        'link[rel="stylesheet"]'
+    )].find(link =>
+        link.href.includes("/is_production/css/dashboards.css")
+        && !link.disabled
+    )?.href;
+
+    if (!printCssUrl) {
+        printWindow.close();
+        frappe.msgprint(
+            "Shared dashboard stylesheet is unavailable for printing."
+        );
+        return;
+    }
+
     const documentHtml = `
         <!doctype html>
         <html>
         <head>
             <meta charset="utf-8">
             <title>${title}</title>
-            <style>
-                @page {
-                    size: A4 landscape;
-                    margin: 10mm;
-                }
-                body {
-                    font-family: Arial, sans-serif;
-                    color: #111;
-                    margin: 0;
-                    font-size: 10px;
-                }
-                h2 {
-                    margin: 0 0 14px;
-                    font-size: 17px;
-                    color: #111;
-                }
-                table {
-                    border-collapse: collapse !important;
-                    width: 100% !important;
-                    min-width: 0 !important;
-                    font-size: 9px !important;
-                }
-                th, td {
-                    padding: 6px !important;
-                    border: 1px solid #aaa !important;
-                    color: #111 !important;
-                    background: #fff !important;
-                    vertical-align: top;
-                }
-                thead th {
-                    background: #ddd !important;
-                    font-weight: bold !important;
-                }
-                tbody tr:last-child td {
-                    background: #ddd !important;
-                    font-weight: bold !important;
-                }
-                thead {
-                    display: table-header-group;
-                }
-                tr {
-                    break-inside: avoid;
-                }
-            </style>
+            <link rel="stylesheet" href="${printCssUrl}">
         </head>
-        <body>
+        <body class="hod-breakdown-print">
             <h2>${title}</h2>
             ${table.outerHTML}
         </body>
@@ -1542,9 +1548,9 @@ function hodHrStats(row) {
                     </div>
 
                     <div class="hod-hr-card-values">
-                        <span>Male = <strong class="hod-hr-count">${safeCount(group.values?.male)}</strong></span>
-                        <span class="hod-hr-separator">|</span>
-                        <span>Female = <strong class="hod-hr-count">${safeCount(group.values?.female)}</strong></span>
+                        ${(group.values?.genders || []).map(item => `
+                            <span>${hodEscape(item.label)} = <strong class="hod-hr-count">${safeCount(item.count)}</strong></span>
+                        `).join(`<span class="hod-hr-separator">|</span>`) || `<span>None = 0</span>`}
                     </div>
                 </div>
             `).join("")}
@@ -1554,6 +1560,16 @@ function hodHrStats(row) {
 
 function hodDashboard(row) {
     const engineering = row.engineering;
+
+    const averageBcm = hodValue(row.average_bcm_h);
+    const averageBcmClass = averageBcm === null
+        ? "hod-production-kpi-neutral"
+        : averageBcm >= 220
+            ? "hod-production-kpi-green"
+            : averageBcm >= 210
+                ? "hod-production-kpi-orange"
+                : "hod-production-kpi-red";
+
     return `<article class="hod-performance-dashboard" data-site="${hodEscape(row.site)}">
         <header class="hod-brand"><img src="/files/ISAMBANE-WHITE.png" alt="Isambane Mining"><h2>${hodEscape(hodGetComplexName(row.site))} · Production Performance</h2></header>
         <div class="hod-period"><strong>${hodEscape(row.site)}</strong><span>${hodEscape(row.period)}</span></div>
@@ -1631,7 +1647,23 @@ ${hodProblemMachinesPanel(engineering)}
             </section>
             <section class="hod-domain-panel hod-production-panel">
                 ${hodHrStats(row)}
-                <div class="hod-domain-heading hod-production-title"><div><h3>Production</h3><span>Production performance</span></div></div>
+                <!-- HOD_PRODUCTION_HEADER_KPIS_V1 -->
+                <div class="hod-domain-heading hod-production-title">
+                    <div class="hod-production-title-text">
+                        <h3>Production</h3>
+                        <span>Production performance</span>
+                    </div>
+                    <div class="hod-production-header-kpis">
+                        <div class="hod-production-header-kpi">
+                            <span>Average BCM/Hour =</span>
+                            <strong class="${averageBcmClass}">${hodNumber(row.average_bcm_h, 1)}</strong>
+                        </div>
+                        <div class="hod-production-header-kpi">
+                            <span>BCM/Man =</span>
+                            <strong>${hodNumber(row.bcm_per_man, 1)}</strong>
+                        </div>
+                    </div>
+                </div>
                 <div class="hod-domain-main hod-production-main">${hodProduction(row)}</div>
                 ${hodDowntimeContributorsPanel(engineering)}
             </section>
@@ -2181,6 +2213,66 @@ async function downloadHodPresentation(view) {
                 clone.querySelectorAll(
                     '.hod-view-au-detail, .hod-view-plant-detail, .hod-view-breakdown-detail'
                 ).forEach(button => button.remove());
+
+                // HOD_RESTORED_ADAPTIVE_LANDSCAPE_V1
+                // Restore full-width export sizing without altering
+                // the live ERPNext dashboard.
+                //
+                // Keep the canvas as close to 16:9 as practical,
+                // allowing the dashboard to reflow naturally.
+
+                for (let attempt = 0; attempt < 4; attempt++) {
+                    const currentHeight = Math.max(
+                        clone.scrollHeight,
+                        clone.offsetHeight,
+                        1
+                    );
+
+                    const desiredWidth = Math.max(
+                        2000,
+                        Math.min(
+                            2400,
+                            Math.ceil(currentHeight * 16 / 9)
+                        )
+                    );
+
+                    root.style.setProperty(
+                        'width', `${desiredWidth}px`, 'important'
+                    );
+
+                    clone.style.setProperty(
+                        'width', `${desiredWidth}px`, 'important'
+                    );
+
+                    clone.style.setProperty(
+                        'max-width', 'none', 'important'
+                    );
+
+                    // Force the browser to recalculate its layout.
+                    void clone.offsetHeight;
+
+                    const measuredWidth = clone.offsetWidth;
+                    const measuredHeight = clone.scrollHeight;
+
+                    if (
+                        measuredHeight > 0 &&
+                        Math.abs(
+                            measuredWidth / measuredHeight - 16 / 9
+                        ) < 0.01
+                    ) {
+                        break;
+                    }
+                }
+
+                // Re-align after the final export width is applied.
+                // Recalculate main panels after export resizing.
+                alignHodMainPanels($(root));
+                fillHodGaugeSpace($(root));
+
+                alignHodDowntimeSections($(root));
+                alignHodDowntimePanelHeights($(root));
+                fillHodDowntimeGraphSpace($(root));
+
                 const siteRow = (view.data || []).find(
                     row => row.site === board.dataset.site
                 );
@@ -2190,7 +2282,7 @@ async function downloadHodPresentation(view) {
                     start_date:siteRow?.start_date || '',
                     end_date:siteRow?.end_date || '',
 
-                    image_data:await captureHodSection(clone,{width:1600,pixelRatio:1.0,quality:0.85})});
+                    image_data:await captureHodSection(clone,{pixelRatio:1.0})});
             } finally { root.remove(); }
         }
         const response = await frappe.call({
@@ -2227,7 +2319,7 @@ async function captureHodSection(element, options = {}) {
     );
 
     const capturePromise =
-        window.htmlToImage.toJpeg(
+        /* HOD_LOSSLESS_PNG_EXPORT_V2 */ window.htmlToImage.toPng(
             element,
             {
                 quality:

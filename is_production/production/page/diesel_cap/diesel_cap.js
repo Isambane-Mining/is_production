@@ -31,7 +31,7 @@ frappe.DieselCapPage = class DieselCapPage {
 			</section>
 		</div>`).appendTo(this.page.main);
 		this.kpis = [
-			["actual_bcm", __("Total Month to Date BCM"), "BCM", "project"],
+			["month_to_date_bcm", __("Total Month to Date BCM"), "BCM", "project"],
 			["total_tallies_cubes", __("Total Tallies Cubes"), "m³", "stock"],
 			["total_diesel_litres", __("Total Diesel Litres"), "L", "assets"],
 			["diesel_cap", __("Diesel Cap"), "L/BCM", "dashboard"],
@@ -129,14 +129,25 @@ frappe.DieselCapPage = class DieselCapPage {
 	}
 
 	summarize(rows) {
-		const totals = {actual_bcm: 0, total_tallies_cubes: 0, total_diesel_litres: 0};
+		const totals = {
+			month_to_date_bcm: 0,
+			selected_period_bcm: 0,
+			total_tallies_cubes: 0,
+			total_diesel_litres: 0,
+		};
+
 		for (const row of rows) {
-			for (const key of Object.keys(totals)) totals[key] += Number(row[key]) || 0;
+			for (const key of Object.keys(totals)) {
+				totals[key] += Number(row[key]) || 0;
+			}
 		}
-		// Ratios follow the report's formulas, applied to the returned totals.
-		return {...totals,
-			diesel_cap: totals.actual_bcm ? totals.total_diesel_litres / totals.actual_bcm : 0,
-			tallies_fuel_cap: totals.total_tallies_cubes ? totals.total_diesel_litres / totals.total_tallies_cubes : 0,
+
+		return {
+			...totals,
+			diesel_cap: totals.selected_period_bcm
+				? totals.total_diesel_litres / totals.selected_period_bcm : 0,
+			tallies_fuel_cap: totals.total_tallies_cubes
+				? totals.total_diesel_litres / totals.total_tallies_cubes : 0,
 		};
 	}
 
@@ -154,7 +165,8 @@ frappe.DieselCapPage = class DieselCapPage {
 		// Report messages are trusted server-rendered HTML, as on the standard report.
 		this.$root.find(".dc-report-message").html(report.message || "");
 		if (!rows.length) return;
-		const columns = report.columns.map(column => ({
+		const visibleColumns = report.columns.filter(column => !column.hidden);
+		const columns = visibleColumns.map(column => ({
 			...column, id: column.fieldname, name: column.label, editable: false,
 			align: ["Float", "Int", "Currency"].includes(column.fieldtype) ? "right" : "left",
 			compareValue: column.fieldtype === "Date" ? (cell, keyword) => {
@@ -164,7 +176,7 @@ frappe.DieselCapPage = class DieselCapPage {
 			format: value => frappe.format(value, column, {for_print: false, always_show_decimals: true}),
 		}));
 		this.datatable = new window.DataTable(this.$root.find(".dc-table")[0], {
-			columns, data: rows.map(row => report.columns.map(column => row[column.fieldname])),
+			columns, data: rows.map(row => visibleColumns.map(column => row[column.fieldname])),
 			inlineFilters: true, layout: "fixed", cellHeight: 44, serialNoColumn: true,
 			checkboxColumn: false, noDataMessage: __("No matching rows"),
 			language: frappe.boot.lang, translations: frappe.utils.datatable.get_translations(),

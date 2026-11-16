@@ -5,44 +5,31 @@ from is_production.production.report.hod_presentation import hod_presentation as
 from is_production.production.report.hod_presentation.hod_presentation import build_grid_data, render_grids
 
 
-# HOD_HR_STATS_V1
+# HOD_HR_STATS_V3_DYNAMIC_GENDERS
 def get_hod_hr_stats(site, start_date, end_date):
-    """Return period-based HR totals by gender for an authorised HOD site."""
+    """Return active headcount and period activity for every recorded gender."""
     report.check_hod_site_access(site)
 
     records = frappe.db.sql(
         """
         SELECT
-            gender,
+            COALESCE(NULLIF(TRIM(gender), ''), 'Not specified') AS gender,
+            SUM(CASE WHEN status = 'Active' THEN 1 ELSE 0 END)
+                AS total_employees,
             SUM(
-                CASE WHEN date_of_joining <= %(end)s
-                    AND (
-                        relieving_date IS NULL
-                        OR relieving_date > %(end)s
-                    )
-                    THEN 1 ELSE 0
-                END
-            ) AS total_employees,
-            SUM(
-                CASE WHEN relieving_date
-                    BETWEEN %(start)s AND %(end)s
-                    THEN 1 ELSE 0
-                END
+                CASE WHEN relieving_date BETWEEN %(start)s AND %(end)s
+                THEN 1 ELSE 0 END
             ) AS terminations,
             SUM(
-                CASE WHEN date_of_joining
-                    BETWEEN %(start)s AND %(end)s
-                    THEN 1 ELSE 0
-                END
+                CASE WHEN date_of_joining BETWEEN %(start)s AND %(end)s
+                THEN 1 ELSE 0 END
             ) AS recruitment
         FROM `tabEmployee`
-        WHERE company = %(company)s
-          AND branch = %(site)s
-          AND gender IN ('Male', 'Female')
-        GROUP BY gender
+        WHERE branch = %(site)s
+        GROUP BY COALESCE(NULLIF(TRIM(gender), ''), 'Not specified')
+        ORDER BY gender
         """,
         {
-            "company": "Isambane Mining (Pty) Ltd",
             "site": site,
             "start": start_date,
             "end": end_date,
@@ -50,25 +37,38 @@ def get_hod_hr_stats(site, start_date, end_date):
         as_dict=True,
     )
 
+    categories = (
+        "total_employees",
+        "terminations",
+        "recruitment",
+    )
+
     stats = {
-        category: {"male": 0, "female": 0}
-        for category in (
-            "total_employees",
-            "terminations",
-            "recruitment",
-        )
+        category: {"total": 0, "genders": []}
+        for category in categories
     }
 
     for record in records:
-        gender = str(record.get("gender") or "").lower()
+        gender = str(record.get("gender") or "Not specified")
 
-        if gender not in ("male", "female"):
-            continue
+        for category in categories:
+            count = int(record.get(category) or 0)
+            stats[category]["total"] += count
 
-        for category in stats:
-            stats[category][gender] = int(
-                record.get(category) or 0
-            )
+            if count:
+                stats[category]["genders"].append({
+                    "label": gender,
+                    "count": count,
+                })
+
+    # Same branch/status population as BCM/Man.
+    stats["total_employees"]["total"] = frappe.db.count(
+        "Employee",
+        filters={
+            "branch": site,
+            "status": "Active",
+        },
+    )
 
     return stats
 

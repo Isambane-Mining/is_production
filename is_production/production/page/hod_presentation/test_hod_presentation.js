@@ -118,6 +118,14 @@ test('gauges carry their threshold colours and font sizes into SVG image capture
     assert.match(html,/stroke="#f1a900"/);
     assert.match(html,/fill="#a16a00" font-family="Arial" font-size="27" font-weight="800"/);
     assert.match(html,/stroke-dasharray="80 100"/);
+    // Higher Production/Swing value is capped at 100% for display.
+    const capped = vm.runInContext(
+        "hodGauge('ADT','avail',{excluding:{avail:105},swing:{avail:92}})",
+        context
+    );
+    assert.match(capped, /data-value="100"/);
+    assert.match(capped, /stroke-dasharray="100 100"/);
+    assert.match(capped, /100,0%/);
     const missing = vm.runInContext("hodGauge('Dozer','util',{})",context);
     assert.match(missing,/stroke="#a0a8b2"/);
     assert.match(missing,/—/);
@@ -128,7 +136,7 @@ test('export includes only the unchanged dashboard for each selected site', asyn
     const sites = ['Uitgevallen','Klipfontein'];
     const boards = sites.map(site=>({dataset:{site},cloneNode:()=>({
         kind:`dashboard-${site}`,
-        style:{},
+        style:{setProperty(){}},
         classList:{add(){}},
         querySelector: selector => (
             selector === '.hod-brand' || selector === '.hod-brand img'
@@ -139,10 +147,29 @@ test('export includes only the unchanged dashboard for each selected site', asyn
     })}));
     let removed = 0, exported, error;
     context.document = {
-        fonts:{ready:Promise.resolve()},body:{appendChild(){}},
-        createElement:()=>({style:{},appendChild(){},remove(){removed++;},
-            querySelector:()=>({kind:'fleet-summary',querySelectorAll:()=>[],querySelector:()=>null})})
+        fonts: {ready: Promise.resolve()},
+        body: {appendChild() {}},
+        createElement: () => ({
+            style: {setProperty() {}},
+            classList: {add() {}},
+            appendChild() {},
+            remove() {removed++;},
+            querySelector: () => null,
+            querySelectorAll: () => [],
+            scrollHeight: 1125,
+            offsetHeight: 1125,
+            offsetWidth: 2000
+        })
     };
+
+    // The export routine now performs layout alignment on its clone.
+    // These mocks isolate capture behaviour without changing production.
+    context.$ = () => ({find: () => ({length: 0})});
+    context.alignHodMainPanels = () => {};
+    context.fillHodGaugeSpace = () => {};
+    context.alignHodDowntimeSections = () => {};
+    context.alignHodDowntimePanelHeights = () => {};
+    context.fillHodDowntimeGraphSpace = () => {};
     context.frappe.dom = {freeze(){},unfreeze(){}};
     context.frappe.require = async()=>{};
     context.frappe.msgprint = value=>{error=value;};
