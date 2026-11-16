@@ -8341,7 +8341,47 @@ const Margin = (() => {
     lines.push(['Left out', 'waste dozed into the void (counted as loaded and hauled), rehandling, pit water, escalation, royalty and tax']);
     return lines;
   }
-  return { DEF, QUAL, FUEL, fuelOf, fuelLines, litres, settings, fromFin, finRates, formula, finLines, guess, colFor, ready, isCoal, isWasteSeam, compute, tonsWord, colorOf, gradient, srColor, srGradient, divColor, divGradient, NEG, POS, RED, GREEN, AMBER };
+  /* The area of the reserve boundary (m², in the model's coordinates): its rings by the even-odd rule, as a block is taken
+     in (Model.inReserve): a ring inside an odd number of the others is a hole. {area, areas, holes, rings}; null without a
+     boundary drawn (switched off or not). */
+  function reserveArea(P) {
+    const rings = Model.reserveRings(P).filter(r => r && r.length >= 3);
+    if (!rings.length) return null;
+    let area = 0, areas = 0, holes = 0;
+    rings.forEach((r, i) => {
+      let d = 0; for (let k = 0; k < rings.length; k++) if (k !== i && Geo.pip(r[0][0], r[0][1], rings[k])) d++;
+      const a = Geo.area(r);
+      if (d % 2) { area -= a; holes++; } else { area += a; areas++; }
+    });
+    return { area: Math.max(0, area), areas, holes, rings: rings.length };
+  }
+  /* The reserve layout in figures: its blocks (ids: the blocks of the reserve layout once they are copied for the schedule;
+     else those whose centre lies inside the reserve boundary, every block without one), each layer's bcm and tons in them
+     and in every block of the resource layout (as the block margin counts them: coal tons on its basis, the other layers
+     bcm × density), the area of the reserve boundary and the plan area of the blocks. R: compute(P, ws). */
+  function reserveSummary(P, ws, R, ids) {
+    const set = ids ? new Set(ids) : null, inRes = r => (set ? set.has(r.id) : !!r.inside), rows = R.rows.filter(inRes);
+    const layers = P.layers.map((L, l) => {
+      const T = R.layerTot[l], q = { l, id: L.id, name: L.name, type: L.type, coal: T.coal, v: 0, t: 0, vAll: T.v, tAll: T.t };
+      for (const r of rows) { q.v += r.byLayer[l].v; q.t += r.byLayer[l].t; }
+      return q;
+    });
+    let plan = 0, planAll = 0; for (const r of R.rows) { const a = ws.blockArea[r.b] || 0; planAll += a; if (inRes(r)) plan += a; }
+    const sum = (coal, k) => layers.reduce((x, q) => x + (q.coal === coal ? q[k] : 0), 0);
+    const S = { src: set ? 'layout' : hasBoundary(P) ? 'boundary' : 'all', on: hasBoundary(P), n: rows.length, N: R.rows.length, area: reserveArea(P), plan, planAll, layers,
+      waste: sum(false, 'v'), wasteT: sum(false, 't'), coalB: sum(true, 'v'), coalT: sum(true, 't'), wasteAll: sum(false, 'vAll'), wasteTAll: sum(false, 'tAll'), coalBAll: sum(true, 'vAll'), coalTAll: sum(true, 'tAll'), basis: tonsWord(R.M) };
+    S.bcm = S.waste + S.coalB; S.bcmAll = S.wasteAll + S.coalBAll; S.sr = S.coalT > 0 ? S.waste / S.coalT : NaN;
+    return S;
+  }
+  const hasBoundary = P => Model.hasReserve(P);
+  // what the reserve of a summary is, in words (from: the boundary the reserve layout was copied from)
+  function reserveWords(S, P, from) {
+    const drawn = !!S.area, right = Model.rightOverlay(P);
+    if (S.src === 'layout') return `The reserve layout: the ${U.fmtNum(S.n)} blocks the schedule mines, copied from inside “${from || 'the reserve boundary'}”, of the ${U.fmtNum(S.N)} blocks of the resource layout.`;
+    if (S.src === 'boundary') return `The ${U.fmtNum(S.n)} of the ${U.fmtNum(S.N)} blocks whose centre lies inside the reserve boundary${right ? ` and the mining right (${right.name})` : ''}: the blocks the schedule mines.`;
+    return drawn ? `The reserve boundary is switched off, so every block is in the reserve: ${U.fmtNum(S.N)} blocks.` : `There is no reserve boundary yet, so every block is in the reserve: ${U.fmtNum(S.N)} blocks.`;
+  }
+  return { DEF, QUAL, FUEL, fuelOf, fuelLines, litres, settings, fromFin, finRates, formula, finLines, guess, colFor, ready, isCoal, isWasteSeam, compute, tonsWord, reserveArea, reserveSummary, reserveWords, colorOf, gradient, srColor, srGradient, divColor, divGradient, NEG, POS, RED, GREEN, AMBER };
 })();
 
 /* ===== Coal tons from gross in situ to air-dry contaminated (Reserve tab; DOM-free) =====
@@ -16613,6 +16653,7 @@ const Tabs = (() => {
     if (part === 'rank') {
       if (!R.ready) body.append(sec('Margin rank', null, msg('warn', R.fin ? 'Enter the coal price in the Finance tab (Coal sales) to work out the margin of every block.' : 'Type the coal price (and the costs) above to work out the margin of every block.')));
       else marginRank(body, R, cur, kp);
+      reserveSummarySec(body, R, kp);
       reserveBoundary(body, R, cur, kp);
     }
     if (part === 'strip') {
@@ -16751,6 +16792,36 @@ const Tabs = (() => {
     else if (cand) parts.push(msg('info', `“${cand.name}” (Feature layers tab) looks like the mining right: it is taken when you create or draw the reserve boundary, so that the blocks outside it are left out. Choose it above to use it now, or None.`));
     else if (opts.length === 1) parts.push(hint('Add the mining right as a KML or DXF overlay in the Feature layers tab, then choose it here: a reserve boundary then takes only the blocks inside it.'));
     return parts;
+  }
+  /* The reserve layout in figures (Block Margin Rank tab): the area of the reserve boundary and the plan area of the reserve
+     blocks, and each layer's bcm and tons in the reserve beside every block of the resource layout */
+  function reserveSummarySec(body, R, kp) {
+    const V = App.rv(), P = V.P, S = Margin.reserveSummary(P, V.ws, R, V.sep ? App.P.blocks.map(b => b.id) : null), A = S.area;
+    const m2 = v => `${U.fmtNum(v, 0)} m²`, ha = v => `${U.fmtNum(v / 1e4, 1)} ha`, n0 = v => U.fmtNum(v, 0);
+    const part = S.n < S.N || S.src === 'layout'; // (the reserve is not every block: show the resource layout beside it)
+    const parts = [h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, Margin.reserveWords(S, P, (App.P.reserveLayout || {}).boundary))];
+    parts.push(h('div', { class: 'kpis' },
+      kp(A ? `Reserve boundary area${S.on || S.src === 'layout' ? '' : ' (switched off)'}` : 'Reserve boundary area', A ? `${m2(A.area)} · ${ha(A.area)}` : 'no boundary'),
+      kp('Plan area of the reserve blocks', `${m2(S.plan)} · ${ha(S.plan)}`),
+      kp('Waste', `${U.fmtBig(S.waste, 'bcm')}`), kp(`Coal (${S.basis})`, `${U.fmtBig(S.coalT, 't')} · ${U.fmtBig(S.coalB, 'bcm')}`),
+      kp('Strip ratio', S.sr === S.sr ? `${U.fmtNum(S.sr, 2)} bcm/t` : '–'), kp('Blocks', `${U.fmtNum(S.n)} of ${U.fmtNum(S.N)}`)));
+    if (A && (A.areas > 1 || A.holes)) parts.push(h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `The boundary is ${A.areas} area${A.areas === 1 ? '' : 's'}${A.holes ? ` less ${A.holes} hole${A.holes === 1 ? '' : 's'}` : ''}: the area is theirs added up, less the holes.`));
+    const typ = q => { const t = (Model.LAYER_TYPES[q.type] || {}).label || q.type; return q.type === 'coal' && !q.coal ? `${t}, counted as waste` : t; };
+    const pc = (a, b) => (b > 0 ? `${U.fmtNum((a / b) * 100, 1)}%` : '–');
+    const row = (cells, cls) => h('tr', cls ? { class: cls } : null, ...cells.map((c, i) => h('td', i >= 2 ? { class: 'r num' } : null, c)));
+    const line = q => row([q.name, typ(q), n0(q.v), n0(q.t), ...(part ? [n0(q.vAll), pc(q.v, q.vAll)] : [])]);
+    const tot = (label, v, t, vA, cls) => row([label, '', n0(v), t == null ? '' : n0(t), ...(part ? [n0(vA), pc(v, vA)] : [])], cls);
+    parts.push(h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl recon-tbl', 'aria-label': 'Volumes of each layer in the reserve' },
+      h('thead', null, h('tr', null, h('th', null, 'Layer'), h('th', null, 'Type'), h('th', { class: 'r' }, 'Volume (bcm)'), h('th', { class: 'r', title: `Coal on the block margin's basis (${S.basis}); the other layers in situ: bcm × density` }, 'Tons'),
+        ...(part ? [h('th', { class: 'r', title: 'Every block of the resource layout' }, 'Resource layout (bcm)'), h('th', { class: 'r', title: 'The reserve’s share of the layer’s bcm' }, 'In the reserve')] : []))),
+      h('tbody', null, ...S.layers.map(line),
+        tot('Waste', S.waste, S.wasteT, S.wasteAll, 'tot'), tot(`Coal (${S.basis})`, S.coalB, S.coalT, S.coalBAll, 'tot'), tot('All layers', S.bcm, null, S.bcmAll, 'tot')))));
+    parts.push(h('div', { class: 'row' }, btn('Export to Excel', async () => {
+      try { const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, Report.reserveSheet(P, V.ws, R, App), 'Reserve Summary'); await App.saveFile(`${U.slug(App.P.name) || 'project'}_reserve_summary_${U.todayISO().replace(/-/g, '')}.xlsx`, Report.toBytes(wb)); }
+      catch (e) { UI.toast('The workbook failed: ' + (e.message || e)); }
+    }, 'sm', 'The area, the blocks and each layer’s bcm and tons in the reserve (also a sheet of the Excel schedule)')));
+    parts.push(hint(`The volumes of each layer as the block margin counts them: from the 3D model, as the schedule mines each block (the seam and quality cut-offs, depth limits and keep-out zones taken off); waste layers and seams counted as waste in bcm, the seams counted as coal also in tons (${S.basis}), the waste in tons in situ (bcm × density). The area of the reserve boundary is its polygon’s, in the model’s coordinates${A && A.rings > 1 ? ' (its areas less its holes)' : ''}; the plan area of the reserve blocks is the area of their outlines.${S.on && Model.rightOverlay(P) ? ' The mining right can leave blocks inside the boundary out of the reserve, but not out of its area.' : ''}`));
+    body.append(sec('Reserve layout summary', h('span', { class: 'chip' }, A ? m2(A.area) : `${U.fmtNum(S.n)} blocks`), ...parts));
   }
   function reserveBoundary(body, R, cur, kp) {
     const P = App.rv().P, B = P.reserve, drawn = !!(B && B.pts && B.pts.length >= 3), on = Model.hasReserve(P), Q = R.resv;
@@ -20170,6 +20241,27 @@ const Report = (() => {
   /* The strip ratio of every block (Strip Ratio tab), ranked from the lowest, when there is no block margin to carry it. */
   /* Coal tons from GTIS to ADC (Tons; Reserve tab): seam by seam with every factor and the ADC qualities, the quality of the
      contamination, and block by block. */
+  /* The reserve layout in figures (Block Margin Rank tab): the area of the reserve boundary, the blocks and each layer's bcm
+     and tons in the reserve and in the resource layout */
+  function reserveSheet(P, ws, R, App) {
+    const V = App && App.rv ? App.rv() : { sep: false }, S = Margin.reserveSummary(P, ws, R, V.sep ? App.P.blocks.map(b => b.id) : null), A = S.area;
+    const r0 = v => (v === v && v != null ? Math.round(v) : null), r1 = v => (v === v && v != null ? Math.round(v * 10) / 10 : null), r2 = v => (v === v && v != null ? Math.round(v * 100) / 100 : null);
+    const aoa = [['Reserve layout summary', (App && App.P ? App.P.name : P.name) || ''], [Margin.reserveWords(S, P, App && App.P ? (App.P.reserveLayout || {}).boundary : null)], [],
+      ['Reserve boundary area (m²)', A ? r0(A.area) : 'no boundary'], ['Reserve boundary area (ha)', A ? r2(A.area / 1e4) : null], ...(A && (A.areas > 1 || A.holes) ? [['Areas · holes', `${A.areas} · ${A.holes}`]] : []),
+      ...(A && !S.on && S.src !== 'layout' ? [['Reserve boundary', 'switched off: every block is in the reserve']] : []),
+      ['Plan area of the reserve blocks (m²)', r0(S.plan)], ['Blocks in the reserve', S.n], ['Blocks in the resource layout', S.N], [],
+      ['Layer', 'Type', 'Reserve (bcm)', 'Reserve (t)', 'Resource layout (bcm)', 'Resource layout (t)', 'In the reserve (% of the bcm)']];
+    const typ = q => { const t = (Model.LAYER_TYPES[q.type] || {}).label || q.type; return q.type === 'coal' && !q.coal ? `${t}, counted as waste` : t; };
+    for (const q of S.layers) aoa.push([q.name, typ(q), r0(q.v), r0(q.t), r0(q.vAll), r0(q.tAll), q.vAll > 0 ? r1((q.v / q.vAll) * 100) : null]);
+    aoa.push(['Waste', '', r0(S.waste), r0(S.wasteT), r0(S.wasteAll), r0(S.wasteTAll), S.wasteAll > 0 ? r1((S.waste / S.wasteAll) * 100) : null],
+      [`Coal (${S.basis})`, '', r0(S.coalB), r0(S.coalT), r0(S.coalBAll), r0(S.coalTAll), S.coalBAll > 0 ? r1((S.coalB / S.coalBAll) * 100) : null],
+      ['All layers', '', r0(S.bcm), null, r0(S.bcmAll), null, S.bcmAll > 0 ? r1((S.bcm / S.bcmAll) * 100) : null], [],
+      ['Strip ratio (bcm/t)', r2(S.sr)], [],
+      [`Volumes as the block margin counts them: from the 3D model, as the schedule mines each block (cut-offs, depth limits and keep-out zones taken off). Coal tons ${S.basis}; the other layers in situ (bcm × density). The area of the reserve boundary is its polygon's, in the model's coordinates (m²).`]);
+    const sh = sheet(aoa, [34, 26, 16, 16, 20, 20, 16]);
+    delete sh['!autofilter'];
+    return sh;
+  }
   function tonsSheet(P, ws, R) {
     const T = Tons.compute(P, ws, R), o = T.o, Q = Tons.Q, r0 = v => (v === v && v != null ? Math.round(v) : null), rq = (v, d) => (v === v && v != null ? Math.round(v * Math.pow(10, d)) / Math.pow(10, d) : null);
     const pits = P.pits || [], pitOf = pits.length ? Model.blockPits(P, ws) : null, boundary = Model.hasReserve(P);
@@ -20669,6 +20761,7 @@ const Report = (() => {
       const RV = App.rv ? App.rv() : { P, ws }, MR = App.margin ? App.margin() : Margin.compute(P, ws); // (the resource layout)
       if (MR.ready) XLSX.utils.book_append_sheet(wb, marginSheet(RV.P, RV.ws, MR), 'Block Margin'); // with the strip ratio of each block
       else if (MR.stats.sr.n) XLSX.utils.book_append_sheet(wb, stripSheet(RV.P, RV.ws, MR), 'Strip Ratio');
+      if (MR.rows.length) XLSX.utils.book_append_sheet(wb, reserveSheet(RV.P, RV.ws, MR, App), 'Reserve Summary'); // the area and the volumes of the reserve
       // the coal tons from GTIS to ADC, with the ADC qualities (Reserve tab)
       if (typeof Tons !== 'undefined' && P.layers.some(L => L.type === 'coal')) XLSX.utils.book_append_sheet(wb, tonsSheet(RV.P, RV.ws, MR), 'Coal Tons');
     }
@@ -20694,7 +20787,7 @@ const Report = (() => {
       return new Uint8Array(XLSX.CFB.write(cfb, { type: 'array', fileType: 'zip', compression: true }));
     } catch (e) { return u8; }
   }
-  return { build, toBytes, inventory, tonsSheet };
+  return { build, toBytes, inventory, tonsSheet, reserveSheet };
 })();
 
 /* ===== Excel: the LoM schedule sheets, laid out like the South Witbank LoM workbook (SW_LoM_Schedule_v6) =====
