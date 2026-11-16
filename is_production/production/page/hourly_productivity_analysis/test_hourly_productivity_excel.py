@@ -6,6 +6,7 @@ from unittest.mock import patch
 from zipfile import ZipFile
 
 from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
 
 from is_production.production.page.hourly_productivity_analysis import hourly_productivity_analysis as report
 from is_production.production.page.hourly_productivity_analysis import test_hourly_productivity_analysis as fixtures
@@ -17,7 +18,7 @@ class TestHourlyProductivityExcel(TestCase):
         fixture = fixtures.TestHourlyProductivityAnalysis()
         fixture.setUp()
         docs = [fixture.f.doc("07:00-08:00", rows=[fixture.f.row(bcm=880)]),
-                fixture.f.doc("08:00-09:00", rows=[fixture.f.row(bcm=800)])]
+                fixture.f.doc("08:00-09:00", rows=[fixture.f.row(bcm=400)])]
         fatigue = [{"site": "Koppie", "shift": "Day", "day_type": "Weekday",
                     "fatigue_start": "13:00", "fatigue_end": "13:30"}]
         self.data = fixture.build(docs, fatigue=fatigue)
@@ -30,13 +31,18 @@ class TestHourlyProductivityExcel(TestCase):
             "Month", "Days", "Actual BCM", "Target BCM", "Achievement",
             "Green hrs", "Orange hrs", "Red hrs", "Fatigue / Non-working hrs"])
         self.assertEqual([summary.cell(10, col).value for col in range(6, 10)], [1, 1, 21.5, .5])
-        self.assertEqual(summary["C10"].value, 1680)
-        self.assertEqual(summary["D10"].value, 9680)
+        self.assertEqual(summary["C10"].value, 1280)
+        self.assertEqual(summary["D10"].value, 7920)
+        self.assertEqual(
+            sum(cell["target_bcm"] for cell in self.data["rows"][0]["cells"]),
+            9680,
+        )
+        self.assertEqual(self.data["rows"][0]["mpp_daily_target_bcm"], 7920)
         self.assertEqual(summary.auto_filter.ref, "A9:I10")
         expected = [
-            ("Green · ≥440 BCM per excavator", 1, "FF00B050"),
-            ("Orange · ≥400 and <440 BCM per excavator", 1, "FFFF9F1C"),
-            ("Red · <400 BCM per excavator", 21.5, "FFD63C4B"),
+            ("Green · 220 and above per production excavator", 1, "FF00B050"),
+            ("Orange · 200-219 per production excavator", 1, "FFFF9F1C"),
+            ("Red · Below 200 per production excavator", 21.5, "FFD63C4B"),
             ("Fatigue / Non-working", .5, "FFF5F5F5"),
         ]
         for row, (label, hours, colour) in enumerate(expected, 13):
@@ -62,6 +68,20 @@ class TestHourlyProductivityExcel(TestCase):
         fixture.setUp()
         september = dict(fixture.plan, name="SEP", prod_month_start_date="2026-09-01",
                          prod_month_end_date="2026-09-30")
+        september["month_prod_days"] = [{
+            "shift_start_date": "2026-09-30",
+            "production_excavators": "2",
+            "shift_day_hours": 9,
+            "shift_night_hours": 9,
+            "bcm_per_day": 7920,
+        }]
+        fixture.plan["month_prod_days"] = [{
+            "shift_start_date": "2026-10-01",
+            "production_excavators": "2",
+            "shift_day_hours": 9,
+            "shift_night_hours": 9,
+            "bcm_per_day": 7920,
+        }]
         data = fixture.build(plans=[september, fixture.plan], start="2026-09-30", end="2026-10-01")
         book = load_workbook(BytesIO(make_workbook(data)))
         self.assertEqual(book.sheetnames, ["Summary", "September 2026", "October 2026"])
@@ -76,10 +96,14 @@ class TestHourlyProductivityExcel(TestCase):
         fixture = fixtures.TestHourlyProductivityAnalysis()
         fixture.setUp()
         plan = dict(fixture.plan, num_excavators=1)
+        plan["month_prod_days"] = [
+            dict(row, production_excavators="1", bcm_per_day=3960)
+            for row in fixture.plan["month_prod_days"]
+        ]
         plan["excavator_truck_assignments"] = plan["excavator_truck_assignments"] + [
             {"excavator": f"SPARE{i}", "truck": None} for i in range(8)]
         docs = [fixture.f.doc("07:00-08:00", rows=[fixture.f.row(bcm=440)]),
-                fixture.f.doc("08:00-09:00", rows=[fixture.f.row(bcm=400)])]
+                fixture.f.doc("08:00-09:00", rows=[fixture.f.row(bcm=200)])]
         data = fixture.build(docs, plans=[plan])
         book = load_workbook(BytesIO(make_workbook(data)))
         self.assertEqual([book["Summary"].cell(10, col).value for col in range(6, 10)], [1, 1, 22, 0])
@@ -89,6 +113,48 @@ class TestHourlyProductivityExcel(TestCase):
         self.assertEqual(data["pie"]["categories"]["amber"]["hours"], 1)
 
 
+
+    def test_hourly_export_maps_all_24_hours_correctly(self):
+        book = load_workbook(BytesIO(make_workbook(self.data)))
+        sheet = book["October 2026"]
+
+        first_row = self.data["rows"][0]
+
+        self.assertEqual(sheet["P6"].value, "Day Avg")
+        self.assertEqual(sheet["Q6"].value, first_row["cells"][12]["label"])
+        self.assertEqual(sheet["AB6"].value, first_row["cells"][23]["label"])
+        self.assertEqual(sheet["AC6"].value, "Night Avg")
+
+        exported_actual = 0.0
+
+        for excel_row, row in enumerate(self.data["rows"], start=7):
+            for hour_index, cell in enumerate(row["cells"]):
+                column = hour_index + 3 + (1 if hour_index >= 12 else 0)
+                address = f"{get_column_letter(column + 1)}{excel_row}"
+
+                actual = float(cell.get("actual_bcm") or 0)
+
+                if not cell.get("has_record"):
+                    expected = f"{actual:g}*"
+                elif not cell.get("completed"):
+                    expected = f"{actual:g}{chr(8224)}"
+                else:
+                    expected = actual
+
+                self.assertEqual(
+                    sheet[address].value,
+                    expected,
+                    f"{row['date']} {cell['label']}"
+                )
+
+                exported_actual += float(
+                    str(sheet[address].value).rstrip("*" + chr(8224))
+                )
+
+        self.assertAlmostEqual(
+            exported_actual,
+            book["Summary"]["C10"].value
+        )
 
     def test_monthly_export_includes_day_and_night_average_columns(self):
         book = load_workbook(BytesIO(make_workbook(self.data)))
@@ -139,6 +205,9 @@ class TestHourlyProductivityExcel(TestCase):
 
         self.assertEqual(sheet["P6"].value, "Day Avg")
         self.assertEqual(sheet["AC6"].value, "Night Avg")
+        self.assertEqual(sheet["Q6"].value, row["cells"][12]["label"])
+        self.assertEqual(sheet["AB6"].value, row["cells"][23]["label"])
+        self.assertTrue(str(sheet["AB7"].value).strip())
 
         for address, cells in (
             ("P7", row["cells"][:12]),
@@ -198,6 +267,10 @@ class TestHourlyProductivityExcel(TestCase):
         )
 
         sheet = load_workbook(BytesIO(response["filecontent"]))["October 2026"]
+        row = data["rows"][0]
+        self.assertEqual(sheet["P6"].value, row["cells"][12]["label"])
+        self.assertEqual(sheet["AA6"].value, row["cells"][23]["label"])
+        self.assertTrue(str(sheet["AA7"].value).strip())
 
         self.assertEqual(sheet["E7"].value, "5 / 5")
         self.assertEqual(sheet["F7"].value, "4 / 5")

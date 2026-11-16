@@ -826,8 +826,8 @@
       <div class="hpt-tabs" role="tablist" aria-label="Hourly productivity reports">
         <button type="button" role="tab" id="hpt-summary-tab" aria-controls="hpt-summary-panel" aria-selected="true" data-report-tab="summary" data-mobile-label="Current">Current Productivity Analysis</button>
         <button type="button" role="tab" id="hpt-analysis-tab" aria-controls="hpt-analysis-panel" aria-selected="false" tabindex="-1" data-report-tab="analysis" data-mobile-label="Historical">Hourly Productivity Analysis</button>
-        <button type="button" role="tab" id="hpt-availability-tab" aria-controls="hpt-machines-panel" aria-selected="false" tabindex="-1" data-report-tab="availability" data-mobile-label="Availability">Availability</button>
-        <button type="button" role="tab" id="hpt-machines-tab" aria-controls="hpt-machines-panel" aria-selected="false" tabindex="-1" data-report-tab="machines" data-mobile-label="Utilisation">Utilisation</button>
+        <button type="button" role="tab" id="hpt-availability-tab" aria-controls="hpt-machines-panel" aria-selected="false" tabindex="-1" data-report-tab="availability" data-mobile-label="ADT Avail">ADT Avail</button>
+        <button type="button" role="tab" id="hpt-machines-tab" aria-controls="hpt-machines-panel" aria-selected="false" tabindex="-1" data-report-tab="machines" data-mobile-label="ADT Util">ADT Util</button>
       </div>
       <div class="hpt-summary-panel" id="hpt-summary-panel" role="tabpanel" aria-labelledby="hpt-summary-tab"></div>
       <div class="hpt-analysis-panel" id="hpt-analysis-panel" role="tabpanel" aria-labelledby="hpt-analysis-tab" hidden></div>

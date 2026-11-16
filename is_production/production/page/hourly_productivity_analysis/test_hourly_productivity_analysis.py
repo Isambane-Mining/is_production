@@ -12,6 +12,20 @@ class TestHourlyProductivityAnalysis(TestCase):
         self.f.setUp()
         self.plan = dict(self.f.plan, location="Koppie", prod_month_start_date="2026-10-01",
                          prod_month_end_date="2026-10-31", modified="2026-10-01 00:00:00")
+        self.plan["month_prod_days"] = [{
+            "shift_start_date": "2026-10-12",
+            "production_excavators": "2",
+            "shift_day_hours": 9,
+            "shift_night_hours": 9,
+            "bcm_per_day": 7920,
+        }]
+        self.plan["month_prod_days"] = [{
+            "shift_start_date": "2026-10-12",
+            "production_excavators": "2",
+            "shift_day_hours": 9,
+            "shift_night_hours": 9,
+            "bcm_per_day": 7920,
+        }]
 
     def build(self, docs=(), plans=None, pbm=(), start="2026-10-12", end="2026-10-12", now=None, fatigue=()):
         return report.build_analysis(start, end, "Koppie", [self.plan] if plans is None else plans,
@@ -27,6 +41,66 @@ class TestHourlyProductivityAnalysis(TestCase):
         self.assertEqual(cells[18]["actual_bcm"], 50)
         self.assertEqual(sum(c["actual_bcm"] for c in cells), 50)
         self.assertEqual([cells[i]["target_bcm"] for i in (0, 11, 12, 23)], [110, 330, 110, 330])
+
+    def test_daily_targets_use_date_specific_mpp_hours_without_changing_hourly_targets(self):
+        plan = dict(self.plan, month_prod_days=[
+            {
+                "shift_start_date": "2026-10-12",
+                "production_excavators": "2",
+                "shift_day_hours": 9,
+                "shift_night_hours": 9,
+                "bcm_per_day": 7920,
+            },
+            {
+                "shift_start_date": "2026-10-13",
+                "production_excavators": "2",
+                "shift_day_hours": 7,
+                "shift_night_hours": 7,
+                "bcm_per_day": 6160,
+            },
+            {
+                "shift_start_date": "2026-10-14",
+                "production_excavators": "0",
+                "shift_day_hours": 0,
+                "shift_night_hours": 0,
+                "bcm_per_day": 0,
+            },
+        ])
+
+        data = self.build(
+            plans=[plan],
+            start="2026-10-12",
+            end="2026-10-14",
+        )
+
+        self.assertEqual(
+            [row["mpp_daily_target_bcm"] for row in data["rows"]],
+            [7920, 6160, 0],
+        )
+
+        # Existing hourly targets must remain unchanged.
+        for row in data["rows"]:
+            self.assertEqual(
+                [row["cells"][i]["target_bcm"] for i in (0, 1, 11, 12, 23)],
+                [110, 440, 330, 110, 330],
+            )
+
+    def test_three_shift_mpp_daily_target_includes_all_required_hours(self):
+        plan = dict(self.plan, num_excavators=3, month_prod_days=[
+            {
+                "shift_start_date": "2026-10-12",
+                "production_excavators": "3",
+                "shift_morning_hours": 8,
+                "shift_afternoon_hours": 8,
+                "shift_night_hours": 8,
+                "bcm_per_day": 15840,
+            }
+        ])
+
+        data = self.build(plans=[plan])
+
+        self.assertEqual(data["rows"][0]["mpp_daily_target_bcm"], 15840)
+
 
     def test_koppie_night_shift_stored_production_date(self):
         values = {
@@ -52,8 +126,8 @@ class TestHourlyProductivityAnalysis(TestCase):
 
     def test_colour_thresholds_and_zero_missing_status(self):
         docs = [self.f.doc("06:00-07:00", rows=[self.f.row(bcm=220)]),
-                self.f.doc("07:00-08:00", rows=[self.f.row(bcm=800)]),
-                self.f.doc("08:00-09:00", rows=[self.f.row(bcm=799)]), self.f.doc("09:00-10:00")]
+                self.f.doc("07:00-08:00", rows=[self.f.row(bcm=430)]),
+                self.f.doc("08:00-09:00", rows=[self.f.row(bcm=399)]), self.f.doc("09:00-10:00")]
         data = self.build(docs)
         cells = data["rows"][0]["cells"]
         self.assertEqual([c["category"] for c in cells[:5]], ["green", "amber", "red", "red", "red"])
@@ -78,8 +152,8 @@ class TestHourlyProductivityAnalysis(TestCase):
     def test_spare_fleet_and_pbm_availability_do_not_change_bcm_thresholds(self):
         # Saved MPP production count stays 2 even when many spare identities exist.
         docs = [self.f.doc("07:00-08:00", rows=[self.f.row(bcm=880)]),
-                self.f.doc("08:00-09:00", rows=[self.f.row(bcm=800)]),
-                self.f.doc("09:00-10:00", rows=[self.f.row(bcm=799)])]
+                self.f.doc("08:00-09:00", rows=[self.f.row(bcm=420)]),
+                self.f.doc("09:00-10:00", rows=[self.f.row(bcm=399)])]
         baseline = self.build(docs)
         assets = self.f.assets + [{"name": f"SPARE{i}", "asset_name": f"SPARE{i}",
                                    "location": "Koppie", "asset_category": "Excavator"} for i in range(12)]
@@ -122,7 +196,7 @@ class TestHourlyProductivityAnalysis(TestCase):
                 self.assertIn("Production Excavator Count", data["configuration_error"]["title"])
 
     def test_one_excavator_compensates_for_another(self):
-        for amounts, expected in (((700, 180), "green"), ((700, 100), "amber"), ((600, 199), "red")):
+        for amounts, expected in (((700, 180), "green"), ((300, 100), "amber"), ((300, 99), "red")):
             with self.subTest(amounts=amounts):
                 doc = self.f.doc("07:00-08:00", rows=[self.f.row(bcm=amounts[0]), self.f.row("EX2", "T3", bcm=amounts[1])])
                 cell = self.build([doc])["rows"][0]["cells"][1]
@@ -181,6 +255,34 @@ class TestHourlyProductivityAnalysis(TestCase):
         september = dict(self.plan, name="SEP", num_excavators=1, prod_month_start_date="2026-09-01",
                          prod_month_end_date="2026-09-30",
                          excavator_truck_assignments=[{"excavator": "EX1", "truck": "T1"}])
+        september["month_prod_days"] = [{
+            "shift_start_date": "2026-09-30",
+            "production_excavators": "1",
+            "shift_day_hours": 9,
+            "shift_night_hours": 9,
+            "bcm_per_day": 3960,
+        }]
+        self.plan["month_prod_days"] = [{
+            "shift_start_date": "2026-10-01",
+            "production_excavators": "2",
+            "shift_day_hours": 9,
+            "shift_night_hours": 9,
+            "bcm_per_day": 7920,
+        }]
+        september["month_prod_days"] = [{
+            "shift_start_date": "2026-09-30",
+            "production_excavators": "1",
+            "shift_day_hours": 9,
+            "shift_night_hours": 9,
+            "bcm_per_day": 3960,
+        }]
+        self.plan["month_prod_days"] = [{
+            "shift_start_date": "2026-10-01",
+            "production_excavators": "2",
+            "shift_day_hours": 9,
+            "shift_night_hours": 9,
+            "bcm_per_day": 7920,
+        }]
         data = self.build(plans=[september, self.plan], start="2026-09-30", end="2026-10-01")
         self.assertEqual([r["plan_name"] for r in data["rows"]], ["SEP", "MPP"])
         self.assertEqual([r["cells"][0]["target_bcm"] for r in data["rows"]], [55, 110])
@@ -199,7 +301,7 @@ class TestHourlyProductivityAnalysis(TestCase):
         doc["dozer_production"] = [{"bcm_hour": 999}]
         data = self.build([doc, dict(doc)])
         self.assertEqual(data["rows"][0]["cells"][0]["actual_bcm"], 110)
-        self.assertEqual(data["rows"][0]["cells"][0]["category"], "red")
+        self.assertEqual(data["rows"][0]["cells"][0]["category"], "green")
 
     def test_pending_hours_are_not_claimed_zero_with_verified_availability(self):
         data = self.build(now=datetime(2026, 10, 12, 7))
