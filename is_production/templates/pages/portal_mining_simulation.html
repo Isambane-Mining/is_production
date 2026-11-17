@@ -191,6 +191,9 @@ input[type="number"] { font-family: var(--font-mono); }
 .wash-fig { display: flex; flex-direction: column; gap: 2px; } .wash-chart { width: 100%; height: auto; display: block; } .wash-chart text { font: 9px var(--font-mono); fill: var(--muted); } .wash-chart .g { stroke: var(--line); stroke-width: 1; } .wash-chart .c { fill: none; stroke: var(--ink-2); stroke-width: 1.2; opacity: .55; } .wash-chart .cut { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 3; } .wash-chart .cl { fill: var(--accent); font-weight: 600; } .wash-chart .pt { fill: var(--accent); }
 .qr-card .qr-name { flex: 1 1 auto; min-width: 0; font-weight: 600; overflow-wrap: anywhere; } .qr-card .ovl-h .chip { flex: none; } .qr-card .kv .v { overflow-wrap: anywhere; }
 .recon-tbl tr.tot td, .recon-tbl tr.tot th { font-weight: 600; border-top: 1px solid var(--line); }
+.recon-plan { display: block; width: 100%; height: auto; image-rendering: pixelated; background: var(--field); border: 1px solid var(--line); border-radius: var(--r); cursor: crosshair; }
+.recon-key { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: var(--fs-xs); color: var(--muted); margin-top: 4px; }
+.recon-key .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
 .coal-q tr.grp th { text-align: left; font-weight: 600; color: var(--ink-2); padding-top: 8px; border-bottom: 1px solid var(--line); }
 .ovl-fn { max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ovl-fn .dt { white-space: nowrap; }
@@ -10530,16 +10533,19 @@ const Recon = (() => {
     if (from) for (let c = 0; c < ws.n; c++) if (F[c] < M[c]) M[c] = F[c];
     const layers = L.map(() => ({ bcm: 0, t: 0 })), blocks = new Map(), cellBlock = ws.cellBlock;
     const covered = new Uint32Array(ws.blockCells.length);
-    let spoil = 0, below = 0, fill = 0, cells = 0, cutCells = 0, fillCells = 0;
+    let spoil = 0, below = 0, fill = 0, cells = 0, cutCells = 0, fillCells = 0, cutV = 0, maxCut = 0, maxFill = 0;
+    // the change of each cell (to − from, m): NaN where the two do not both cover it, 0 within the tolerance
+    const dz = new Float32Array(ws.n).fill(NaN);
     const row = b => { let r = blocks.get(b); if (!r) blocks.set(b, (r = { bcm: new Float64Array(nL), t: new Float64Array(nL), spoil: 0, below: 0, fill: 0 })); return r; };
     for (let c = 0; c < ws.n; c++) {
       const f = F[c], t = T[c];
       if (!(f === f && t === t)) continue;
       cells++; const b = cellBlock[c]; if (b >= 0) covered[b]++;
       const d = t - f;
-      if (Math.abs(d) < tol || d === 0) continue;
-      if (d > 0) { fill += d * A; fillCells++; row(b).fill += d * A; continue; }
-      cutCells++;
+      if (Math.abs(d) < tol || d === 0) { dz[c] = 0; continue; }
+      dz[c] = d;
+      if (d > 0) { fill += d * A; fillCells++; row(b).fill += d * A; if (d > maxFill) maxFill = d; continue; }
+      cutCells++; cutV -= d * A; if (-d > maxCut) maxCut = -d;
       const top = Math.min(f, M[c]), r = row(b);
       const sp = Math.max(0, f - Math.max(t, top)); spoil += sp * A; r.spoil += sp * A;
       for (let l = 0; l < nL; l++) {
@@ -10560,7 +10566,37 @@ const Recon = (() => {
       }
       plan.blocks = seen.size;
     }
-    return { from, to, d0, d1, days: U.daysBetween(d0, d1), tol, layers, spoil, below, fill, cells, cutCells, fillCells, A, blocks, plan };
+    // the colours' scale: the 98th percentile of the cut and of the fill (a few deep cells do not wash the rest out)
+    const p98 = (n, sign) => { if (!n) return 0; const a = new Float32Array(n); let k = 0; for (let c = 0; c < ws.n; c++) { const v = dz[c] * sign; if (v > 0) a[k++] = v; } a.sort(); return Math.max(tol, a[Math.min(k - 1, Math.floor(k * 0.98))]); };
+    return { from, to, d0, d1, days: U.daysBetween(d0, d1), tol, layers, spoil, below, fill, cells, cutCells, fillCells, cutV, maxCut, maxFill, scaleCut: p98(cutCells, -1), scaleFill: p98(fillCells, 1), dz, n: ws.n, A, blocks, plan };
+  }
+  /* The colour of a change (m, to − from) on the plan and in the 3D view: cut red, fill blue, stronger the deeper it is (to
+     the scale of compute: its 98th percentile); null for no change or not compared. [r, g, b, a] */
+  const CUT = 'rgb(196,18,18)', FILL = 'rgb(22,78,218)', SAME = 'rgb(214,214,210)';
+  function shade(d, C) {
+    if (!(d === d) || d === 0) return null;
+    const cut = d < 0, x = Math.min(1, Math.sqrt(Math.abs(d) / Math.max(1e-6, cut ? C.scaleCut : C.scaleFill)));
+    const [a, b] = cut ? [[255, 175, 165], [196, 18, 18]] : [[170, 200, 255], [22, 78, 218]];
+    return [Math.round(a[0] + (b[0] - a[0]) * x), Math.round(a[1] + (b[1] - a[1]) * x), Math.round(a[2] + (b[2] - a[2]) * x), Math.round(175 + 55 * x)];
+  }
+  // the plan: a pixel a cell, north up; cut and fill shaded, no change light grey, not compared clear. {w, h, px (RGBA)}
+  function raster(C, ws) {
+    const w = ws.nx, ht = ws.ny, px = new Uint8ClampedArray(w * ht * 4), dz = C.dz;
+    for (let c = 0; c < ws.n; c++) {
+      const d = dz[c]; if (!(d === d)) continue;
+      const o = ((ht - 1 - ((c / w) | 0)) * w + (c % w)) * 4, k = shade(d, C);
+      if (k) { px[o] = k[0]; px[o + 1] = k[1]; px[o + 2] = k[2]; } else { px[o] = 214; px[o + 1] = 214; px[o + 2] = 210; }
+      px[o + 3] = 255;
+    }
+    return { w, h: ht, px };
+  }
+  // the legend of the 3D view's "Cut and fill" colours
+  function legend(C) {
+    const ha = n => U.fmtNum((n * C.A) / 1e4, 2), m = v => U.fmtNum(v, v < 10 ? 2 : 1);
+    return { type: 'diverge', title: `Cut (red) and fill (blue), m: ${C.from ? C.from.name : 'model'} → ${C.to.name}`, lo: `−${m(C.scaleCut)}`, hi: `+${m(C.scaleFill)}`, zero: 50, mid: '0',
+      css: `linear-gradient(90deg, ${CUT}, rgb(255,175,165) 49%, ${SAME} 50%, rgb(170,200,255) 51%, ${FILL})`,
+      extra: [[CUT, `Cut: ${ha(C.cutCells)} ha, ${U.fmtBig(C.cutV, 'm³')}${C.maxCut > 0 ? `, up to ${m(C.maxCut)} m` : ''}`], [FILL, `Fill: ${ha(C.fillCells)} ha, ${U.fmtBig(C.fill, 'm³')}${C.maxFill > 0 ? `, up to ${m(C.maxFill)} m` : ''}`],
+        [SAME, `No change (under ${m(C.tol)} m): ${ha(C.cells - C.cutCells - C.fillCells)} ha`]] };
   }
 
   // ---------- the Excel report ----------
@@ -10616,7 +10652,7 @@ const Recon = (() => {
     return wb;
   }
 
-  return { DEF, settings, key, dispKey, keysOf, blobKeys, byDate, dateFromName, readPoints, readRaster, fillGaps, usable, compute, workbook };
+  return { DEF, settings, key, dispKey, keysOf, blobKeys, byDate, dateFromName, readPoints, readRaster, fillGaps, usable, compute, shade, raster, legend, CUT, FILL, SAME, workbook };
 })();
 
 /* ===== Project storage: IndexedDB (standalone), artifact db (shared, owner writes), memory (view-only file) ===== */
@@ -12748,6 +12784,8 @@ const UI = (() => {
     else if (App.colorBy === 'inventory') App.colorBy = 'status';
     if (App.res && App.res.rehab && App.res.rehab.on) opts.push(['rehab', 'Backfill & topsoil']);
     else if (App.colorBy === 'rehab') App.colorBy = 'status';
+    if (P && App.recon && App.recon.pid === P.id) opts.push(['recon', 'Cut and fill (Recon)']);
+    else if (App.colorBy === 'recon') App.colorBy = 'status';
     if (P) for (const L of P.layers) if (L.type === 'coal') opts.push(['thick:' + L.id, L.name + ' thickness']);
     if (P) for (const c of P.attrColumns || []) {
       if (c === P.idColumn) continue;
@@ -17906,6 +17944,7 @@ const Tabs = (() => {
     let C = null, err = null;
     if (RD.loading || [from, to].some(id => id !== 'model' && G.get(id) === undefined)) rp.push(h('div', { class: 'dt' }, 'Reading the surveys…'));
     else { try { C = Recon.compute(P, ws, G, { from, to, tol: st.tol }, res); } catch (e) { err = e.message || String(e); } }
+    if (C || err) App.setRecon(P, C);
     if (err) rp.push(msg('warn', err));
     if (C) {
       const L = P.layers, f0 = v => U.fmtNum(v, 0), plan = C.plan, ha = n => U.fmtNum((n * C.A) / 1e4, 2);
@@ -17918,6 +17957,15 @@ const Tabs = (() => {
       });
       const sum = (src, k, coal) => L.reduce((s, Ly, l) => s + (coal == null || (Ly.type === 'coal') === coal ? src[l][k] : 0), 0);
       for (const [nm, coal] of [['Total waste', false], ['Total coal', true]]) rows.push(h('tr', { class: 'tot' }, td(nm), td(f0(sum(C.layers, 'bcm', coal)), 1), td(f0(sum(C.layers, 't', coal)), 1), ...(plan ? [td(f0(sum(plan.layers, 'bcm', coal)), 1), td('', 1)] : [])));
+      // where the ground changed: cut red, fill blue, on a plan and (switched on) in the 3D view
+      { const m = v => U.fmtNum(v, v < 10 ? 2 : 1), on3d = App.colorBy === 'recon', sw = c => h('span', { class: 'sw', style: { background: c } });
+        rp.push(h('div', { class: 'fld' }, h('span', null, 'Where the ground changed: cut red, fill blue'), reconPlan(C, ws),
+          h('div', { class: 'recon-key' }, h('span', null, sw(Recon.CUT), `Cut ${ha(C.cutCells)} ha${C.maxCut > 0 ? `, up to ${m(C.maxCut)} m` : ''}`), h('span', null, sw(Recon.FILL), `Fill ${ha(C.fillCells)} ha${C.maxFill > 0 ? `, up to ${m(C.maxFill)} m` : ''}`), h('span', null, sw(Recon.SAME), `No change (under ${m(C.tol)} m)`))));
+        rp.push(h('div', { 'data-viewer': '' }, chk('Show the cut and fill on the 3D view', on3d, v => {
+          if (v) { App.reconOff = false; if (App.colorBy !== 'recon') App.reconPrev = App.colorBy; App.colorBy = 'recon'; }
+          else { App.reconOff = true; App.colorBy = App.reconPrev && App.reconPrev !== 'recon' ? App.reconPrev : 'status'; }
+          UI.renderColorBy(); App.refreshTint(); UI.renderTab();
+        }))); }
       rp.push(h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl recon-tbl' }, h('thead', null, h('tr', null, ...head)), h('tbody', null, ...rows))));
       const kv = (k, v) => [h('span', { class: 'k' }, k), h('span', { class: 'v' }, v)];
       rp.push(h('div', { class: 'kv' }, ...kv('Spoil and dumps taken out', `${f0(C.spoil)} m³`), ...kv('Dug below the model', `${f0(C.below)} m³`), ...kv('Fill placed', `${f0(C.fill)} m³`)));
@@ -17935,6 +17983,27 @@ const Tabs = (() => {
     body.append(sec('Reconciliation', null, ...rp));
   }
 
+  /* The plan of a comparison (Recon.raster): a pixel a cell, north up, scaled to the panel, with the block outlines; hovering
+     says the change of the cell */
+  function reconPlan(C, ws) {
+    const R = Recon.raster(C, ws), k = U.clamp(Math.floor(720 / Math.max(R.w, R.h)), 1, 8);
+    const cv = h('canvas', { width: R.w * k, height: R.h * k, class: 'recon-plan', role: 'img', 'aria-label': `Plan of the cut (red) and fill (blue) from ${C.from ? C.from.name : 'the model'} to ${C.to.name}` });
+    try {
+      const off = document.createElement('canvas'); off.width = R.w; off.height = R.h;
+      const oc = off.getContext('2d'), im = oc.createImageData(R.w, R.h); im.data.set(R.px); oc.putImageData(im, 0, 0);
+      const g = cv.getContext('2d'); g.imageSmoothingEnabled = false; g.drawImage(off, 0, 0, R.w * k, R.h * k);
+      const X = x => ((x - ws.x0) / ws.cell) * k, Y = y => (R.h - (y - ws.y0) / ws.cell) * k;
+      g.strokeStyle = 'rgba(70,70,70,.5)'; g.lineWidth = 1;
+      for (const b of App.P.blocks) { const p = b.pts; if (!p || p.length < 3) continue; g.beginPath(); p.forEach(([x, y], i) => (i ? g.lineTo(X(x), Y(y)) : g.moveTo(X(x), Y(y)))); g.closePath(); g.stroke(); }
+    } catch (e) { /* (no 2D canvas: the plan stays empty) */ }
+    cv.addEventListener('mousemove', e => {
+      const r = cv.getBoundingClientRect(); if (!(r.width > 0)) return;
+      const i = Math.floor(((e.clientX - r.left) / r.width) * R.w), j = R.h - 1 - Math.floor(((e.clientY - r.top) / r.height) * R.h);
+      const d = i >= 0 && j >= 0 && i < R.w && j < R.h ? C.dz[j * R.w + i] : NaN;
+      cv.title = d === d ? (d < 0 ? `Cut ${U.fmtNum(-d, 2)} m` : d > 0 ? `Fill ${U.fmtNum(d, 2)} m` : 'No change (within the tolerance)') : 'Not covered by both surfaces';
+    });
+    return cv;
+  }
   // =============== FEATURE LAYERS ===============
   function featureLayers(body) { overlaySection(body); }
   // =============== DRILL AND BLAST ===============
@@ -21823,6 +21892,13 @@ const App = {
       UI.renderLegend({ type: 'list', title: v ? `Exposed coal — ${U.fmtBig(v.I.total.expT, 't')}` : 'Exposed coal', items: seams.map((l, si) => [cols[si % cols.length], `${P.layers[l].name}: ${U.fmtBig(v.I.bySeam[si].expT, 't')}`]) });
       return;
     }
+    if (mode === 'recon') {
+      // where the two surveys of the Recon tab differ: cut red, fill blue (on the ground shown, in plan)
+      const RC = this.recon && this.recon.pid === P.id && this.recon.ws === ws ? this.recon.C : null;
+      View.setTint(RC ? data => { const dz = RC.dz; for (let c = 0; c < ws.n; c++) { const k = Recon.shade(dz[c], RC); if (!k) continue; const o = c * 4; data[o] = k[0]; data[o + 1] = k[1]; data[o + 2] = k[2]; data[o + 3] = k[3]; } } : null);
+      UI.renderLegend(RC ? Recon.legend(RC) : { type: 'list', title: 'Cut and fill', items: [['#8a8f98', 'Compare two surveys in the Recon tab']] });
+      return;
+    }
     if (mode === 'rehab') {
       // the final landform at the timeline date: topsoil replaced, backfilled and waiting for topsoil, void below the backfill
       const R = this.res && this.res.rehab && this.res.rehab.on ? this.res.rehab : null, pb = this.pb, d = this.day, topo = ws.topo;
@@ -22130,6 +22206,17 @@ const App = {
     if (this.ws) { this.rasterize(); Timeline.setData(null, P); }
     this.changed('blocks', { now: true });
     return true;
+  },
+  /* The last comparison of the Recon tab (Recon.compute: the cut and fill of every cell), for the 3D view's "Cut and fill"
+     colours. The first comparison of a project is shown at once, unless the colours were switched off in the tab. */
+  setRecon(P, C) {
+    const key = C ? [C.from ? C.from.id : 'model', C.to.id, C.tol, C.cells, C.cutCells, C.fillCells, C.cutV, C.fill].join('|') : '';
+    const prev = this.recon && this.recon.pid === P.id ? this.recon.key : null;
+    this.recon = C ? { pid: P.id, ws: this.ws, C, key } : null;
+    if (key === (prev || '')) return;
+    if (C && !prev && !this.reconOff && this.colorBy !== 'recon') { this.reconPrev = this.colorBy; this.colorBy = 'recon'; }
+    UI.renderColorBy();
+    if (this.colorBy === 'recon' || (!C && prev)) this.refreshTint();
   },
   margin() {
     if (!this.P || !this.ws) return null;
