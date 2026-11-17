@@ -335,3 +335,109 @@ class TestHourlyProductivityExcel(TestCase):
                 patch.object(report.frappe, "throw", side_effect=ValueError("No exportable analysis")):
             with self.assertRaisesRegex(ValueError, "No exportable analysis"):
                 report.export_excel("Koppie", "2026-10-12", "2026-10-12")
+
+
+class TestExcavatorAvailabilityExcel(TestCase):
+
+    def test_workbook_exports_summary_hourly_segments_and_downtime(self):
+        cells = []
+
+        for index in range(24):
+            label = f"{(index + 6) % 24:02d}:00-{(index + 7) % 24:02d}:00"
+
+            if index == 0:
+                segments = [
+                    {"start_minute": 0, "end_minute": 15,
+                     "category": "green", "available": 3,
+                     "unavailable": 0, "unknown": 0},
+                    {"start_minute": 15, "end_minute": 45,
+                     "category": "orange", "available": 2,
+                     "unavailable": 1, "unknown": 0,
+                     "unavailable_excavators": ["IS0309"]},
+                    {"start_minute": 45, "end_minute": 60,
+                     "category": "green", "available": 3,
+                     "unavailable": 0, "unknown": 0},
+                ]
+                details = [
+                    {
+                        "asset": "IS0309", "label": "IS0309",
+                        "status": "Unavailable",
+                        "events": [{
+                            "downtime_type": "Breakdown",
+                            "status": "Closed",
+                            "reason": "Aircon fault",
+                            "start": "2026-11-05 06:15:00",
+                            "resolved": "2026-11-05 06:45:00",
+                            "effective_end": "2026-11-05 06:45:00",
+                            "exclude_from_au": True,
+                            "resolution": "Fixed",
+                        }],
+                    },
+                    {"asset": "IS0310", "label": "IS0310",
+                     "status": "Available", "events": []},
+                    {"asset": "IS0311", "label": "IS0311",
+                     "status": "Available", "events": []},
+                ]
+            else:
+                segments = [{
+                    "start_minute": 0, "end_minute": 60,
+                    "category": "green", "available": 3,
+                    "unavailable": 0, "unknown": 0,
+                }]
+                details = []
+
+            cells.append({
+                "label": label,
+                "completed": True,
+                "has_record": True,
+                "available": 2 if index == 0 else 3,
+                "unavailable": 1 if index == 0 else 0,
+                "category": "orange" if index == 0 else "green",
+                "segments": segments,
+                "details": details,
+            })
+
+        data = {
+            "site": "Koppie",
+            "from_date": "2026-11-05",
+            "to_date": "2026-11-05",
+            "hours": [cell["label"] for cell in cells],
+            "rows": [{
+                "date": "2026-11-05",
+                "day": "Thu",
+                "month": "November 2026",
+                "month_key": "2026-11",
+                "fleet_total": 3,
+                "cells": cells,
+            }],
+        }
+
+        content = report.make_excavator_availability_workbook(data)
+        book = load_workbook(BytesIO(content))
+
+        self.assertEqual(book.sheetnames, [
+            "Summary", "Hourly Detail", "Downtime Details",
+        ])
+
+        summary = book["Summary"]
+        self.assertEqual(summary["A8"].value, "Date")
+        self.assertEqual(summary["C9"].value, 3)
+        self.assertAlmostEqual(summary["D9"].value, 71.5)
+        self.assertAlmostEqual(summary["E9"].value, 0.5)
+        self.assertAlmostEqual(summary["H9"].value, 71.5 / 72)
+
+        hourly = book["Hourly Detail"]
+        self.assertEqual(hourly["E5"].value, "2 / 3")
+
+        self.assertIn(
+            "06:15:00-06:45:00: orange",
+            hourly["E5"].comment.text,
+        )
+
+        downtime = book["Downtime Details"]
+        self.assertEqual(downtime["F2"].value, "Aircon fault")
+        self.assertEqual(downtime["J2"].value, "Yes")
+        self.assertEqual(downtime["L2"].value, 30)
+
+        with ZipFile(BytesIO(content)) as archive:
+            self.assertIsNone(archive.testzip())
