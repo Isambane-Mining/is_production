@@ -90,6 +90,13 @@ const contrast=(foreground,background)=>{
         api.html=value=>{if(value===undefined)return list[0]?.innerHTML;list.forEach(node=>{node.innerHTML=value;});return api;};
         api.attr=(name,value)=>{if(value===undefined)return list[0]?.getAttribute(name);list.forEach(node=>node.setAttribute(name,value));return api;};
         api.replaceWith=html=>{list.forEach(node=>{node.insertAdjacentHTML('beforebegin',html);node.remove();});return api;};
+        api.append=value=>{
+          const children = value && typeof value.length === 'number'
+            ? Array.from(value).filter(node => node instanceof Node)
+            : [value];
+          list.forEach(parent=>children.forEach(child=>parent.append(child)));
+          return api;
+        };
         api.empty=()=>api.html('');
         api.text=value=>{if(value===undefined)return list[0]?.textContent;list.forEach(node=>{node.textContent=value;});return api;};
         api.val=value=>{if(value===undefined)return list[0]?.value;list.forEach(node=>{node.value=value;});return api;};
@@ -102,6 +109,15 @@ for(const eventName of events.split(' '))for(const node of list)node.addEventLis
         });return api;};
         return api;
       };
+      window.$ = selector => {
+        if (typeof selector === 'string' && selector.trim().startsWith('<')) {
+          const template = document.createElement('template');
+          template.innerHTML = selector.trim();
+          return wrap(template.content.childNodes);
+        }
+        return wrap(document.querySelectorAll(selector));
+      };
+
       window.fixture=data;window.calls=[];window.wrapper={};window.appPages=0;
       window.frappe={pages:{'hourly-productivity-analysis':{},'hourly-productivity-summary':{}},ui:{
         make_app_page:()=>{appPages++;return {main:wrap([document.querySelector('main')])};},
@@ -110,8 +126,37 @@ for(const eventName of events.split(' '))for(const node of list)node.addEventLis
           const input=document.createElement('input');input.style.cssText='width:100%;box-sizing:border-box;height:36px';
           label.append(input);parent[0].append(label);
           return {get_value:()=>input.value,set_value:async value=>{input.value=value;await df.onchange();}};
-        }}},call:async request=>{calls.push(request);return {message:request.method.endsWith('get_defaults')?
-          {from_date:data.from_date,to_date:data.to_date,date:data.from_date,shift:'Day'}:request.method.endsWith('get_summary')?window.summaryFixture:data};}};
+        }}},
+        call: async request => {
+          calls.push(request);
+          let message;
+
+          if (request.method.endsWith('get_defaults')) {
+            message = {
+              from_date:data.from_date,
+              to_date:data.to_date,
+              date:data.from_date,
+              shift:'Day'
+            };
+          } else if (request.method.endsWith('get_summary')) {
+            message = window.summaryFixture;
+          } else if (
+            request.method.endsWith('get_machine_analysis') &&
+            request.args?.machine_scope !== 'all'
+          ) {
+            message = {
+              rows: [],
+              configuration_error: {
+                title: `${request.args.machine_scope} fleet unverified`,
+                message: 'The synthetic fixture does not define historical MPP machine assignments.'
+              }
+            };
+          } else {
+            message = data;
+          }
+
+          return {message};
+        }};
     },fixture);
     await page.evaluate(data=>{window.summaryFixture=data;},summaryFixture);
     let assetLoads=0;
@@ -139,7 +184,7 @@ for(const eventName of events.split(' '))for(const node of list)node.addEventLis
     assert.equal(await page.evaluate(()=>appPages),1);
     let callsBefore=await page.evaluate(()=>calls.length);
     await page.locator('#hpt-analysis-tab').click();
-    assert.equal(await page.locator('.hpa-cell').count(),48);
+    assert.equal(await page.locator('.hpa-analysis-matrix .hpa-cell:not(.hpa-shift-average)').count(),48);
     await page.setViewportSize({width:390,height:900});
     await page.locator('.hpa-mobile-date').selectOption('1');
     await page.locator('.hpa-mobile-cell[data-hpa-hour="18"]').click();
@@ -162,54 +207,94 @@ for(const eventName of events.split(' '))for(const node of list)node.addEventLis
     assert.equal(assetLoads,1);
     assert.equal(await page.evaluate(()=>appPages),1);
     assert.deepEqual(await page.locator('[role=tab]').allTextContents(),
-      ['Current Productivity Analysis','Hourly Productivity Analysis','Machine Available vs Utilised']);
+      ['Current Productivity Analysis','Hourly Productivity Analysis','ADT Avail','ADT Util','Excavator Avail']);
     await page.locator('#hpt-summary-tab').press('End');
-    assert.equal(await page.locator('[role=tab][aria-selected=true]').innerText(),'Machine Available vs Utilised');
+    assert.equal(await page.locator('[role=tab][aria-selected=true]').innerText(),'Excavator Avail');
+
+    // Return to ADT Util before testing the machine component.
+    await page.locator('#hpt-machines-tab').click();
+    await page.waitForFunction(()=>wrapper.hourlyProductivityMachines);
+
     await page.evaluate(()=>wrapper.hourlyProductivityMachines.site.set_value('Synthetic Koppie'));
-    await page.waitForSelector('.hm-matrix td');
-    assert.equal(await page.locator('.hm-matrix td.hm-cell').count(),48);
-    assert.equal(await page.locator('.hm-matrix td.hm-cell').first().innerText(),'2.5 / 2');
-    assert.equal(await page.locator('.hm-avail').first().evaluate(el=>getComputedStyle(el).color),'rgb(37, 99, 235)');
-    assert.equal(await page.locator('.hm-used').first().evaluate(el=>getComputedStyle(el).color),'rgb(147, 51, 234)');
-    assert.equal(await page.locator('.hm-matrix td.hm-cell').nth(3).innerText(),'—');
-    assert.equal(await page.locator('.hm-matrix td.hm-cell').nth(18).innerText(),'—');
-    assert.equal(await page.locator('.hm-note').count(), 0);
+    await page.waitForSelector('.hpt-machines-panel .hm-matrix td.hm-hour-cell');
+    assert.equal(await page.locator('.hpt-machines-panel .hm-matrix td.hm-cell').count(),48);
+    assert.equal(await page.locator('.hpt-machines-panel .hm-matrix td.hm-cell').first().innerText(),'2 / 2.5');
+    assert.equal(await page.locator('.hpt-machines-panel .hm-avail').first().evaluate(el=>getComputedStyle(el).color),'rgb(37, 99, 235)');
+    assert.equal(await page.locator('.hpt-machines-panel .hm-used').first().evaluate(el=>getComputedStyle(el).color),'rgb(147, 51, 234)');
+    assert.equal(await page.locator('.hpt-machines-panel .hm-matrix td.hm-cell').nth(3).innerText(),'—');
+    assert.equal(await page.locator('.hpt-machines-panel .hm-matrix td.hm-cell').nth(18).innerText(),'—');
+    assert.equal(await page.locator('.hpt-machines-panel .hm-note').count(), 0);
     assert.equal(await page.locator('.hpa-month-divider').last().count(), 1);
-    assert.equal(await page.locator('.hm-chart .hm-legend').count(), 1);
-    assert.equal(await page.locator('.hm-matrix').count(), 1);
+    assert.equal(await page.locator('.hpt-machines-panel .hm-chart .hm-legend').count(), 1);
+    assert.equal(await page.locator('.hpt-machines-panel .hm-matrix').count(), 1);
     const machineCalls=await page.evaluate(()=>calls.length);
-    await page.locator('.hm-scope').selectOption('production');
-    assert.equal(await page.locator('.hm-matrix td.hm-cell').count(),0);
-    assert.match(await page.locator('.hm-status').innerText(), /unverified|not yet verified/i);
-    assert.equal(await page.evaluate(()=>calls.length),machineCalls);
-    await page.locator('.hm-scope').selectOption('spare');
-    assert.equal(await page.locator('.hm-matrix td.hm-cell').count(),0);
-    await page.locator('.hm-scope').selectOption('all');
-    await page.waitForSelector('.hm-matrix td');
+    await page.locator('.hpt-machines-panel .hm-scope').selectOption('production');
+    await page.waitForFunction(() =>
+      document.querySelector('.hpt-machines-panel .hm-status')?.textContent.includes('unverified')
+    );
+    assert.equal(await page.locator('.hpt-machines-panel .hm-matrix td.hm-cell').count(),0);
+    assert.equal(await page.evaluate(()=>calls.length),machineCalls + 1);
+    assert.equal(await page.evaluate(()=>calls.at(-1).args.machine_scope),'production');
+
+    await page.locator('.hpt-machines-panel .hm-scope').selectOption('spare');
+    await page.waitForFunction(() =>
+      document.querySelector('.hpt-machines-panel .hm-status')?.textContent.includes('unverified')
+    );
+    assert.equal(await page.locator('.hpt-machines-panel .hm-matrix td.hm-cell').count(),0);
+    assert.equal(await page.evaluate(()=>calls.length),machineCalls + 2);
+    assert.equal(await page.evaluate(()=>calls.at(-1).args.machine_scope),'spare');
+    await page.locator('.hpt-machines-panel .hm-scope').selectOption('all');
+    await page.waitForSelector('.hpt-machines-panel .hm-matrix td.hm-hour-cell');
     await page.evaluate(async()=>{
       const original=frappe.call;
-      let resolveOld;
-      frappe.call=()=>new Promise(resolve=>{resolveOld=resolve;});
-      const old=wrapper.hourlyProductivityMachines.refresh();
-      const select=document.querySelector('.hm-scope');
-      select.value='spare';select.dispatchEvent(new Event('change'));
-      resolveOld({message:fixture});await old;
-      frappe.call=original;
+      const pending=[];
+      frappe.call=()=>new Promise(resolve=>pending.push(resolve));
+
+      try {
+        const old=wrapper.hourlyProductivityMachines.refresh();
+        const select=document.querySelector('.hpt-machines-panel .hm-scope');
+        select.value='spare';
+        select.dispatchEvent(new Event('change'));
+
+        if(pending.length !== 2) {
+          throw new Error(`Expected two concurrent requests, received ${pending.length}`);
+        }
+
+        // Newer request completes first with an unverified spare fleet.
+        pending[1]({message:{
+          rows:[],
+          configuration_error:{
+            title:'spare fleet unverified',
+            message:'Synthetic spare fleet unavailable.'
+          }
+        }});
+
+        // Older response arrives afterwards and must be ignored.
+        pending[0]({message:fixture});
+
+        await old;
+      } finally {
+        frappe.call=original;
+      }
     });
-    assert.equal(await page.locator('.hm-matrix td.hm-cell').count(),0);
-    assert.match(await page.locator('.hm-status').innerText(), /unverified|not yet verified/i);
-    await page.locator('.hm-scope').selectOption('all');
-    await page.waitForSelector('.hm-matrix td');
+
+    await page.waitForFunction(() =>
+      document.querySelector('.hpt-machines-panel .hm-status')
+        ?.textContent.includes('unverified')
+    );
+    assert.equal(await page.locator('.hpt-machines-panel .hm-matrix td.hm-cell').count(),0);
+    await page.locator('.hpt-machines-panel .hm-scope').selectOption('all');
+    await page.waitForSelector('.hpt-machines-panel .hm-matrix td.hm-hour-cell');
     await page.evaluate(async()=>{
       const original=frappe.call;
       frappe.call=async()=>{throw new Error('Denied source');};
       await wrapper.hourlyProductivityMachines.refresh();
       frappe.call=original;
     });
-    assert.equal(await page.locator('.hm-matrix td.hm-cell').count(),0);
-    assert.ok((await page.locator('.hm-status').innerText()).includes('permissions'));
+    assert.equal(await page.locator('.hpt-machines-panel .hm-matrix td.hm-cell').count(),0);
+    assert.ok((await page.locator('.hpt-machines-panel .hm-status').innerText()).includes('permissions'));
     await page.locator('#hpt-machines-tab').press('ArrowLeft');
-    assert.equal(await page.locator('[role=tab][aria-selected=true]').innerText(),'Hourly Productivity Analysis');
+    assert.equal(await page.locator('[role=tab][aria-selected=true]').innerText(),'ADT Avail');
     await page.locator('#hpt-analysis-tab').press('Home');
     await page.evaluate(()=>wrapper.hourlyProductivityMachines.refresh());
     for(const width of [320,390,768,1440]){

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const {renderAnalysis, renderHourDetails, renderMobileAnalysis, renderProductivityTabs,renderMachineMatrix} = require('./hourly_productivity_analysis.js');
+const {renderAnalysis, renderHourDetails, renderMobileAnalysis, renderProductivityTabs,renderMachineMatrix,renderExcavatorAvailabilityMatrix} = require('./hourly_productivity_analysis.js');
 
 function fixture() {
   const cells = Array.from({length: 24}, (_, i) => ({label: `${(i+6)%24}:00`, category: 'red',
@@ -100,7 +100,7 @@ test('hover card keeps unknown achievement and availability distinct from zero',
 
 test('hour cells expose accessible card controls and no native long tooltip', () => {
   const html = renderAnalysis(fixture());
-  const cells = html.match(/<td class="hpa-cell [^>]+>/g);
+  const cells = html.match(/<td class="hpa-cell [^>]+data-hpa-hour="[^"]+"[^>]*>/g);
   assert.ok(cells.every(cell=>cell.includes('tabindex="0"') && cell.includes('aria-haspopup="dialog"')));
   assert.ok(cells.every(cell=>!cell.includes(' title=')));
   assert.ok(html.includes('hpa-pie'));
@@ -170,9 +170,9 @@ test('approved palette is shared by the matrix, pie and phone key without changi
   assert.ok(html.includes('#ff9f1c'));
   assert.ok(!html.includes('#ffe066'));
   assert.ok(!html.includes('Zero production'));
-  assert.ok(html.includes('Green · ≥440 BCM'));
-  assert.ok(html.includes('Orange · ≥400 and &lt;440 BCM'));
-  assert.ok(html.includes('Red · &lt;400 BCM'));
+  assert.ok(html.includes('Green · 220 and above per production excavator'));
+  assert.ok(html.includes('Orange · 200–219 per production excavator'));
+  assert.ok(html.includes('Red · Below 200 per production excavator'));
   assert.ok(html.includes('#d63c4b'));
   assert.ok(!html.includes('#ffc000'));
   assert.equal(JSON.stringify(data.pie),before);
@@ -187,13 +187,64 @@ test('mobile preview escapes dates and empty data returns no selectable hours', 
   assert.ok(!renderMobileAnalysis({...data,rows:[]}).includes('hpa-mobile-cell'));
 });
 
+
+test('Excavator Avail renders all 24 hours and production plus spare fleet', () => {
+  const hours = Array.from({length:24}, (_, i) => `${i}:00-${i+1}:00`);
+  const categories = ['green', 'orange', 'red', 'unknown'];
+
+  const cells = hours.map((label, i) => ({
+    label,
+    completed: true,
+    has_record: i !== 3,
+    available: i < 3 ? 3 - i : null,
+    category: categories[i] || 'green',
+    segments: i === 0 ? [
+      {start_minute: 0, end_minute: 15, category: 'green'},
+      {start_minute: 15, end_minute: 45, category: 'orange'},
+      {start_minute: 45, end_minute: 60, category: 'green'}
+    ] : [
+      {start_minute: 0, end_minute: 60, category: categories[i] || 'green'}
+    ]
+  }));
+
+  const html = renderExcavatorAvailabilityMatrix({
+    site: 'Koppie',
+    hours,
+    rows: [{
+      date: '2026-11-16',
+      day: 'Mon',
+      month: 'November 2026',
+      month_key: '2026-11',
+      fleet_total: 3,
+      cells
+    }]
+  });
+
+  assert.ok(html.includes('Production + Spare'));
+  assert.ok(html.includes('Total Fleet'));
+  assert.ok(html.includes('3 / 3'));
+  assert.ok(html.includes('2 / 3'));
+  assert.ok(html.includes('1 / 3'));
+  assert.ok(html.includes('hm-green'));
+  assert.ok(html.includes('hm-orange'));
+  assert.ok(html.includes('hm-red'));
+  assert.ok(html.includes('hm-neutral'));
+  assert.ok(html.includes('linear-gradient(90deg'));
+  assert.ok(html.includes('data-he-row="0"'));
+  assert.ok(html.includes('data-he-hour="0"'));
+  assert.ok(html.includes('aria-haspopup="dialog"'));
+  assert.ok(html.includes('he-excavator-cell'));
+
+  assert.equal((html.match(/class="hpa-cell hm-cell hm-hour-cell/g) || []).length, 24);
+});
+
 test('combined page presents Current, Historical and Machines in order with separate labelled panels', () => {
   const html=renderProductivityTabs();
   assert.ok(html.indexOf('Current Productivity Analysis') < html.indexOf('Hourly Productivity Analysis'));
-  assert.ok(html.indexOf('Hourly Productivity Analysis') < html.indexOf('Machine Utilised vs Available'));
+  assert.ok(html.indexOf('Hourly Productivity Analysis') < html.indexOf('ADT Avail'));
   assert.match(html, /hpt-machines-panel/);
-  assert.equal((html.match(/role="tab"/g)||[]).length,3);
-  assert.equal((html.match(/role="tabpanel"/g)||[]).length,3);
+  assert.equal((html.match(/role="tab"/g)||[]).length,5);
+  assert.equal((html.match(/role="tabpanel"/g)||[]).length,4);
   assert.ok(html.includes('aria-selected="true"'));
   assert.ok(html.includes('class="hpt-summary-panel"'));
   assert.ok(html.includes('class="hpt-analysis-panel"'));
@@ -219,12 +270,12 @@ test('machine matrix preserves unknown counts and suppresses pending and missing
   const html=renderMachineMatrix(data);
   assert.ok(!html.includes('999'));
   assert.ok(!html.includes('997'));
-  assert.ok(html.includes('Unknown, missing or pending'));
+  assert.ok(html.includes('Zero available / unknown / missing / pending / spare-only'));
   assert.ok(html.includes('—'));
 });
 
 
-test('shift averages remain display-only and excluded from popup events', () => {
+test('shift averages expose accessible popup controls', () => {
   const data = fixture();
   const html = renderAnalysis(data);
 
@@ -235,7 +286,11 @@ test('shift averages remain display-only and excluded from popup events', () => 
   assert.equal(averageCells.length, data.rows.length * 2);
 
   for (const cell of averageCells) {
-    assert.doesNotMatch(cell, /data-hpa-row|data-hpa-hour|aria-haspopup|tabindex/);
+    assert.match(cell, /data-hpa-row=/);
+    assert.match(cell, /data-hpa-average-shift="(?:day|night)"/);
+    assert.match(cell, /tabindex="0"/);
+    assert.match(cell, /aria-haspopup="dialog"/);
+    assert.doesNotMatch(cell, /data-hpa-hour=/);
   }
 
   const source = require('node:fs').readFileSync(
@@ -254,7 +309,7 @@ test('both shift-average tables use the same width as hourly columns', () => {
   const path = require('node:path');
 
   const css = fs.readFileSync(
-    path.resolve(__dirname, 'hourly_productivity_analysis.css'),
+    path.resolve(__dirname, '../../../../is_production/public/css/dashboards.css'),
     'utf8'
   );
 
@@ -300,4 +355,31 @@ test('Hourly shift-average popup shows magnified BCM average and shift total', (
   const html = renderAnalysis(data);
   assert.match(html,/data-hpa-average-shift="day"/);
   assert.match(html,/data-hpa-average-shift="night"/);
+});
+
+test('ADT availability renders independent green and orange half-hour backgrounds', () => {
+  const data = fixture();
+  const cell = data.rows[0].cells[0];
+
+  Object.assign(cell, {
+    completed: true,
+    has_record: true,
+    available: 2,
+    production_availability_segments: [
+      {start_minute: 0, end_minute: 30, category: 'green'},
+      {start_minute: 30, end_minute: 60, category: 'orange'}
+    ]
+  });
+
+  const availability = renderMachineMatrix(data, null, 'availability');
+
+  assert.ok(availability.includes(
+    'linear-gradient(90deg,#B9EDC5 0% 50%,#FFC18A 50% 100%)'
+  ));
+  assert.ok(availability.includes('ADT Availability'));
+  assert.ok(availability.includes('Production requirement met'));
+  assert.ok(availability.includes('More than one ADT below requirement'));
+
+  const utilisation = renderMachineMatrix(data, null, 'utilisation');
+  assert.ok(!utilisation.includes('linear-gradient(90deg,#B9EDC5'));
 });
