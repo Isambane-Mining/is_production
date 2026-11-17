@@ -10070,18 +10070,24 @@ const Fin = (() => {
    and dozing) and the drilling and blasting (hard overburden, hard midburden, coal and presplit). Two sets of rates, as
    the workbook's two sheets: Isambane Contract Rates and Isambane Rates (Actual Costs). A line costs its quantity × the
    dry rate, × the fuel cap (litres a unit) × the fuel price, and × the powder factor (kg a unit) × the explosive rate.
-   The quantities come from the last run: the months of the schedule (first to last month of mining); the bcm of each
-   layer, topsoil and softs as the running totals group them, the other waste above the first seam as hard overburden
-   and below it as hard midburden, with the ramps and batters in the overburden; what the activities doze (out of their
-   load and haul); the bcm rehandled out of dumps; the coal tons (as received or in situ); and the drilling and blasting
-   of the Drill and Blast tab: the bcm and tons blasted and their explosives (their kg, so the powder factor shown is
-   the kg ÷ the quantity), and the presplit of the Finance tab (the waste blasted ÷ the strip width) at the powder factor
-   of the rates. Each material is put into one haul distance band (chosen; the workbook's own by default).
-   P.boq = {option, months, coalBasis, deduct, band: {material: band index}, rates: {contract | actual: {fuel, expl,
+   The quantities come from the reserve (from 'reserve', the default: reserveQuantities) or from the last run of the
+   schedule ('schedule': quantities). The reserve: the blocks and the layer volumes of the reserve layout summary (Block
+   Margin Rank tab), the waste grouped as below, the coal tons of its blocks, dozed where the activity of a block pushes
+   it, drilled and blasted by the Drill and Blast tab's design; the months (unless typed) and the dump rehandling, which
+   the reserve does not hold, are the last run's. The last run: the months of the schedule (first to last month of
+   mining); the bcm of each layer, topsoil and softs as the running totals group them, the other waste above the first
+   seam as hard overburden and below it as hard midburden, with the ramps and batters in the overburden; what the
+   activities doze (out of their load and haul); the bcm rehandled out of dumps; the coal tons (as received or in situ);
+   and the drilling and blasting of the Drill and Blast tab: the bcm and tons blasted and their explosives (their kg, so
+   the powder factor shown is the kg ÷ the quantity), and the presplit of the Finance tab (the waste blasted ÷ the strip
+   width) at the powder factor of the rates. Each material is put into one haul distance band (chosen; 500-1000 m by
+   default).
+   P.boq = {option, from, months, coalBasis, deduct, band: {material: band index}, rates: {contract | actual: {fuel, expl,
    items: {key: [dry rate, fuel cap, powder factor]}, from}}} (the rates as edited or loaded; the workbook's otherwise). */
 const Boq = (() => {
   const OPTIONS = [['contract', 'Isambane Contract Rates'], ['actual', 'Isambane Rates (Actual Costs)']];
   const SHORT = { contract: 'Contract rates', actual: 'Actual costs' };
+  const FROM = [['reserve', 'The reserve (reserve layout summary)'], ['schedule', 'The last run of the schedule']];
   const BANDS = Array.from({ length: 10 }, (_, i) => `${i * 500}-${(i + 1) * 500}m`);
   const LH = 'LOAD, HAUL, DUMP, LEVEL AND MAINTAIN';
   const MATS = [
@@ -10090,7 +10096,7 @@ const Boq = (() => {
     { k: 'hardOB', name: 'Hard overburden', heads: [['2.2', 'BURDEN REMOVAL AND PLACEMENT'], ['', LH], ['', 'HARD OVERBURDEN']], word: 'HARD', uom: 'BCM', tail: 'LOAD,HAUL,PLACE AND LEVEL', band: 1 },
     { k: 'hardMB', name: 'Hard midburden', heads: [['2.3', 'BURDEN REMOVAL AND PLACEMENT'], ['', LH], ['', 'HARD MIDBURDEN']], word: 'HARD', uom: 'BCM', tail: 'LOAD,HAUL,PLACE AND LEVEL', band: 1 },
     { k: 'dump', name: 'Dump rehandling', heads: [['2.4', 'DUMP REMOVAL AND PLACEMENT'], ['', LH], ['', 'DUMP']], word: 'DUMP', uom: 'BCM', tail: 'LOAD,HAUL,PLACE AND LEVEL', band: 1 },
-    { k: 'coal', name: 'Coal', heads: [['2.7', 'COALING']], word: 'COAL', uom: 'TON', tail: 'LOAD,HAUL,PLACE', band: 4 }
+    { k: 'coal', name: 'Coal', heads: [['2.7', 'COALING']], word: 'COAL', uom: 'TON', tail: 'LOAD,HAUL,PLACE', band: 1 }
   ];
   // the rates of the workbook: [dry rate, fuel cap (l a unit), powder factor (kg a unit)] (the actual sheet carries the
   // contract's presplit explosives: its powder factor is the contract's)
@@ -10107,7 +10113,7 @@ const Boq = (() => {
       rates[id] = { fuel: Math.max(0, num(s.fuel, d.fuel)), expl: Math.max(0, num(s.expl, d.expl)), items, from: s.from || null, edited: !!(s.items && Object.keys(s.items).length) || s.fuel != null || s.expl != null };
     }
     const months = num(B.months, 0);
-    return { option: OPTIONS.some(o => o[0] === B.option) ? B.option : 'contract', months: months > 0 ? months : null, coalBasis: B.coalBasis === 'insitu' ? 'insitu' : 'ar', deduct: U.clamp(num(B.deduct, 7), 0, 100), band, rates };
+    return { option: OPTIONS.some(o => o[0] === B.option) ? B.option : 'contract', from: B.from === 'schedule' ? 'schedule' : 'reserve', months: months > 0 ? months : null, coalBasis: B.coalBasis === 'insitu' ? 'insitu' : 'ar', deduct: U.clamp(num(B.deduct, 7), 0, 100), band, rates };
   }
 
   /* The quantities of the last run. ext: {mo (Monthly.build), blast (Blast.compute)} — worked out here when not given */
@@ -10135,10 +10141,71 @@ const Boq = (() => {
       else { Q.dbOB += y.bcm; Q.kgOB += y.kg; Q.names.dbOB.add(y.name); }
     }
     Q.psW = typeof Fin !== 'undefined' ? Fin.settings(P).presplitW : 40; Q.dbPS = (Q.dbOB + Q.dbMB) / Q.psW;
-    let m0 = -1, m1 = -1; for (let m = 0; m < mo.nM; m++) if (mo.moved[m] > 0 || mo.coalT[m] > 0) { if (m0 < 0) m0 = m; m1 = m; }
-    Q.monthsRun = m0 >= 0 ? m1 - m0 + 1 : 0; Q.months = o.months || Q.monthsRun; Q.from = m0 >= 0 ? mo.label(m0) : ''; Q.to = m1 >= 0 ? mo.label(m1) : '';
-    Q.coalBasis = o.coalBasis;
+    runMonths(Q, mo, o);
+    Q.src = 'schedule'; Q.run = true; Q.coalBasis = o.coalBasis;
     for (const k of Object.keys(Q.names)) Q.names[k] = Array.from(Q.names[k]);
+    return Q;
+  }
+  // the months of a run (mo: Monthly.build, or null): first to last month of mining, and the months of P&Gs (typed, else those)
+  function runMonths(Q, mo, o) {
+    let m0 = -1, m1 = -1; if (mo) for (let m = 0; m < mo.nM; m++) if (mo.moved[m] > 0 || mo.coalT[m] > 0) { if (m0 < 0) m0 = m; m1 = m; }
+    Q.monthsRun = m0 >= 0 ? m1 - m0 + 1 : 0; Q.months = o.months || Q.monthsRun; Q.from = m0 >= 0 ? mo.label(m0) : ''; Q.to = m1 >= 0 ? mo.label(m1) : '';
+  }
+
+  /* The quantities of the reserve: the blocks of the reserve layout summary (Block Margin Rank tab: the reserve layout once
+     copied for the schedule, else the blocks inside the reserve boundary, every block without one) and each layer's bcm in
+     them, as that summary has them. A layer counted as coal there is coal here: its tons are the blocks' bcm × their
+     density (× the seam's as-received factor for tons as received); every other layer is waste, grouped as the last run's
+     (topsoil and softs as the running totals group them, the rest above the first seam counted as coal hard overburden,
+     below it hard midburden). A block's layer is dozed where the activity mining it pushes it (dozer push; a mixed
+     activity in the share it pushed in the last run, none before a run). The drilling and blasting: the Drill and Blast
+     tab's design (the layers it blasts, their benches and powder factors) on these volumes. The reserve has no months,
+     dumps or ramps: the months of P&Gs (unless typed) and the bcm rehandled out of the dumps are the last run's; the ramps
+     and batters are left out (the blocks' volumes only).
+     P, ws: the resource layout (App.rv()); R: Margin.compute(P, ws); ids: the reserve layout's blocks once copied (as the
+     summary takes them); ext: {res: the last run (or null), mo: its Monthly.build} */
+  function reserveQuantities(P, ws, R, ids, ext = {}) {
+    if (!P || !ws || !R) return null;
+    const o = settings(P), S = Margin.reserveSummary(P, ws, R, ids), set = ids ? new Set(ids) : null, res = ext.res || null, mo = res ? ext.mo || null : null;
+    const L = P.layers, nL = L.length, coalL = S.layers.map(q => q.coal), first = coalL.indexOf(true), sum = a => { let s = 0; if (a) for (let i = 0; i < a.length; i++) s += a[i]; return s; };
+    const groupOf = l => { if (coalL[l]) return 'coal'; const Ly = L[l], g = Ly.type === 'coal' ? 'waste' : Monthly.wasteGroup(P, Ly); return g === 'topsoil' || g === 'softs' ? g : first >= 0 && l > first ? 'hardMB' : 'hardOB'; };
+    const Q = { src: 'reserve', S, topsoil: 0, softs: 0, hardOB: 0, hardMB: 0, dump: 0, coal: 0, coalT: 0, coalAR: 0, coalBcm: 0, doze: 0, ramps: 0, rampsRun: 0, dbOB: 0, dbMB: 0, dbCoal: 0, dbPS: 0, kgOB: 0, kgMB: 0, kgCoal: 0, mixedNoRun: [],
+      names: { topsoil: new Set(), softs: new Set(), hardOB: new Set(), hardMB: new Set(), coal: new Set(), doze: new Set(), dbOB: new Set(), dbMB: new Set(), dbCoal: new Set() } };
+    // the share of each block's layer dozed, by the activity that mines it (the first one whose path holds the block)
+    const pushed = new Map(); if (res) for (const A of res.acts) if (A.meth === 'mixed') { const v = sum(A.bcm); pushed.set(A.id, v > 0 ? Math.min(1, sum(A.dozBcm) / v) : 0); }
+    const dz = new Map();
+    for (const a of P.activities || []) {
+      const l = Model.layerIndex(P, a.layerId); if (l < 0 || coalL[l]) continue;
+      let f = 0;
+      if (a.method === 'dozer_push') f = 1;
+      else if (a.method === 'mixed') { if (pushed.has(a.id)) f = pushed.get(a.id); else if (!res && !Q.mixedNoRun.includes(a.name)) Q.mixedNoRun.push(a.name); }
+      for (const id of a.path || []) { const b = ws.blockIndex.get(id); if (b !== undefined && !dz.has(b * nL + l)) dz.set(b * nL + l, f); }
+    }
+    // the drilling and blasting: the Drill and Blast tab's design on the blocks' volumes (the margin's: a row a block)
+    const BO = typeof Blast !== 'undefined' ? Blast.settings(P) : null; Q.blastOn = !!(BO && BO.on);
+    const rate = Q.blastOn ? Blast.rates(P, ws, { vol0: R.rows.map(r => r.byLayer.map(q => q.v)) }, BO, Blast.plan(P, ws)) : null;
+    for (const r of R.rows) {
+      if (set ? !set.has(r.id) : !r.inside) continue;
+      const b = r.b;
+      for (let l = 0; l < nL; l++) {
+        const v = r.byLayer[l].v; if (!(v > 0)) continue;
+        const g = groupOf(l), t = v * Model.blockDensity(P, b, l), arF = Model.arFactor(P, L[l]);
+        if (g === 'coal') { Q.coalT += t; Q.coalAR += t * arF; Q.coalBcm += v; Q.names.coal.add(l); }
+        else { const d = v * (dz.get(b * nL + l) || 0); Q[g] += v - d; Q.doze += d; if (v - d > 0) Q.names[g].add(l); if (d > 0) Q.names.doze.add(l); }
+        const z = rate ? rate(b, l) : null; if (!z) continue;
+        const kg = v * z.kgB + t * z.kgT;
+        if (z.coal) { Q.dbCoal += t * (o.coalBasis === 'ar' ? arF : 1); Q.kgCoal += kg; Q.names.dbCoal.add(l); }
+        else if (first >= 0 && l > first) { Q.dbMB += v; Q.kgMB += kg; Q.names.dbMB.add(l); }
+        else { Q.dbOB += v; Q.kgOB += kg; Q.names.dbOB.add(l); }
+      }
+    }
+    Q.psW = typeof Fin !== 'undefined' ? Fin.settings(P).presplitW : 40; Q.dbPS = (Q.dbOB + Q.dbMB) / Q.psW;
+    Q.coal = o.coalBasis === 'ar' ? Q.coalAR : Q.coalT;
+    // what the reserve does not hold: the last run's
+    if (mo) { Q.dump = sum(mo.bcmReh); Q.rampsRun = sum(mo.rampB) + sum(mo.batterB); }
+    Q.run = !!mo; runMonths(Q, mo, o);
+    Q.coalBasis = o.coalBasis;
+    for (const k of Object.keys(Q.names)) Q.names[k] = Array.from(Q.names[k]).sort((x, y) => x - y).map(l => L[l].name);
     return Q;
   }
 
@@ -10146,15 +10213,18 @@ const Boq = (() => {
   function source(Q, key) {
     if (!Q) return '';
     const n = k => (Q.names[k] && Q.names[k].length ? Q.names[k].join(', ') : 'no layer'), t = Q.coalBasis === 'ar' ? 'as received' : 'in situ';
+    const rv = Q.src === 'reserve', got = rv ? 'bcm in the reserve' : 'bcm mined', inR = rv ? ' in the reserve' : '';
     switch (key) {
-      case 'pg': case 'pgDB': return Q.months === Q.monthsRun ? `the months of the schedule (${Q.from} to ${Q.to})` : `${Q.months} months as typed (the schedule: ${Q.monthsRun}, ${Q.from} to ${Q.to})`;
-      case 'topsoil': case 'softs': case 'hardMB': return `bcm mined: ${n(key)}`;
-      case 'hardOB': return `bcm mined: ${n('hardOB')}${Q.ramps > 0 ? `, with ${U.fmtNum(Q.ramps, 0)} bcm of ramps and batters` : ''}`;
-      case 'dump': return 'bcm rehandled out of the dumps';
-      case 'coal': return `coal tons ${t}: ${n('coal')}`;
-      case 'doze': return Q.doze > 0 ? `bcm dozed: ${n('doze')}` : 'nothing is dozed';
-      case 'dbOB': case 'dbMB': return Q.blastOn ? `bcm drilled and blasted: ${n(key)} (Drill and Blast tab), ${U.fmtNum(key === 'dbOB' ? Q.kgOB : Q.kgMB, 0)} kg of explosives` : 'drill and blast is off (Drill and Blast tab)';
-      case 'dbCoal': return Q.blastOn ? `coal tons ${t} drilled and blasted: ${n('dbCoal')}, ${U.fmtNum(Q.kgCoal, 0)} kg of explosives` : 'drill and blast is off (Drill and Blast tab)';
+      case 'pg': case 'pgDB':
+        if (rv && !Q.run) return Q.months > 0 ? `${Q.months} months as typed` : 'none: the reserve has no months; type them (Quantities) or run the schedule';
+        return Q.months === Q.monthsRun ? `the months of the ${rv ? 'last run of the ' : ''}schedule (${Q.from} to ${Q.to})` : `${Q.months} months as typed (the schedule: ${Q.monthsRun}, ${Q.from} to ${Q.to})`;
+      case 'topsoil': case 'softs': case 'hardMB': return `${got}: ${n(key)}`;
+      case 'hardOB': return `${got}: ${n('hardOB')}${Q.ramps > 0 ? `, with ${U.fmtNum(Q.ramps, 0)} bcm of ramps and batters` : ''}${rv && Q.rampsRun > 0 ? `; not the schedule's ramps and batters (${U.fmtNum(Q.rampsRun, 0)} bcm in the last run)` : ''}`;
+      case 'dump': return !rv ? 'bcm rehandled out of the dumps' : Q.run ? 'bcm rehandled out of the dumps in the last run of the schedule (the reserve has none)' : 'none: the rehandling out of the dumps comes from the schedule (run it)';
+      case 'coal': return `coal tons ${t}${inR}: ${n('coal')}`;
+      case 'doze': return `${Q.doze > 0 ? `${got} dozed: ${n('doze')}` : 'nothing is dozed'}${rv && Q.mixedNoRun && Q.mixedNoRun.length ? `; ${Q.mixedNoRun.join(', ')} (mixed) counted as hauled until the schedule is run` : ''}`;
+      case 'dbOB': case 'dbMB': return Q.blastOn ? `${rv ? got : 'bcm'} drilled and blasted: ${n(key)} (Drill and Blast tab${rv ? ', its design' : ''}), ${U.fmtNum(key === 'dbOB' ? Q.kgOB : Q.kgMB, 0)} kg of explosives` : 'drill and blast is off (Drill and Blast tab)';
+      case 'dbCoal': return Q.blastOn ? `coal tons ${t}${inR} drilled and blasted: ${n('dbCoal')}, ${U.fmtNum(Q.kgCoal, 0)} kg of explosives` : 'drill and blast is off (Drill and Blast tab)';
       case 'dbPS': return Q.blastOn ? `the waste drilled and blasted ÷ the ${U.fmtNum(Q.psW, 0)} m strip width (Finance tab): one presplit face per strip` : 'drill and blast is off (Drill and Blast tab)';
       default: return '';
     }
@@ -10217,7 +10287,9 @@ const Boq = (() => {
     const Z0 = '#,##0', Z2 = '#,##0.00', Q = b.Q;
     set(0, 0, `Pricing ${P.name || ''}`.trim()); set(2, 0, 'Bill of quantities from the ISAMIQ simulator');
     set(0, 2, b.label);
-    set(0, 5, Q ? `Quantities: the last run of the schedule, ${Q.from} to ${Q.to} (${Q.monthsRun} months); coal tons ${Q.coalBasis === 'ar' ? 'as received' : 'in situ'}` : 'No quantities: run the simulation');
+    set(0, 5, !Q ? 'No quantities: run the simulation' : Q.src === 'reserve'
+      ? `Quantities: the reserve (Block Margin Rank tab, reserve layout summary), ${Q.S.n} of ${Q.S.N} blocks${Q.S.area ? `, reserve boundary ${U.fmtNum(Q.S.area.area, 0)} m²` : ''}; coal tons ${Q.coalBasis === 'ar' ? 'as received' : 'in situ'}; P&G months: ${source(Q, 'pg')}; dump rehandling: ${source(Q, 'dump')}`
+      : `Quantities: the last run of the schedule, ${Q.from} to ${Q.to} (${Q.monthsRun} months); coal tons ${Q.coalBasis === 'ar' ? 'as received' : 'in situ'}`);
     set(0, 6, b.from ? `Rates: ${b.from}` : `Rates: BOQ South Witbank - Isambane Rates (Revised 2 October 2026), sheet "${b.label}"${b.edited ? ', as edited' : ''}`);
     set(4, 7, 'Fuel Base Price (R/Litre)'); set(5, 7, b.fuelPrice, null, Z2);
     set(4, 8, 'Explosive Rate'); set(5, 8, b.explRate, null, Z2); set(6, 8, 'R/Kg');
@@ -10246,7 +10318,7 @@ const Boq = (() => {
     set(8, r, S.lPerBcm, `I${T + 1}/E${rT}`, Z2); set(9, r, 'litres a bcm (burden and coal)');
     r++; set(3, r, 'Coal'); set(4, r, S.coal, sumOf('coal'), Z0); set(5, r, S.coal * S.deduct / 100, `E${rC}*${S.deduct / 100}`, Z0); set(6, r, S.net, `E${rC}-F${rC}`, Z0);
     set(7, r, `t (${Q && Q.coalBasis === 'insitu' ? 'in situ' : 'as received'}); less ${U.fmtNum(S.deduct, S.deduct % 1 ? 1 : 0)}%; the coal the rates a ton are on`);
-    r++; set(3, r, 'Total'); set(4, r, S.bcm, `E${rB}+F${rT}`, Z0); set(5, r, S.coalBcm, null, Z0); set(6, r, 'bcm: the burden and the coal (its bcm from the schedule, in F)');
+    r++; set(3, r, 'Total'); set(4, r, S.bcm, `E${rB}+F${rT}`, Z0); set(5, r, S.coalBcm, null, Z0); set(6, r, `bcm: the burden and the coal (its bcm ${Q && Q.src === 'reserve' ? 'in the reserve' : 'from the schedule'}, in F)`);
     set(8, r, S.fuelMonth, S.months > 0 ? `I${T}/${S.months}` : null, Z0); set(9, r, 'Fuel a month');
     r++; set(3, r, 'Rand per Ton (Dry)'); set(4, r, S.perTDry, `IFERROR((H${T}+J${T})/G${rC},0)`, Z2);
     set(10, r, 'Total a month'); set(11, r, S.perMonth, S.months > 0 ? `L${T}/${S.months}` : null, Z0);
@@ -10330,7 +10402,7 @@ const Boq = (() => {
     const pick = re => (found.find(s => re.test(s.name)) || {}).name || null;
     return { found, guess: { contract: pick(/isambane.*contract|contract.*rate/i) || (found[0] || {}).name || null, actual: pick(/isambane.*actual/i) || pick(/actual/i) || null } };
   }
-  return { OPTIONS, SHORT, BANDS, MATS, DEF, KEYS, settings, quantities, source, bill, sheet, workbook, readSheet, readBook };
+  return { OPTIONS, SHORT, FROM, BANDS, MATS, DEF, KEYS, settings, quantities, reserveQuantities, source, bill, sheet, workbook, readSheet, readBook };
 })();
 
 /* ===== Survey reconciliation (Recon tab; DOM-free) =====
@@ -17535,15 +17607,18 @@ const Tabs = (() => {
     const P = App.P, o = Boq.settings(P), B0 = () => P.boq || (P.boq = {});
     const save = () => { App.changed('boq'); UI.renderTab(); };
     const opt = (!edit() && BV.option) || o.option, otherId = opt === 'contract' ? 'actual' : 'contract';
-    const res = App.res && !App.stale ? App.res : null, Q = res ? App.boqQ() : null;
+    const res = App.res && !App.stale ? App.res : null, rv = o.from === 'reserve', Q = rv || res ? App.boqQ() : null;
     const b = Boq.bill(P, Q, opt), bo = Boq.bill(P, Q, otherId), C = opt === 'contract' ? b : bo, A = opt === 'contract' ? bo : b;
     const money = v => (v === v && v != null ? `R ${U.fmtBig(v)}` : '–'), perT = v => (v === v && v != null ? `R ${U.fmtNum(v, 2)}/t` : '–');
     const kp = (k, v) => h('div', { class: 'kpi' }, h('span', { class: 'k' }, k), h('span', { class: 'v' }, v));
     // the rates shown (a viewer's pick is kept for the session)
     const rs = sel(Boq.OPTIONS, opt, v => { if (edit()) { B0().option = v; save(); } else { BV.option = v; UI.renderTab(); } });
     rs.setAttribute('aria-label', 'BOQ rates');
-    const top = [h('div', { 'data-viewer': '' }, fld('Rates', rs))];
-    if (!res) top.push(msg('warn', App.res ? 'Run the simulation again: the schedule has changed since the last run, and the quantities come from it.' : 'Run the simulation: the quantities (tons, volumes, drilling and blasting) come from the schedule. The rates are shown below.'));
+    const qs = sel(Boq.FROM, o.from, v => { B0().from = v; save(); });
+    qs.setAttribute('aria-label', 'BOQ quantities from');
+    const top = [h('div', { class: 'grid2' }, h('div', { 'data-viewer': '' }, fld('Rates', rs)), fld('Quantities from', qs))];
+    if (rv) { if (!res) top.push(msg('info', `The quantities are the reserve’s: the reserve layout summary of the Block Margin Rank tab. The months of P&Gs and the dump rehandling come from the schedule: ${App.res ? 'run the simulation again (the schedule has changed since the last run)' : 'run the simulation'}${o.months ? '' : ', or type the months (Quantities, below)'}.`)); }
+    else if (!res) top.push(msg('warn', App.res ? 'Run the simulation again: the schedule has changed since the last run, and the quantities come from it.' : 'Run the simulation: the quantities (tons, volumes, drilling and blasting) come from the schedule. The rates are shown below.'));
     if (Q) {
       const S = b.sum;
       top.push(h('div', { class: 'kpis' },
@@ -17574,16 +17649,23 @@ const Tabs = (() => {
     const parts = [];
     {
       const cb = sel([['ar', 'As received'], ['insitu', 'In situ']], o.coalBasis, v => { B0().coalBasis = v; save(); }); cb.setAttribute('aria-label', 'BOQ coal tons');
-      const mi = num(o.months, v => { B0().months = v > 0 ? Math.round(v) : null; save(); }, { min: 1, step: 1, allowEmpty: true, placeholder: Q ? String(Q.monthsRun) : 'the schedule' }); mi.setAttribute('aria-label', 'BOQ months');
+      const mi = num(o.months, v => { B0().months = v > 0 ? Math.round(v) : null; save(); }, { min: 1, step: 1, allowEmpty: true, placeholder: Q && Q.monthsRun ? String(Q.monthsRun) : 'the schedule' }); mi.setAttribute('aria-label', 'BOQ months');
       const di = num(o.deduct, v => { B0().deduct = v == null ? null : U.clamp(v, 0, 100); save(); }, { min: 0, max: 100, step: 0.5, allowEmpty: true, placeholder: '7' }); di.setAttribute('aria-label', 'BOQ coal deduction');
+      if (Q && Q.src === 'reserve') {
+        const S = Q.S, A = S.area, V = App.rv();
+        parts.push(h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `${Margin.reserveWords(S, V.P, (P.reserveLayout || {}).boundary)} The reserve layout summary: ${U.fmtBig(S.waste, 'bcm')} of waste and ${U.fmtBig(S.coalT, 't')} of coal (${S.basis}, ${U.fmtBig(S.coalB, 'bcm')})${A ? `; the reserve boundary ${U.fmtNum(A.area, 0)} m² (${U.fmtNum(A.area / 1e4, 1)} ha)` : ''}.`));
+      }
       parts.push(h('div', { class: 'grid3' }, fld('Coal tons', cb), fld('Months of P&Gs', mi), fld('Coal less (%)', di)));
       const band = M => { const s = sel(Boq.BANDS.map((x, i) => [String(i), x.replace('-', ' – ').replace('m', ' m')]), String(o.band[M.k]), v => { (B0().band || (B0().band = {}))[M.k] = +v; save(); }); s.setAttribute('aria-label', `${M.name} haul distance`); return s; };
       parts.push(h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl', 'aria-label': 'Haul distance of each material' },
         h('thead', null, h('tr', null, h('th', null, 'Material'), h('th', { class: 'r' }, 'Quantity'), h('th', null, 'Haul distance'))),
         h('tbody', null, Boq.MATS.map(M => h('tr', null, h('td', null, M.name, h('span', { class: 'dt', style: { display: 'block', whiteSpace: 'normal' } }, Q ? Boq.source(Q, M.k) : '')), h('td', { class: 'r num' }, Q ? `${U.fmtNum(Q[M.k], 0)} ${M.uom === 'TON' ? 't' : 'bcm'}` : '–'), h('td', null, band(M))))))));
-      parts.push(hint(`The months of P&Gs are the schedule's, first to last month of mining${Q ? ` (${Q.monthsRun}: ${Q.from} to ${Q.to})` : ''}, unless typed. Topsoil and softs are the layers the running totals put there (Timeline, the table's settings); the other waste above the first seam is hard overburden and below it hard midburden; the ramps and batters are with the hard overburden. Dozed bcm are dozing, not load and haul. The coal less the percentage is what the rates a ton are worked out on, as in the workbook (7%). The haul distance band of each material picks its line in the bill: the schedule has no haul distances, so set the band of the average haul.`));
+      const band5 = 'The haul distance band of each material picks its line in the bill: 500 – 1,000 m unless chosen; set the band of the average haul.';
+      parts.push(hint(rv
+        ? `The quantities are the reserve layout summary’s (Block Margin Rank tab): its blocks and each layer’s bcm in them. A layer counted as coal there is coal here, its tons the blocks’ bcm × their density (× the seam’s as-received factor, Reserve tab losses, for tons as received); a seam counted as waste there is hauled as waste. Topsoil and softs are the layers the running totals put there (Timeline, the table’s settings); the other waste above the first seam is hard overburden and below it hard midburden. A block’s layer is dozing, not load and haul, where the activity mining it pushes it (dozer push; a mixed activity in the share it pushed in the last run). The drilling and blasting is the Drill and Blast tab’s design (its layers, benches and powder factors) on these volumes. The reserve has no months, dumps or ramps: the months of P&Gs are the last run’s, first to last month of mining${Q && Q.monthsRun ? ` (${Q.monthsRun}: ${Q.from} to ${Q.to})` : ''}, unless typed; the dump rehandling is the last run’s; the ramps and batters are left out. The coal less the percentage is what the rates a ton are worked out on, as in the workbook (7%). ${band5}`
+        : `The months of P&Gs are the schedule's, first to last month of mining${Q ? ` (${Q.monthsRun}: ${Q.from} to ${Q.to})` : ''}, unless typed. Topsoil and softs are the layers the running totals put there (Timeline, the table's settings); the other waste above the first seam is hard overburden and below it hard midburden; the ramps and batters are with the hard overburden. Dozed bcm are dozing, not load and haul. The coal less the percentage is what the rates a ton are worked out on, as in the workbook (7%). ${band5}`));
     }
-    body.append(sec('Quantities', Q ? h('span', { class: 'chip' }, `${Q.from} – ${Q.to}`) : null, ...parts));
+    body.append(sec('Quantities', Q ? h('span', { class: 'chip' }, Q.src === 'reserve' ? `Reserve: ${U.fmtNum(Q.S.n)} of ${U.fmtNum(Q.S.N)} blocks` : `${Q.from} – ${Q.to}`) : null, ...parts));
 
     // the rates: the fuel price and the explosive rate of these rates, where they come from, and loading new ones
     const R = o.rates[opt], fi = num(R.fuel, v => { setRate('fuel', v); }, { min: 0, step: 0.01, allowEmpty: true, placeholder: String(Boq.DEF[opt].fuel) }), ei = num(R.expl, v => { setRate('expl', v); }, { min: 0, step: 0.01, allowEmpty: true, placeholder: String(Boq.DEF[opt].expl) });
@@ -21646,7 +21728,7 @@ const App = {
   // ---------- change tracking & saving ----------
   changed(kind = 'sim', opts = {}) {
     if (!this.P) return;
-    if (kind !== 'view') { this.inv = null; this._margin = null; }
+    if (kind !== 'view' && kind !== 'boq') { this.inv = null; this._margin = null; }
     if (kind === 'blocks' || kind === 'wash') this._rv = null;
     if (kind !== 'view' && this.selBlock < 0) UI.renderInspectorThrottled(); // (the pit overview shows the coal tons and qualities) // the coal inventory and the block margins are worked out again
     if (kind === 'view' && !this.persisted) return;
@@ -22118,13 +22200,25 @@ const App = {
     }
     return this._fin.F;
   },
-  /* The quantities of the bill of quantities (Boq) of the last run, kept for that run and those settings */
+  /* The quantities of the bill of quantities (Boq): of the reserve (the reserve layout summary of the block margin, with the
+     months and the dump rehandling of the last run, if it is current) or of the last run; kept for those inputs (the
+     block margin is worked out again on every change but the view's and the bill's) */
   boqQ() {
-    if (!this.P || !this.res || !this.ws) return null;
-    const P = this.P, b = P.boq || {}, key = JSON.stringify([b.coalBasis, b.months, P.blast || {}, P.accTable && P.accTable.groups, P.layers.map(L => [L.type, L.name]), (P.fin || {}).presplitW]);
-    if (!this._boq || this._boq.res !== this.res || this._boq.ws !== this.ws || this._boq.key !== key) {
+    if (!this.P || !this.ws) return null;
+    const P = this.P, b = P.boq || {}, from = Boq.settings(P).from, key = JSON.stringify([from, b.coalBasis, b.months, P.blast || {}, P.accTable && P.accTable.groups, P.layers.map(L => [L.type, L.name]), (P.fin || {}).presplitW]);
+    if (from === 'reserve') {
+      const R = this.margin(), run = this.res && !this.stale ? this.res : null; if (!R) return null;
+      if (!this._boq || this._boq.R !== R || this._boq.res !== run || this._boq.ws !== this.ws || this._boq.key !== key) {
+        const V = this.rv(); let Q = null;
+        try { Q = Boq.reserveQuantities(V.P, V.ws, R, V.sep ? P.blocks.map(x => x.id) : null, { res: run, mo: run ? Monthly.build(P, this.ws, run) : null }); } catch (e) { console.error(e); }
+        this._boq = { R, res: run, ws: this.ws, key, Q };
+      }
+      return this._boq.Q;
+    }
+    if (!this.res) return null;
+    if (!this._boq || this._boq.R || this._boq.res !== this.res || this._boq.ws !== this.ws || this._boq.key !== key) {
       let Q = null; try { Q = Boq.quantities(P, this.ws, this.res, { blast: this.blast() }); } catch (e) { console.error(e); }
-      this._boq = { res: this.res, ws: this.ws, key, Q };
+      this._boq = { R: null, res: this.res, ws: this.ws, key, Q };
     }
     return this._boq.Q;
   },
