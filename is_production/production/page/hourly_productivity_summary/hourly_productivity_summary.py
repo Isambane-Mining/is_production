@@ -278,6 +278,20 @@ def build_summary(date, shift, site, plan, assets, breakdowns, documents, *, now
                            completed_actual_bcm=completed_actual,
                            achievement=completed_actual / completed_target * 100 if completed_target else None,
                            missing_hours=sum(h["record_status"] == "missing" for h in data["hours"]))
+    benchmark_target = shift_target_bcm if shift_target_bcm is not None else completed_target
+    benchmark_shortfall = max(benchmark_target - completed_actual, 0)
+    benchmark_estimate = min(estimate_total, benchmark_shortfall)
+
+    data["summary"]["achievement"] = (
+        completed_actual / benchmark_target * 100 if benchmark_target else None
+    )
+    data["pie"] = {
+        "achieved": min(max(completed_actual, 0), benchmark_target),
+        "availability_estimate": benchmark_estimate,
+        "remaining": benchmark_shortfall - benchmark_estimate,
+        "target": benchmark_target,
+    }
+
     return data
 
 
