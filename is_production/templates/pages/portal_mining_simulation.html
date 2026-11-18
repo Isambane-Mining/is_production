@@ -276,6 +276,9 @@ canvas.chart { width: 100%; display: block; }
 .viewport canvas.gl { display: block; width: 100%; height: 100%; }
 .labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 .lbl3d { position: absolute; transform: translate(-50%, -50%); font-family: var(--font-cond); font-weight: 600; font-size: 11px; color: #fff; text-shadow: 0 0 3px rgba(0,0,0,.9), 0 0 1px #000; white-space: nowrap; letter-spacing: .02em; }
+.lbl3d.sr { background: rgba(15, 20, 22, .74); padding: 0 4px 1px; border-radius: 3px; border-bottom: 3px solid #8a8f98; text-shadow: none; font-family: var(--font-mono); font-weight: 500; font-size: 10.5px; line-height: 13px; }
+.lbl3d.sr.out { opacity: .55; }
+.lbl3d.sr.none { color: #c9ccd1; }
 .lbl3d.seq { background: rgba(15, 20, 22, .78); padding: 0 5px; border-radius: 8px; text-shadow: none; font-family: var(--font-mono); font-weight: 500; font-size: 10.5px; }
 .lbl3d.toe { background: #ffd58a; color: #2a2118; text-shadow: none; padding: 1px 6px 1px 6px; border-radius: 3px; font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; transform: translate(-50%, -150%); }
 .lbl3d.toe::after { content: ""; position: absolute; left: 50%; top: 100%; margin-left: -4px; border: 4px solid transparent; border-top-color: #ffd58a; }
@@ -10976,13 +10979,14 @@ const View = (() => {
   let terrain = null, geom = null, mat = null, perim = null;
   let surfNow = null, insNow = null;
   let vex = 3;
-  const show = { outlines: false, resOut: false, labels: false, paths: false, roads: false, dumps: false, contours: false, ovl: false, keep: false, limits: false, pits: false, drains: false, fills: false, water: true }; // (the layers start off: Layers menu)
+  const show = { outlines: false, resOut: false, labels: false, paths: false, roads: false, dumps: false, contours: false, ovl: false, keep: false, limits: false, pits: false, drains: false, fills: false, srLabels: false, water: true }; // (the layers start off: Layers menu)
   let rasOn = false, rasTex = null, rasOpacity = 0.9; // (the survey DEM's picture, Dem)
   let satOn = false, satTex = null, tintTex = null, tintData = null, tintOn = false, matTex = null, matData = null;
   let needsRender = true, needsDrape = false, labelsDirty = true;
   const G = {};
   let outlineData = null, selOutline = null, selBlock = -1;
   let roadDefs = [], dumpDefs = [], pathDefs = [], toeDefs = [], limitDefs = [], pitDefs = [], labelMode = { mode: 'id', seq: null };
+  let valueDefs = []; // values written inside the blocks (the strip ratio): [{x, y, text, color, out, none}] in model coordinates
   let listeners = { hover: null, click: null, dbl: null };
   let draw = null;
   const tmpV = new THREE.Vector3();
@@ -11656,6 +11660,8 @@ const View = (() => {
   }
   function drapePathAll() { for (const o of G.paths.children) drapePath(o); }
   function setLabelMode(mode, seq) { labelMode = { mode, seq }; labelsDirty = true; }
+  // the values written inside the blocks when the Layers menu shows them (show.srLabels): the strip ratio of each block
+  function setBlockValues(list) { valueDefs = Array.isArray(list) ? list : []; labelsDirty = true; }
   function setToes(list) { toeDefs = list || []; labelsDirty = true; }
   /* depth-limit zones: [{pts, color, label, blocks:[block index], selected}] — the drawn polygon and the blocks it limits */
   function setLimits(list) {
@@ -12013,6 +12019,17 @@ const View = (() => {
       d.style.left = p[0].toFixed(1) + 'px'; d.style.top = p[1].toFixed(1) + 'px';
     }
   }
+  // the size of a block on screen (px, a block of the average area at the first block), for a view w × h pixels
+  function blockPx(w, h) {
+    if (!ws || !ws.project.blocks.length) return 999;
+    const a = Math.sqrt(ws.blockArea.reduce((s, v) => s + v, 0) / ws.blockArea.length);
+    const c0 = ws.blockCentroid[0];
+    const p1 = project(c0[0], c0[1], ws.topo[Model.cellAt(ws, c0[0], c0[1])] || zOff, w, h), p2 = project(c0[0] + a, c0[1], ws.topo[Model.cellAt(ws, c0[0], c0[1])] || zOff, w, h);
+    return p1 && p2 ? Math.hypot(p1[0] - p2[0], p1[1] - p2[1]) : 999;
+  }
+  const VAL_PX = 30; // (the values inside the blocks: shown where a block is at least this wide on screen)
+  // whether the values inside the blocks can be shown at this zoom
+  const valuesFit = () => !!ws && blockPx(container.clientWidth, container.clientHeight) >= VAL_PX;
   // the labels shown and where, for a view w × h pixels: [[item, [x, y]]]
   function placeLabels(w, h) {
     const items = [];
@@ -12024,6 +12041,8 @@ const View = (() => {
         items.push({ x: c[0], y: c[1], text: seq ? String(seq.get(k)) : b.id, cls: seq ? 'lbl3d seq' : 'lbl3d', pri: 1, blk: k });
       });
     }
+    // the values inside the blocks: at the centre, under the block's label when that is shown too
+    if (show.srLabels) for (const v of valueDefs) items.push({ x: v.x, y: v.y, text: v.text, cls: 'lbl3d sr' + (v.out ? ' out' : '') + (v.none ? ' none' : ''), color: v.color, pri: 1, val: true, dy: show.labels && ws.project.blocks.length ? 13 : 0 });
     if (show.dumps) for (const d of dumpDefs) if (d.pts && d.pts.length >= 3) { const c = Geo.centroid(d.pts); items.push({ x: c[0], y: c[1], text: d.name, cls: 'lbl3d dump', pri: 2, up: 18 }); }
     if (show.roads) for (const t of toeDefs) items.push({ x: t.x, y: t.y, text: t.text, cls: 'lbl3d toe', pri: 3, up: 4 });
     if (show.limits) for (const z of limitDefs) if (z.pts && z.pts.length >= 3 && z.label && !z.noPoly) { let c = null, top = -Infinity; const n = z.pts.length; for (let k = 0; k < n; k++) { const a = z.pts[k], b = z.pts[(k + 1) % n], my = (a[1] + b[1]) / 2; if (my > top) { top = my; c = [(a[0] + b[0]) / 2, my]; } } items.push({ x: c[0], y: c[1], text: z.label, cls: 'lbl3d limit', pri: 2, up: 10 }); }
@@ -12035,25 +12054,20 @@ const View = (() => {
     let used = 0;
     const out = [];
     // approx on-screen block size to decide whether IDs fit
-    let blkPx = 999;
-    if (ws.project.blocks.length) {
-      const a = Math.sqrt(ws.blockArea.reduce((s, v) => s + v, 0) / ws.blockArea.length);
-      const c0 = ws.blockCentroid[0];
-      const p1 = project(c0[0], c0[1], ws.topo[Model.cellAt(ws, c0[0], c0[1])] || zOff, w, h), p2 = project(c0[0] + a, c0[1], ws.topo[Model.cellAt(ws, c0[0], c0[1])] || zOff, w, h);
-      if (p1 && p2) blkPx = Math.hypot(p1[0] - p2[0], p1[1] - p2[1]);
-    }
+    const blkPx = blockPx(w, h);
     items.sort((a, b) => b.pri - a.pri);
     for (const it of items) {
-      if (it.pri === 1 && blkPx < (labelMode.mode === 'seq' ? 16 : 34)) continue;
+      if (it.pri === 1 && blkPx < (it.val ? VAL_PX : labelMode.mode === 'seq' ? 16 : 34)) continue;
       if (slice.on && slice.n[0] * (it.x - ox - slice.p[0]) + slice.n[1] * (it.y - oy - slice.p[1]) < 0) continue;
       const lz = surfAtLocal(it.x - ox, it.y - oy) + (it.up || 3);
-      const p = project(it.x, it.y, lz, w, h);
+      let p = project(it.x, it.y, lz, w, h);
       if (!p || p[0] < -40 || p[1] < -20 || p[0] > w + 40 || p[1] > h + 20) continue;
-      const key = Math.round(p[0] / cellPx) + ':' + Math.round(p[1] / (cellPx * 0.5));
+      if (it.dy) p = [p[0], p[1] + it.dy];
+      const key = (it.val ? 'v' : '') + Math.round(p[0] / cellPx) + ':' + Math.round(p[1] / (cellPx * 0.5)); // (a value and a block label do not crowd each other out)
       if (it.pri === 1 && occ.has(key)) continue;
       occ.add(key);
       out.push([it, p]);
-      if (++used > 700) break;
+      if (++used > 1400) break;
     }
     return out;
   }
@@ -12113,7 +12127,7 @@ const View = (() => {
     R.setPixelRatio(1); R.setSize(W, H, false);
     camera.aspect = W / H; camera.updateProjectionMatrix();
   }
-  const LBL = { 'lbl3d': null, 'lbl3d seq': ['rgba(15,20,22,.78)', '#fff'], 'lbl3d toe': ['#ffd58a', '#2a2118'], 'lbl3d limit': ['rgba(48,36,92,.78)', '#e4dbff'], 'lbl3d pit': ['rgba(15,20,22,.84)', '#fff', '#fff'], 'lbl3d pit box': ['rgba(15,20,22,.72)', '#fff', '#fff'], 'lbl3d fill': ['rgba(16,70,82,.78)', '#dff7fb'], 'lbl3d dump': null };
+  const LBL = { 'lbl3d': null, 'lbl3d seq': ['rgba(15,20,22,.78)', '#fff'], 'lbl3d toe': ['#ffd58a', '#2a2118'], 'lbl3d limit': ['rgba(48,36,92,.78)', '#e4dbff'], 'lbl3d pit': ['rgba(15,20,22,.84)', '#fff', '#fff'], 'lbl3d pit box': ['rgba(15,20,22,.72)', '#fff', '#fff'], 'lbl3d fill': ['rgba(16,70,82,.78)', '#dff7fb'], 'lbl3d dump': null, 'lbl3d sr': ['rgba(15,20,22,.74)', '#fff'], 'lbl3d sr out': ['rgba(15,20,22,.45)', '#d8dadd'], 'lbl3d sr none': ['rgba(15,20,22,.74)', '#c9ccd1'], 'lbl3d sr out none': ['rgba(15,20,22,.45)', '#c9ccd1'] };
   function frame(ctx, o = {}) {
     const W = ctx.canvas.width, H = ctx.canvas.height;
     if (needsDrape) { drapeAll(); needsDrape = false; }
@@ -12151,6 +12165,23 @@ const View = (() => {
     controls.target.set(0, 0, tz);
     if (kind === 'plan') camera.position.set(0, -d * 0.001, tz + d * 1.05);
     else { const dir = new THREE.Vector3(-0.25, -0.85, 0.62).normalize(); camera.position.set(dir.x * d, dir.y * d, tz + dir.z * d); }
+    camera.near = Math.max(0.5, d / 2000); camera.far = d * 20; camera.updateProjectionMatrix();
+    controls.update();
+    needsRender = true; labelsDirty = true;
+  }
+  /* The plan view framing the blocks (their centres, and the values written inside the blocks of the resource layout, with
+     a block around them) rather than the whole elevation model: close enough to read the values inside the blocks */
+  function fitBlocks() {
+    if (!ws || !ws.blockCentroid || !ws.blockCentroid.length) return fit('plan');
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    const take = (x, y) => { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; };
+    for (const c of ws.blockCentroid) take(c[0], c[1]);
+    if (show.srLabels) for (const v of valueDefs) take(v.x, v.y);
+    const a = Math.sqrt(ws.blockArea.reduce((s, v) => s + v, 0) / ws.blockArea.length);
+    const [lx0, ly0] = toL(x0 - a, y0 - a), [lx1, ly1] = toL(x1 + a, y1 + a);
+    const cx = (lx0 + lx1) / 2, cy = (ly0 + ly1) / 2, half = Math.max((ly1 - ly0) / 2, (lx1 - lx0) / 2 / (camera.aspect || 1));
+    const d = (half / Math.tan((camera.fov * Math.PI) / 360)) * 1.04, tz = ((zMin + zMax - 60) / 2 - zOff) * vex;
+    controls.target.set(cx, cy, tz); camera.position.set(cx, cy - d * 0.001, tz + d);
     camera.near = Math.max(0.5, d / 2000); camera.far = d * 20; camera.updateProjectionMatrix();
     controls.update();
     needsRender = true; labelsDirty = true;
@@ -12421,7 +12452,7 @@ const View = (() => {
   function requestRender() { needsRender = true; labelsDirty = true; }
   function snapshot() { R.render(scene, camera); return canvas.toDataURL('image/jpeg', 0.85); }
 
-  return { init, setWorkspace, setResBlocks, setLayerColors, setSurface, setOverlays, setGeo, setKeepOut, setToes, setLimits, setPits, setDrains, setFills, setWater, setGroundwater, setMeasure, beginCapture, frame, endCapture, viewSize, labelsShown, setTool, getSurface, getInsitu, setSlice, getSlice, modelBounds, viewAlong, setTint, setSatTexture, setSatVisible, setRasTexture, setRasVisible, hasSat, setVex, setShow, setSelectedBlock, setDumps, setRoads, setRoadHidden, roadShown: id => !roadHidden.has(id) && G.roads.children.some(o => o.userData.roadId === id && o.visible), setPaths, setLabelMode, fit, focusOn, pickAt, on, startDraw, finishDraw, cancelDraw, isDrawing, requestRender, snapshot, get vex() { return vex; }, get zOff() { return zOff; } };
+  return { init, setWorkspace, setResBlocks, setBlockValues, fitBlocks, valuesFit, setLayerColors, setSurface, setOverlays, setGeo, setKeepOut, setToes, setLimits, setPits, setDrains, setFills, setWater, setGroundwater, setMeasure, beginCapture, frame, endCapture, viewSize, labelsShown, setTool, getSurface, getInsitu, setSlice, getSlice, modelBounds, viewAlong, setTint, setSatTexture, setSatVisible, setRasTexture, setRasVisible, hasSat, setVex, setShow, setSelectedBlock, setDumps, setRoads, setRoadHidden, roadShown: id => !roadHidden.has(id) && G.roads.children.some(o => o.userData.roadId === id && o.visible), setPaths, setLabelMode, fit, focusOn, pickAt, on, startDraw, finishDraw, cancelDraw, isDrawing, requestRender, snapshot, get vex() { return vex; }, get zOff() { return zOff; } };
 })();
 
 /* ===== Satellite imagery: live tiles (Google Map Tiles API, Esri, custom XYZ) or a georeferenced image file ===== */
@@ -12863,9 +12894,9 @@ const UI = (() => {
   function renderLayersPop() {
     const p = $('layersPop'); p.innerHTML = '';
     const sepL = App.rv ? App.rv().sep : false;
-    const items = [['outlines', sepL ? 'Reserve blocks (the schedule)' : 'Block outlines'], ...(sepL ? [['resOut', 'Resource blocks']] : []), ['labels', 'Block labels'], ['paths', 'Mining path'], ['roads', 'Haul roads & ramps'], ['dumps', 'Dumps'], ['ovl', 'Overlays (KML, DXF)'], ['keep', 'Keep-out zones'], ['limits', 'Depth limits & reserve boundary'], ['pits', 'Pit outlines & box cuts'], ['drains', 'Surface-water flow paths'], ['fills', 'Depression fills'], ['contours', 'Contours on natural ground']];
+    const items = [['outlines', sepL ? 'Reserve blocks (the schedule)' : 'Block outlines'], ...(sepL ? [['resOut', 'Resource blocks']] : []), ['labels', 'Block labels'], ['srLabels', 'Strip ratio in the blocks'], ['paths', 'Mining path'], ['roads', 'Haul roads & ramps'], ['dumps', 'Dumps'], ['ovl', 'Overlays (KML, DXF)'], ['keep', 'Keep-out zones'], ['limits', 'Depth limits & reserve boundary'], ['pits', 'Pit outlines & box cuts'], ['drains', 'Surface-water flow paths'], ['fills', 'Depression fills'], ['contours', 'Contours on natural ground']];
     p.append(h('div', { class: 'pop-h' }, 'Show in the 3D view'));
-    for (const [k, label] of items) p.append(chk(label, App.show[k], v => { App.show[k] = v; View.setShow(k, v); if (k === 'paths') App.refreshOverlays(); }));
+    for (const [k, label] of items) p.append(chk(label, App.show[k], v => { if (k === 'srLabels') { App.showSr(v); return; } App.show[k] = v; View.setShow(k, v); if (k === 'paths') App.refreshOverlays(); }));
     // the survey DEM's picture (Geological Data tab), when there is a GeoTIFF survey
     { const P = App.P, sv = P ? Recon.byDate(P).filter(q => q.disp) : [];
       if (sv.length) p.append(chk('Survey DEM (pseudocolour)', Dem.settings(P).on, v => { const o = Dem.settings(P); P.demView = Object.assign(o, { on: v, survey: sv.some(q => q.id === o.survey) ? o.survey : sv[sv.length - 1].id }); App.changed('dem'); if (App.tab === 'data') UI.renderTab(); })); }
@@ -17079,8 +17110,13 @@ const Tabs = (() => {
       h('tbody', null, rows)));
     return [h('div', { class: 'sec-h', style: { marginTop: '6px' } }, h('h3', null, 'Strip ratio colours')), scale, key, table,
       h('div', { class: 'row' }, on ? btn('Stop colouring the blocks', () => { App.colorBy = 'status'; UI.renderColorBy(); App.refreshTint(); UI.renderTab(); }, 'sm') : btn('Colour the blocks by strip ratio', () => { App.colorBy = 'sr'; UI.renderColorBy(); App.refreshTint(); UI.renderTab(); }, 'sm', 'The 3D view in these colours')),
+      srLabelsChk(),
       hint(`The colours the blocks take in the 3D view coloured by strip ratio (waste bcm ÷ coal t, as the Strip Ratio tab works it out): green for the lowest, amber at the middle of the scale, red for the highest; each side of the scale is split in two bands. ${Q ? 'The blocks outside the boundary are faded there. ' : ''}A band’s strip ratio is the waste of its blocks ÷ their coal.`)];
   }
+  // the switch for the strip ratio written inside the blocks of the 3D view (the Layers menu's too)
+  const srLabelsChk = () => h('div', { class: 'row', 'data-viewer': '', style: { alignItems: 'center' } },
+    chk('Show the strip ratio inside the blocks (3D view)', !!App.show.srLabels, v => App.showSr(v)),
+    btn('Plan of the blocks', () => { if (!App.show.srLabels) App.showSr(true); View.fitBlocks(); document.querySelectorAll('#vbarView [data-view="3d"],#vbarView [data-view="plan"]').forEach(x => x.classList.toggle('on', x.dataset.view === 'plan')); UI.renderTab(); }, 'sm', 'The 3D view from above, framing the blocks, with their strip ratios'));
   function drawReserve() {
     const P = App.rv().P, R = App.margin();
     if (R && R.ready) App.colorBy = 'margin'; else App.colorBy = 'sr';
@@ -17202,6 +17238,7 @@ const Tabs = (() => {
       h('div', { class: 'grid2' }, fld('Middle of the scale (bcm/t)', mi), h('div', { class: 'dt', style: { whiteSpace: 'normal', alignSelf: 'end' } }, S.midSet ? 'amber here; empty for the average' : 'amber at the average strip ratio')),
       h('div', { class: 'row' }, on ? btn('Stop colouring the blocks', () => { App.colorBy = 'status'; UI.renderColorBy(); App.refreshTint(); UI.renderTab(); }, 'sm') : btn('Colour the blocks by strip ratio', () => { App.colorBy = 'sr'; UI.renderColorBy(); App.refreshTint(); UI.renderTab(); }, 'sm primary'),
         R.ready && S.breakEven === S.breakEven && !(S.midSet && Math.abs(S.mid - S.breakEven) < 0.005) ? btn('Middle at the break-even', () => { const m = P.margin || (P.margin = {}); m.srMid = Math.round(S.breakEven * 100) / 100; App.changed('margin'); UI.renderTab(); }, 'sm') : null),
+      srLabelsChk(),
       h('div', { class: 'tbl-wrap', style: { maxHeight: '420px', overflow: 'auto' } }, h('table', { class: 'tbl mg-tbl' },
         h('thead', null, h('tr', null, h('th', { class: 'r' }, 'Rank'), h('th', null, 'Block'), h('th', { class: 'r' }, 'bcm/t'), h('th', { class: 'r' }, 'Waste bcm'), h('th', { class: 'r' }, 'Coal t'), R.ready ? h('th', { class: 'r', title: 'Its rank by margin' }, 'Margin rank') : null)),
         h('tbody', null, show.map(tr)))),
@@ -21660,7 +21697,7 @@ const App = {
   P: null, surf: null, ws: null, res: null, pb: null, day: -1, stale: false,
   selBlock: -1, actId: null, roadId: null, dumpId: null,
   tab: 'project', colorBy: 'status', colorAttr: '',
-  show: { outlines: false, resOut: false, labels: false, paths: false, roads: false, dumps: false, contours: false, ovl: false, keep: false, limits: false, pits: false, drains: false, fills: false }, // (every layer starts off; turned on in the Layers menu)
+  show: { outlines: false, resOut: false, labels: false, paths: false, roads: false, dumps: false, contours: false, ovl: false, keep: false, limits: false, pits: false, drains: false, fills: false, srLabels: false }, // (every layer starts off; turned on in the Layers menu)
   drainId: null, rhId: null, fillId: null, raiseId: null,
   limitId: null, LIMIT_COLOR: '#b9a2ff', RESERVE_COLOR: '#e040fb', OUT_COLOR: '#e34948', pitId: null,
   sat: { on: false, canvas: null, sig: '', attribution: '' },
@@ -21800,12 +21837,12 @@ const App = {
     this.refreshOverlays();
     Section.apply();
   },
-  rasterize() { if (!this.ws) return; this._rv = null; Model.rasterizeBlocks(this.ws); View.setWorkspace(this.ws, { vex: View.vex, keepCamera: true }); if (this.pb) View.setSurface(this.pb.insitu, this.pb.fill, this.pb.mat, this.spoilClasses()); this.refreshOverlays(); Section.reset(); Measure.reset(); },
+  rasterize() { if (!this.ws) return; this._rv = null; this.ws._keep = null; /* (the keep-out zones' blocks: worked out again for the new blocks) */ Model.rasterizeBlocks(this.ws); View.setWorkspace(this.ws, { vex: View.vex, keepCamera: true }); if (this.pb) View.setSurface(this.pb.insitu, this.pb.fill, this.pb.mat, this.spoilClasses()); this.refreshOverlays(); Section.reset(); Measure.reset(); },
 
   // ---------- change tracking & saving ----------
   changed(kind = 'sim', opts = {}) {
     if (!this.P) return;
-    if (kind !== 'view' && kind !== 'boq') { this.inv = null; this._margin = null; }
+    if (kind !== 'view' && kind !== 'boq') { this.inv = null; this._margin = null; this.refreshSrLabelsSoon(); }
     if (kind === 'blocks' || kind === 'wash') this._rv = null;
     if (kind !== 'view' && this.selBlock < 0) UI.renderInspectorThrottled(); // (the pit overview shows the coal tons and qualities) // the coal inventory and the block margins are worked out again
     if (kind === 'view' && !this.persisted) return;
@@ -21968,9 +22005,30 @@ const App = {
   },
 
   // ---------- overlays ----------
+  /* The strip ratio written inside each block of the 3D view (Layers menu: Strip ratio in the blocks; the Strip Ratio tab and
+     the reserve boundary's legend): each block of the resource layout at its centre, as the block margin works it out
+     (waste bcm ÷ coal t), underlined in its colour on the strip ratio scale; '–' without coal; faded outside the reserve
+     boundary. Two decimals, one from 10 bcm/t, none from 100. */
+  showSr(v) {
+    this.show.srLabels = !!v; View.setShow('srLabels', !!v); this.refreshSrLabels();
+    if (v && this.ws && View.valuesFit && View.valuesFit() === false) UI.toast('At this zoom the blocks are too small on screen for their strip ratios: zoom in, or use “Plan of the blocks” (Strip Ratio tab).', 7000);
+  },
+  refreshSrLabels() {
+    clearTimeout(this._srT); this._srT = null;
+    if (!this.show.srLabels || !this.P || !this.ws) { View.setBlockValues([]); return; }
+    const R = this.margin(), V = this.rv(), S = R && R.stats.sr;
+    if (!R || !V.ws) { View.setBlockValues([]); return; }
+    View.setBlockValues(R.rows.map(r => {
+      const c = V.ws.blockCentroid[r.b], ok = r.coalT > 0 && r.sr === r.sr, col = ok && S && S.n ? Margin.srColor(r.sr, S) : null;
+      return { x: c[0], y: c[1], text: ok ? U.fmtNum(r.sr, r.sr >= 100 ? 0 : r.sr >= 10 ? 1 : 2) : '–', color: col ? `rgb(${col.join(',')})` : '#8a8f98', out: !!R.boundary && !r.inside, none: !ok, b: r.b };
+    }));
+  },
+  // (after a change: once the changes settle, as the block margin is worked out again)
+  refreshSrLabelsSoon() { if (!this.show.srLabels) return; clearTimeout(this._srT); this._srT = setTimeout(() => this.refreshSrLabels(), 150); },
   refreshOverlays() {
     const P = this.P;
     { const V = this.rv(); View.setResBlocks(V.sep && P ? P.resBlocks : null); } // (the resource layout, kept apart)
+    this.refreshSrLabels();
     if (!P || !this.ws) { View.setRoads([]); View.setDumps([]); View.setPaths([]); View.setOverlays([]); View.setKeepOut(null); View.setLimits([]); View.setPits([], []); View.setDrains([]); View.setFills([]); return; }
     this.refreshKeep();
     // depth-limit zones: the polygon, and the blocks each one actually limits
