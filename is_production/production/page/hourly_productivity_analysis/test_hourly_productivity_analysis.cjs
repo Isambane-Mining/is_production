@@ -4,7 +4,8 @@ const {renderAnalysis, renderHourDetails, renderMobileAnalysis, renderProductivi
 
 function fixture() {
   const cells = Array.from({length: 24}, (_, i) => ({label: `${(i+6)%24}:00`, category: 'red',
-    actual_bcm: 0, target_bcm: 220, has_record: false, record_status: 'missing', excavator_available: 1}));
+    actual_bcm: 0, target_bcm: 220, average_productive_hours: 1,
+    has_record: false, record_status: 'missing', excavator_available: 1}));
   return {site: '<Koppie>', warnings: ['Missing <records>'], hours: cells.map(x=>x.label),
     rows: [{date: '2026-09-30', day: 'Wed', month: 'September 2026', month_key: '2026-09', plan_name: 'SEP', cells},
       {date: '2026-10-01', day: 'Thu', month: 'October 2026', month_key: '2026-10', plan_name: 'OCT', cells}],
@@ -344,7 +345,7 @@ test('Hourly shift-average popup shows magnified BCM average and shift total', (
   const {renderShiftAverageDetails} = require('./hourly_productivity_analysis.js');
 
   const day = renderShiftAverageDetails(row,'day');
-  assert.match(day,/Average BCM \/ hour/);
+  assert.match(day,/Average BCM \/ productive hour/);
   assert.match(day,/6[,.]5/);
   assert.match(day,/78 BCM/);
 
@@ -383,3 +384,78 @@ test('ADT availability renders independent green and orange half-hour background
   const utilisation = renderMachineMatrix(data, null, 'utilisation');
   assert.ok(!utilisation.includes('linear-gradient(90deg,#B9EDC5'));
 });
+
+test('shift averages use weighted productive hours and exclude fatigue time', () => {
+  const data = fixture();
+  const row = data.rows[0];
+
+  row.cells.forEach(cell => {
+    cell.completed = true;
+    cell.has_record = true;
+    cell.actual_bcm = 0;
+    cell.average_productive_hours = 0;
+  });
+
+  // First hour: 50 BCM over 15 weighted productive minutes.
+  Object.assign(row.cells[0], {
+    actual_bcm: 50,
+    average_productive_hours: 0.25
+  });
+
+  // Normal hour: 15 minutes fatigue leaves 45 productive minutes.
+  Object.assign(row.cells[1], {
+    actual_bcm: 150,
+    average_productive_hours: 0.75
+  });
+
+  // Last hour: 45 weighted minutes, less 15 minutes fatigue.
+  Object.assign(row.cells[11], {
+    actual_bcm: 100,
+    average_productive_hours: 0.5
+  });
+
+  const html = renderAnalysis(data);
+  assert.match(html, /hpa-day-average[^>]*>200</);
+
+  const {renderShiftAverageDetails} = require('./hourly_productivity_analysis.js');
+  const details = renderShiftAverageDetails(row, 'day');
+
+  assert.match(details, /Average BCM \/ productive hour/);
+  assert.match(details, /200/);
+  assert.match(details, /300 BCM/);
+  assert.match(details, /1[,.]5 productive hours/);
+});
+
+test('ADT Util colour classification includes utilised spare machines', () => {
+  const data = fixture();
+  const row = data.rows[0];
+  row.production_fleet_total = 8;
+  row.fleet_total = 12;
+
+  const cell = row.cells[0];
+  Object.assign(cell, {
+    completed: true,
+    has_record: true,
+    available: 8,
+    utilised: 7,
+    production_available: 8,
+    production_utilised: 7,
+    all_utilised: 10
+  });
+
+  const firstCell = html => html.match(
+    /<td class="hpa-cell hm-cell hm-hour-cell[^"]*"/
+  )?.[0] || '';
+
+  let html = renderMachineMatrix(data);
+  assert.match(firstCell(html), /hm-green/);
+
+  cell.all_utilised = 7;
+  html = renderMachineMatrix(data);
+  assert.match(firstCell(html), /hm-orange/);
+
+  cell.all_utilised = 6;
+  html = renderMachineMatrix(data);
+  assert.match(firstCell(html), /hm-red/);
+});
+

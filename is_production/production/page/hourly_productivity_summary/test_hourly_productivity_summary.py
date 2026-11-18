@@ -291,6 +291,34 @@ class TestHourlyProductivitySummary(TestCase):
         self.assertEqual(sum(hour["fatigue_minutes"] for hour in data["hours"]),0)
 
 
+    def test_shift_target_is_current_productivity_benchmark(self):
+        plan = dict(self.plan)
+        plan["num_excavators"] = 3
+        plan["excavator_truck_assignments"] = list(self.plan["excavator_truck_assignments"]) + [
+            {"excavator": "EX3", "truck": "T4"}
+        ]
+        plan["month_prod_days"] = [
+            {"shift_start_date": "2026-10-12", "shift_day_hours": 9}
+        ]
+
+        self.assets.extend([
+            {"name": "EX3", "asset_name": "EX3", "location": "Koppie",
+             "asset_category": "Excavator"},
+            {"name": "T4", "asset_name": "T4", "location": "Koppie",
+             "asset_category": "ADT"},
+        ])
+
+        data = self.build([self.doc(rows=[self.row(bcm=4387)])], plan=plan)
+
+        self.assertEqual(data["summary"]["completed_target_bcm"], 7260)
+        self.assertEqual(data["summary"]["shift_target_bcm"], 5940)
+        self.assertAlmostEqual(data["summary"]["achievement"], 4387 / 5940 * 100)
+        self.assertEqual(data["pie"]["target"], 5940)
+        self.assertEqual(data["pie"]["achieved"], 4387)
+        self.assertEqual(data["pie"]["remaining"], 1553)
+
+
+
 class TestLoaderPermissions(TestCase):
     def test_guest_denied_before_reading_sources(self):
         with patch.object(report.frappe, "session", report.frappe._dict(user="Guest")):
