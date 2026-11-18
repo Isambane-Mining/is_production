@@ -418,6 +418,7 @@ canvas.chart { width: 100%; display: block; }
 .sr-key i.in { width: 4px; background: #fff; border-radius: 1px; box-shadow: 0 0 0 1px var(--ink); }
 .sr-key i.mid { width: 2px; background: var(--ink); border-radius: 1px; }
 .sr-key i.cut { width: 0; border-left: 2px dashed var(--ink); }
+.sr-key i.top { width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; }
 .sr-sw { display: inline-block; width: 28px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
 .sr-tbl td .dt { margin-left: 4px; }
 .coords { position: absolute; right: 10px; bottom: 10px; background: rgba(18, 24, 27, .82); color: var(--view-ink); border-radius: 6px; padding: 5px 9px; font-family: var(--font-mono); font-size: 11px; z-index: 4; white-space: nowrap; }
@@ -8277,10 +8278,13 @@ const Margin = (() => {
     srR.forEach((r, i) => { r.srRank = i + 1; });
     let sW = 0, sT = 0, sRev = 0, sPl = 0, sCW = 0, sCC = 0; for (const r of srR) { sW += r.waste; sT += r.coalT; sRev += r.rev; sPl += r.plant; sCW += r.costW + r.fuelW; sCC += r.costC + r.fuelC + r.over + r.rehab; }
     const srAvg = sT > 0 ? sW / sT : NaN, srLo = srR.length ? srR[0].sr : NaN, srHi = srR.length ? srR[srR.length - 1].sr : NaN;
+    // the top of the colour scale: the 98th percentile of the blocks' strip ratios (between ranks, as Excel's PERCENTILE.INC),
+    // so that a few extreme blocks (next to no coal) do not squash the colours; the blocks above it take the darkest red
+    const srTop = pctl(srR.map(r => r.sr), SR_TOP), srAbove = srR.filter(r => r.sr > srTop + 1e-9).length;
     const midSet = num(M.srMid) > 0, srMid = midSet ? +M.srMid : srAvg;
     let below = 0, above = 0, tBelow = 0, tAbove = 0; for (const r of srR) { if (r.sr <= srMid) { below++; tBelow += r.coalT; } else { above++; tAbove += r.coalT; } }
     const wRate = sW > 0 ? sCW / sW : 0, breakEven = sRev > 0 && wRate > 0 && sT > 0 ? (sRev - sCC - sPl) / sT / wRate : NaN; // (the average waste cost a bcm)
-    const sr = { n: srR.length, lo: srLo, hi: srHi, avg: srAvg, mid: srMid, midSet, below, above, tBelow, tAbove, lowest: srR[0] || null, highest: srR[srR.length - 1] || null, breakEven };
+    const sr = { n: srR.length, lo: srLo, hi: srHi, top: srTop, capped: srAbove > 0, nAbove: srAbove, avg: srAvg, mid: srMid, midSet, below, above, tBelow, tAbove, lowest: srR[0] || null, highest: srR[srR.length - 1] || null, breakEven };
     // the block depths: shallowest and deepest, the average weighted by the plan area, and the blocks by their lowest seam
     const depth = { n: 0, lo: Infinity, hi: -Infinity, avg: NaN, max: -Infinity, bySeam: [] };
     { let sa = 0, sd = 0; const bs = new Map();
@@ -8316,19 +8320,26 @@ const Margin = (() => {
   const colorOf = (m, lo, hi) => divColor(m, Math.min(lo, 0), 0, Math.max(hi, 0), RED, GREEN);
   const gradient = (lo, hi) => divGradient(Math.min(lo, 0), 0, Math.max(hi, 0), RED, GREEN);
   // the strip ratio: green for the lowest, amber at the middle, red for the highest
-  const srMidIn = S => Math.min(S.hi, Math.max(S.lo, S.mid));
-  const srColor = (v, S) => divColor(v, S.lo, srMidIn(S), S.hi, GREEN, RED);
-  const srGradient = S => divGradient(S.lo, srMidIn(S), S.hi, GREEN, RED);
+  // the strip ratio's colour scale ends at the 98th percentile of the blocks (srTop: S.top), not at the highest (S.hi)
+  const SR_TOP = 0.98;
+  const pctl = (a, p) => { if (!a.length) return NaN; const x = (a.length - 1) * p, i = Math.floor(x), f = x - i; return i + 1 < a.length ? a[i] + (a[i + 1] - a[i]) * f : a[i]; }; // (a sorted)
+  const srTopOf = S => (S.top === S.top && S.top >= S.lo ? S.top : S.hi);
+  const srMidIn = S => Math.min(srTopOf(S), Math.max(S.lo, S.mid));
+  const srColor = (v, S) => divColor(v, S.lo, srMidIn(S), srTopOf(S), GREEN, RED);
+  const srGradient = S => divGradient(S.lo, srMidIn(S), srTopOf(S), GREEN, RED);
+  // the cap in words: '' when no block lies above it
+  const srCapWords = S => (S && S.capped ? `The colour scale ends at the 98th percentile of the blocks’ strip ratios, ${U.fmtNum(srTopOf(S), 2)} bcm/t: the ${S.nAbove} block${S.nAbove === 1 ? '' : 's'} above it, up to the highest (${U.fmtNum(S.hi, 2)}), ${S.nAbove === 1 ? 'is' : 'are'} the darkest red.` : '');
   /* The strip ratio colours in bands, for a legend: each side of the scale split in two (the lowest to halfway to the middle,
      on to the middle (amber), on to halfway to the highest, on to the highest), each with the colours at its ends and its
      blocks inside and outside the reserve boundary (all of them inside without one): their count, coal and waste. A block
      is on the low side at or below the middle of the scale, as the scale's counts (below, above) take it. The blocks
      without coal apart. R: compute(P, ws) → {S, mid, bands: [{k, lo, hi, from, to (rgb), n, coalT, waste ([inside,
-     outside]), sr ([inside, outside]: waste ÷ coal)}], none: [inside, outside], boundary} or null (no block has coal) */
+     outside]), sr ([inside, outside]: waste ÷ coal)}], none: [inside, outside], top (the scale's end), capped, boundary} or null
+     (no block has coal); the highest band takes the blocks above the scale's end too */
   const SR_BANDS = ['lowest', 'low', 'high', 'highest'];
   function srBands(R) {
     const S = R && R.stats.sr; if (!S || !S.n) return null;
-    const m = srMidIn(S), e = [S.lo, (S.lo + m) / 2, m, (m + S.hi) / 2, S.hi], none = [0, 0];
+    const top = srTopOf(S), m = srMidIn(S), e = [S.lo, (S.lo + m) / 2, m, (m + top) / 2, top], none = [0, 0];
     const bands = SR_BANDS.map((name, k) => ({ k, name, lo: e[k], hi: e[k + 1], from: srColor(e[k], S), to: srColor(e[k + 1], S), n: [0, 0], coalT: [0, 0], waste: [0, 0] }));
     for (const r of R.rows) {
       const s = R.boundary && !r.inside ? 1 : 0;
@@ -8337,7 +8348,7 @@ const Margin = (() => {
       q.n[s]++; q.coalT[s] += r.coalT; q.waste[s] += r.waste;
     }
     for (const q of bands) q.sr = [0, 1].map(s => (q.coalT[s] > 0 ? q.waste[s] / q.coalT[s] : NaN));
-    return { S, mid: m, bands: bands.filter(q => q.hi > q.lo || q.n[0] + q.n[1] > 0), none, boundary: !!R.boundary };
+    return { S, mid: m, top, capped: !!S.capped, bands: bands.filter(q => q.hi > q.lo || q.n[0] + q.n[1] > 0), none, boundary: !!R.boundary };
   }
   // the tons the margin counts the coal in: 'ADC', 'as received' or 'in situ'
   const tonsWord = M => (M.basis === 'ar' ? 'as received' : M.basis === 'insitu' ? 'in situ' : 'ADC');
@@ -8414,7 +8425,7 @@ const Margin = (() => {
     if (S.src === 'boundary') return `The ${U.fmtNum(S.n)} of the ${U.fmtNum(S.N)} blocks whose centre lies inside the reserve boundary${right ? ` and the mining right (${right.name})` : ''}: the blocks the schedule mines.`;
     return drawn ? `The reserve boundary is switched off, so every block is in the reserve: ${U.fmtNum(S.N)} blocks.` : `There is no reserve boundary yet, so every block is in the reserve: ${U.fmtNum(S.N)} blocks.`;
   }
-  return { DEF, QUAL, FUEL, fuelOf, fuelLines, litres, settings, fromFin, finRates, formula, finLines, guess, colFor, ready, isCoal, isWasteSeam, compute, tonsWord, reserveArea, reserveSummary, reserveWords, colorOf, gradient, srColor, srGradient, srBands, divColor, divGradient, NEG, POS, RED, GREEN, AMBER };
+  return { DEF, QUAL, FUEL, fuelOf, fuelLines, litres, settings, fromFin, finRates, formula, finLines, guess, colFor, ready, isCoal, isWasteSeam, compute, tonsWord, reserveArea, reserveSummary, reserveWords, colorOf, gradient, srColor, srGradient, srTopOf, srCapWords, srBands, divColor, divGradient, NEG, POS, RED, GREEN, AMBER };
 })();
 
 /* ===== Coal tons from gross in situ to air-dry contaminated (Reserve tab; DOM-free) =====
@@ -17041,19 +17052,20 @@ const Tabs = (() => {
   function srLegend(R, Q) {
     const L = Margin.srBands(R); if (!L) return [];
     const S = L.S, G = Margin.srGradient(S), f2 = v => U.fmtNum(v, 2), n0 = v => U.fmtNum(v, 0), on = App.colorBy === 'sr';
-    const at = v => U.clamp(S.hi > S.lo ? ((v - S.lo) / (S.hi - S.lo)) * 100 : 50, 0, 100), cut = AutoRes.settings(App.rv().P).srMax;
+    const top = L.top, topL = f2(top) + (L.capped ? '+' : ''), at = v => U.clamp(top > S.lo ? ((v - S.lo) / (top - S.lo)) * 100 : 50, 0, 100), cut = AutoRes.settings(App.rv().P).srMax;
     const I = Q && Q.inside, rin = I && I.sr === I.sr ? I.sr : null, rgb = c => (c ? `rgb(${c.join(',')})` : '#8a8f98');
     const bar = h('div', { class: 'bar', style: { background: G.css } },
       G.zero > 0 && G.zero < 100 ? h('span', { class: 'zero', style: { left: G.zero + '%' } }) : null,
       cut > 0 ? h('span', { class: 'mk cut', style: { left: at(cut) + '%' }, title: `The strip ratio cut-off: ${f2(cut)} bcm/t` }) : null,
       rin != null ? h('span', { class: 'mk in', style: { left: at(rin) + '%' }, title: `The reserve: ${f2(rin)} bcm/t` }) : null);
-    const scale = h('div', { class: 'mg-scale', role: 'img', 'aria-label': `Strip ratio colours from ${f2(S.lo)} (green) through ${f2(L.mid)} (amber) to ${f2(S.hi)} bcm/t (red)${rin != null ? `; the reserve ${f2(rin)}` : ''}${cut > 0 ? `; the cut-off ${f2(cut)}` : ''}` }, bar,
-      h('div', { class: 'lab' }, h('span', { style: { left: 0 } }, f2(S.lo)), G.zero > 18 && G.zero < 82 ? h('span', { style: { left: G.zero + '%', transform: 'translateX(-50%)' } }, f2(L.mid)) : null, h('span', { style: { right: 0 } }, f2(S.hi) + ' bcm/t')));
+    const scale = h('div', { class: 'mg-scale', role: 'img', 'aria-label': `Strip ratio colours from ${f2(S.lo)} (green) through ${f2(L.mid)} (amber) to ${topL} bcm/t (red)${rin != null ? `; the reserve ${f2(rin)}` : ''}${cut > 0 ? `; the cut-off ${f2(cut)}` : ''}` }, bar,
+      h('div', { class: 'lab' }, h('span', { style: { left: 0 } }, f2(S.lo)), G.zero > 18 && G.zero < 82 ? h('span', { style: { left: G.zero + '%', transform: 'translateX(-50%)' } }, f2(L.mid)) : null, h('span', { style: { right: 0 } }, topL + ' bcm/t')));
     const key = h('div', { class: 'sr-key' }, h('span', null, h('i', { class: 'mid' }), `the middle (amber): ${f2(L.mid)} bcm/t, ${S.midSet ? 'as set in the Strip Ratio tab' : 'the average'}`),
       rin != null ? h('span', null, h('i', { class: 'in' }), `the reserve: ${f2(rin)} bcm/t`) : null,
-      cut > 0 ? h('span', null, h('i', { class: 'cut' }), `the cut-off: ${f2(cut)} bcm/t`) : null);
+      cut > 0 ? h('span', null, h('i', { class: 'cut' }), `the cut-off: ${f2(cut)} bcm/t`) : null,
+      L.capped ? h('span', null, h('i', { class: 'top', style: { background: rgb(Margin.srColor(top, S)) } }), `the scale ends at the 98th percentile, ${f2(top)} bcm/t: ${S.nAbove} block${S.nAbove === 1 ? '' : 's'} above it, up to ${f2(S.hi)}, ${S.nAbove === 1 ? 'is' : 'are'} the darkest red`) : null);
     const sides = Q ? [[0, 'Inside the boundary'], [1, 'Outside']] : [[0, 'All blocks']], cw = Margin.tonsWord(R.M);
-    const range = (q, i) => `${i === 0 ? '' : '> '}${f2(q.lo)} – ${f2(q.hi)}`;
+    const range = (q, i) => (L.capped && q.k === 3 ? `> ${f2(q.lo)}` : `${i === 0 ? '' : '> '}${f2(q.lo)} – ${f2(q.hi)}`);
     const rows = L.bands.map((q, i) => h('tr', null,
       h('td', null, h('span', { class: 'sr-sw', style: { background: `linear-gradient(90deg, ${rgb(q.from)}, ${rgb(q.to)})` } }), q.name),
       h('td', { class: 'r num' }, range(q, i)),
@@ -17169,12 +17181,12 @@ const Tabs = (() => {
   function stripRatio(body, R, cur, kp) {
     const P = App.rv().P, S = R.stats.sr, f = v => `${U.fmtNum(v, 2)} bcm/t`;
     if (!S.n) { body.append(sec('Strip ratio', null, msg('warn', 'No block has coal, so there is no strip ratio.'))); return; }
-    const G = Margin.srGradient(S), on = App.colorBy === 'sr', midIn = Math.min(S.hi, Math.max(S.lo, S.mid));
+    const G = Margin.srGradient(S), on = App.colorBy === 'sr', top = Margin.srTopOf(S), topL = U.fmtNum(top, 2) + (S.capped ? '+' : ''), midIn = Math.min(top, Math.max(S.lo, S.mid));
     const mi = num(S.midSet ? S.mid : null, v => { const m = P.margin || (P.margin = {}); m.srMid = v > 0 ? v : null; App.changed('margin'); UI.renderTab(); }, { min: 0, step: 0.1, allowEmpty: true, placeholder: `average, ${U.fmtNum(S.avg, 2)}` });
     mi.setAttribute('aria-label', 'Middle of the strip ratio scale');
-    const scale = h('div', { class: 'mg-scale', 'aria-label': `Strip ratio scale from ${f(S.lo)} (green) to ${f(S.hi)} (red)` },
+    const scale = h('div', { class: 'mg-scale', 'aria-label': `Strip ratio scale from ${f(S.lo)} (green) to ${topL} bcm/t (red)` },
       h('div', { class: 'bar', style: { background: G.css } }, G.zero > 0 && G.zero < 100 ? h('span', { class: 'zero', style: { left: G.zero + '%' } }) : null),
-      h('div', { class: 'lab' }, h('span', { style: { left: 0 } }, U.fmtNum(S.lo, 2)), G.zero > 18 && G.zero < 82 ? h('span', { style: { left: G.zero + '%', transform: 'translateX(-50%)' } }, U.fmtNum(midIn, 2)) : null, h('span', { style: { right: 0 } }, U.fmtNum(S.hi, 2) + ' bcm/t')));
+      h('div', { class: 'lab' }, h('span', { style: { left: 0 } }, U.fmtNum(S.lo, 2)), G.zero > 18 && G.zero < 82 ? h('span', { style: { left: G.zero + '%', transform: 'translateX(-50%)' } }, U.fmtNum(midIn, 2)) : null, h('span', { style: { right: 0 } }, topL + ' bcm/t')));
     const show = R.srRanked.slice(0, 1000);
     const tr = r => { const c = Margin.srColor(r.sr, S);
       return h('tr', { class: (r.b === App.selRes() ? 'sel ' : '') + (r.inside ? '' : 'out'), onclick: () => App.selectRes(r.b), title: r.inside ? '' : 'Outside the reserve boundary: not mined' },
@@ -17194,7 +17206,7 @@ const Tabs = (() => {
         h('thead', null, h('tr', null, h('th', { class: 'r' }, 'Rank'), h('th', null, 'Block'), h('th', { class: 'r' }, 'bcm/t'), h('th', { class: 'r' }, 'Waste bcm'), h('th', { class: 'r' }, 'Coal t'), R.ready ? h('th', { class: 'r', title: 'Its rank by margin' }, 'Margin rank') : null)),
         h('tbody', null, show.map(tr)))),
       R.srRanked.length > show.length ? h('div', { class: 'dt' }, `The first ${show.length} of ${R.srRanked.length}; the Excel schedule has them all.`) : null,
-      hint(`The strip ratio of a block is its waste (every layer that is not coal, topsoil too) in bcm ÷ its coal in tons ${Margin.tonsWord(R.M)} (Coal tons, in the Block Margin Rank tab), with depth limits and keep-out zones taken off. Rank 1 is the lowest. “Colour the blocks by strip ratio” shows them in robot colours: green for the lowest, amber at the middle of the scale, red for the highest.${R.ready ? ' The break-even strip ratio is where a block with the average revenue per ton (and plant cost) would just pay for itself: above it the waste costs more than the coal earns.' : ''} Blocks without coal have no strip ratio.`)));
+      hint(`The strip ratio of a block is its waste (every layer that is not coal, topsoil too) in bcm ÷ its coal in tons ${Margin.tonsWord(R.M)} (Coal tons, in the Block Margin Rank tab), with depth limits and keep-out zones taken off. Rank 1 is the lowest. “Colour the blocks by strip ratio” shows them in robot colours: green for the lowest, amber at the middle of the scale, red for the highest.${S.capped ? ' ' + Margin.srCapWords(S) : ''}${R.ready ? ' The break-even strip ratio is where a block with the average revenue per ton (and plant cost) would just pay for itself: above it the waste costs more than the coal earns.' : ''} Blocks without coal have no strip ratio.`)));
   }
 
   // =============== PRODUCTION ===============
@@ -22101,9 +22113,9 @@ const App = {
       const R = this.margin(), S = R && R.stats.sr;
       if (S && S.n) {
         for (const r of R.rows) { const c = Margin.srColor(r.sr, S); cellColor[r.b] = c ? [c[0], c[1], c[2], r.inside ? 225 : 80] : [138, 143, 152, 110]; }
-        const G = Margin.srGradient(S), mid = Math.min(S.hi, Math.max(S.lo, S.mid));
-        legend = { type: 'diverge', title: 'Strip ratio (bcm/t)', lo: U.fmtNum(S.lo, 2), hi: U.fmtNum(S.hi, 2), css: G.css, zero: G.zero > 0 && G.zero < 100 ? G.zero : -1, mid: U.fmtNum(mid, 2),
-          extra: [[Margin.GREEN[3], `At or below ${U.fmtNum(S.mid, 2)}: ${S.below} blocks`], [Margin.RED[3], `Above ${U.fmtNum(S.mid, 2)}: ${S.above} blocks`]].concat(R.stats.none ? [['#8a8f98', `No coal: ${R.stats.none}`]] : [], R.resv ? [['rgba(160,160,160,.45)', `Faded: outside the reserve boundary (${R.resv.outside.n})`]] : [], R.resv && R.resv.inside.sr === R.resv.inside.sr ? [['rgba(0,0,0,0)', `The reserve: ${R.resv.inside.n} blocks, ${U.fmtNum(R.resv.inside.sr, 2)} bcm/t`]] : []) };
+        const G = Margin.srGradient(S), top = Margin.srTopOf(S), mid = Math.min(top, Math.max(S.lo, S.mid));
+        legend = { type: 'diverge', title: 'Strip ratio (bcm/t)', lo: U.fmtNum(S.lo, 2), hi: U.fmtNum(top, 2) + (S.capped ? '+' : ''), css: G.css, zero: G.zero > 0 && G.zero < 100 ? G.zero : -1, mid: U.fmtNum(mid, 2),
+          extra: [[Margin.GREEN[3], `At or below ${U.fmtNum(S.mid, 2)}: ${S.below} blocks`], [Margin.RED[3], `Above ${U.fmtNum(S.mid, 2)}: ${S.above} blocks`]].concat(S.capped ? [[Margin.RED[4], `Above the 98th percentile (${U.fmtNum(top, 2)}): ${S.nAbove} block${S.nAbove === 1 ? '' : 's'}, up to ${U.fmtNum(S.hi, 2)}`]] : [], R.stats.none ? [['#8a8f98', `No coal: ${R.stats.none}`]] : [], R.resv ? [['rgba(160,160,160,.45)', `Faded: outside the reserve boundary (${R.resv.outside.n})`]] : [], R.resv && R.resv.inside.sr === R.resv.inside.sr ? [['rgba(0,0,0,0)', `The reserve: ${R.resv.inside.n} blocks, ${U.fmtNum(R.resv.inside.sr, 2)} bcm/t`]] : []) };
       } else legend = { type: 'list', title: 'Strip ratio', items: [['#8a8f98', 'No block has coal']] };
     } else if (mode === 'depth') {
       // the depth to the floor of the lowest seam mined: shallow to deep on the ramp; grey where no seam is mined
