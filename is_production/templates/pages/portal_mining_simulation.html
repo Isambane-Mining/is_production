@@ -410,6 +410,16 @@ canvas.chart { width: 100%; display: block; }
 .bnd-col { border: 1px solid var(--line); border-radius: var(--r); padding: 8px 10px; background: var(--field); min-width: 0; }
 .bnd-col.in { border-left: 4px solid #2fbf7a; } .bnd-col.out { border-left: 4px solid var(--bad); }
 .bnd-h { font-weight: 600; font-size: var(--fs-s); margin-bottom: 6px; }
+.mg-scale .bar .mk { position: absolute; top: -4px; bottom: -4px; transform: translateX(-50%); }
+.mg-scale .bar .mk.in { width: 4px; background: #fff; border-radius: 1px; box-shadow: 0 0 0 1px var(--ink); }
+.mg-scale .bar .mk.cut { width: 0; border-left: 2px dashed var(--ink); }
+.sr-key { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: var(--fs-xs); color: var(--muted); margin: 2px 0 6px; }
+.sr-key i { display: inline-block; height: 12px; margin-right: 6px; vertical-align: -2px; }
+.sr-key i.in { width: 4px; background: #fff; border-radius: 1px; box-shadow: 0 0 0 1px var(--ink); }
+.sr-key i.mid { width: 2px; background: var(--ink); border-radius: 1px; }
+.sr-key i.cut { width: 0; border-left: 2px dashed var(--ink); }
+.sr-sw { display: inline-block; width: 28px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
+.sr-tbl td .dt { margin-left: 4px; }
 .coords { position: absolute; right: 10px; bottom: 10px; background: rgba(18, 24, 27, .82); color: var(--view-ink); border-radius: 6px; padding: 5px 9px; font-family: var(--font-mono); font-size: 11px; z-index: 4; white-space: nowrap; }
 .coords:empty { display: none; }
 .hud { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); background: var(--accent); color: #fff; border-radius: 7px; padding: 7px 8px 7px 12px; display: flex; align-items: center; gap: 10px; z-index: 7; box-shadow: var(--shadow); max-width: calc(100% - 24px); flex-wrap: wrap; }
@@ -8309,6 +8319,26 @@ const Margin = (() => {
   const srMidIn = S => Math.min(S.hi, Math.max(S.lo, S.mid));
   const srColor = (v, S) => divColor(v, S.lo, srMidIn(S), S.hi, GREEN, RED);
   const srGradient = S => divGradient(S.lo, srMidIn(S), S.hi, GREEN, RED);
+  /* The strip ratio colours in bands, for a legend: each side of the scale split in two (the lowest to halfway to the middle,
+     on to the middle (amber), on to halfway to the highest, on to the highest), each with the colours at its ends and its
+     blocks inside and outside the reserve boundary (all of them inside without one): their count, coal and waste. A block
+     is on the low side at or below the middle of the scale, as the scale's counts (below, above) take it. The blocks
+     without coal apart. R: compute(P, ws) → {S, mid, bands: [{k, lo, hi, from, to (rgb), n, coalT, waste ([inside,
+     outside]), sr ([inside, outside]: waste ÷ coal)}], none: [inside, outside], boundary} or null (no block has coal) */
+  const SR_BANDS = ['lowest', 'low', 'high', 'highest'];
+  function srBands(R) {
+    const S = R && R.stats.sr; if (!S || !S.n) return null;
+    const m = srMidIn(S), e = [S.lo, (S.lo + m) / 2, m, (m + S.hi) / 2, S.hi], none = [0, 0];
+    const bands = SR_BANDS.map((name, k) => ({ k, name, lo: e[k], hi: e[k + 1], from: srColor(e[k], S), to: srColor(e[k + 1], S), n: [0, 0], coalT: [0, 0], waste: [0, 0] }));
+    for (const r of R.rows) {
+      const s = R.boundary && !r.inside ? 1 : 0;
+      if (!(r.coalT > 0) || !(r.sr === r.sr)) { none[s]++; continue; }
+      const q = bands[r.sr <= S.mid ? (r.sr <= e[1] ? 0 : 1) : r.sr <= e[3] ? 2 : 3];
+      q.n[s]++; q.coalT[s] += r.coalT; q.waste[s] += r.waste;
+    }
+    for (const q of bands) q.sr = [0, 1].map(s => (q.coalT[s] > 0 ? q.waste[s] / q.coalT[s] : NaN));
+    return { S, mid: m, bands: bands.filter(q => q.hi > q.lo || q.n[0] + q.n[1] > 0), none, boundary: !!R.boundary };
+  }
   // the tons the margin counts the coal in: 'ADC', 'as received' or 'in situ'
   const tonsWord = M => (M.basis === 'ar' ? 'as received' : M.basis === 'insitu' ? 'in situ' : 'ADC');
   // the terms of the margin formula, revenue first
@@ -8384,7 +8414,7 @@ const Margin = (() => {
     if (S.src === 'boundary') return `The ${U.fmtNum(S.n)} of the ${U.fmtNum(S.N)} blocks whose centre lies inside the reserve boundary${right ? ` and the mining right (${right.name})` : ''}: the blocks the schedule mines.`;
     return drawn ? `The reserve boundary is switched off, so every block is in the reserve: ${U.fmtNum(S.N)} blocks.` : `There is no reserve boundary yet, so every block is in the reserve: ${U.fmtNum(S.N)} blocks.`;
   }
-  return { DEF, QUAL, FUEL, fuelOf, fuelLines, litres, settings, fromFin, finRates, formula, finLines, guess, colFor, ready, isCoal, isWasteSeam, compute, tonsWord, reserveArea, reserveSummary, reserveWords, colorOf, gradient, srColor, srGradient, divColor, divGradient, NEG, POS, RED, GREEN, AMBER };
+  return { DEF, QUAL, FUEL, fuelOf, fuelLines, litres, settings, fromFin, finRates, formula, finLines, guess, colFor, ready, isCoal, isWasteSeam, compute, tonsWord, reserveArea, reserveSummary, reserveWords, colorOf, gradient, srColor, srGradient, srBands, divColor, divGradient, NEG, POS, RED, GREEN, AMBER };
 })();
 
 /* ===== Coal tons from gross in situ to air-dry contaminated (Reserve tab; DOM-free) =====
@@ -16961,6 +16991,7 @@ const Tabs = (() => {
       if (App.res && App.stale) parts.push(msg('warn', 'Run the simulation again to schedule only the blocks inside the boundary.'));
     } else if (drawn) parts.push(msg('warn', `The boundary is switched off: every block is scheduled.${App.res && App.stale ? ' Run the simulation again to update the schedule.' : ''}`));
     else parts.push(h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, 'None: every block is scheduled.'));
+    parts.push(...srLegend(R, on ? Q : null));
     parts.push(hint('Draw a polygon around the blocks that pay and are to be mined: those whose centre lies inside it are scheduled, those outside are left in the ground (with their coal and waste), the mining paths skip them and the final landform leaves their ground as it is. While you draw, the blocks are coloured by margin (red to green) when there is a price, else by strip ratio. In the 3D view the boundary is magenta and the blocks outside are outlined in red (and faded when coloured by margin, strip ratio or a blended quality). Every block keeps its margin and rank here; in the tables below the blocks outside are greyed. Changing the boundary needs a new run.'));
     // ---- the boundary from a strip ratio and a block margin cut-off (AutoRes)
     if (App.rv().ws && P.blocks.length) {
@@ -17003,6 +17034,40 @@ const Tabs = (() => {
     }
     parts.push(h('div', { class: 'sec-h', style: { marginTop: '6px' } }, h('h3', null, 'Reserve layout for the schedule')), ...reserveLayoutParts());
     body.append(sec('Reserve boundary', drawn ? h('span', { class: 'chip' }, on && Q ? `${Q.inside.n} of ${P.blocks.length} blocks` : 'off') : null, ...parts));
+  }
+  /* The strip ratio colours of the blocks for the reserve boundary: the 3D view's scale (green lowest, amber at the middle,
+     red highest) with the reserve's strip ratio and the cut-off marked on it, and the blocks of each band inside and
+     outside the boundary (Q: R.resv, the boundary on; every block without one) */
+  function srLegend(R, Q) {
+    const L = Margin.srBands(R); if (!L) return [];
+    const S = L.S, G = Margin.srGradient(S), f2 = v => U.fmtNum(v, 2), n0 = v => U.fmtNum(v, 0), on = App.colorBy === 'sr';
+    const at = v => U.clamp(S.hi > S.lo ? ((v - S.lo) / (S.hi - S.lo)) * 100 : 50, 0, 100), cut = AutoRes.settings(App.rv().P).srMax;
+    const I = Q && Q.inside, rin = I && I.sr === I.sr ? I.sr : null, rgb = c => (c ? `rgb(${c.join(',')})` : '#8a8f98');
+    const bar = h('div', { class: 'bar', style: { background: G.css } },
+      G.zero > 0 && G.zero < 100 ? h('span', { class: 'zero', style: { left: G.zero + '%' } }) : null,
+      cut > 0 ? h('span', { class: 'mk cut', style: { left: at(cut) + '%' }, title: `The strip ratio cut-off: ${f2(cut)} bcm/t` }) : null,
+      rin != null ? h('span', { class: 'mk in', style: { left: at(rin) + '%' }, title: `The reserve: ${f2(rin)} bcm/t` }) : null);
+    const scale = h('div', { class: 'mg-scale', role: 'img', 'aria-label': `Strip ratio colours from ${f2(S.lo)} (green) through ${f2(L.mid)} (amber) to ${f2(S.hi)} bcm/t (red)${rin != null ? `; the reserve ${f2(rin)}` : ''}${cut > 0 ? `; the cut-off ${f2(cut)}` : ''}` }, bar,
+      h('div', { class: 'lab' }, h('span', { style: { left: 0 } }, f2(S.lo)), G.zero > 18 && G.zero < 82 ? h('span', { style: { left: G.zero + '%', transform: 'translateX(-50%)' } }, f2(L.mid)) : null, h('span', { style: { right: 0 } }, f2(S.hi) + ' bcm/t')));
+    const key = h('div', { class: 'sr-key' }, h('span', null, h('i', { class: 'mid' }), `the middle (amber): ${f2(L.mid)} bcm/t, ${S.midSet ? 'as set in the Strip Ratio tab' : 'the average'}`),
+      rin != null ? h('span', null, h('i', { class: 'in' }), `the reserve: ${f2(rin)} bcm/t`) : null,
+      cut > 0 ? h('span', null, h('i', { class: 'cut' }), `the cut-off: ${f2(cut)} bcm/t`) : null);
+    const sides = Q ? [[0, 'Inside the boundary'], [1, 'Outside']] : [[0, 'All blocks']], cw = Margin.tonsWord(R.M);
+    const range = (q, i) => `${i === 0 ? '' : '> '}${f2(q.lo)} – ${f2(q.hi)}`;
+    const rows = L.bands.map((q, i) => h('tr', null,
+      h('td', null, h('span', { class: 'sr-sw', style: { background: `linear-gradient(90deg, ${rgb(q.from)}, ${rgb(q.to)})` } }), q.name),
+      h('td', { class: 'r num' }, range(q, i)),
+      ...sides.flatMap(([s]) => [h('td', { class: 'r num' }, n0(q.n[s])), h('td', { class: 'r num' }, q.n[s] ? U.fmtBig(q.coalT[s], 't') : '–'), ...(s === 0 ? [h('td', { class: 'r num' }, q.sr[s] === q.sr[s] ? f2(q.sr[s]) : '–')] : [])])));
+    if (L.none[0] + L.none[1]) rows.push(h('tr', null, h('td', null, h('span', { class: 'sr-sw', style: { background: '#8a8f98' } }), 'no coal'), h('td', { class: 'r num' }, '–'),
+      ...sides.flatMap(([s]) => [h('td', { class: 'r num' }, n0(L.none[s])), h('td', { class: 'r num' }, '–'), ...(s === 0 ? [h('td', { class: 'r num' }, '–')] : [])])));
+    const table = h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl mg-tbl sr-tbl', 'aria-label': 'Strip ratio colours: the blocks of each band' },
+      h('thead', null,
+        h('tr', null, h('th', { rowspan: 2 }, 'Colour'), h('th', { class: 'r', rowspan: 2 }, 'Strip ratio (bcm/t)'), ...sides.map(([s, t]) => h('th', { class: 'r', colspan: s === 0 ? 3 : 2 }, t))),
+        h('tr', null, ...sides.flatMap(([s]) => [h('th', { class: 'r' }, 'Blocks'), h('th', { class: 'r' }, `Coal (${cw})`), ...(s === 0 ? [h('th', { class: 'r', title: 'The band’s waste ÷ its coal' }, 'bcm/t')] : [])]))),
+      h('tbody', null, rows)));
+    return [h('div', { class: 'sec-h', style: { marginTop: '6px' } }, h('h3', null, 'Strip ratio colours')), scale, key, table,
+      h('div', { class: 'row' }, on ? btn('Stop colouring the blocks', () => { App.colorBy = 'status'; UI.renderColorBy(); App.refreshTint(); UI.renderTab(); }, 'sm') : btn('Colour the blocks by strip ratio', () => { App.colorBy = 'sr'; UI.renderColorBy(); App.refreshTint(); UI.renderTab(); }, 'sm', 'The 3D view in these colours')),
+      hint(`The colours the blocks take in the 3D view coloured by strip ratio (waste bcm ÷ coal t, as the Strip Ratio tab works it out): green for the lowest, amber at the middle of the scale, red for the highest; each side of the scale is split in two bands. ${Q ? 'The blocks outside the boundary are faded there. ' : ''}A band’s strip ratio is the waste of its blocks ÷ their coal.`)];
   }
   function drawReserve() {
     const P = App.rv().P, R = App.margin();
@@ -22038,7 +22103,7 @@ const App = {
         for (const r of R.rows) { const c = Margin.srColor(r.sr, S); cellColor[r.b] = c ? [c[0], c[1], c[2], r.inside ? 225 : 80] : [138, 143, 152, 110]; }
         const G = Margin.srGradient(S), mid = Math.min(S.hi, Math.max(S.lo, S.mid));
         legend = { type: 'diverge', title: 'Strip ratio (bcm/t)', lo: U.fmtNum(S.lo, 2), hi: U.fmtNum(S.hi, 2), css: G.css, zero: G.zero > 0 && G.zero < 100 ? G.zero : -1, mid: U.fmtNum(mid, 2),
-          extra: [[Margin.GREEN[3], `At or below ${U.fmtNum(S.mid, 2)}: ${S.below} blocks`], [Margin.RED[3], `Above ${U.fmtNum(S.mid, 2)}: ${S.above} blocks`]].concat(R.stats.none ? [['#8a8f98', `No coal: ${R.stats.none}`]] : [], R.resv ? [['rgba(160,160,160,.45)', `Faded: outside the reserve boundary (${R.resv.outside.n})`]] : []) };
+          extra: [[Margin.GREEN[3], `At or below ${U.fmtNum(S.mid, 2)}: ${S.below} blocks`], [Margin.RED[3], `Above ${U.fmtNum(S.mid, 2)}: ${S.above} blocks`]].concat(R.stats.none ? [['#8a8f98', `No coal: ${R.stats.none}`]] : [], R.resv ? [['rgba(160,160,160,.45)', `Faded: outside the reserve boundary (${R.resv.outside.n})`]] : [], R.resv && R.resv.inside.sr === R.resv.inside.sr ? [['rgba(0,0,0,0)', `The reserve: ${R.resv.inside.n} blocks, ${U.fmtNum(R.resv.inside.sr, 2)} bcm/t`]] : []) };
       } else legend = { type: 'list', title: 'Strip ratio', items: [['#8a8f98', 'No block has coal']] };
     } else if (mode === 'depth') {
       // the depth to the floor of the lowest seam mined: shallow to deep on the ramp; grey where no seam is mined
