@@ -73,22 +73,38 @@
     </section>`;
   }
 
-  function renderShiftAverageDetails(row, shift) {
-    const cells = shift === "day"
-      ? row.cells.slice(0, 12)
-      : row.cells.slice(12, 24);
-
+  function shiftAverageMetrics(cells) {
     const recorded = cells.filter(cell =>
-      cell.completed && cell.has_record &&
+      cell.completed &&
+      cell.has_record &&
       cell.actual_bcm != null &&
-      Number.isFinite(Number(cell.actual_bcm))
+      Number.isFinite(Number(cell.actual_bcm)) &&
+      cell.average_productive_hours != null &&
+      Number.isFinite(Number(cell.average_productive_hours)) &&
+      Number(cell.average_productive_hours) > 0
     );
 
     const total = recorded.reduce(
       (sum, cell) => sum + Number(cell.actual_bcm), 0
     );
 
-    const average = recorded.length ? total / recorded.length : null;
+    const productiveHours = recorded.reduce(
+      (sum, cell) => sum + Number(cell.average_productive_hours), 0
+    );
+
+    return {
+      total,
+      productiveHours,
+      average: productiveHours > 0 ? total / productiveHours : null
+    };
+  }
+
+  function renderShiftAverageDetails(row, shift) {
+    const cells = shift === "day"
+      ? row.cells.slice(0, 12)
+      : row.cells.slice(12, 24);
+
+    const {total, productiveHours, average} = shiftAverageMetrics(cells);
 
     const label = shift === "day"
       ? "DAY SHIFT · 06:00–18:00"
@@ -97,11 +113,11 @@
     return `<h3>${escape(row.date)} · ${label}</h3>
       <div class="hpa-average-popup">
         <div class="hpa-average-popup-main">
-          <span>Average BCM / hour</span>
+          <span>Average BCM / productive hour</span>
           <strong>${average == null ? "—" : number(average, 1)}</strong>
         </div>
         <div class="hpa-average-popup-total">
-          <span>Shift total</span>
+          <span>Shift total · ${number(productiveHours, 2)} productive hours</span>
           <strong>${number(total, 1)} BCM</strong>
         </div>
       </div>`;
@@ -121,20 +137,7 @@
       gradientStart += Number(data.pie.categories[key].percent);
       return `${colour} ${start}% ${gradientStart}%`;
     }).join(',');
-    const shiftAverage = cells => {
-      const recorded = cells.filter(cell =>
-        cell.completed &&
-        cell.has_record &&
-        cell.actual_bcm != null &&
-        Number.isFinite(Number(cell.actual_bcm))
-      );
-
-      if (!recorded.length) return null;
-
-      return recorded.reduce(
-        (sum, cell) => sum + Number(cell.actual_bcm), 0
-      ) / recorded.length;
-    };
+    const shiftAverage = cells => shiftAverageMetrics(cells).average;
 
     const aria = categories.map(([key, , label]) => `${label}: ${number(data.pie.categories[key].hours, 2)} hours, ${number(data.pie.categories[key].percent, 1)}%`).join('; ');
     return `      <section class="hpa-chart" aria-label="Proportion of hourly performance categories"><div class="hpa-pie" role="img"
@@ -442,12 +445,17 @@
     const valid = value => value != null && String(value).trim() !== '' &&
       Number.isFinite(Number(value)) && Number(value) >= 0;
     if (!verified || ![production, available, utilised].every(valid) ||
-        Number(production) <= 0 || Number(available) <= 0) return 'neutral';
+        Number(production) <= 0) return 'neutral';
 
-    const expected = Math.min(Number(production), Number(available));
-    const shortfall = expected - Number(utilised);
+    const shortfall = Number(production) - Number(utilised);
+
+    // Data anomaly: utilisation cannot physically exceed availability.
+    // Keep performance green, but flag the data with a thin red border.
+    // Allow up to 1 hour above availability; flag only clear anomalies.
+    if (Number(utilised) >= Number(available) + 1) return 'green-anomaly';
+
     if (shortfall <= 0) return 'green';
-    if (shortfall < 2) return 'orange';
+    if (shortfall <= 1) return 'orange';
     return 'red';
   }
 
@@ -476,7 +484,9 @@
       ? Number(value).toLocaleString(undefined, {maximumFractionDigits: digits})
       : "—";
 
-    const verified = Boolean(cell.completed && cell.has_record);
+    const verified = viewMode === "availability"
+      ? Boolean(cell.availability_verified)
+      : Boolean(cell.completed && cell.has_record);
 
     if (viewMode === "availability") {
       const available = verified && valid(cell.available)
@@ -510,7 +520,7 @@
       : row.cells.slice(12, 24);
 
     const values = cells
-      .filter(cell => cell.completed && cell.has_record &&
+      .filter(cell => cell.availability_verified &&
         cell.available != null && String(cell.available).trim() !== "" &&
         Number.isFinite(Number(cell.available)) && Number(cell.available) >= 0)
       .map(cell => Number(cell.available));
@@ -651,15 +661,15 @@
     let lastMonth = '';
     const isAvailability = viewMode === 'availability';
     const availabilityPalette = {
-      green: '#B9EDC5',
-      orange: '#FFC18A',
-      red: '#F3A6AE',
-      unknown: '#E8EDF2'
+      green: '#22C55E',
+      orange: '#F59E0B',
+      red: '#EF4444',
+      unknown: '#E5E7EB'
     };
 
     const averageAvailable = cells => {
       const values = cells
-        .filter(cell => cell.completed && cell.has_record &&
+        .filter(cell => cell.availability_verified &&
           cell.available != null && String(cell.available).trim() !== '' &&
           Number.isFinite(Number(cell.available)) &&
           Number(cell.available) >= 0)
@@ -675,10 +685,15 @@
         ? `<span class="${cls}">${Number(value).toLocaleString('en-US',{maximumFractionDigits:digits})}</span>`
         : '—';
 
+    const fleetSummaryRow = [...(data.rows || [])].reverse()
+      .find(row => row.fleet_composition);
+    const fleetComposition = fleetSummaryRow?.fleet_composition || {};
+    const fleetCount = value => value == null ? '—' : number(value);
+
     const rows = data.rows.map((row, rowIndex) => {
       const divider = row.month_key !== lastMonth
         ? `<tr class="hpa-month-divider">
-             <th colspan="${isAvailability ? 29 : 27}"><span>${escape(row.month)}</span></th>
+             <th colspan="${isAvailability ? 28 : 27}"><span>${escape(row.month)}</span></th>
            </tr>`
         : '';
 
@@ -708,7 +723,9 @@
         ? renderAverage(row.cells.slice(12, 24), 'night') : '';
 
       const cells = row.cells.map((cell, index) => {
-        const verified = cell.completed && cell.has_record;
+        const verified = isAvailability
+          ? Boolean(cell.availability_verified)
+          : Boolean(cell.completed && cell.has_record);
         const total = Number(row.fleet_total);
         const highlighted = verified &&
           matchesUnavailableRange(total, cell.available, unavailableNumber);
@@ -732,16 +749,27 @@
           : '';
 
         const value = isAvailability
-          ? (available === '—' && totalFleet === '—' ? '—' : `${available} / ${totalFleet}`)
+          ? (available === '—' ? '—' : `${available} / ${totalFleet}`)
           : (available === '—' && utilised === '—' ? '—' : `${utilised} / ${available}`);
 
         const productionVerified = verified && data.machine_scope !== 'spare';
+        // Use the exact Utilised / Available values displayed in the cell
+        // for performance and anomaly classification.
         const colour = machineColour(
-          row.production_fleet_total, cell.production_available,
-          cell.production_utilised, productionVerified
+          row.production_fleet_total, cell.available,
+          cell.utilised, productionVerified
         );
 
-        const cellClass = isAvailability ? 'hm-availability-cell' : `hm-${colour}`;
+        const isFatigueOrNonProduction =
+          Number(cell.non_working_minutes || 0) > 0;
+
+        const cellClass = isAvailability
+          ? `hm-availability-cell ${available === '—' ? 'hm-no-production' : ''}`
+          : colour === 'green-anomaly'
+            ? 'hm-green-anomaly'
+            : isFatigueOrNonProduction
+              ? 'hm-neutral hm-fatigue'
+              : `hm-${colour}`;
 
         return `<td class="hpa-cell hm-cell hm-hour-cell ${cellClass} ${
           index === 12 ? 'hpa-night-start' : ''
@@ -753,28 +781,51 @@
           aria-label="${escape(hourHeading(row, cell))}; ${isAvailability ? 'Availability' : 'Utilisation'} details. Open hourly machine details.">${value}</td>${isAvailability && index === 11 ? dayAverageCell : ""}${isAvailability && index === 23 ? nightAverageCell : ""}`;
       }).join('');
 
-      return `${divider}<tr>
+      const rowClass = row.day === 'Sun' ? 'hm-sunday-row' : '';
+      return `${divider}<tr class="${rowClass}">
         <th scope="row" class="hpa-sticky-date">${escape(row.date)}</th>
         <td class="hpa-sticky-day">${escape(row.day)}</td>
-        <td class="hpa-sticky-month">${escape(row.month)}</td>
+        ${isAvailability ? '' : `<td class="hpa-sticky-month">${escape(row.month)}</td>`}
         ${cells}
       </tr>`;
     }).join('');
 
     return `${viewMode === 'availability' ? `
-    <section class="hpa-chart hm-chart" aria-label="Availability legend">
-      <div class="hm-availability-legend">
-        <strong>ADT Availability</strong>
-        <div><i class="hm-available-key"></i><span>Available ADTs</span></div>
-        <div><i class="hm-total-key"></i><span>Total fleet</span></div>
-        <div><i class="hm-green-key"></i><span>Green · Production requirement met</span></div>
-        <div><i class="hm-orange-key"></i><span>Orange · One ADT below requirement</span></div>
-        <div><i class="hm-red-key"></i><span>Red · More than one ADT below requirement</span></div>
-        <div><i class="hm-unknown-key"></i><span>Grey · Unverified / future</span></div>
+    <section class="hpa-chart hm-chart" aria-label="ADT fleet composition and availability legend">
+      <div class="hm-availability-legend-card">
+        <section class="hm-availability-fleet-card">
+          <div class="hm-availability-card-heading">
+            <strong>MPP Fleet Composition</strong>
+            <span>${fleetSummaryRow ? `As at ${escape(fleetSummaryRow.date)}` : 'MPP date unavailable'}</span>
+          </div>
+          <div class="hm-availability-fleet-counts">
+            <div class="hm-availability-fleet-stat hm-production-stat">
+              <span>Production ADTs</span>
+              <strong>${fleetCount(fleetComposition.production)}</strong>
+            </div>
+            <div class="hm-availability-fleet-stat hm-spare-stat">
+              <span>Spare ADTs</span>
+              <strong>${fleetCount(fleetComposition.spare)}</strong>
+            </div>
+            <div class="hm-availability-fleet-stat hm-total-stat">
+              <span>Total ADTs</span>
+              <strong>${fleetCount(fleetComposition.total)}</strong>
+            </div>
+          </div>
+        </section>
+        <section class="hm-availability-key-card">
+          <strong>ADT Availability</strong>
+          <div class="hm-availability-key-items">
+            <div><i class="hm-green-key"></i><span>Green · Production requirement met</span></div>
+            <div><i class="hm-orange-key"></i><span>Orange · One ADT below requirement</span></div>
+            <div><i class="hm-red-key"></i><span>Red · More than one ADT below requirement</span></div>
+            <div><i class="hm-unknown-key"></i><span>Grey · PBM unverified / future</span></div>
+          </div>
+        </section>
       </div>
     </section>` : `
     <section class="hpa-chart hm-chart" aria-label="Machine utilisation legend">
-      <div class="hm-legend hm-legend-card">
+      <div class="hm-legend hm-legend-card hm-legend-has-fleet">
         <section class="hm-legend-section hm-legend-counts">
           <h3><span class="hm-legend-heading-icon">▱</span>Machine counts</h3>
           <div class="hm-legend-items">
@@ -786,30 +837,54 @@
             </div>
           </div>
         </section>
+        <section class="hm-legend-section hm-legend-fleet">
+          <h3><span class="hm-legend-heading-icon">▤</span>MPP Fleet Composition</h3>
+          <div class="hm-legend-fleet-list">
+            <div class="hm-legend-fleet-row">
+              <span>Production ADTs</span>
+              <strong class="hm-production-count">${fleetCount(fleetComposition.production)}</strong>
+            </div>
+            <div class="hm-legend-fleet-row">
+              <span>Spare ADTs</span>
+              <strong class="hm-spare-count">${fleetCount(fleetComposition.spare)}</strong>
+            </div>
+            <div class="hm-legend-fleet-row">
+              <span>Total ADTs</span>
+              <strong class="hm-total-count">${fleetCount(fleetComposition.total)}</strong>
+            </div>
+          </div>
+          <small class="hm-legend-fleet-date">
+            ${fleetSummaryRow ? `As at ${escape(fleetSummaryRow.date)}` : 'MPP date unavailable'}
+          </small>
+        </section>
         <section class="hm-legend-section hm-legend-target">
           <h3><span class="hm-legend-heading-icon">◎</span>Production target</h3>
           <div class="hm-legend-formula">Expected = min(P, A)</div>
           <p><strong>P</strong> = MPP production ADT count</p>
           <p><strong>A</strong> = available production ADTs</p>
+          <p>Actual utilisation includes production and spare ADTs.</p>
         </section>
         <section class="hm-legend-section hm-legend-classification">
           <h3><span class="hm-legend-heading-icon">▥</span>Performance classification</h3>
           <div class="hm-classification-list">
             <div class="hm-classification-item">
               <i class="hm-green-key"></i>
-              <span><strong>Green</strong> · Production utilisation meets or exceeds expected</span>
+              <span><strong>Green</strong> · Production requirement met or exceeded</span>
             </div>
             <div class="hm-classification-item">
               <i class="hm-orange-key"></i>
-              <span><strong>Orange</strong> · Shortfall above 0 and below 2 machines</span>
+              <span><strong>Orange</strong> · 1 ADT below production requirement</span>
             </div>
             <div class="hm-classification-item">
               <i class="hm-red-key"></i>
-              <span><strong>Red</strong> · Shortfall of 2 or more machines</span>
+              <span><strong>Red</strong> · 2+ ADTs below production requirement</span>
+            </div>            <div class="hm-classification-item">
+              <i class="hm-anomaly-key"></i>
+              <span><strong>Green + red border</strong> · Utilised ADTs exceed available ADTs (data anomaly)</span>
             </div>
             <div class="hm-classification-item">
               <i class="hm-unknown-key"></i>
-              <span><strong>Grey</strong> · Zero available / unknown / missing / pending / spare-only</span>
+              <span><strong>Grey</strong> · Non-production hours / fatigue / unavailable or unverified</span>
             </div>
           </div>
         </section>
@@ -822,7 +897,7 @@
           <tr>
             <th rowspan="2" class="hpa-sticky-date">Date</th>
             <th rowspan="2" class="hpa-sticky-day">Day</th>
-            <th rowspan="2" class="hpa-sticky-month">Month</th>
+            ${isAvailability ? '' : '<th rowspan="2" class="hpa-sticky-month">Month</th>'}
             <th colspan="${isAvailability ? 13 : 12}" class="hpa-shift-day">
               DAY SHIFT · 06:00–18:00
             </th>
@@ -902,11 +977,17 @@
   function renderExcavatorAvailabilityMatrix(data) {
     let lastMonth = "";
 
+    const fleetSummaryRow = data.rows[data.rows.length - 1] || data.rows[0];
+    const composition = fleetSummaryRow.fleet_composition || {
+      production: "—",
+      spare: "—",
+      total: fleetSummaryRow.fleet_total ?? "—"
+    };
+
     const palette = {
-      green: "#B9EDC5",
-      orange: "#FFC18A",
-      red: "#F3A6AE",
-      unknown: "#E8EDF2",
+      green: "#22C55E",
+      red: "#EF4444",
+      unknown: "#E5E7EB",
     };
 
     const rows = data.rows.map((row, rowIndex) => {
@@ -921,8 +1002,8 @@
       const total = Number(row.fleet_total) || 0;
 
       const cells = row.cells.map((cell, index) => {
-        const category = ["green", "orange", "red"].includes(cell.category)
-          ? cell.category : "neutral";
+        const category = ["green", "red"].includes(cell.category)
+          ? cell.category : "unknown";
 
         const available = cell.available == null
           ? "—"
@@ -970,16 +1051,37 @@
     }).join("");
 
     return `
-      <section class="hpa-chart hm-chart" aria-label="Excavator availability legend">
-        <div class="hm-availability-legend">
+      <div class="he-availability-overview">
+        <section class="he-fleet-card" aria-label="MPP excavator fleet composition">
+          <div class="he-fleet-card-heading">
+            <strong>MPP Excavator Fleet</strong>
+            <span>As at ${escape(fleetSummaryRow.date)}</span>
+          </div>
+          <div class="he-fleet-counts">
+            <div class="he-fleet-stat he-production-stat">
+              <span>Production Excavators</span>
+              <strong>${escape(composition.production)}</strong>
+            </div>
+            <div class="he-fleet-stat he-spare-stat">
+              <span>Spare Excavators</span>
+              <strong>${escape(composition.spare)}</strong>
+            </div>
+            <div class="he-fleet-stat he-total-stat">
+              <span>Total Excavators</span>
+              <strong>${escape(composition.total)}</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="hm-availability-legend he-excavator-legend"
+                 aria-label="Excavator availability legend">
           <strong>Excavator Availability · Production + Spare</strong>
-          <div><i class="hm-green-key"></i><span>Green · All running</span></div>
-          <div><i class="hm-orange-key"></i><span>Orange · 1 unavailable</span></div>
-          <div><i class="hm-red-key"></i><span>Red · 2 or more unavailable</span></div>
-          <div><i class="hm-unknown-key"></i><span>Grey · Missing / unverified</span></div>
+          <div><i class="hm-green-key"></i><span>Green · Available excavators meet production requirement</span></div>
+          <div><i class="hm-red-key"></i><span>Red · Available excavators below production requirement</span></div>
+          <div><i class="hm-unknown-key"></i><span>Grey · Non-production hours / missing / unverified</span></div>
           <div><span>Click an hour to inspect individual excavators.</span></div>
-        </div>
-      </section>
+        </section>
+      </div>
 
       <div class="hpa-scroll hm-availability-scroll" tabindex="0"
            role="region" aria-label="Hourly excavator availability">
@@ -1151,9 +1253,12 @@
         status.text('Loading machine counts…');
 
         try {
+          const method = machineViewMode === 'availability'
+            ? 'is_production.production.page.hourly_productivity_analysis.hourly_productivity_analysis.get_machine_availability'
+            : 'is_production.production.page.hourly_productivity_analysis.hourly_productivity_analysis.get_machine_analysis';
+
           const response = await frappe.call({
-            method:
-              'is_production.production.page.hourly_productivity_analysis.hourly_productivity_analysis.get_machine_analysis',
+            method,
             args: {site,from_date,to_date,machine_scope:scope}
           });
 
@@ -1707,9 +1812,11 @@
         machineViewMode = name === 'availability' ? 'availability' : 'utilisation';
         loadMachines().then(async () => {
           if (tabFilterState.active !== name) return;
-          wrapper.hourlyProductivityMachines?.draw();
           await syncFilters(previous,name);
-          if (tabFilterState.active === name) applyScope('machines');
+          if (tabFilterState.active === name) {
+            await wrapper.hourlyProductivityMachines?.refresh();
+            applyScope('machines');
+          }
         });
       } else if (name === 'excavator') {
         loadExcavators().then(async () => {

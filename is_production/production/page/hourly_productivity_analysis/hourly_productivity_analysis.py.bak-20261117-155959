@@ -1,0 +1,2323 @@
+"""Operational-day BCM matrix and proportions of hourly performance categories."""
+from collections import defaultdict
+from datetime import datetime, time, timedelta
+from math import isfinite
+
+import frappe
+from frappe.utils import getdate, get_datetime, now_datetime
+
+from is_production.production.controllers.production_summary_periods import source_hour
+from is_production.production.controllers.hourly_productivity_schedule import hour_segments, shift_windows
+from is_production.production.page.hourly_productivity_summary import hourly_productivity_summary as summary
+
+CATEGORIES = ("green", "amber", "red", "grey")
+
+
+def validate_range(from_date, to_date):
+    start, end = getdate(from_date), getdate(to_date)
+    if start > end:
+        raise ValueError("From Date must be on or before To Date")
+    if (end - start).days >= 366:
+        raise ValueError("Select at most 366 operational days")
+    return start, end
+
+
+def category(hour):
+    target, actual = hour["target_bcm"], hour["actual_bcm"]
+    if target is None:
+        raise ValueError("Hourly target is unavailable; a covering MPP is required")
+    if target == 0:
+        return "red"  # No deployed machines does not prove a scheduled non-working period.
+    # target_bcm already includes all MPP production excavators.
+    # Green = 220 BCM per excavator; Orange = 200 BCM per excavator.
+    # Preserve proportional thresholds for partial hours.
+    if actual >= target:
+        return "green"
+    if actual >= target * (200 / 220):
+        return "amber"
+    return "red"
+
+
+
+def get_average_productive_hours(target_bcm, production_excavators,
+                                 excluded_minutes=0, *, verified=True):
+    """Convert weighted hourly targets into effective productive hours."""
+    if not verified:
+        return None
+
+    try:
+        target = float(target_bcm)
+        excavators = float(production_excavators)
+        excluded = float(excluded_minutes or 0)
+    except (TypeError, ValueError):
+        return None
+
+    if (
+        not all(isfinite(value) for value in (target, excavators, excluded))
+        or target < 0 or excavators <= 0 or excluded < 0
+    ):
+        return None
+
+    # Full production target: 220 BCM per excavator per productive hour.
+    weighted_hours = target / (excavators * 220)
+
+    # Remove fatigue/non-working time. Never allow negative productive hours.
+    return max(0.0, weighted_hours - excluded / 60)
+
+
+def planning_error(first, last, site, plans, *, permission_denied=False):
+    """Only inspect accessible plans; never probe for hidden record existence."""
+    months = {}
+    for offset in range((last - first).days + 1):
+        date = first + timedelta(days=offset)
+        if permission_denied or summary.select_plan(plans, site, date) is None:
+            months.setdefault(date.strftime("%Y-%m"), date.strftime("%B %Y"))
+    if not months:
+        return None
+    issues = []
+    for key, month in months.items():
+        message = (f"You do not have permission to access Monthly Production Planning for {site} for {month}. "
+                   "Please ask your administrator for access." if permission_denied else
+                   f"No accessible production plan was found for {site} for {month}. Please check that the "
+                   "Monthly Production Planning exists and that you have permission to access it.")
+        issues.append({"month_key": key, "month": month, "status": "permission_denied" if permission_denied
+                       else "missing_or_inaccessible", "message": message})
+    return {"rows": [], "planning_error": {
+        "title": "Monthly Production Planning Access Denied" if permission_denied
+                 else "Monthly Production Planning Not Found", "issues": issues}}
+
+
+def _schedule_document(doctype, name, fields):
+    doc = frappe.get_doc(doctype, name)
+    doc.check_permission("read")
+    before = doc.as_dict()
+    doc.apply_fieldlevel_read_permissions()
+    result = doc.as_dict()
+    if any(before.get(field) != result.get(field) for field in fields):
+        raise frappe.PermissionError("Access to scheduling calculation fields is required")
+    return result
+
+
+def load_plans(site, first, last):
+    summary._read_document("Location", site)
+    if not frappe.has_permission("Monthly Production Planning", "read"):
+        return None
+    fields = ("location", "prod_month_start_date", "prod_month_end_date", "num_excavators",
+              "excavator_truck_assignments", "excluded_production_machines", "month_prod_days", "month_actual_bcm")
+    plans = []
+    for row in summary._permitted_rows("Monthly Production Planning", {
+            "location": site, "prod_month_start_date": ["<=", last],
+            "prod_month_end_date": [">=", first], "docstatus": ["<", 2]},
+            order_by="modified desc, name desc"):
+        try:
+            plans.append(_schedule_document("Monthly Production Planning", row.name, fields))
+        except frappe.PermissionError:
+            # A list-visible plan may still deny document or scheduling-field access.
+            # Keep readable months and report uncovered months without revealing this record.
+            continue
+    return plans
+
+
+def load_fatigue(site):
+    return summary.load_fatigue(site)
+
+
+def non_working_windows(plan, date, shift, site, fatigue, warnings):
+    return shift_windows(plan, date, shift, site, fatigue, warnings)[0]
+
+
+
+def mpp_adt_scope(plan, machine_scope):
+    """Resolve saved MPP ADT assignments for one operational date."""
+    if machine_scope not in ("all", "production", "spare"):
+        raise ValueError("Invalid machine scope")
+
+    production = set()
+    spare = set()
+
+    for row in plan.get("excavator_truck_assignments", []):
+        truck = row.get("truck")
+        if not truck:
+            continue
+
+        if row.get("excavator"):
+            production.add(truck)
+        else:
+            spare.add(truck)
+
+    # Conflicting assignments cannot safely be classified.
+    ambiguous = production & spare
+    production -= ambiguous
+    spare -= ambiguous
+
+    if machine_scope == "all":
+        return production | spare
+    return production if machine_scope == "production" else spare
+
+
+
+
+
+
+
+def mpp_production_adt_roster(plan):
+    """Resolve a complete, unambiguous production ADT roster from saved MPP."""
+    assignments = plan.get("excavator_truck_assignments")
+    if assignments is None:
+        return None
+
+    production = set()
+    spare = set()
+    production_excavators = set()
+    truck_owners = {}
+
+    for row in assignments:
+        excavator = row.get("excavator")
+        truck = row.get("truck")
+
+        if not truck:
+            continue
+
+        if excavator:
+            production.add(truck)
+            production_excavators.add(excavator)
+            truck_owners.setdefault(truck, set()).add(excavator)
+        else:
+            spare.add(truck)
+
+    if production & spare:
+        return None
+
+    if any(len(owners) > 1 for owners in truck_owners.values()):
+        return None
+
+    try:
+        count = float(plan.get("num_excavators"))
+    except (TypeError, ValueError):
+        return None
+
+    if not isfinite(count) or not count.is_integer() or count < 0:
+        return None
+
+    if int(count) != len(production_excavators):
+        return None
+
+    return production or None
+
+
+
+def production_adt_availability_segments(
+    production_adts, assets, breakdowns, start, end, now, *, all_adts=None
+):
+    """Calculate two exact, time-weighted 30-minute ADT availability blocks."""
+    start = get_datetime(start)
+    end = get_datetime(end)
+    now = get_datetime(now)
+
+    def unknown_segment(left=0, right=60):
+        return [{
+            "start_minute": left,
+            "end_minute": right,
+            "category": "unknown",
+            "available": None,
+            "unavailable": None,
+            "unknown": True,
+        }]
+
+    production_adts = set(production_adts or ())
+    all_adts = set(all_adts) if all_adts is not None else set(production_adts)
+
+    if not production_adts or not production_adts.issubset(all_adts) or end <= start:
+        return unknown_segment()
+
+    assets_by_name = {row["name"]: row for row in assets}
+    aliases = {
+        alias: row["name"]
+        for row in assets
+        for alias in (row.get("name"), row.get("asset_name"))
+        if alias
+    }
+
+    if any(
+        asset not in assets_by_name
+        or assets_by_name[asset].get("asset_category") != "ADT"
+        for asset in all_adts
+    ):
+        return unknown_segment()
+
+    events = {asset: [] for asset in all_adts}
+
+    for row in breakdowns:
+        # Both breakdowns and planned maintenance reduce ADT availability.
+        if row.get("downtime_type") not in ("Breakdown", "Planned Maintenance"):
+            continue
+
+        asset = aliases.get(row.get("asset_name"))
+        if asset not in all_adts:
+            continue
+
+        if not row.get("breakdown_start_datetime"):
+            continue
+
+        try:
+            event_start = get_datetime(row["breakdown_start_datetime"])
+            status = str(row.get("open_closed") or "").strip().lower()
+            resolved = row.get("resolved_datetime")
+
+            if status == "open":
+                event_end = now
+                uncertain = False
+            elif status == "closed" and resolved:
+                event_end = get_datetime(resolved)
+                uncertain = False
+            elif resolved:
+                event_end = get_datetime(resolved)
+                uncertain = True
+            else:
+                event_end = now
+                uncertain = True
+
+            event_end = min(event_end, now)
+        except (TypeError, ValueError):
+            continue
+
+        if event_end <= event_start:
+            continue
+
+        events[asset].append({
+            "start": event_start,
+            "end": event_end,
+            "uncertain": uncertain,
+        })
+
+    def union_seconds(intervals, left, right):
+        """Union overlapping PBM intervals so one ADT is never double-counted."""
+        clipped = sorted(
+            (max(left, a), min(right, b))
+            for a, b in intervals
+            if a < right and b > left
+        )
+
+        if not clipped:
+            return 0.0
+
+        total = 0.0
+        current_start, current_end = clipped[0]
+
+        for next_start, next_end in clipped[1:]:
+            if next_start <= current_end:
+                current_end = max(current_end, next_end)
+            else:
+                total += (current_end - current_start).total_seconds()
+                current_start, current_end = next_start, next_end
+
+        total += (current_end - current_start).total_seconds()
+        return total
+
+    segments = []
+    fleet_total = len(all_adts)
+
+    for half in range(2):
+        block_start = start + timedelta(minutes=half * 30)
+        block_end = min(block_start + timedelta(minutes=30), end)
+        known_end = min(block_end, now)
+        offset = half * 30
+        block_offset_end = (block_end - start).total_seconds() / 60
+
+        if block_start >= now or known_end <= block_start:
+            segments.extend(unknown_segment(offset, block_offset_end))
+            continue
+
+        boundaries = {block_start, known_end}
+
+        for asset in all_adts:
+            for event in events[asset]:
+                if event["start"] < known_end and event["end"] > block_start:
+                    boundaries.add(max(block_start, event["start"]))
+                    boundaries.add(min(known_end, event["end"]))
+
+        ordered = sorted(boundaries)
+
+        for left, right in zip(ordered, ordered[1:]):
+            if right <= left:
+                continue
+
+            unavailable_ids = set()
+            unknown_ids = set()
+
+            for asset in all_adts:
+                active = [
+                    event for event in events[asset]
+                    if event["start"] <= left < event["end"]
+                ]
+
+                if any(not event["uncertain"] for event in active):
+                    unavailable_ids.add(asset)
+                elif active:
+                    unknown_ids.add(asset)
+
+            available_count = fleet_total - len(unavailable_ids)
+
+            if unknown_ids:
+                category = "unknown"
+                available_value = None
+            else:
+                shortfall = len(production_adts) - available_count
+                if shortfall >= 2:
+                    category = "red"
+                elif shortfall == 1:
+                    category = "orange"
+                else:
+                    category = "green"
+                available_value = available_count
+
+            segments.append({
+                "start_minute": (left - start).total_seconds() / 60,
+                "end_minute": (right - start).total_seconds() / 60,
+                "category": category,
+                "available": available_value,
+                "unavailable": len(unavailable_ids),
+                "unknown": bool(unknown_ids),
+            })
+
+        # Never classify the unelapsed part of the current half-hour.
+        if known_end < block_end:
+            segments.extend(unknown_segment(
+                (known_end - start).total_seconds() / 60,
+                block_offset_end,
+            ))
+
+    return segments or unknown_segment()
+
+
+
+def mpp_excavator_roster(plan):
+    """Return unique production and spare excavators from MPP."""
+    assignments = plan.get("excavator_truck_assignments")
+    if assignments is None:
+        return None
+
+    excluded = {
+        row.get("asset")
+        for row in (plan.get("excluded_production_machines") or [])
+        if row.get("machine_type") == "Excavator" and row.get("asset")
+    }
+
+    return {
+        row.get("excavator")
+        for row in assignments
+        if row.get("excavator")
+    } - excluded
+
+
+def excavator_availability_category(unavailable, verified=True):
+    if not verified:
+        return "unknown"
+    if unavailable == 0:
+        return "green"
+    if unavailable == 1:
+        return "orange"
+    return "red"
+
+
+
+
+def load_excavator_pbm(site, start, end, assets):
+    """Load permitted Breakdown and Planned Maintenance records, including A&U exclusions."""
+    aliases = sorted({
+        value
+        for asset in assets
+        for value in (asset.get("name"), asset.get("asset_name"))
+        if value
+    })
+    if not aliases:
+        return []
+
+    names = summary._permitted_rows(
+        "Plant Breakdown or Maintenance",
+        {
+            "location": site,
+            "asset_name": ["in", aliases],
+            "downtime_type": ["in", ["Breakdown", "Planned Maintenance"]],
+            "docstatus": ["<", 2],
+            "breakdown_start_datetime": ["<", end],
+        },
+        order_by="breakdown_start_datetime asc",
+        or_filters=[
+            ["resolved_datetime", ">", start],
+            ["open_closed", "=", "Open"],
+            ["resolved_datetime", "is", "not set"],
+        ],
+    )
+
+    required_fields = (
+        "location", "asset_name", "downtime_type",
+        "breakdown_start_datetime", "resolved_datetime",
+        "open_closed", "breakdown_reason", "resolution_summary",
+        "exclude_from_au", "docstatus",
+    )
+
+    records = []
+    for row in names:
+        doc = frappe.get_doc("Plant Breakdown or Maintenance", row.name)
+        doc.check_permission("read")
+        before = doc.as_dict()
+        doc.apply_fieldlevel_read_permissions()
+        after = doc.as_dict()
+
+        if any(before.get(field) != after.get(field) for field in required_fields):
+            raise frappe.PermissionError(
+                "Read access to Plant Breakdown or Maintenance calculation fields is required"
+            )
+
+        records.append(after)
+
+    return records
+
+
+def build_excavator_availability(
+    from_date, to_date, site, plans, assets, breakdowns, documents, *, now=None
+):
+    """Build exact minute-level availability timelines for the MPP excavator fleet."""
+    first, last = validate_range(from_date, to_date)
+    error = planning_error(first, last, site, plans)
+    if error:
+        return error
+
+    now = get_datetime(now or now_datetime())
+    start = datetime.combine(first, time(6))
+    end = datetime.combine(last + timedelta(days=1), time(6))
+
+    assets_by_name = {row["name"]: row for row in assets}
+    aliases = {
+        alias: row["name"]
+        for row in assets
+        for alias in (row.get("name"), row.get("asset_name"))
+        if alias
+    }
+
+    events_by_asset = defaultdict(list)
+    invalid_pbm = 0
+
+    for row in breakdowns:
+        asset = aliases.get(row.get("asset_name"))
+        if not asset or not row.get("breakdown_start_datetime"):
+            invalid_pbm += 1
+            continue
+
+        event_start = get_datetime(row["breakdown_start_datetime"])
+        status = str(row.get("open_closed") or "").strip().lower()
+        resolved = row.get("resolved_datetime")
+        uncertain = False
+
+        if status == "open":
+            event_end = now
+        elif status == "closed" and resolved:
+            event_end = get_datetime(resolved)
+        elif resolved:
+            event_end = get_datetime(resolved)
+            uncertain = True
+        else:
+            # A closed/unknown record without a resolution time cannot prove
+            # when the machine became available again.
+            event_end = now
+            uncertain = True
+
+        event_end = min(event_end, now)
+
+        if event_end <= event_start or event_start >= end or event_end <= start:
+            continue
+
+        events_by_asset[asset].append({
+            "start": event_start,
+            "end": event_end,
+            "uncertain": uncertain,
+            "details": {
+                "downtime_type": row.get("downtime_type") or "Downtime",
+                "status": row.get("open_closed") or "Unknown",
+                "reason": row.get("breakdown_reason") or "Reason not recorded",
+                "resolution": row.get("resolution_summary") or "",
+                "start": event_start.isoformat(sep=" "),
+                "resolved": get_datetime(resolved).isoformat(sep=" ") if resolved else None,
+                "effective_end": event_end.isoformat(sep=" "),
+                "exclude_from_au": bool(row.get("exclude_from_au")),
+            },
+        })
+
+    recorded_by_date = defaultdict(set)
+    seen_documents = set()
+
+    for doc in documents:
+        if doc.get("location") != site or doc.get("docstatus", 0) >= 2:
+            continue
+        if doc.get("name") in seen_documents:
+            continue
+        seen_documents.add(doc.get("name"))
+
+        try:
+            dt = source_hour(doc["prod_date"], doc["hour_slot"])
+            if doc.get("shift") == "Night" and dt.hour < 6:
+                dt += timedelta(days=1)
+            operational_date = (dt - timedelta(hours=6)).date()
+        except (ValueError, TypeError, KeyError):
+            continue
+
+        if first <= operational_date <= last:
+            recorded_by_date[operational_date].add(dt)
+
+    rows = []
+    missing = pending = 0
+
+    for offset in range((last - first).days + 1):
+        date = first + timedelta(days=offset)
+        plan = summary.select_plan(plans, site, date)
+        excavators = mpp_excavator_roster(plan)
+
+        if not excavators:
+            return {"rows": [], "configuration_error": {
+                "title": "Excavator Fleet Unavailable",
+                "message": f"No complete excavator roster found for {date}."
+            }}
+
+        invalid = [
+            asset for asset in excavators
+            if asset not in assets_by_name
+            or assets_by_name[asset].get("asset_category") != "Excavator"
+        ]
+        if invalid:
+            return {"rows": [], "configuration_error": {
+                "title": "Excavator Asset Access Required",
+                "message": f"Unable to verify the complete excavator roster for {date}."
+            }}
+
+        total = len(excavators)
+        cells = []
+        day_start = datetime.combine(date, time(6))
+
+        for index in range(24):
+            left = day_start + timedelta(hours=index)
+            right = left + timedelta(hours=1)
+            completed = right <= now
+            has_record = left in recorded_by_date[date]
+
+            machine_events = {}
+            boundaries = {left, right}
+
+            for asset in excavators:
+                overlaps = [
+                    event for event in events_by_asset.get(asset, [])
+                    if event["start"] < right and event["end"] > left
+                ]
+                machine_events[asset] = overlaps
+
+                for event in overlaps:
+                    boundaries.add(max(left, event["start"]))
+                    boundaries.add(min(right, event["end"]))
+
+            if left < now < right:
+                boundaries.add(now)
+
+            ordered = sorted(boundaries)
+            segments = []
+
+            for segment_start, segment_end in zip(ordered, ordered[1:]):
+                unavailable_ids = []
+                unknown_ids = []
+
+                for asset in excavators:
+                    active = [
+                        event for event in machine_events[asset]
+                        if event["start"] <= segment_start < event["end"]
+                    ]
+
+                    if any(not event["uncertain"] for event in active):
+                        unavailable_ids.append(asset)
+                    elif active or segment_start >= now or not has_record:
+                        unknown_ids.append(asset)
+
+                unavailable_count = len(unavailable_ids)
+                unknown_count = len(unknown_ids)
+
+                if unavailable_count >= 2:
+                    category = "red"
+                elif unknown_count:
+                    category = "unknown"
+                elif unavailable_count == 1:
+                    category = "orange"
+                else:
+                    category = "green"
+
+                segments.append({
+                    "start_minute": (segment_start - left).total_seconds() / 60,
+                    "end_minute": (segment_end - left).total_seconds() / 60,
+                    "category": category,
+                    "unavailable": unavailable_count,
+                    "unknown": unknown_count,
+                    "available": total - unavailable_count if not unknown_count else None,
+                    "unavailable_excavators": [
+                        assets_by_name[a].get("asset_name") or a
+                        for a in unavailable_ids
+                    ],
+                })
+
+            details = []
+            for asset in sorted(excavators):
+                overlaps = machine_events[asset]
+                known_down = any(not event["uncertain"] for event in overlaps)
+                uncertain_down = any(event["uncertain"] for event in overlaps)
+
+                if known_down:
+                    machine_status = "Unavailable"
+                elif uncertain_down or not has_record or not completed:
+                    machine_status = "Unverified"
+                else:
+                    machine_status = "Available"
+
+                details.append({
+                    "asset": asset,
+                    "label": assets_by_name[asset].get("asset_name") or asset,
+                    "status": machine_status,
+                    "events": [event["details"] for event in overlaps],
+                })
+
+            known_segments = [segment for segment in segments if segment["available"] is not None]
+            worst_categories = [segment["category"] for segment in segments]
+
+            if "red" in worst_categories:
+                overall_category = "red"
+            elif "orange" in worst_categories:
+                overall_category = "orange"
+            elif known_segments:
+                overall_category = "green"
+            else:
+                overall_category = "unknown"
+
+            if not completed:
+                pending += 1
+            elif not has_record:
+                missing += 1
+
+            cells.append({
+                "label": f"{left:%H}:00-{(left.hour + 1) % 24:02}:00",
+                "completed": completed,
+                "has_record": has_record,
+                "available": min(s["available"] for s in known_segments) if known_segments else None,
+                "unavailable": max((s["unavailable"] for s in segments), default=0),
+                "category": overall_category,
+                "segments": segments,
+                "details": details,
+            })
+
+        rows.append({
+            "date": date.isoformat(),
+            "day": date.strftime("%a"),
+            "month": date.strftime("%B %Y"),
+            "month_key": date.strftime("%Y-%m"),
+            "fleet_total": total,
+            "cells": cells,
+        })
+
+    warnings = []
+    if missing:
+        warnings.append(f"{missing} completed hours have no Hourly Production record.")
+    if pending:
+        warnings.append(f"{pending} hours are unfinished or future.")
+    if invalid_pbm:
+        warnings.append(f"{invalid_pbm} PBM records could not be matched to an excavator.")
+
+    return {
+        "site": site,
+        "from_date": first.isoformat(),
+        "to_date": last.isoformat(),
+        "hours": [cell["label"] for cell in rows[0]["cells"]],
+        "rows": rows,
+        "missing_hours": missing,
+        "pending_hours": pending,
+        "warnings": warnings,
+    }
+
+
+def get_mpp_daily_target(plan, date):
+    """Read the authoritative saved daily target from Monthly Production Days."""
+    matching = [
+        row for row in (plan.get("month_prod_days") or [])
+        if row.get("shift_start_date")
+        and getdate(row["shift_start_date"]) == date
+    ]
+
+    if len(matching) != 1:
+        return None
+
+    value = matching[0].get("bcm_per_day")
+
+    try:
+        target = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    if not isfinite(target) or target < 0:
+        return None
+
+    return target
+
+
+
+def get_mpp_month_actual(plan):
+    """Read saved Monthly Actual BCMs from Monthly Production Planning."""
+    value = plan.get("month_actual_bcm")
+    try:
+        actual = float(value)
+    except (TypeError, ValueError):
+        return None
+    return actual if isfinite(actual) and actual >= 0 else None
+
+
+def build_analysis(from_date, to_date, site, plans, assets, breakdowns, documents, *, now=None, fatigue=(), machine_scope="all", include_machine_targets=False, availability_breakdowns=None):
+    first, last = validate_range(from_date, to_date)
+    error = planning_error(first, last, site, plans)
+    if error:
+        return error
+    # Never turn a missing saved production count into a zero BCM threshold.
+    # The machine tab has its own MPP ADT roster and does not use BCM colours.
+    if not include_machine_targets:
+        for offset in range((last - first).days + 1):
+            date = first + timedelta(days=offset)
+            plan = summary.select_plan(plans, site, date)
+            raw_count = plan.get("num_excavators")
+            try:
+                count = float(raw_count) if raw_count not in (None, "") else None
+            except (TypeError, ValueError):
+                count = None
+            if count is None or not isfinite(count) or count < 0 or not count.is_integer():
+                return {"rows": [], "configuration_error": {
+                    "title": "Production Excavator Count Unavailable",
+                    "message": f"MPP production excavator count is missing or invalid for {date}. "
+                               "Check the saved Number of Production Excavators before classifying BCM hours."}}
+    now = get_datetime(now or now_datetime())
+    availability_breakdowns = breakdowns if availability_breakdowns is None else availability_breakdowns
+    by_date = defaultdict(list)
+    warnings = []
+    seen = set()
+    for doc in documents:
+        if doc.get("location") != site or doc.get("docstatus", 0) >= 2 or doc["name"] in seen:
+            continue
+        seen.add(doc["name"])
+        try:
+            dt = source_hour(doc["prod_date"], doc["hour_slot"])
+            if doc.get("shift") == "Night" and dt.hour < 6:
+                dt += timedelta(days=1)
+            operational_date = (dt - timedelta(hours=6)).date()
+        except (ValueError, TypeError):
+            warnings.append("An invalid source hour was excluded.")
+            continue
+        if first <= operational_date <= last:
+            by_date[operational_date].append(doc)
+    rows = []
+    counts = dict.fromkeys(CATEGORIES, 0)
+    missing = pending = 0
+    for offset in range((last - first).days + 1):
+        date = first + timedelta(days=offset)
+        plan = summary.select_plan(plans, site, date)
+
+        mpp_daily_target = (
+            None if include_machine_targets
+            else get_mpp_daily_target(plan, date)
+        )
+
+        if not include_machine_targets and mpp_daily_target is None:
+            warnings.append(
+                f"MPP daily target unavailable for {date}; "
+                "check Monthly Production Days."
+            )
+
+        adt_scope = mpp_adt_scope(plan, machine_scope)
+        fleet_total = len(adt_scope)
+        production_scope = mpp_adt_scope(plan, "production") if include_machine_targets else None
+        spare_scope = mpp_adt_scope(plan, "spare") if include_machine_targets else None
+        all_adt_scope = mpp_adt_scope(plan, "all") if include_machine_targets else None
+        production_adt_roster = (
+            mpp_production_adt_roster(plan) if include_machine_targets else None
+        )
+        production_availability_fleet_total = (
+            len(production_adt_roster) if production_adt_roster is not None else None
+        )
+        cells = []
+        load_times = {}
+        for shift in ("Day", "Night"):
+            shift_data = summary.build_summary(date, shift, site, plan, assets, breakdowns, by_date[date],
+                                               now=now, estimate_availability=False, adt_scope=adt_scope)
+            if include_machine_targets:
+                production_data = shift_data if adt_scope == production_scope else summary.build_summary(
+                    date, shift, site, plan, assets, breakdowns, by_date[date],
+                    now=now, estimate_availability=False, adt_scope=production_scope)
+                production_hours = production_data["hours"]
+
+                all_data = (
+                    shift_data if adt_scope == all_adt_scope
+                    else summary.build_summary(
+                        date, shift, site, plan, assets, breakdowns, by_date[date],
+                        now=now, estimate_availability=False, adt_scope=all_adt_scope
+                    )
+                )
+                all_hours = all_data["hours"]
+
+            warnings.extend(shift_data["warnings"])
+            load_times[shift] = shift_data["excavators"]
+            fatigue_warning_start = len(warnings)
+            windows = non_working_windows(plan, date, shift, site, fatigue, warnings)
+
+            fatigue_verified = not any(
+                "fatigue configuration" in warning.lower()
+                or "fatigue periods are unknown" in warning.lower()
+                for warning in warnings[fatigue_warning_start:]
+            )
+
+            for hour_index, hour in enumerate(shift_data["hours"]):
+                colour = category(hour)
+                segments, minutes = hour_segments(hour, windows, colour)
+                counts["grey"] += minutes / 60
+                counts[colour] += 1 - minutes / 60
+                missing += int(hour["record_status"] == "missing")
+                pending += int(not hour["completed"])
+                average_hours = get_average_productive_hours(
+                    hour.get("target_bcm"),
+                    plan.get("num_excavators"),
+                    minutes,
+                    verified=fatigue_verified,
+                )
+
+                cells.append({key: hour[key] for key in ("label", "start", "end", "actual_bcm", "target_bcm",
+                              "achievement", "has_record", "record_status", "excavator_available",
+                              "excavator_utilised", "excavator_unavailable", "completed", "available", "utilised")} | {
+                                  "category": "grey" if minutes == 60 else colour,
+                                  "non_working_minutes": minutes,
+                                  "average_productive_hours": average_hours,
+                                  "segments": segments
+                              })
+                if include_machine_targets:
+                    production_hour = production_hours[hour_index]
+                    cells[-1].update(
+                        production_available=production_hour["available"],
+                        production_utilised=production_hour["utilised"],
+                        all_utilised=all_hours[hour_index]["utilised"],
+                    )
+
+                    hour_start = datetime.combine(date, time(6)) + timedelta(hours=hour_index)
+                    cells[-1]["production_availability_segments"] = (
+                        production_adt_availability_segments(
+                            production_adt_roster,
+                            assets,
+                            availability_breakdowns,
+                            hour_start,
+                            hour_start + timedelta(hours=1),
+                            now,
+                            all_adts=all_adt_scope,
+                        )
+                    )
+
+        rows.append({"date": date.isoformat(), "day": date.strftime("%a"), "month": date.strftime("%B %Y"),
+                     "month_key": date.strftime("%Y-%m"), "plan_name": plan["name"],
+                     "fleet_total": fleet_total, "cells": cells, "load_times": load_times,
+                     "mpp_daily_target_bcm": mpp_daily_target, "mpp_month_actual_bcm": get_mpp_month_actual(plan)})
+        if include_machine_targets:
+            rows[-1]["production_fleet_total"] = (
+                len(production_scope) if plan.get("excavator_truck_assignments") is not None else None
+            )
+            rows[-1]["production_availability_fleet_total"] = (
+                production_availability_fleet_total
+            )
+            rows[-1]["fleet_composition"] = {
+                "production": production_availability_fleet_total,
+                "spare": len(spare_scope) if production_adt_roster is not None else None,
+                "total": len(all_adt_scope) if production_adt_roster is not None else None,
+            }
+
+    total = len(rows) * 24
+    if missing:
+        warnings.append(f"{missing} completed hourly cells have no production record. Displayed zero is unverified; missing cells remain in the pie denominator.")
+    if pending:
+        warnings.append(f"{pending} hourly cells are unfinished or future. They remain in the pie denominator.")
+    return {"site": site, "from_date": first.isoformat(), "to_date": last.isoformat(), "rows": rows,
+            "hours": [cell["label"] for cell in rows[0]["cells"]], "warnings": list(dict.fromkeys(warnings)),
+            "pie": {"total_hours": total, "categories": {key: {"hours": value, "percent": value / total * 100}
+                                                        for key, value in counts.items()}},
+            "missing_hours": missing, "pending_hours": pending,
+            **({"machine_scope": machine_scope} if include_machine_targets else {})}
+
+
+@frappe.whitelist()
+def get_defaults():
+    if frappe.session.user == "Guest":
+        raise frappe.PermissionError("Login required")
+    # Default to fully completed operational days for meaningful historical analysis.
+    now = now_datetime()
+    end = now.date() - timedelta(days=1 if now.hour >= 6 else 2)
+    return {"from_date": end.replace(day=1).isoformat(), "to_date": end.isoformat()}
+
+
+@frappe.whitelist()
+def get_analysis(site, from_date, to_date, machine_scope="all"):
+    return _get_analysis(site, from_date, to_date, machine_scope)
+
+
+
+
+@frappe.whitelist()
+def get_excavator_availability(site, from_date, to_date):
+    """Return exact hourly excavator availability, including A&U-excluded PBMs."""
+    if frappe.session.user == "Guest":
+        raise frappe.PermissionError("Login required")
+    if not site or not from_date or not to_date:
+        raise ValueError("Select Site, From Date and To Date")
+
+    first, last = validate_range(from_date, to_date)
+    start = datetime.combine(first, time(6))
+    end = datetime.combine(last + timedelta(days=1), time(6))
+
+    try:
+        plans = load_plans(site, first, last)
+    except frappe.PermissionError:
+        summary._read_document("Location", site)
+        return planning_error(first, last, site, [], permission_denied=True)
+
+    error = planning_error(
+        first, last, site, plans or [], permission_denied=plans is None
+    )
+    if error:
+        return error
+
+    _, documents, assets, _ = summary.load_sources(
+        site, start, end, plans=plans
+    )
+
+    breakdowns = load_excavator_pbm(site, start, end, assets)
+
+    return build_excavator_availability(
+        first, last, site, plans, assets, breakdowns, documents
+    )
+
+
+
+
+def load_mpp_adt_assets(site, plans):
+    """Load MPP-assigned ADTs without loading Hourly Production."""
+    summary._read_document("Location", site)
+    frappe.has_permission("Asset", "read", throw=True)
+
+    names = set()
+    for plan in plans or []:
+        if plan.get("excavator_truck_assignments") is not None:
+            names.update(mpp_adt_scope(plan, "all"))
+
+    return [
+        summary._read_document("Asset", name)
+        for name in sorted(names)
+    ]
+
+
+def build_machine_availability_analysis(
+    from_date, to_date, site, plans, assets, pbm_records,
+    *, now=None, machine_scope="all"
+):
+    """Build hourly ADT availability exclusively from MPP and PBM."""
+    if machine_scope not in ("all", "production", "spare"):
+        raise ValueError("Invalid machine scope")
+
+    first, last = validate_range(from_date, to_date)
+    error = planning_error(first, last, site, plans)
+    if error:
+        return error
+
+    now = get_datetime(now or now_datetime())
+
+    assets_by_name = {
+        row["name"]: row for row in assets
+    }
+
+    rows = []
+
+    for offset in range((last - first).days + 1):
+        date = first + timedelta(days=offset)
+        plan = summary.select_plan(plans, site, date)
+
+        if not plan or plan.get("excavator_truck_assignments") is None:
+            return {
+                "rows": [],
+                "configuration_error": {
+                    "title": "MPP ADT Fleet Unavailable",
+                    "message": f"Saved ADT assignments are unavailable for {date}."
+                }
+            }
+
+        production = mpp_production_adt_roster(plan)
+        production_scope = mpp_adt_scope(plan, "production")
+        spare_scope = mpp_adt_scope(plan, "spare")
+        all_scope = mpp_adt_scope(plan, "all")
+
+        if (
+            production is None
+            or production != production_scope
+            or not production.issubset(all_scope)
+        ):
+            return {
+                "rows": [],
+                "configuration_error": {
+                    "title": "MPP ADT Fleet Cannot Be Verified",
+                    "message": f"Check the production ADT assignments and count for {date}."
+                }
+            }
+
+        if machine_scope == "all":
+            display_scope = all_scope
+            requirement_scope = production
+            timeline_scope = all_scope
+        elif machine_scope == "production":
+            display_scope = production_scope
+            requirement_scope = production
+            timeline_scope = production_scope
+        else:
+            display_scope = spare_scope
+            requirement_scope = spare_scope
+            timeline_scope = spare_scope
+
+        for name in all_scope:
+            asset = assets_by_name.get(name)
+            if not asset or asset.get("asset_category") != "ADT":
+                return {
+                    "rows": [],
+                    "configuration_error": {
+                        "title": "MPP Asset Verification Failed",
+                        "message": f"ADT asset information is unavailable for {date}."
+                    }
+                }
+
+        cells = []
+
+        for index in range(24):
+            hour_start = (
+                datetime.combine(date, time(6)) + timedelta(hours=index)
+            )
+            hour_end = hour_start + timedelta(hours=1)
+
+            segments = production_adt_availability_segments(
+                requirement_scope,
+                assets,
+                pbm_records,
+                hour_start,
+                hour_end,
+                now,
+                all_adts=timeline_scope,
+            )
+
+            weighted_available = 0.0
+            known_minutes = 0.0
+            has_unknown = False
+
+            for segment in segments:
+                duration = (
+                    float(segment["end_minute"])
+                    - float(segment["start_minute"])
+                )
+
+                if duration <= 0:
+                    continue
+
+                if segment.get("unknown") or segment.get("available") is None:
+                    has_unknown = True
+                    continue
+
+                weighted_available += float(segment["available"]) * duration
+                known_minutes += duration
+
+            verified = (
+                not has_unknown
+                and abs(known_minutes - 60) < 0.001
+            )
+
+            available = weighted_available / 60 if verified else None
+
+            cells.append({
+                "label": f"{hour_start:%H:%M}-{hour_end:%H:%M}",
+                "start": hour_start.strftime("%Y-%m-%d %H:%M:%S"),
+                "end": hour_end.strftime("%Y-%m-%d %H:%M:%S"),
+                "available": available,
+                "availability_verified": verified,
+                "completed": hour_end <= now,
+                "has_record": verified,
+                "record_status": "verified" if verified else "unverified",
+                "production_availability_segments": segments,
+            })
+
+        rows.append({
+            "date": date.isoformat(),
+            "day": date.strftime("%a"),
+            "month": date.strftime("%B %Y"),
+            "month_key": date.strftime("%Y-%m"),
+            "plan_name": plan["name"],
+            "fleet_total": len(display_scope),
+            "production_fleet_total": len(production_scope),
+            "production_availability_fleet_total": len(production_scope),
+            "fleet_composition": {
+                "production": len(production_scope),
+                "spare": len(spare_scope),
+                "total": len(all_scope),
+            },
+            "cells": cells,
+            "load_times": {},
+        })
+
+    return {
+        "site": site,
+        "from_date": first.isoformat(),
+        "to_date": last.isoformat(),
+        "hours": [cell["label"] for cell in rows[0]["cells"]],
+        "rows": rows,
+        "warnings": [],
+        "machine_scope": machine_scope,
+    }
+
+
+@frappe.whitelist()
+def get_machine_availability(site, from_date, to_date, machine_scope="all"):
+    """Dedicated PBM-only endpoint for ADT Avail."""
+    if frappe.session.user == "Guest":
+        raise frappe.PermissionError("Login required")
+
+    if machine_scope not in ("all", "production", "spare"):
+        raise ValueError("Invalid machine scope")
+
+    if not site or not from_date or not to_date:
+        raise ValueError("Select Site, From Date and To Date")
+
+    first, last = validate_range(from_date, to_date)
+    start = datetime.combine(first, time(6))
+    end = datetime.combine(last + timedelta(days=1), time(6))
+
+    try:
+        plans = load_plans(site, first, last)
+    except frappe.PermissionError:
+        summary._read_document("Location", site)
+        return planning_error(first, last, site, [], permission_denied=True)
+
+    error = planning_error(
+        first, last, site, plans or [], permission_denied=plans is None
+    )
+    if error:
+        return error
+
+    try:
+        assets = load_mpp_adt_assets(site, plans)
+
+        frappe.has_permission(
+            "Plant Breakdown or Maintenance", "read", throw=True
+        )
+
+        pbm_records = load_excavator_pbm(
+            site, start, end, assets
+        )
+    except frappe.PermissionError:
+        return {
+            "rows": [],
+            "configuration_error": {
+                "title": "PBM or Asset Access Required",
+                "message": (
+                    "Read access to MPP, ADT Assets and Plant Breakdown "
+                    "or Maintenance calculation fields is required."
+                )
+            }
+        }
+
+    return build_machine_availability_analysis(
+        first, last, site, plans, assets, pbm_records,
+        now=now_datetime(),
+        machine_scope=machine_scope,
+    )
+
+
+@frappe.whitelist()
+def get_machine_analysis(site, from_date, to_date, machine_scope="all"):
+    """Add production-only ADT metrics without changing displayed scope counts."""
+    return _get_analysis(site, from_date, to_date, machine_scope, include_machine_targets=True)
+
+
+def _get_analysis(site, from_date, to_date, machine_scope="all", *, include_machine_targets=False):
+    if machine_scope not in ("all", "production", "spare"):
+        raise ValueError("Invalid machine scope")
+    if frappe.session.user == "Guest":
+        raise frappe.PermissionError("Login required")
+    if not site or not from_date or not to_date:
+        raise ValueError("Select Site, From Date and To Date")
+    first, last = validate_range(from_date, to_date)
+    start = datetime.combine(first, time(6))
+    end = datetime.combine(last + timedelta(days=1), time(6))
+    try:
+        plans = load_plans(site, first, last)
+    except frappe.PermissionError:
+        # Location access must succeed before revealing even site/month diagnostics.
+        summary._read_document("Location", site)
+        return planning_error(first, last, site, [], permission_denied=True)
+    error = planning_error(first, last, site, plans or [], permission_denied=plans is None)
+    if error:
+        return error
+    _, documents, assets, breakdowns = summary.load_sources(site, start, end, plans=plans)
+
+    availability_breakdowns = (
+        [
+            row for row in load_excavator_pbm(site, start, end, assets)
+            if row.get("downtime_type") in ("Breakdown", "Planned Maintenance")
+        ]
+        if include_machine_targets else breakdowns
+    )
+
+    try:
+        fatigue = load_fatigue(site)
+    except frappe.PermissionError:
+        return {"rows": [], "configuration_error": {
+            "title": "Fatigue Configuration Access Required",
+            "message": "You need read access to Startup and Fatigue Specification and its scheduling fields "
+                       "to classify fatigue periods. Please ask your administrator for access."}}
+    return build_analysis(
+        first, last, site, plans, assets, breakdowns, documents,
+        fatigue=fatigue,
+        machine_scope=machine_scope,
+        include_machine_targets=include_machine_targets,
+        availability_breakdowns=availability_breakdowns,
+    )
+
+
+@frappe.whitelist()
+def export_excel(site, from_date, to_date, machine_scope="all"):
+    """Download the same permission-checked data shown on the dashboard."""
+    from frappe.utils import cint
+
+
+    data = get_analysis(site, from_date, to_date, machine_scope=machine_scope)
+    if not data.get("rows"):
+        frappe.throw("No exportable analysis. Check planning and configuration access.")
+
+    missing_targets = [
+        row["date"] for row in data["rows"]
+        if row.get("mpp_daily_target_bcm") is None
+    ]
+
+    if missing_targets:
+        frappe.throw(
+            "MPP daily targets unavailable for: "
+            + ", ".join(missing_targets)
+        )
+
+    safe_site = "".join(
+        character if character.isalnum() or character in "-_" else "_"
+        for character in site
+    )[:60]
+
+    frappe.response["filename"] = (
+        f"{safe_site}_Hourly_Productivity_{from_date}_to_{to_date}.xlsx"
+    )
+    frappe.response["filecontent"] = make_workbook(data)
+    frappe.response["type"] = "download"
+
+
+
+
+
+def make_excavator_availability_workbook(data):
+    """Export the exact excavator availability result and its PBM timelines."""
+    from io import BytesIO
+    import xlsxwriter
+
+    output = BytesIO()
+    book = xlsxwriter.Workbook(output, {"in_memory": True})
+
+    colours = {
+        "green": "#B9EDC5",
+        "orange": "#FFC18A",
+        "red": "#F3A6AE",
+        "unknown": "#E8EDF2",
+    }
+
+    title = book.add_format({
+        "bold": True, "font_size": 17,
+        "font_color": "#FFFFFF", "bg_color": "#183153",
+        "valign": "vcenter",
+    })
+    section = book.add_format({
+        "bold": True, "font_color": "#FFFFFF",
+        "bg_color": "#315574", "border": 1,
+    })
+    header = book.add_format({
+        "bold": True, "bg_color": "#DFE8F1",
+        "border": 1, "align": "center", "valign": "vcenter",
+    })
+    normal = book.add_format({"border": 1, "valign": "vcenter"})
+    number = book.add_format({"border": 1, "num_format": "#,##0.00"})
+    percent = book.add_format({"border": 1, "num_format": "0.0%"})
+    total_format = book.add_format({
+        "bold": True, "bg_color": "#DDEBF7",
+        "border": 1, "num_format": "#,##0.00",
+    })
+
+    cell_formats = {
+        key: book.add_format({
+            "bg_color": colour, "border": 1,
+            "align": "center", "valign": "vcenter",
+        })
+        for key, colour in colours.items()
+    }
+
+    # SUMMARY
+    summary_sheet = book.add_worksheet("Summary")
+    summary_sheet.hide_gridlines(2)
+    summary_sheet.set_tab_color("#183153")
+    summary_sheet.set_column("A:A", 15)
+    summary_sheet.set_column("B:B", 13)
+    summary_sheet.set_column("C:C", 12)
+    summary_sheet.set_column("D:G", 23)
+    summary_sheet.set_column("H:H", 17)
+
+    summary_sheet.merge_range("A1:H2", "EXCAVATOR AVAILABILITY | SUMMARY", title)
+    summary_sheet.write("A4", "Site", section)
+    summary_sheet.write("B4", data["site"], normal)
+    summary_sheet.write("A5", "From Date", section)
+    summary_sheet.write("B5", data["from_date"], normal)
+    summary_sheet.write("A6", "To Date", section)
+    summary_sheet.write("B6", data["to_date"], normal)
+
+    summary_headers = [
+        "Date", "Day", "Fleet",
+        "Available Machine Hours", "Unavailable Machine Hours",
+        "Unverified Machine Hours", "Verified Machine Hours",
+        "Availability %",
+    ]
+    for col, label in enumerate(summary_headers):
+        summary_sheet.write(7, col, label, header)
+
+    overall = {
+        "available": 0.0,
+        "unavailable": 0.0,
+        "unknown": 0.0,
+        "verified": 0.0,
+    }
+
+    # HOURLY DETAIL, TIMELINE SEGMENTS and PBM detail share the same source rows.
+    hourly = book.add_worksheet("Hourly Detail")
+    hourly.hide_gridlines(2)
+    hourly.set_tab_color("#16A05A")
+    hourly.set_landscape()
+    hourly.fit_to_pages(1, 0)
+    hourly.freeze_panes(4, 4)
+    hourly.set_column("A:A", 14)
+    hourly.set_column("B:B", 10)
+    hourly.set_column("C:C", 17)
+    hourly.set_column("D:D", 12)
+    hourly.set_column(4, 27, 12)
+    hourly.merge_range("A1:AB1", f"{data['site']} | EXCAVATOR AVAILABILITY", title)
+    hourly.merge_range("A3:D3", "OPERATIONAL DAY", section)
+    hourly.merge_range("E3:P3", "DAY SHIFT | 06:00-18:00", section)
+    hourly.merge_range("Q3:AB3", "NIGHT SHIFT | 18:00-06:00", section)
+
+    for col, label in enumerate(["Date", "Day", "Month", "Total Fleet"]):
+        hourly.write(3, col, label, header)
+
+    for index, label in enumerate(data["hours"]):
+        hourly.write(3, index + 4, label, header)
+
+    downtime_sheet = book.add_worksheet("Downtime Details")
+    downtime_sheet.hide_gridlines(2)
+    downtime_sheet.set_tab_color("#D63C4B")
+    downtime_headers = [
+        "Date", "Hours Affected", "Excavator", "Downtime Type",
+        "Status", "Reason", "Started", "Resolved", "Effective End",
+        "Excluded from A&U", "Resolution", "Overlap Minutes",
+    ]
+    for col, label in enumerate(downtime_headers):
+        downtime_sheet.write(0, col, label, header)
+    downtime_sheet.set_column("A:B", 17)
+    downtime_sheet.set_column("C:E", 20)
+    downtime_sheet.set_column("F:F", 38)
+    downtime_sheet.set_column("G:I", 23)
+    downtime_sheet.set_column("J:J", 19)
+    downtime_sheet.set_column("K:K", 35)
+    downtime_sheet.set_column("L:L", 18)
+
+    downtime_records = {}
+
+    def clock_at(date_value, hour_index, minute):
+        base = datetime.combine(
+            getdate(date_value), time(6)
+        ) + timedelta(hours=hour_index)
+        return (base + timedelta(minutes=minute)).strftime("%H:%M:%S")
+
+    from datetime import datetime
+
+    for row_index, row in enumerate(data["rows"]):
+        fleet = int(row.get("fleet_total") or 0)
+        daily = {
+            "available": 0.0,
+            "unavailable": 0.0,
+            "unknown": 0.0,
+            "verified": 0.0,
+        }
+
+        excel_row = row_index + 4
+        hourly.write(excel_row, 0, row["date"], normal)
+        hourly.write(excel_row, 1, row["day"], normal)
+        hourly.write(excel_row, 2, row["month"], normal)
+        hourly.write_number(excel_row, 3, fleet, normal)
+
+        for hour_index, cell in enumerate(row["cells"]):
+            category = cell.get("category")
+            if category not in cell_formats:
+                category = "unknown"
+
+            available = cell.get("available")
+            display = f"{available} / {fleet}" if available is not None else f"— / {fleet}"
+            excel_col = hour_index + 4
+
+            hourly.write_string(
+                excel_row, excel_col, display, cell_formats[category]
+            )
+
+            comment_lines = []
+            for segment in cell.get("segments") or []:
+                start_min = float(segment.get("start_minute") or 0)
+                end_min = float(segment.get("end_minute") or 0)
+                duration = max(0.0, end_min - start_min)
+                unavailable = int(segment.get("unavailable") or 0)
+                unknown = int(segment.get("unknown") or 0)
+                available_count = max(0, fleet - unavailable - unknown)
+                segment_category = segment.get("category", "unknown")
+
+                daily["available"] += available_count * duration
+                daily["unavailable"] += unavailable * duration
+                daily["unknown"] += unknown * duration
+                daily["verified"] += (fleet - unknown) * duration
+
+                start_label = clock_at(row["date"], hour_index, start_min)
+                end_label = clock_at(row["date"], hour_index, end_min)
+                unavailable_names = segment.get("unavailable_excavators") or []
+
+                comment_lines.append(
+                    f"{start_label}-{end_label}: {segment_category}; "
+                    f"{available_count} available, {unavailable} unavailable, "
+                    f"{unknown} unverified"
+                )
+
+            if comment_lines:
+                hourly.write_comment(
+                    excel_row, excel_col, "\n".join(comment_lines)
+                )
+
+            hour_start = datetime.combine(
+                getdate(row["date"]), time(6)
+            ) + timedelta(hours=hour_index)
+            hour_end = hour_start + timedelta(hours=1)
+
+            for machine in cell.get("details") or []:
+                for event in machine.get("events") or []:
+                    key = (
+                        row["date"], machine.get("asset"),
+                        event.get("downtime_type"), event.get("start"),
+                        event.get("resolved"), event.get("reason"),
+                    )
+                    item = downtime_records.setdefault(key, {
+                        "date": row["date"],
+                        "hours": set(),
+                        "asset": machine.get("label") or machine.get("asset"),
+                        "event": event,
+                        "overlap_minutes": 0.0,
+                    })
+                    item["hours"].add(cell["label"])
+
+                    try:
+                        event_start = get_datetime(event["start"])
+                        event_end = get_datetime(event["effective_end"])
+                        overlap_start = max(hour_start, event_start)
+                        overlap_end = min(hour_end, event_end)
+                        if overlap_end > overlap_start:
+                            item["overlap_minutes"] += (
+                                overlap_end - overlap_start
+                            ).total_seconds() / 60
+                    except (KeyError, TypeError, ValueError):
+                        pass
+
+        for key in daily:
+            daily[key] /= 60
+            overall[key] += daily[key]
+
+        availability = (
+            daily["available"] / daily["verified"]
+            if daily["verified"] else None
+        )
+
+        values = [
+            row["date"], row["day"], fleet,
+            daily["available"], daily["unavailable"],
+            daily["unknown"], daily["verified"], availability,
+        ]
+        for col, value in enumerate(values):
+            fmt = percent if col == 7 else (
+                number if col in (3, 4, 5, 6) else normal
+            )
+            if value is None:
+                summary_sheet.write(excel_row + 4, col, "—", normal)
+            elif col == 2:
+                summary_sheet.write_number(excel_row + 4, col, value, normal)
+            elif col in (3, 4, 5, 6):
+                summary_sheet.write_number(excel_row + 4, col, value, fmt)
+            elif col == 7:
+                summary_sheet.write_number(excel_row + 4, col, value, fmt)
+            else:
+                summary_sheet.write(excel_row + 4, col, value, fmt)
+
+    total_verified = overall["verified"]
+    total_availability = (
+        overall["available"] / total_verified if total_verified else None
+    )
+    total_row = len(data["rows"]) + 8
+    summary_sheet.write(total_row, 0, "TOTAL", section)
+    summary_sheet.write(total_row, 1, "", section)
+    summary_sheet.write(total_row, 2, "", section)
+    for col, key in ((3, "available"), (4, "unavailable"),
+                     (5, "unknown"), (6, "verified")):
+        summary_sheet.write_number(total_row, col, overall[key], total_format)
+    if total_availability is not None:
+        summary_sheet.write_number(total_row, 7, total_availability, percent)
+
+    for item in downtime_records.values():
+        event = item["event"]
+        values = [
+            item["date"], ", ".join(sorted(item["hours"])), item["asset"],
+            event.get("downtime_type") or "Downtime",
+            event.get("status") or "Unknown",
+            event.get("reason") or "Reason not recorded",
+            event.get("start") or "",
+            event.get("resolved") or "",
+            event.get("effective_end") or "",
+            "Yes" if event.get("exclude_from_au") else "No",
+            event.get("resolution") or "",
+            round(item["overlap_minutes"], 2),
+        ]
+        row_number = downtime_sheet.dim_rowmax + 1
+        for col, value in enumerate(values):
+            downtime_sheet.write(row_number, col, value, normal)
+
+    summary_sheet.freeze_panes(8, 0)
+    summary_sheet.autofilter(
+        7, 0, 7 + len(data["rows"]), 7
+    )
+    hourly.freeze_panes(4, 4)
+    hourly.autofilter(
+        3, 0, max(3, hourly.dim_rowmax), 27
+    )
+    downtime_sheet.freeze_panes(1, 0)
+    downtime_sheet.autofilter(
+        0, 0, max(0, downtime_sheet.dim_rowmax), 11
+    )
+
+    book.close()
+    return output.getvalue()
+
+
+@frappe.whitelist()
+def export_excavator_availability_excel(site, from_date, to_date):
+    """Download the exact excavator availability result shown in the ERP."""
+    if frappe.session.user == "Guest":
+        raise frappe.PermissionError("Login required")
+
+    data = get_excavator_availability(site, from_date, to_date)
+    if not data.get("rows"):
+        error = data.get("configuration_error") or data.get("planning_error")
+        frappe.throw(
+            (error or {}).get("message")
+            or "No exportable excavator availability data."
+        )
+
+    safe_site = "".join(
+        character if character.isalnum() or character in "-_" else "_"
+        for character in site
+    )[:60]
+
+    frappe.response["filename"] = (
+        f"{safe_site}_Excavator_Availability_{from_date}_to_{to_date}.xlsx"
+    )
+    frappe.response["filecontent"] = make_excavator_availability_workbook(data)
+    frappe.response["type"] = "download"
+
+
+@frappe.whitelist()
+def export_machine_excel(site, from_date, to_date, machine_scope="all", unavailable_number="", view_mode="utilisation"):
+    """Download the same machine data and classifications displayed in the ERP."""
+    from io import BytesIO
+    from collections import OrderedDict
+    import xlsxwriter
+    from math import isfinite
+
+    if view_mode not in ("utilisation", "availability"):
+        raise ValueError("Invalid machine export view")
+
+    if unavailable_number is None or str(unavailable_number) == "":
+        selected_range = None
+    else:
+        selected_range = int(unavailable_number)
+        if selected_range < 0 or selected_range > 10000:
+            raise ValueError("Invalid unavailable-machine range")
+
+    data = (
+        get_machine_availability(site, from_date, to_date, machine_scope)
+        if view_mode == "availability"
+        else get_machine_analysis(site, from_date, to_date, machine_scope)
+    )
+    if not data.get("rows"):
+        frappe.throw("No exportable machine data.")
+
+    out = BytesIO()
+    book = xlsxwriter.Workbook(out, {"in_memory": True})
+
+    navy = book.add_format({
+        "bold": True, "font_size": 17,
+        "font_color": "#FFFFFF", "bg_color": "#183153"
+    })
+    heading = book.add_format({
+        "bold": True, "bg_color": "#DFE8F1",
+        "align": "center", "border": 1
+    })
+    shift = book.add_format({
+        "bold": True, "font_color": "#FFFFFF",
+        "bg_color": "#315574", "align": "center"
+    })
+    normal = book.add_format({"border": 1})
+    blue = book.add_format({"bold": True, "font_color": "#1769AA"})
+    purple = book.add_format({"bold": True, "font_color": "#7030A0"})
+    green = book.add_format({"bold": True, "font_color": "#16A05A"})
+    average_format = book.add_format({
+        "bg_color": "#DDEBF7",
+        "border": 1,
+        "align": "center",
+        "valign": "vcenter",
+    })
+
+    backgrounds = {
+        "green": "#B9EDC5",
+        "orange": "#FFC18A",
+        "red": "#F3A6AE",
+        "unknown": "#E8EDF2",
+    }
+    formats = {
+        key: book.add_format({
+            "bg_color": colour, "border": 1,
+            "align": "center", "valign": "vcenter"
+        })
+        for key, colour in backgrounds.items()
+    }
+
+    highlighted_formats = {
+        key: book.add_format({
+            "bg_color": colour,
+            "border": 2,
+            "border_color": "#DC2626",
+            "align": "center",
+            "valign": "vcenter"
+        })
+        for key, colour in backgrounds.items()
+    }
+
+    def valid_nonnegative(value):
+        if value is None or str(value).strip() == "":
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if isfinite(number) and number >= 0 else None
+
+    def display_number(value, digits):
+        if value is None:
+            return "—"
+        result = f"{value:,.{digits}f}"
+        return result.rstrip("0").rstrip(".") if digits else result
+
+    def utilisation_colour(row, cell, verified):
+        if not verified or machine_scope == "spare":
+            return "unknown"
+
+        production = valid_nonnegative(row.get("production_fleet_total"))
+        available = valid_nonnegative(cell.get("production_available"))
+        utilised = valid_nonnegative(cell.get("production_utilised"))
+
+        if production is None or available is None or utilised is None:
+            return "unknown"
+
+        if production <= 0 or available <= 0:
+            return "unknown"
+
+        expected = min(production, available)
+        shortfall = expected - utilised
+
+        if shortfall <= 0:
+            return "green"
+        if shortfall < 2:
+            return "orange"
+        return "red"
+
+    months = OrderedDict()
+    for row in data["rows"]:
+        months.setdefault(row["month_key"], []).append(row)
+
+    overview = book.add_worksheet("Summary")
+    overview.hide_gridlines(2)
+    overview.set_column("A:A", 24)
+    overview.set_column("B:B", 28)
+    overview.merge_range("A1:H2", "MACHINE AVAILABILITY" if view_mode == "availability" else "MACHINE UTILISED VS AVAILABLE", navy)
+
+    details = [
+        ("Site", site),
+        ("From Date", from_date),
+        ("To Date", to_date),
+        ("Machine Scope", machine_scope.title()),
+        ("Measurement", "Available / Total fleet ADTs" if view_mode == "availability" else "Utilised / Available ADTs"),
+        ("Unavailable Filter",
+         "No highlight" if selected_range is None else
+         "0 - Fully available" if selected_range == 0 else
+         f"{selected_range - 1}-{selected_range} unavailable"),
+    ]
+
+    for index, (label, value) in enumerate(details, 3):
+        overview.write(index, 0, label, heading)
+        overview.write_string(index, 1, str(value), normal)
+
+    if view_mode == "availability":
+        overview.write("A10", "Available", blue)
+        overview.write("B10", "PBM-adjusted available ADT count", normal)
+        overview.write("A11", "Total fleet", green)
+        overview.write("B11", "Total ADTs in selected machine scope", normal)
+    else:
+        overview.write("A10", "Utilised", purple)
+        overview.write("B10", "ADTs with recorded loads", normal)
+        overview.write("A11", "Available", blue)
+        overview.write("B11", "PBM-adjusted ADT count", normal)
+        overview.write("A13", "Green · Target met", formats["green"])
+        overview.write("A14", "Orange · Shortfall below 2", formats["orange"])
+        overview.write("A15", "Red · Shortfall of 2 or more", formats["red"])
+        overview.write("A16", "Grey · Unknown / pending / spare", formats["unknown"])
+
+    for month, rows in months.items():
+        sheet = book.add_worksheet(rows[0]["month"][:31])
+        sheet.hide_gridlines(2)
+        sheet.set_landscape()
+        sheet.fit_to_pages(1, 0)
+        sheet.freeze_panes(6, 3)
+        sheet.set_column("A:A", 14)
+        sheet.set_column("B:B", 10)
+        sheet.set_column("C:C", 18)
+        sheet.set_column(3, 28 if view_mode == 'availability' else 26, 13)
+
+        sheet.merge_range(
+            "A1:AC2" if view_mode == "availability" else "A1:AA2",
+            f"{site} | {rows[0]['month']} | " + ("AVAILABLE VS TOTAL FLEET" if view_mode == "availability" else "AVAILABLE VS UTILISED"),
+            navy
+        )
+        sheet.write("A3", "Machines", heading)
+        sheet.write_string("B3", machine_scope.title())
+        sheet.write("D3", "Value", heading)
+        sheet.write_string("E3", "Available / Total fleet" if view_mode == "availability" else "Utilised / Available")
+
+        sheet.merge_range("A5:C5", "OPERATIONAL DAY", shift)
+        sheet.merge_range(
+            "D5:P5" if view_mode == "availability" else "D5:O5",
+            "DAY SHIFT 06:00-18:00", shift
+        )
+        sheet.merge_range(
+            "Q5:AC5" if view_mode == "availability" else "P5:AA5",
+            "NIGHT SHIFT 18:00-06:00", shift
+        )
+
+        for col, label in enumerate(("Date", "Day", "Month")):
+            sheet.write(5, col, label, heading)
+
+        for hour_index, label in enumerate(data["hours"]):
+            col = hour_index + 3 + (
+                1 if view_mode == "availability" and hour_index >= 12 else 0
+            )
+            sheet.write(5, col, label, heading)
+
+            if view_mode == "availability" and hour_index == 11:
+                sheet.write(5, 15, "Day Avg", heading)
+            elif view_mode == "availability" and hour_index == 23:
+                sheet.write(5, 28, "Night Avg", heading)
+
+        for row_index, row in enumerate(rows, 6):
+            for col, key in enumerate(("date", "day", "month")):
+                sheet.write_string(row_index, col, str(row[key]), normal)
+
+            for hour_index, cell in enumerate(row["cells"]):
+                col = hour_index + 3 + (
+                    1 if view_mode == "availability" and hour_index >= 12 else 0
+                )
+                if view_mode == "availability":
+                    raw_available = cell.get("available")
+                    raw_total = row.get("fleet_total")
+                    verified = bool(cell.get("availability_verified"))
+
+                    try:
+                        available_valid = (
+                            verified and raw_available is not None
+                            and isfinite(float(raw_available))
+                            and float(raw_available) >= 0
+                        )
+                    except (TypeError, ValueError):
+                        available_valid = False
+
+                    try:
+                        total_valid = (
+                            raw_total is not None and isfinite(float(raw_total))
+                            and float(raw_total) >= 0
+                        )
+                    except (TypeError, ValueError):
+                        total_valid = False
+
+                    available_text = f"{float(raw_available):g}" if available_valid else "—"
+                    total_text = f"{float(raw_total):g}" if total_valid else "—"
+
+                    highlighted = False
+                    if selected_range is not None and available_valid and total_valid and float(raw_total) > 0:
+                        deficit = float(raw_total) - float(raw_available)
+                        epsilon = 1e-9
+                        highlighted = (
+                            abs(deficit) <= epsilon if selected_range == 0 else
+                            deficit > selected_range - 1 + epsilon
+                            and deficit <= selected_range + epsilon
+                        )
+
+                    cell_format = (
+                        highlighted_formats["unknown"] if highlighted
+                        else formats["unknown"]
+                    )
+                    sheet.write_rich_string(
+                        row_index, col,
+                        blue, available_text, normal, " / ",
+                        green, total_text, cell_format
+                    )
+                    continue
+
+                verified = bool(cell.get("completed") and cell.get("has_record"))
+
+                available_value = (
+                    valid_nonnegative(cell.get("available")) if verified else None
+                )
+                utilised_value = (
+                    valid_nonnegative(cell.get("utilised")) if verified else None
+                )
+
+                # Match the displayed Utilised / Available values.
+                value = (
+                    f"{display_number(utilised_value, 0)} / "
+                    f"{display_number(available_value, 2)}"
+                )
+
+                # Classification uses production-only ADT metrics,
+                # exactly as machineColour() does in the dashboard.
+                colour = utilisation_colour(row, cell, verified)
+
+                highlighted = False
+                total_value = valid_nonnegative(row.get("fleet_total"))
+
+                if (
+                    selected_range is not None
+                    and verified
+                    and available_value is not None
+                    and total_value is not None
+                    and total_value > 0
+                ):
+                    deficit = total_value - available_value
+                    epsilon = 1e-9
+
+                    if selected_range == 0:
+                        highlighted = abs(deficit) <= epsilon
+                    else:
+                        highlighted = (
+                            deficit > selected_range - 1 + epsilon
+                            and deficit <= selected_range + epsilon
+                        )
+
+                sheet.write_string(
+                    row_index, col,
+                    value,
+                    highlighted_formats[colour] if highlighted
+                    else formats[colour]
+                )
+
+        if view_mode == "availability":
+            for row_index, row in enumerate(rows, 6):
+                total = row.get("fleet_total")
+                try:
+                    total_value = float(total)
+                    total_valid = isfinite(total_value) and total_value >= 0
+                except (TypeError, ValueError):
+                    total_valid = False
+
+                total_text = f"{total_value:g}" if total_valid else "—"
+
+                for shift_cells, col in (
+                    (row["cells"][:12], 15),
+                    (row["cells"][12:24], 28),
+                ):
+                    values = []
+                    for cell in shift_cells:
+                        if not cell.get("availability_verified"):
+                            continue
+                        try:
+                            value = float(cell.get("available"))
+                        except (TypeError, ValueError):
+                            continue
+                        if isfinite(value) and value >= 0:
+                            values.append(value)
+
+                    average = sum(values) / len(values) if values else None
+                    average_text = (
+                        f"{average:.2f}" if average is not None else "—"
+                    )
+
+                    sheet.write_rich_string(
+                        row_index, col,
+                        blue, average_text,
+                        normal, " / ",
+                        green, total_text,
+                        average_format
+                    )
+
+    book.close()
+
+    safe_site = "".join(
+        c if c.isalnum() or c in "-_" else "_"
+        for c in str(site)
+    )[:60]
+
+    frappe.response["filename"] = (
+        f"{safe_site}_{'Availability' if view_mode == 'availability' else 'Machine_Utilised_vs_Available'}_"
+        f"{from_date}_to_{to_date}.xlsx"
+    )
+    frappe.response["filecontent"] = out.getvalue()
+    frappe.response["type"] = "download"
+
+
+# Consolidated Hourly Productivity Excel generator
+
+from collections import OrderedDict
+from io import BytesIO
+from math import isfinite
+import re
+
+import xlsxwriter
+
+COLOURS = {
+    "green": "#00B050",
+    "amber": "#FF9F1C",
+    "red": "#D63C4B",
+    "grey": "#F5F5F5",
+}
+
+LABELS = {
+    "green": "Green · 220 and above per production excavator",
+    "amber": "Orange · 200-219 per production excavator",
+    "red": "Red · Below 200 per production excavator",
+    "grey": "Fatigue / Non-working",
+}
+
+
+
+def _shift_bcm_average(cells):
+    values = []
+    for cell in cells:
+        if not cell.get("completed") or not cell.get("has_record"):
+            continue
+        try:
+            value = float(cell["actual_bcm"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        if isfinite(value):
+            values.append(value)
+    return sum(values) / len(values) if values else None
+
+
+def make_workbook(data):
+    output = BytesIO()
+    workbook = xlsxwriter.Workbook(output, {"in_memory": True})
+
+    workbook.set_properties({
+        "title": "Hourly Productivity Analysis",
+        "subject": "Production performance by operational day",
+        "comments": "Generated from permission-checked ERPNext report data",
+    })
+
+    title = workbook.add_format({
+        "bold": True, "font_size": 18, "font_color": "#FFFFFF",
+        "bg_color": "#183153", "valign": "vcenter",
+    })
+    section = workbook.add_format({
+        "bold": True, "font_color": "#FFFFFF",
+        "bg_color": "#315574", "border": 1,
+        "border_color": "#CAD5E0",
+    })
+    head = workbook.add_format({
+        "bold": True, "bg_color": "#DFE8F1",
+        "border": 1, "border_color": "#B8C8D5",
+        "align": "center",
+    })
+    text = workbook.add_format({"font_color": "#253647"})
+    integer = workbook.add_format({"num_format": "#,##0"})
+    decimal = workbook.add_format({"num_format": "#,##0.0"})
+    percentage = workbook.add_format({"num_format": "0.0%"})
+
+    fills = {
+        key: workbook.add_format({
+            "bg_color": colour,
+            "font_color": "#FFFFFF" if key == "red" else "#17212B",
+            "border": 1,
+            "border_color": "#C7D2DD",
+            "align": "center",
+            "num_format": "#,##0.0#",
+        })
+        for key, colour in COLOURS.items()
+    }
+
+    average_fill = workbook.add_format({
+        "bg_color": "#DDEBF7",
+        "font_color": "#1769AA",
+        "bold": True,
+        "border": 1,
+        "border_color": "#B8C8D5",
+        "align": "center",
+        "num_format": "#,##0.0",
+    })
+
+    missing_fills = {
+        key: workbook.add_format({
+            "bg_color": colour,
+            "font_color": "#FFFFFF" if key == "red" else "#17212B",
+            "border": 1,
+            "border_color": "#C7D2DD",
+            "align": "center",
+            "bold": True,
+        })
+        for key, colour in COLOURS.items()
+    }
+
+    months = OrderedDict()
+    for row in data["rows"]:
+        months.setdefault(row["month_key"], []).append(row)
+
+    overview = workbook.add_worksheet("Summary")
+    overview.hide_gridlines(2)
+    overview.set_tab_color("#183153")
+    overview.set_column("A:A", 22)
+    overview.set_column("B:B", 18)
+    overview.set_column("C:H", 19)
+    overview.set_column("I:I", 27)
+
+    overview.merge_range("A1:I2", "HOURLY PRODUCTIVITY | MANAGEMENT SUMMARY", title)
+    overview.write("A4", "Site", section)
+    overview.write("B4", data["site"], text)
+    overview.write("A5", "From date", section)
+    overview.write("B5", data["from_date"], text)
+    overview.write("A6", "To date", section)
+    overview.write("B6", data["to_date"], text)
+    overview.merge_range(
+        "A7:I7",
+        "Actual BCM source: Monthly Production Planning - Monthly Actual BCMs",
+        text,
+    )
+
+    headers = [
+        "Month", "Days", "Actual BCM (MPP)", "Target BCM",
+        "Achievement", "Green hrs", "Orange hrs",
+        "Red hrs", "Fatigue / Non-working hrs",
+    ]
+
+    for col, label in enumerate(headers):
+        overview.write(8, col, label, head)
+
+    for month_index, (month_key, rows) in enumerate(months.items()):
+        month_name = rows[0]["month"]
+        monthly_actuals = [row.get("mpp_month_actual_bcm") for row in rows]
+
+        if any(value is None for value in monthly_actuals):
+            raise ValueError(f"MPP Monthly Actual BCMs unavailable for {month_name}")
+
+        monthly_actuals = {float(value) for value in monthly_actuals}
+        if len(monthly_actuals) != 1:
+            raise ValueError(f"Inconsistent MPP Monthly Actual BCMs for {month_name}")
+
+        monthly_actual = monthly_actuals.pop()
+        sheet = workbook.add_worksheet(month_name[:31])
+        sheet.set_tab_color("#00B050")
+        sheet.hide_gridlines(2)
+        sheet.set_landscape()
+        sheet.fit_to_pages(1, 1)
+        sheet.set_paper(8)
+        sheet.set_margins(0.25, 0.25, 0.4, 0.4)
+        sheet.repeat_rows(0, 5)
+        sheet.freeze_panes(6, 3)
+        sheet.set_column("A:A", 13)
+        sheet.set_column("B:B", 9)
+        sheet.set_column("C:C", 14)
+        sheet.set_column(3, 28, 11)
+
+        sheet.merge_range("A1:AC2", f"{data['site']} | {month_name} | HOURLY PRODUCTIVITY", title)
+        sheet.merge_range("A4:C4", "OPERATIONAL DAY 06:00-06:00", section)
+        sheet.merge_range("D4:P4", "DAY SHIFT | 06:00-18:00", section)
+        sheet.merge_range("Q4:AC4", "NIGHT SHIFT | 18:00-06:00", section)
+
+        for col, label in enumerate(["Date", "Day", "Month"]):
+            sheet.write(5, col, label, head)
+
+        hours = [cell["label"] for cell in rows[0]["cells"]]
+        for hour_index, label in enumerate(hours):
+            col = hour_index + 3 + (1 if hour_index >= 12 else 0)
+            sheet.write(5, col, label, head)
+
+            if hour_index == 11:
+                sheet.write(5, 15, "Day Avg", head)
+            elif hour_index == 23:
+                sheet.write(5, 28, "Night Avg", head)
+
+        totals = {
+            "actual": 0.0, "target": 0.0,
+            **{key: 0.0 for key in COLOURS},
+        }
+
+        for day_index, row in enumerate(rows):
+            excel_row = day_index + 6
+            sheet.write(excel_row, 0, row["date"], text)
+            sheet.write(excel_row, 1, row["day"], text)
+            sheet.write(excel_row, 2, row["month"], text)
+
+            daily_target = row.get("mpp_daily_target_bcm")
+            if daily_target is None:
+                raise ValueError(f"MPP daily target missing for {row['date']}")
+
+            totals["target"] += float(daily_target)
+
+            for hour_index, cell in enumerate(row["cells"]):
+                col = hour_index + 3 + (1 if hour_index >= 12 else 0)
+                category = cell["category"]
+                if category not in COLOURS:
+                    category = "red"
+
+                actual = float(cell["actual_bcm"] or 0)
+                totals["actual"] += actual
+
+                segments = cell.get("segments") or []
+                if segments:
+                    for segment in segments:
+                        key = segment["category"]
+                        if key in totals:
+                            totals[key] += (
+                                float(segment["end_percent"])
+                                - float(segment["start_percent"])
+                            ) / 100
+                else:
+                    totals[category] += 1
+
+                if not cell["has_record"]:
+                    sheet.write(excel_row, col, f"{actual:g}*", missing_fills[category])
+                    sheet.write_comment(
+                        excel_row, col,
+                        "No hourly production record. Zero is unverified."
+                    )
+                elif not cell["completed"]:
+                    sheet.write(excel_row, col, f"{actual:g}†", missing_fills[category])
+                    sheet.write_comment(
+                        excel_row, col, "Current or unfinished hour."
+                    )
+                else:
+                    sheet.write_number(excel_row, col, actual, fills[category])
+
+                if len(segments) > 1:
+                    sheet.write_comment(
+                        excel_row, col,
+                        "Mixed classification within this hour: "
+                        + ", ".join(
+                            f"{s['category']}: "
+                            f"{float(s['end_percent'])-float(s['start_percent']):.0f}%"
+                            for s in segments
+                        )
+                    )
+
+        # Dashboard-equivalent averages: completed recorded hours only.
+        for day_index, row in enumerate(rows):
+            excel_row = day_index + 6
+
+            for shift_cells, col in (
+                (row["cells"][:12], 15),
+                (row["cells"][12:24], 28),
+            ):
+                average = _shift_bcm_average(shift_cells)
+                if average is None:
+                    sheet.write_string(excel_row, col, "—", average_fill)
+                else:
+                    sheet.write_number(excel_row, col, average, average_fill)
+
+        end_row = 6 + len(rows)
+        sheet.autofilter(5, 0, end_row - 1, 28)
+        sheet.print_area(0, 0, end_row + 5 + len(COLOURS), 28)
+
+        note_row = end_row + 2
+        sheet.merge_range(
+            note_row, 0, note_row, 12,
+            "* Missing record (unverified zero)  |  † Unfinished hour",
+            text,
+        )
+
+        sheet.write(note_row + 2, 0, "Performance category", head)
+        sheet.write(note_row + 2, 1, "Hours", head)
+        for ix, key in enumerate(COLOURS):
+            sheet.write(note_row + 3 + ix, 0, LABELS[key], fills[key])
+            sheet.write_number(note_row + 3 + ix, 1, totals[key], decimal)
+        sheet.set_column("A:A", 48)
+
+        summary_row = 9 + month_index
+        values = [
+            month_name, len(rows), monthly_actual, totals["target"],
+            monthly_actual / totals["target"] if totals["target"] else 0,
+            totals["green"], totals["amber"], totals["red"],
+            totals["grey"],
+        ]
+        for col, value in enumerate(values):
+            fmt = percentage if col == 4 else decimal if col >= 5 else integer if col in (1, 2, 3) else text
+            if isinstance(value, str):
+                overview.write(summary_row, col, value, fmt)
+            else:
+                overview.write_number(summary_row, col, value, fmt)
+
+    last = 9 + len(months)
+    overview.autofilter(8, 0, last - 1, len(headers) - 1)
+    overview.freeze_panes(9, 1)
+
+    chart = workbook.add_chart({"type": "column"})
+    chart.add_series({
+        "name": "Actual BCM",
+        "categories": ["Summary", 9, 0, last - 1, 0],
+        "values": ["Summary", 9, 2, last - 1, 2],
+    })
+    chart.add_series({
+        "name": "Target BCM",
+        "categories": ["Summary", 9, 0, last - 1, 0],
+        "values": ["Summary", 9, 3, last - 1, 3],
+    })
+    chart.set_title({"name": "Monthly Actual vs Target BCM"})
+    chart.set_y_axis({"name": "BCM"})
+    chart.set_legend({"position": "bottom"})
+    chart.set_style(10)
+    overview.insert_chart(last + 3, 0, chart, {"x_scale": 1.6, "y_scale": 1.4})
+
+    overview.write(
+        last + 27, 0,
+        "Performance categories are hour-weighted. "
+        "Mixed fatigue hours contribute fractionally. "
+        "Thresholds combine excavators and scale for partial hours.",
+        text,
+    )
+
+    workbook.close()
+    return output.getvalue()

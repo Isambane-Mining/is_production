@@ -97,14 +97,14 @@ class TestHourlyProductivityAnalysis(TestCase):
         cells = data["rows"][0]["cells"]
 
         self.assertEqual(cells[0]["available"], 2)
-        self.assertEqual(cells[0]["category"], "orange")
+        self.assertEqual(cells[0]["category"], "green")
         self.assertEqual(
             [(x["start_minute"], x["end_minute"]) for x in cells[0]["segments"]],
             [(0, 15), (15, 45), (45, 60)],
         )
         self.assertEqual(
             [x["category"] for x in cells[0]["segments"]],
-            ["green", "orange", "green"],
+            ["green", "green", "green"],
         )
 
         machine = next(x for x in cells[0]["details"] if x["asset"] == ex1)
@@ -117,7 +117,7 @@ class TestHourlyProductivityAnalysis(TestCase):
         self.assertEqual(cells[2]["category"], "red")
         self.assertEqual(
             [x["category"] for x in cells[2]["segments"]],
-            ["orange", "red"],
+            ["green", "red"],
         )
 
     def test_excavator_availability_missing_hour_is_unknown(self):
@@ -224,7 +224,7 @@ class TestHourlyProductivityAnalysis(TestCase):
         )
         self.assertEqual(
             [row["cells"][i]["category"] for i in range(3)],
-            ["orange", "green", "red"],
+            ["green", "green", "red"],
         )
 
         # Verify exact partial-hour colour segments.
@@ -235,7 +235,7 @@ class TestHourlyProductivityAnalysis(TestCase):
             ],
             [
                 (0, 15, "green"),
-                (15, 45, "orange"),
+                (15, 45, "green"),
                 (45, 60, "green"),
             ],
         )
@@ -246,7 +246,7 @@ class TestHourlyProductivityAnalysis(TestCase):
                 for x in row["cells"][2]["segments"]
             ],
             [
-                (0, 30, "orange"),
+                (0, 30, "green"),
                 (30, 60, "red"),
             ],
         )
@@ -824,6 +824,214 @@ class TestHourlyProductivityAnalysis(TestCase):
         self.assertEqual(cell["utilised"],0)
         self.assertIsNone(cell["excavator_available"])
 
+    def test_pbmonly_availability_shows_sunday_without_hourly_production(self):
+        data = report.build_machine_availability_analysis(
+            "2026-10-11", "2026-10-11", "Koppie",
+            [self.plan], self.f.assets, [],
+            now=datetime(2026, 10, 14),
+            machine_scope="all",
+        )
+
+        row = data["rows"][0]
+        fleet = report.mpp_adt_scope(self.plan, "all")
+
+        self.assertEqual(len(row["cells"]), 24)
+        for cell in row["cells"]:
+            self.assertTrue(cell["availability_verified"])
+            self.assertAlmostEqual(cell["available"], len(fleet))
+            self.assertTrue(all(
+                segment["category"] == "green"
+                for segment in cell["production_availability_segments"]
+            ))
+
+    def test_pbmonly_availability_ignores_mpp_shift_hours(self):
+        zero_hours_plan = dict(
+            self.plan,
+            month_prod_days=[{
+                "shift_start_date": "2026-10-12",
+                "shift_day_hours": 0,
+                "shift_night_hours": 0,
+                "bcm_per_day": 0,
+            }]
+        )
+
+        data = report.build_machine_availability_analysis(
+            "2026-10-12", "2026-10-12", "Koppie",
+            [zero_hours_plan], self.f.assets, [],
+            now=datetime(2026, 10, 14),
+            machine_scope="all",
+        )
+
+        fleet = report.mpp_adt_scope(zero_hours_plan, "all")
+        cells = data["rows"][0]["cells"]
+
+        self.assertEqual(len(cells), 24)
+        for cell in cells:
+            self.assertTrue(cell["availability_verified"])
+            self.assertAlmostEqual(cell["available"], len(fleet))
+            self.assertTrue(all(
+                segment["category"] == "green"
+                for segment in cell["production_availability_segments"]
+            ))
+
+    def test_pbmonly_availability_uses_breakdown_and_planned_maintenance(self):
+        self.plan["excavator_truck_assignments"].append(
+            {"excavator": None, "truck": "T4"}
+        )
+        self.f.assets.append({
+            "name": "T4",
+            "asset_name": "T4",
+            "asset_category": "ADT",
+            "location": "Koppie",
+        })
+
+        production = sorted(report.mpp_production_adt_roster(self.plan))
+        spare = sorted(report.mpp_adt_scope(self.plan, "spare"))
+        all_fleet = report.mpp_adt_scope(self.plan, "all")
+
+        self.assertTrue(spare)
+
+        maintenance = {
+            **self._production_adt_pbm(
+                production[0], "2026-10-12 06:10:00",
+                "2026-10-12 06:20:00"
+            ),
+            "downtime_type": "Planned Maintenance",
+        }
+
+        breakdown = self._production_adt_pbm(
+            spare[0], "2026-10-12 06:10:00",
+            "2026-10-12 06:20:00"
+        )
+
+        data = report.build_machine_availability_analysis(
+            "2026-10-12", "2026-10-12", "Koppie",
+            [self.plan], self.f.assets, [maintenance, breakdown],
+            now=datetime(2026, 10, 14),
+            machine_scope="all",
+        )
+
+        cell = data["rows"][0]["cells"][0]
+        segments = cell["production_availability_segments"]
+
+        self.assertTrue(cell["availability_verified"])
+        self.assertAlmostEqual(
+            cell["available"],
+            (len(all_fleet) * 50 + (len(all_fleet) - 2) * 10) / 60
+        )
+        self.assertEqual(
+            [
+                (x["start_minute"], x["end_minute"], x["category"])
+                for x in segments
+            ],
+            [
+                (0, 10, "green"),
+                (10, 20, "orange"),
+                (20, 30, "green"),
+                (30, 60, "green"),
+            ]
+        )
+
+    def test_machine_availability_endpoint_never_loads_hourly_production(self):
+        from types import SimpleNamespace
+
+        with patch.object(
+            report.frappe, "session",
+            SimpleNamespace(user="test@example.com")
+        ), patch.object(
+            report, "load_plans", return_value=[self.plan]
+        ), patch.object(
+            report, "planning_error", return_value=None
+        ), patch.object(
+            report, "load_mpp_adt_assets", return_value=self.f.assets
+        ), patch.object(
+            report, "load_excavator_pbm", return_value=[]
+        ), patch.object(
+            report, "now_datetime", return_value=datetime(2026, 10, 14)
+        ), patch.object(
+            report.frappe, "has_permission", return_value=True
+        ), patch.object(
+            report.summary, "load_sources",
+            side_effect=AssertionError("Hourly Production must not be loaded")
+        ):
+            data = report.get_machine_availability(
+                "Koppie", "2026-10-11", "2026-10-11"
+            )
+
+        self.assertEqual(len(data["rows"]), 1)
+        cell = data["rows"][0]["cells"][0]
+        self.assertTrue(cell["availability_verified"])
+        self.assertEqual(
+            cell["available"],
+            len(report.mpp_adt_scope(self.plan, "all"))
+        )
+
+    def test_excavator_availability_reports_production_spare_and_total(self):
+        composition = report.mpp_excavator_composition(self.plan)
+
+        self.assertEqual(composition, {
+            "production": 2,
+            "spare": 1,
+            "total": 3,
+        })
+
+        data = report.build_excavator_availability(
+            "2026-10-12", "2026-10-12", "Koppie",
+            [self.plan], self.f.assets, [],
+            [self.f.doc("06:00-07:00")],
+            now=datetime(2026, 10, 14),
+        )
+
+        self.assertEqual(
+            data["rows"][0]["fleet_composition"],
+            composition
+        )
+
+    def test_excavator_spare_unavailable_remains_green_when_production_met(self):
+        roster = report.mpp_excavator_roster(self.plan)
+
+        production = {
+            row.get("excavator")
+            for row in self.plan["excavator_truck_assignments"]
+            if row.get("excavator") and (
+                bool(row.get("truck"))
+                or str(row.get("is_production_excavator") or "").strip()
+                in ("1", "1.0", "true", "True")
+            )
+        }
+
+        spare = next(iter(roster - production))
+        asset = next(row for row in self.f.assets if row["name"] == spare)
+
+        pbm = [{
+            "location": "Koppie",
+            "asset_name": asset.get("asset_name") or spare,
+            "downtime_type": "Breakdown",
+            "breakdown_start_datetime": "2026-10-12 06:00:00",
+            "resolved_datetime": "2026-10-12 07:00:00",
+            "open_closed": "Closed",
+            "breakdown_reason": "Spare excavator breakdown",
+            "resolution_summary": "Test",
+            "exclude_from_au": 0,
+            "docstatus": 0,
+        }]
+
+        data = report.build_excavator_availability(
+            "2026-10-12", "2026-10-12", "Koppie",
+            [self.plan], self.f.assets, pbm,
+            [self.f.doc("06:00-07:00")],
+            now=datetime(2026, 10, 14),
+        )
+
+        cell = data["rows"][0]["cells"][0]
+
+        self.assertEqual(cell["available"], 2)
+        self.assertEqual(cell["category"], "green")
+        self.assertEqual(
+            [segment["category"] for segment in cell["segments"]],
+            ["green"]
+        )
+
     def _production_adt_segments(self, breakdowns=(), start=None, end=None, now=None):
         from datetime import datetime
 
@@ -837,6 +1045,7 @@ class TestHourlyProductivityAnalysis(TestCase):
             start or datetime(2026, 10, 12, 6),
             end or datetime(2026, 10, 12, 7),
             now or datetime(2026, 10, 14),
+            all_adts=report.mpp_adt_scope(self.plan, "all"),
         )
 
     def _production_adt_pbm(self, asset, start, resolved=None, status="Closed"):
@@ -848,6 +1057,21 @@ class TestHourlyProductivityAnalysis(TestCase):
             "resolved_datetime": resolved,
             "open_closed": status,
         }
+
+    def test_planned_maintenance_is_included_in_adt_availability(self):
+        roster = sorted(report.mpp_production_adt_roster(self.plan))
+        maintenance = self._production_adt_pbm(
+            roster[0], "2026-10-12 06:10:00",
+            "2026-10-12 06:20:00"
+        )
+        maintenance["downtime_type"] = "Planned Maintenance"
+
+        breakdown = dict(maintenance, downtime_type="Breakdown")
+
+        maintenance_segments = self._production_adt_segments([maintenance])
+        breakdown_segments = self._production_adt_segments([breakdown])
+
+        self.assertEqual(maintenance_segments, breakdown_segments)
 
     def test_production_adt_availability_uses_half_hour_breakdown_segments(self):
         roster = sorted(report.mpp_production_adt_roster(self.plan))
@@ -869,6 +1093,28 @@ class TestHourlyProductivityAnalysis(TestCase):
         ])
         self.assertEqual([x["category"] for x in two_down], ["red", "red"])
 
+    def test_production_adt_availability_colours_exact_pbm_intervals(self):
+        roster = sorted(report.mpp_production_adt_roster(self.plan))
+        segments = self._production_adt_segments([
+            self._production_adt_pbm(
+                roster[0], "2026-10-12 06:10:00",
+                "2026-10-12 06:20:00"
+            )
+        ])
+
+        self.assertEqual(
+            [
+                (x["start_minute"], x["end_minute"], x["category"])
+                for x in segments
+            ],
+            [
+                (0, 10, "green"),
+                (10, 20, "orange"),
+                (20, 30, "green"),
+                (30, 60, "green"),
+            ]
+        )
+
     def test_production_adt_breakdown_starting_halfway_only_colours_second_half(self):
         roster = sorted(report.mpp_production_adt_roster(self.plan))
         segments = self._production_adt_segments([
@@ -885,11 +1131,15 @@ class TestHourlyProductivityAnalysis(TestCase):
             self._production_adt_pbm(roster[0], "2026-10-12 06:10:00",
                                      "2026-10-12 06:30:00"),
         ])
-        self.assertEqual(segments[0]["category"], "orange")
-        self.assertEqual(segments[0]["unavailable"], 1)
-        self.assertEqual(segments[1]["category"], "green")
+        self.assertEqual(
+            [x["category"] for x in segments],
+            ["orange", "orange", "orange", "green"]
+        )
+        self.assertEqual(
+            [x["unavailable"] for x in segments[:3]], [1, 1, 1]
+        )
 
-    def test_production_adt_spare_breakdown_does_not_affect_production_colours(self):
+    def test_spare_capacity_offsets_production_breakdowns_until_requirement_is_missed(self):
         self.plan["excavator_truck_assignments"].append(
             {"excavator": None, "truck": "T4"}
         )
@@ -901,16 +1151,35 @@ class TestHourlyProductivityAnalysis(TestCase):
         })
 
         spare = report.mpp_adt_scope(self.plan, "spare")
+        production = sorted(report.mpp_production_adt_roster(self.plan))
         self.assertEqual(spare, {"T4"})
 
-        segments = self._production_adt_segments([
-            self._production_adt_pbm(
-                "T4", "2026-10-12 06:00:00", "2026-10-12 07:00:00"
-            )
-        ])
-        self.assertEqual(
-            [x["category"] for x in segments], ["green", "green"]
+        spare_down = self._production_adt_pbm(
+            "T4", "2026-10-12 06:00:00", "2026-10-12 07:00:00"
         )
+        production_one_down = self._production_adt_pbm(
+            production[0], "2026-10-12 06:00:00", "2026-10-12 07:00:00"
+        )
+        production_two_down = self._production_adt_pbm(
+            production[1], "2026-10-12 06:00:00", "2026-10-12 07:00:00"
+        )
+
+        # One spare unavailable: remaining fleet still meets production requirement.
+        segments = self._production_adt_segments([spare_down])
+        self.assertEqual([x["category"] for x in segments], ["green", "green"])
+        self.assertEqual(segments[0]["available"], len(production))
+
+        # One spare + one production ADT unavailable: one below requirement.
+        segments = self._production_adt_segments([spare_down, production_one_down])
+        self.assertEqual([x["category"] for x in segments], ["orange", "orange"])
+        self.assertEqual(segments[0]["available"], len(production) - 1)
+
+        # One spare + two production ADTs unavailable: two below requirement.
+        segments = self._production_adt_segments([
+            spare_down, production_one_down, production_two_down
+        ])
+        self.assertEqual([x["category"] for x in segments], ["red", "red"])
+        self.assertEqual(segments[0]["available"], len(production) - 2)
 
     def test_production_adt_open_breakdown_remains_unavailable(self):
         roster = sorted(report.mpp_production_adt_roster(self.plan))
@@ -947,7 +1216,7 @@ class TestHourlyProductivityAnalysis(TestCase):
             datetime(2026, 10, 13, 0, 30),
             datetime(2026, 10, 13, 1, 0),
         )
-        self.assertEqual([x["category"] for x in segments], ["orange", "orange"])
+        self.assertEqual([x["category"] for x in segments], ["green", "orange", "orange", "green"])
 
     def test_production_adt_future_half_hour_remains_neutral(self):
         from datetime import datetime
@@ -973,4 +1242,34 @@ class TestHourlyProductivityAnalysis(TestCase):
         assignments.append({"excavator": "EX2", "truck": "T1"})
         plan = dict(self.plan, excavator_truck_assignments=assignments)
         self.assertIsNone(report.mpp_production_adt_roster(plan))
+
+    def test_average_productive_hours_respects_first_normal_and_last_hour_targets(self):
+        self.assertAlmostEqual(
+            report.get_average_productive_hours(110, 2, 0), 0.25
+        )
+        self.assertAlmostEqual(
+            report.get_average_productive_hours(440, 2, 0), 1.0
+        )
+        self.assertAlmostEqual(
+            report.get_average_productive_hours(330, 2, 0), 0.75
+        )
+
+    def test_average_productive_hours_excludes_fatigue_and_clamps_at_zero(self):
+        self.assertAlmostEqual(
+            report.get_average_productive_hours(440, 2, 15), 0.75
+        )
+        self.assertAlmostEqual(
+            report.get_average_productive_hours(110, 2, 15), 0.0
+        )
+        self.assertAlmostEqual(
+            report.get_average_productive_hours(440, 2, 90), 0.0
+        )
+
+    def test_average_productive_hours_is_unavailable_when_fatigue_is_unverified(self):
+        self.assertIsNone(
+            report.get_average_productive_hours(440, 2, 0, verified=False)
+        )
+        self.assertIsNone(
+            report.get_average_productive_hours(440, None, 0)
+        )
 
