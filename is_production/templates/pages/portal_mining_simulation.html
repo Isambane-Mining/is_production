@@ -276,9 +276,9 @@ canvas.chart { width: 100%; display: block; }
 .viewport canvas.gl { display: block; width: 100%; height: 100%; }
 .labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 .lbl3d { position: absolute; transform: translate(-50%, -50%); font-family: var(--font-cond); font-weight: 600; font-size: 11px; color: #fff; text-shadow: 0 0 3px rgba(0,0,0,.9), 0 0 1px #000; white-space: nowrap; letter-spacing: .02em; }
-.lbl3d.sr { background: rgba(15, 20, 22, .74); padding: 0 4px 1px; border-radius: 3px; border-bottom: 3px solid #8a8f98; text-shadow: none; font-family: var(--font-mono); font-weight: 500; font-size: 10.5px; line-height: 13px; }
-.lbl3d.sr.out { opacity: .55; }
-.lbl3d.sr.none { color: #c9ccd1; }
+.lbl3d.sr { background: rgba(255, 255, 255, .95); color: #10151a; padding: 1px 5px; border-radius: 4px; border: 2px solid #8a8f98; text-shadow: none; box-shadow: 0 1px 3px rgba(0, 0, 0, .4); font-family: "Barlow", var(--font-cond); font-weight: 600; font-variant-numeric: tabular-nums; font-size: 13px; line-height: 1.15; letter-spacing: 0; }
+.lbl3d.sr.out { opacity: .75; }
+.lbl3d.sr.none { color: #6b7178; }
 .lbl3d.seq { background: rgba(15, 20, 22, .78); padding: 0 5px; border-radius: 8px; text-shadow: none; font-family: var(--font-mono); font-weight: 500; font-size: 10.5px; }
 .lbl3d.toe { background: #ffd58a; color: #2a2118; text-shadow: none; padding: 1px 6px 1px 6px; border-radius: 3px; font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; transform: translate(-50%, -150%); }
 .lbl3d.toe::after { content: ""; position: absolute; left: 50%; top: 100%; margin-left: -4px; border: 4px solid transparent; border-top-color: #ffd58a; }
@@ -12016,6 +12016,7 @@ const View = (() => {
       if (d.className !== it.cls) d.className = it.cls;
       if (d.textContent !== it.text) d.textContent = it.text;
       if ((d.dataset.c || '') !== (it.color || '')) { d.dataset.c = it.color || ''; d.style.borderColor = it.color || ''; }
+      const fz = it.fs ? it.fs.toFixed(1) + 'px' : ''; if (d.style.fontSize !== fz) d.style.fontSize = fz;
       d.style.left = p[0].toFixed(1) + 'px'; d.style.top = p[1].toFixed(1) + 'px';
     }
   }
@@ -12027,7 +12028,11 @@ const View = (() => {
     const p1 = project(c0[0], c0[1], ws.topo[Model.cellAt(ws, c0[0], c0[1])] || zOff, w, h), p2 = project(c0[0] + a, c0[1], ws.topo[Model.cellAt(ws, c0[0], c0[1])] || zOff, w, h);
     return p1 && p2 ? Math.hypot(p1[0] - p2[0], p1[1] - p2[1]) : 999;
   }
-  const VAL_PX = 30; // (the values inside the blocks: shown where a block is at least this wide on screen)
+  /* The values inside the blocks: their font grows with the blocks on screen, from 11 px (a block VAL_PX wide) to 16 px, so
+     that a value of four figures ("2,62": about 0.58 em a figure, with its padding and frame) takes no more than 85% of its
+     block; smaller blocks show none */
+  const VAL_PX = 46;
+  const valFont = bp => U.clamp((0.85 * bp - 14) / 2.32, 11, 16);
   // whether the values inside the blocks can be shown at this zoom
   const valuesFit = () => !!ws && blockPx(container.clientWidth, container.clientHeight) >= VAL_PX;
   // the labels shown and where, for a view w × h pixels: [[item, [x, y]]]
@@ -12042,7 +12047,7 @@ const View = (() => {
       });
     }
     // the values inside the blocks: at the centre, under the block's label when that is shown too
-    if (show.srLabels) for (const v of valueDefs) items.push({ x: v.x, y: v.y, text: v.text, cls: 'lbl3d sr' + (v.out ? ' out' : '') + (v.none ? ' none' : ''), color: v.color, pri: 1, val: true, dy: show.labels && ws.project.blocks.length ? 13 : 0 });
+    if (show.srLabels) for (const v of valueDefs) items.push({ x: v.x, y: v.y, text: v.text, cls: 'lbl3d sr' + (v.out ? ' out' : '') + (v.none ? ' none' : ''), color: v.color, pri: 1, val: true });
     if (show.dumps) for (const d of dumpDefs) if (d.pts && d.pts.length >= 3) { const c = Geo.centroid(d.pts); items.push({ x: c[0], y: c[1], text: d.name, cls: 'lbl3d dump', pri: 2, up: 18 }); }
     if (show.roads) for (const t of toeDefs) items.push({ x: t.x, y: t.y, text: t.text, cls: 'lbl3d toe', pri: 3, up: 4 });
     if (show.limits) for (const z of limitDefs) if (z.pts && z.pts.length >= 3 && z.label && !z.noPoly) { let c = null, top = -Infinity; const n = z.pts.length; for (let k = 0; k < n; k++) { const a = z.pts[k], b = z.pts[(k + 1) % n], my = (a[1] + b[1]) / 2; if (my > top) { top = my; c = [(a[0] + b[0]) / 2, my]; } } items.push({ x: c[0], y: c[1], text: z.label, cls: 'lbl3d limit', pri: 2, up: 10 }); }
@@ -12054,18 +12059,27 @@ const View = (() => {
     let used = 0;
     const out = [];
     // approx on-screen block size to decide whether IDs fit
-    const blkPx = blockPx(w, h);
+    const blkPx = blockPx(w, h), vfs = valFont(blkPx), vdy = show.labels && ws.project.blocks.length ? Math.round(7.5 + (vfs * 1.15 + 6) / 2) : 0, vbox = [];
     items.sort((a, b) => b.pri - a.pri);
     for (const it of items) {
       if (it.pri === 1 && blkPx < (it.val ? VAL_PX : labelMode.mode === 'seq' ? 16 : 34)) continue;
+      if (it.val) { it.fs = vfs; it.dy = vdy; } // (the font of the values; under the block's label when that is shown too)
       if (slice.on && slice.n[0] * (it.x - ox - slice.p[0]) + slice.n[1] * (it.y - oy - slice.p[1]) < 0) continue;
       const lz = surfAtLocal(it.x - ox, it.y - oy) + (it.up || 3);
       let p = project(it.x, it.y, lz, w, h);
       if (!p || p[0] < -40 || p[1] < -20 || p[0] > w + 40 || p[1] > h + 20) continue;
       if (it.dy) p = [p[0], p[1] + it.dy];
-      const key = (it.val ? 'v' : '') + Math.round(p[0] / cellPx) + ':' + Math.round(p[1] / (cellPx * 0.5)); // (a value and a block label do not crowd each other out)
-      if (it.pri === 1 && occ.has(key)) continue;
-      occ.add(key);
+      if (it.val) {
+        // a value's chip (its figures about 0.58 em each, with its padding and frame) never over another's: where blocks are
+        // narrow, the ones that would be wait for a closer view
+        const cw = it.text.length * 0.58 * vfs + 14, ch = vfs * 1.15 + 6, bx = [p[0] - cw / 2, p[1] - ch / 2, p[0] + cw / 2, p[1] + ch / 2];
+        if (vbox.some(q => bx[0] < q[2] && bx[2] > q[0] && bx[1] < q[3] && bx[3] > q[1])) continue;
+        vbox.push(bx);
+      } else {
+        const key = Math.round(p[0] / cellPx) + ':' + Math.round(p[1] / (cellPx * 0.5));
+        if (it.pri === 1 && occ.has(key)) continue;
+        occ.add(key);
+      }
       out.push([it, p]);
       if (++used > 1400) break;
     }
@@ -12127,7 +12141,7 @@ const View = (() => {
     R.setPixelRatio(1); R.setSize(W, H, false);
     camera.aspect = W / H; camera.updateProjectionMatrix();
   }
-  const LBL = { 'lbl3d': null, 'lbl3d seq': ['rgba(15,20,22,.78)', '#fff'], 'lbl3d toe': ['#ffd58a', '#2a2118'], 'lbl3d limit': ['rgba(48,36,92,.78)', '#e4dbff'], 'lbl3d pit': ['rgba(15,20,22,.84)', '#fff', '#fff'], 'lbl3d pit box': ['rgba(15,20,22,.72)', '#fff', '#fff'], 'lbl3d fill': ['rgba(16,70,82,.78)', '#dff7fb'], 'lbl3d dump': null, 'lbl3d sr': ['rgba(15,20,22,.74)', '#fff'], 'lbl3d sr out': ['rgba(15,20,22,.45)', '#d8dadd'], 'lbl3d sr none': ['rgba(15,20,22,.74)', '#c9ccd1'], 'lbl3d sr out none': ['rgba(15,20,22,.45)', '#c9ccd1'] };
+  const LBL = { 'lbl3d': null, 'lbl3d seq': ['rgba(15,20,22,.78)', '#fff'], 'lbl3d toe': ['#ffd58a', '#2a2118'], 'lbl3d limit': ['rgba(48,36,92,.78)', '#e4dbff'], 'lbl3d pit': ['rgba(15,20,22,.84)', '#fff', '#fff'], 'lbl3d pit box': ['rgba(15,20,22,.72)', '#fff', '#fff'], 'lbl3d fill': ['rgba(16,70,82,.78)', '#dff7fb'], 'lbl3d dump': null, 'lbl3d sr': ['rgba(255,255,255,.95)', '#10151a'], 'lbl3d sr out': ['rgba(255,255,255,.75)', '#3a4047'], 'lbl3d sr none': ['rgba(255,255,255,.95)', '#6b7178'], 'lbl3d sr out none': ['rgba(255,255,255,.75)', '#6b7178'] };
   function frame(ctx, o = {}) {
     const W = ctx.canvas.width, H = ctx.canvas.height;
     if (needsDrape) { drapeAll(); needsDrape = false; }
@@ -12139,9 +12153,10 @@ const View = (() => {
       ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       for (const [it, p] of placeLabels(W, H)) {
         const up = /toe/.test(it.cls), big = /dump|pit/.test(it.cls), txt = /toe|limit|pit|dump/.test(it.cls) ? it.text.toUpperCase() : it.text;
-        ctx.font = `600 ${Math.round((big ? 12 : 11) * k)}px ${font}`;
+        const fz = it.fs || (big ? 12 : 11) * k, hh = it.fs ? it.fs * 0.72 : 8 * k, pw = it.fs ? 6 : 6 * k; // (a value: its own font, as on screen)
+        ctx.font = `600 ${Math.round(fz)}px ${it.fs ? '"Barlow", ' + font : font}`;
         const tw = ctx.measureText(txt).width, x = p[0], y = up ? p[1] - 10 * k : p[1], st = LBL[it.cls];
-        if (st) { ctx.fillStyle = st[0]; ctx.fillRect(x - tw / 2 - 6 * k, y - 8 * k, tw + 12 * k, 16 * k); if (st[2] || it.color) { ctx.strokeStyle = it.color || st[2]; ctx.lineWidth = 1.5 * k; ctx.strokeRect(x - tw / 2 - 6 * k, y - 8 * k, tw + 12 * k, 16 * k); } ctx.fillStyle = st[1]; }
+        if (st) { ctx.fillStyle = st[0]; ctx.fillRect(x - tw / 2 - pw, y - hh, tw + 2 * pw, 2 * hh); if (st[2] || it.color) { ctx.strokeStyle = it.color || st[2]; ctx.lineWidth = it.fs ? 2 : 1.5 * k; ctx.strokeRect(x - tw / 2 - pw, y - hh, tw + 2 * pw, 2 * hh); } ctx.fillStyle = st[1]; }
         else { ctx.shadowColor = 'rgba(0,0,0,.9)'; ctx.shadowBlur = 3 * k; ctx.fillStyle = /dump/.test(it.cls) ? '#fff7e6' : '#fff'; }
         ctx.fillText(txt, x, y); ctx.shadowBlur = 0;
       }
@@ -12170,7 +12185,7 @@ const View = (() => {
     needsRender = true; labelsDirty = true;
   }
   /* The plan view framing the blocks (their centres, and the values written inside the blocks of the resource layout, with
-     a block around them) rather than the whole elevation model: close enough to read the values inside the blocks */
+     a block around them) rather than the whole elevation model, and close enough to read the values inside the blocks */
   function fitBlocks() {
     if (!ws || !ws.blockCentroid || !ws.blockCentroid.length) return fit('plan');
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -12180,10 +12195,11 @@ const View = (() => {
     const a = Math.sqrt(ws.blockArea.reduce((s, v) => s + v, 0) / ws.blockArea.length);
     const [lx0, ly0] = toL(x0 - a, y0 - a), [lx1, ly1] = toL(x1 + a, y1 + a);
     const cx = (lx0 + lx1) / 2, cy = (ly0 + ly1) / 2, half = Math.max((ly1 - ly0) / 2, (lx1 - lx0) / 2 / (camera.aspect || 1));
-    const d = (half / Math.tan((camera.fov * Math.PI) / 360)) * 1.04, tz = ((zMin + zMax - 60) / 2 - zOff) * vex;
-    controls.target.set(cx, cy, tz); camera.position.set(cx, cy - d * 0.001, tz + d);
-    camera.near = Math.max(0.5, d / 2000); camera.far = d * 20; camera.updateProjectionMatrix();
-    controls.update();
+    const tz = ((zMin + zMax - 60) / 2 - zOff) * vex;
+    const place = d => { controls.target.set(cx, cy, tz); camera.position.set(cx, cy - d * 0.001, tz + d); camera.near = Math.max(0.5, d / 2000); camera.far = d * 20; camera.updateProjectionMatrix(); controls.update(); camera.updateMatrixWorld(); };
+    let d = (half / Math.tan((camera.fov * Math.PI) / 360)) * 1.04; place(d);
+    // the blocks at least 1.15 × VAL_PX on screen, for the values (so part of the blocks, about their middle, when they are many)
+    for (let k = 0; k < 4; k++) { const bp = blockPx(container.clientWidth, container.clientHeight), want = VAL_PX * 1.15; if (!(bp < want) || bp >= 999) break; d *= bp / want; place(d); }
     needsRender = true; labelsDirty = true;
   }
   function focusOn(x, y) {
