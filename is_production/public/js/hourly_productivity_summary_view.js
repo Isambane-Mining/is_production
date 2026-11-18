@@ -98,6 +98,8 @@
   function renderSummary(data) {
     const s = data.summary;
     const pie = data.pie;
+    const benchmarkLabel = s.shift_target_bcm == null ? 'Completed hours' : 'Shift target';
+    const benchmarkValue = s.shift_target_bcm == null ? s.completed_target_bcm : s.shift_target_bcm;
     const achievedEnd = pie.target ? pie.achieved / pie.target * 100 : 0;
     // The full unmet BCM target includes the retained PBM estimate and remaining shortfall.
     const notAchieved = Math.max(pie.target - pie.achieved, 0);
@@ -105,7 +107,7 @@
       ['Actual BCM', number(s.actual_bcm, 1), 'All recorded excavator output'],
       ['Shift target BCM', number(s.shift_target_bcm), `${number(data.production_excavator_count)} MPP excavators × ${number(s.planned_shift_hours)} planned hours × 220`],
       ['Achievement', s.achievement == null ? '—' : `${number(s.achievement, 2)}%`,
-        `${number(s.completed_actual_bcm, 1)} / ${number(s.completed_target_bcm)} · completed hours`],
+        `${number(s.completed_actual_bcm, 1)} / ${number(benchmarkValue)} · ${benchmarkLabel.toLowerCase()}`],
       ['ADTs available / utilised', `${number(s.average_available, 2)} / ${number(s.adts_utilised)}`,
         '12-hour average available / unique utilised']
     ];
@@ -130,11 +132,11 @@
         ${(data.excavators || []).map(r => `<article><strong>${escape(r.excavator)}</strong><div>
           <span>First <b>${escape(r.first_load_time || '—')}</b></span>
           <span>Last <b>${escape(r.last_load_time || '—')}</b></span></div></article>`).join('') || '<p>No load times recorded.</p>'}</div></details>
-      <section class="hps-chart-section" aria-label="Completed-hour target composition">
+      <section class="hps-chart-section" aria-label="${escape(benchmarkLabel)} target composition">
         ${pie.target ? `<div class="hps-pie" role="img" aria-label="${escape(`Target Achieved ${number(pie.achieved, 1)} BCM; Target Not Achieved ${number(notAchieved, 1)} BCM`)}"
           style="background:conic-gradient(var(--hps-green) 0% ${achievedEnd}%, var(--hps-red) ${achievedEnd}% 100%)"></div>` :
           '<div class="hps-no-pie">No completed-hour target</div>'}
-        <div class="hps-legend"><strong>Completed hours · ${number(pie.target)} BCM target</strong>
+        <div class="hps-legend"><strong>${escape(benchmarkLabel)} · ${number(pie.target)} BCM target</strong>
           <span><i class="hps-dot green"></i>Target Achieved <b>${number(pie.achieved, 1)} BCM</b></span>
           <span><i class="hps-dot red"></i>Target Not Achieved <b>${number(notAchieved, 1)} BCM</b></span>
         </div>

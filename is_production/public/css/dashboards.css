@@ -4695,3 +4695,841 @@ body .hod-performance-dashboard:not(.hod-export-dashboard) {
     white-space:nowrap;
   }
 }
+
+
+/* ADT AVAILABILITY VISUAL REFRESH */
+.hpa-availability-matrix td,
+.hpa-availability-matrix th,
+.hpa-availability-matrix .hpa-day-avg,
+.hpa-availability-matrix .hpa-night-avg {
+    font-weight: 700;
+}
+
+.hpa-availability-matrix td {
+    color: #111111;
+}
+
+.hpa-availability-matrix td small {
+    color: #111111;
+    font-weight: 700;
+    opacity: 0.95;
+}
+
+.hpa-availability-matrix .hpa-available,
+.hpa-availability-matrix .hpa-available-value,
+.hpa-availability-matrix .hpa-value-available {
+    color: #1d4ed8 !important;
+    font-weight: 800 !important;
+}
+
+.hpa-availability-matrix .hpa-total,
+.hpa-availability-matrix .hpa-total-value,
+.hpa-availability-matrix .hpa-value-total,
+.hpa-availability-matrix .hpa-fleet-total {
+    color: #111111 !important;
+    font-weight: 800 !important;
+}
+
+.hpa-availability-matrix .hpa-separator,
+.hpa-availability-matrix .hpa-value-separator {
+    color: #111111 !important;
+    font-weight: 700 !important;
+    opacity: 0.9;
+}
+
+/* brighter legend chips */
+.hpa-legend .hpa-green,
+.hpa-availability-legend .hpa-green,
+.hpa-availability-matrix .hpa-green,
+.hpa-availability-matrix td.hpa-green {
+    background: #b8f5c8 !important;
+    color: #0c6b2f !important;
+}
+
+.hpa-legend .hpa-orange,
+.hpa-availability-legend .hpa-orange,
+.hpa-availability-matrix .hpa-orange,
+.hpa-availability-matrix td.hpa-orange {
+    background: #ffd39a !important;
+    color: #9a4b00 !important;
+}
+
+.hpa-legend .hpa-red,
+.hpa-availability-legend .hpa-red,
+.hpa-availability-matrix .hpa-red,
+.hpa-availability-matrix td.hpa-red {
+    background: #ffb3bf !important;
+    color: #9f1239 !important;
+}
+
+/* grey was too dull — make it brighter and cleaner */
+.hpa-legend .hpa-grey,
+.hpa-availability-legend .hpa-grey,
+.hpa-availability-matrix .hpa-grey,
+.hpa-availability-matrix td.hpa-grey {
+    background: #eef2f7 !important;
+    color: #4b5563 !important;
+}
+
+/* make legend text clearer */
+.hpa-legend,
+.hpa-availability-legend {
+    font-weight: 600;
+}
+
+.hpa-legend span,
+.hpa-availability-legend span,
+.hpa-legend-item,
+.hpa-availability-legend .legend-item {
+    color: #1f2937;
+}
+
+/* if total fleet legend item exists, make it dark and bold */
+.hpa-legend .hpa-total-fleet,
+.hpa-availability-legend .hpa-total-fleet,
+.hpa-legend .legend-total-fleet,
+.hpa-availability-legend .legend-total-fleet {
+    color: #111111 !important;
+    font-weight: 800 !important;
+}
+
+
+
+/* ADT AVAILABILITY FLEET COMPOSITION CARD */
+.hm-availability-legend-card {
+  display:grid;
+  grid-template-columns:minmax(250px,.9fr) minmax(0,1.5fr);
+  gap:22px;
+  width:100%;
+  box-sizing:border-box;
+  padding:18px;
+  border:1px solid #dbe3ef;
+  border-radius:12px;
+  background:var(--card-bg,#fff);
+}
+.hm-availability-fleet-card {
+  min-width:0;
+  padding-right:20px;
+  border-right:1px solid #dbe3ef;
+}
+.hm-availability-card-heading {
+  display:flex;
+  flex-wrap:wrap;
+  justify-content:space-between;
+  align-items:center;
+  gap:8px;
+  margin-bottom:15px;
+}
+.hm-availability-card-heading strong,
+.hm-availability-key-card>strong {
+  font-size:14px;
+  font-weight:700;
+  color:#243247;
+}
+.hm-availability-card-heading>span {
+  color:#64748b;
+  font-size:11px;
+}
+.hm-availability-fleet-counts {
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:9px;
+}
+.hm-availability-fleet-stat {
+  display:grid;
+  gap:7px;
+  min-width:0;
+  padding:12px 9px;
+  border:1px solid #dbe3ef;
+  border-radius:9px;
+  background:#f8fafc;
+}
+.hm-availability-fleet-stat span {
+  font-size:11px;
+  color:#475569;
+}
+.hm-availability-fleet-stat strong {
+  font-size:25px;
+  line-height:1.1;
+  font-weight:700;
+  color:#243247;
+  font-variant-numeric:tabular-nums;
+}
+.hm-production-stat {border-top:3px solid #2563EB}
+.hm-spare-stat {border-top:3px solid #9333EA}
+.hm-total-stat {border-top:1px solid #dbe3ef}
+.hm-availability-key-card {min-width:0}
+.hm-availability-key-items {
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:13px 18px;
+  margin-top:15px;
+}
+.hm-availability-key-items>div {
+  display:flex;
+  align-items:center;
+  gap:9px;
+  min-width:0;
+  font-size:12px;
+  line-height:1.4;
+  color:#334155;
+}
+.hm-availability-key-items span {overflow-wrap:anywhere}
+.hm-availability-key-items i {
+  width:13px;
+  height:13px;
+  flex:0 0 13px;
+  border-radius:3px;
+}
+.hm-availability-key-items .hm-available-key {background:#2563EB}
+.hm-availability-key-items .hm-total-key {background:#16A05A}
+.hm-availability-key-items .hm-green-key {background:#B9EDC5}
+.hm-availability-key-items .hm-orange-key {background:#FFC18A}
+.hm-availability-key-items .hm-red-key {background:#F3A6AE}
+.hm-availability-key-items .hm-unknown-key {background:#E8EDF2}
+
+@media(max-width:850px) {
+  .hm-availability-legend-card {grid-template-columns:1fr;gap:18px}
+  .hm-availability-fleet-card {
+    padding-right:0;
+    padding-bottom:17px;
+    border-right:0;
+    border-bottom:1px solid #dbe3ef;
+  }
+}
+@media(max-width:400px) {
+  .hm-availability-key-items {grid-template-columns:1fr}
+  .hm-availability-fleet-stat {padding:10px 6px}
+  .hm-availability-fleet-stat span {font-size:10px}
+}
+
+
+/* ADT AVAILABILITY COLOUR AND FLEET VALUE REFINEMENT */
+
+.hm-availability-matrix .hm-avail {
+    color: #1D4ED8 !important;
+    font-weight: 800 !important;
+}
+
+.hm-availability-matrix .hm-total {
+    color: #111827 !important;
+    font-weight: 900 !important;
+}
+
+.hm-availability-legend .hm-total-key {
+    background: #111827 !important;
+}
+
+.hm-availability-legend .hm-green-key {
+    background: #A7F3B8 !important;
+}
+
+.hm-availability-legend .hm-orange-key {
+    background: #FDBA74 !important;
+}
+
+.hm-availability-legend .hm-red-key {
+    background: #FDA4AF !important;
+}
+
+.hm-availability-legend .hm-unknown-key {
+    background: #DCE4EE !important;
+}
+
+
+
+/* ADT AVAIL TABLE POLISH 2026-11-17 */
+
+/* Make the values stand out more */
+.hm-availability-matrix td {
+  font-size: 12px;
+}
+
+.hm-availability-matrix .hm-avail {
+  color: #1D4ED8 !important;
+  font-weight: 800 !important;
+  font-size: 12px !important;
+}
+
+.hm-availability-matrix .hm-total {
+  color: #111827 !important;
+  font-weight: 900 !important;
+  font-size: 12px !important;
+}
+
+/* Match legend chips to the refreshed colours */
+.hm-availability-legend .hm-green-key {
+  background: #A7F3B8 !important;
+}
+
+.hm-availability-legend .hm-orange-key {
+  background: #FDBA74 !important;
+}
+
+.hm-availability-legend .hm-red-key {
+  background: #FF7A7A !important;
+}
+
+.hm-availability-legend .hm-unknown-key {
+  background: #DCE4EE !important;
+}
+
+/* Make Sundays visually distinct without overriding the coloured hour cells */
+.hm-availability-matrix tr.hm-sunday-row > .hpa-sticky-date,
+.hm-availability-matrix tr.hm-sunday-row > .hpa-sticky-day,
+.hm-availability-matrix tr.hm-sunday-row > .hpa-sticky-month {
+  background: #F3F0FF !important;
+  color: #5B21B6 !important;
+  font-weight: 800 !important;
+}
+
+.hm-availability-matrix tr.hm-sunday-row > .hpa-sticky-date {
+  border-left: 4px solid #8B5CF6 !important;
+}
+
+
+
+/* ADT AVAIL FINAL VALUE AND AVERAGE STYLING */
+
+/* Available number: black bold */
+.hm-availability-matrix .hm-avail {
+    color: #111827 !important;
+    font-weight: 900 !important;
+    font-size: 12px !important;
+}
+
+/* Total fleet number: white bold */
+.hm-availability-matrix .hm-total {
+    color: #FFFFFF !important;
+    font-weight: 900 !important;
+    font-size: 12px !important;
+    text-shadow: 0 1px 2px rgba(0,0,0,.75);
+}
+
+/* Average columns: blue background, clearer separation */
+.hm-availability-matrix .hm-availability-average {
+    background: #DBEAFE !important;
+    border-left: 2px solid #60A5FA !important;
+    border-right: 2px solid #60A5FA !important;
+    font-weight: 800 !important;
+}
+
+.hm-availability-matrix .hm-availability-average-heading {
+    background: #EFF6FF !important;
+    color: #1E3A8A !important;
+    border-left: 2px solid #60A5FA !important;
+    border-right: 2px solid #60A5FA !important;
+    font-weight: 800 !important;
+}
+
+/* Keep both average values readable */
+.hm-availability-matrix .hm-availability-average .hm-avail {
+    display: inline-block;
+    color: #111827 !important;
+    background: #FFFFFF;
+    padding: 1px 3px;
+    border-radius: 3px;
+}
+
+.hm-availability-matrix .hm-availability-average .hm-total {
+    display: inline-block;
+    color: #FFFFFF !important;
+    background: #065F46;
+    padding: 1px 3px;
+    border-radius: 3px;
+    text-shadow: none;
+}
+
+/* Legend keys match the number colours */
+.hm-availability-legend .hm-available-key {
+    background: #111827 !important;
+    border: 1px solid #111827;
+}
+
+.hm-availability-legend .hm-total-key {
+    background: #FFFFFF !important;
+    border: 2px solid #334155 !important;
+}
+
+/* Status legend matches hourly cells */
+.hm-availability-legend .hm-green-key {
+    background: #22C55E !important;
+}
+
+.hm-availability-legend .hm-orange-key {
+    background: #F59E0B !important;
+}
+
+.hm-availability-legend .hm-red-key {
+    background: #EF4444 !important;
+}
+
+.hm-availability-legend .hm-unknown-key {
+    background: #E5E7EB !important;
+}
+
+
+
+/* ADT AVAIL WHITE AVAILABLE VALUES */
+.hm-availability-matrix .hm-avail {
+    color: #FFFFFF !important;
+    -webkit-text-fill-color: #FFFFFF !important;
+    font-weight: 900 !important;
+    text-shadow: 0 1px 2px rgba(0,0,0,.75);
+}
+
+.hm-availability-legend .hm-available-key {
+    background: #FFFFFF !important;
+    border: 2px solid #334155 !important;
+}
+
+
+
+/* ADT AVAIL FINAL TEXT AND AVERAGE CLEANUP */
+
+/* Hourly available ADT value */
+.hm-availability-matrix td.hm-availability-cell .hm-avail {
+    color: #111827 !important;
+    -webkit-text-fill-color: #111827 !important;
+    background: transparent !important;
+    font-weight: 900 !important;
+    text-shadow: none !important;
+    padding: 0 !important;
+}
+
+/* Hourly total fleet value */
+.hm-availability-matrix td.hm-availability-cell .hm-total {
+    color: #FFFFFF !important;
+    -webkit-text-fill-color: #FFFFFF !important;
+    background: #065F46 !important;
+    font-weight: 900 !important;
+    text-shadow: none !important;
+}
+
+/* Clean Day Avg and Night Avg: both values bold black */
+.hm-availability-matrix td.hm-availability-average {
+    background: #FFF1BE !important;
+    color: #111827 !important;
+    font-weight: 900 !important;
+}
+
+.hm-availability-matrix td.hm-availability-average .hm-avail,
+.hm-availability-matrix td.hm-availability-average .hm-total {
+    display: inline !important;
+    color: #111827 !important;
+    -webkit-text-fill-color: #111827 !important;
+    background: transparent !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+    padding: 0 !important;
+    font-size: inherit !important;
+    font-weight: 900 !important;
+}
+
+/* Legend matches the values */
+.hm-availability-legend .hm-available-key {
+    background: #111827 !important;
+    border: 1px solid #111827 !important;
+}
+
+.hm-availability-legend .hm-total-key {
+    background: #065F46 !important;
+    border: 1px solid #065F46 !important;
+}
+
+
+/* REMOVE TOTAL ADTS GREEN ACCENT */
+.hm-availability-fleet-stat.hm-total-stat {
+    border-top: 1px solid #dbe3ef !important;
+    box-shadow: none !important;
+}
+
+/* Enforce distinct fleet composition accent colours */
+.hm-availability-legend-card .hm-availability-fleet-counts > .hm-availability-fleet-stat.hm-production-stat {
+  border-top: 3px solid #2563EB !important;
+}
+
+.hm-availability-legend-card .hm-availability-fleet-counts > .hm-availability-fleet-stat.hm-spare-stat {
+  border-top: 3px solid #9333EA !important;
+}
+
+.hm-availability-legend-card .hm-availability-fleet-counts > .hm-availability-fleet-stat.hm-total-stat {
+  border-top: 3px solid #16A05A !important;
+}
+
+
+/* REMOVE GREEN TOTAL FLEET BADGE */
+.hm-availability-matrix td.hm-availability-cell .hm-total {
+    color: #FFFFFF !important;
+    -webkit-text-fill-color: #FFFFFF !important;
+    background: transparent !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+    font-weight: 900 !important;
+}
+
+
+/* ADT AVAIL COMPACT CELL NUMBERS */
+.hm-availability-matrix td.hm-availability-cell .hm-avail,
+.hm-availability-matrix td.hm-availability-cell .hm-total {
+    font-size: 10px !important;
+    font-weight: 800 !important;
+}
+
+
+/* ADT AVAIL GREY ROW BLACK TEXT */
+.hm-availability-matrix td.hm-availability-cell.hm-no-production {
+    color: #111827 !important;
+    font-weight: 800 !important;
+}
+
+.hm-availability-matrix td.hm-availability-cell.hm-no-production .hm-total,
+.hm-availability-matrix td.hm-availability-cell.hm-no-production .hm-avail {
+    color: #111827 !important;
+    -webkit-text-fill-color: #111827 !important;
+    background: transparent !important;
+    text-shadow: none !important;
+    font-weight: 900 !important;
+}
+
+/* ADT AVAIL LEGEND COLOURS MATCH MATRIX */
+.hm-availability-key-items .hm-green-key {
+    background: #22C55E !important;
+    border: 1px solid #22C55E !important;
+}
+
+.hm-availability-key-items .hm-orange-key {
+    background: #F59E0B !important;
+    border: 1px solid #F59E0B !important;
+}
+
+.hm-availability-key-items .hm-red-key {
+    background: #EF4444 !important;
+    border: 1px solid #EF4444 !important;
+}
+
+.hm-availability-key-items .hm-unknown-key {
+    background: #E5E7EB !important;
+    border: 1px solid #CBD5E1 !important;
+}
+
+/* ADT Util: match ADT Avail palette with contrasting cell numbers */
+.hm-matrix td.hm-green,
+.hm-matrix td.hm-red {
+  color: #FFFFFF !important;
+}
+
+.hm-matrix td.hm-orange,
+.hm-matrix td.hm-neutral {
+  color: #172A1A !important;
+}
+
+.hm-matrix td.hm-green .hm-used,
+.hm-matrix td.hm-green .hm-avail,
+.hm-matrix td.hm-red .hm-used,
+.hm-matrix td.hm-red .hm-avail {
+  color: #FFFFFF !important;
+}
+
+.hm-matrix td.hm-orange .hm-used,
+.hm-matrix td.hm-orange .hm-avail,
+.hm-matrix td.hm-neutral .hm-used,
+.hm-matrix td.hm-neutral .hm-avail {
+  color: #172A1A !important;
+}
+
+/* ADT Util: exact ADT Avail palette */
+.hm-matrix td.hm-green {
+  background: #22C55E !important;
+  color: #FFFFFF !important;
+}
+
+.hm-matrix td.hm-orange {
+  background: #F59E0B !important;
+  color: #000000 !important;
+}
+
+.hm-matrix td.hm-red {
+  background: #EF4444 !important;
+  color: #FFFFFF !important;
+}
+
+.hm-matrix td.hm-neutral {
+  background: #E5E7EB !important;
+  color: #000000 !important;
+}
+
+/* Keep both numbers the same colour */
+.hm-matrix td.hm-green .hm-used,
+.hm-matrix td.hm-green .hm-avail,
+.hm-matrix td.hm-red .hm-used,
+.hm-matrix td.hm-red .hm-avail {
+  color: #FFFFFF !important;
+}
+
+.hm-matrix td.hm-orange .hm-used,
+.hm-matrix td.hm-orange .hm-avail,
+.hm-matrix td.hm-neutral .hm-used,
+.hm-matrix td.hm-neutral .hm-avail {
+  color: #000000 !important;
+}
+
+/* Matching legend indicators */
+.hm-green-key { background: #22C55E !important; }
+.hm-orange-key { background: #F59E0B !important; }
+.hm-red-key { background: #EF4444 !important; }
+.hm-unknown-key { background: #E5E7EB !important; }
+
+
+/* ADT Util: distinguish utilised and available values */
+.hm-legend .hm-utilised-key {
+  background: #000000 !important;
+  border: 1px solid #000000 !important;
+}
+
+.hm-legend .hm-available-key {
+  background: #FFFFFF !important;
+  border: 1px solid #000000 !important;
+}
+
+/* First number = Utilised (black) */
+.hm-matrix td.hm-hour-cell .hm-used {
+  color: #000000 !important;
+}
+
+/* Second number = Available (white) */
+.hm-matrix td.hm-hour-cell .hm-avail {
+  color: #FFFFFF !important;
+}
+
+/* Restrict black/white metric labels to ADT Util only */
+.hm-matrix:not(.hm-availability-matrix) td.hm-hour-cell .hm-used {
+  color: #000000 !important;
+}
+
+.hm-matrix:not(.hm-availability-matrix) td.hm-hour-cell .hm-avail {
+  color: #FFFFFF !important;
+}
+
+/* Preserve original ADT Avail number colour */
+.hm-availability-matrix td.hm-hour-cell .hm-avail {
+  color: #2563EB !important;
+}
+
+/* Four-column combined ADT Util legend */
+.hm-chart .hm-legend.hm-legend-has-fleet {
+  grid-template-columns:
+    minmax(145px, .8fr)
+    minmax(205px, 1.05fr)
+    minmax(210px, 1fr)
+    minmax(310px, 1.4fr);
+}
+
+.hm-chart .hm-legend-fleet-list {
+  display: grid;
+  gap: 12px;
+}
+
+.hm-chart .hm-legend-fleet-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: #334155;
+}
+
+.hm-chart .hm-legend-fleet-row strong {
+  font-size: 19px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.hm-chart .hm-production-count { color: #2563EB; }
+.hm-chart .hm-spare-count { color: #9333EA; }
+.hm-chart .hm-total-count { color: #16A05A; }
+
+.hm-chart .hm-legend-fleet-date {
+  margin-top: auto;
+  padding-top: 12px;
+  color: #64748b;
+  font-size: 10px;
+}
+
+@media(max-width:1100px) {
+  .hm-chart .hm-legend.hm-legend-has-fleet {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media(max-width:600px) {
+  .hm-chart .hm-legend.hm-legend-has-fleet {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+
+/* Available ADTs: white swatch with visible black outline */
+.hm-legend-has-fleet .hm-available-key {
+  background: #FFFFFF !important;
+  border: 1px solid #000000 !important;
+  box-sizing: border-box !important;
+}
+
+/* Improve visibility of white Available ADT numbers */
+.hm-matrix:not(.hm-availability-matrix) td.hm-hour-cell .hm-avail {
+  color: #FFFFFF !important;
+  -webkit-text-stroke: 0.35px #000000;
+  paint-order: stroke fill;
+}
+
+/* Stronger black outline around white Available ADT values */
+.hm-matrix:not(.hm-availability-matrix) td.hm-hour-cell .hm-avail {
+  color: #FFFFFF !important;
+  -webkit-text-stroke: 0.8px #000000 !important;
+  paint-order: stroke fill;
+  text-shadow:
+    0.5px 0 #000000,
+    -0.5px 0 #000000,
+    0 0.5px #000000,
+    0 -0.5px #000000;
+}
+
+/* Remove Available ADT text outline */
+.hm-matrix:not(.hm-availability-matrix) td.hm-hour-cell .hm-avail {
+  -webkit-text-stroke: 0 !important;
+  text-shadow: none !important;
+  paint-order: normal;
+}
+
+/* ADT Util: Available ADT numbers in black */
+.hm-matrix:not(.hm-availability-matrix) td.hm-hour-cell .hm-avail {
+  color: #000000 !important;
+  -webkit-text-stroke: 0 !important;
+  text-shadow: none !important;
+}
+
+/* ADT Util: Available ADT numbers in black */
+.hm-matrix:not(.hm-availability-matrix) td.hm-hour-cell .hm-avail {
+  color: #000000 !important;
+  -webkit-text-stroke: 0 !important;
+  text-shadow: none !important;
+}
+
+
+/* EXCAVATOR AVAILABILITY FLEET COMPOSITION CARD */
+
+.he-availability-overview {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+    gap: 12px;
+    margin-bottom: 14px;
+    align-items: stretch;
+}
+
+.he-fleet-card {
+    min-width: 0;
+    padding: 14px;
+    border: 1px solid #dbe3ef;
+    border-radius: 10px;
+    background: #fff;
+}
+
+.he-fleet-card-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    color: #1f2937;
+    font-size: 13px;
+}
+
+.he-fleet-card-heading span {
+    color: #64748b;
+    font-size: 11px;
+}
+
+.he-fleet-counts {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 9px;
+    margin-top: 13px;
+}
+
+.he-fleet-stat {
+    display: grid;
+    gap: 7px;
+    min-width: 0;
+    padding: 11px 9px;
+    border: 1px solid #dbe3ef;
+    border-radius: 9px;
+    background: #f8fafc;
+}
+
+.he-fleet-stat span {
+    color: #475569;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.he-fleet-stat strong {
+    color: #1f2937;
+    font-size: 25px;
+    line-height: 1.1;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+}
+
+.he-production-stat { border-top: 3px solid #2563eb; }
+.he-spare-stat { border-top: 3px solid #9333ea; }
+.he-total-stat { border-top: 3px solid #111827; }
+
+.he-excavator-legend {
+    align-content: center;
+}
+
+@media(max-width:760px) {
+    .he-availability-overview {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media(max-width:420px) {
+    .he-fleet-counts { gap: 6px; }
+    .he-fleet-stat { padding: 9px 6px; }
+    .he-fleet-stat span { font-size: 10px; }
+    .he-fleet-stat strong { font-size: 21px; }
+}
+
+/* Available ADTs: white normally, black only during fatigue */
+.hm-matrix:not(.hm-availability-matrix) td.hm-hour-cell .hm-avail {
+  color: #FFFFFF !important;
+  -webkit-text-stroke: 0 !important;
+  text-shadow: none !important;
+}
+
+.hm-matrix:not(.hm-availability-matrix) td.hm-hour-cell.hm-fatigue .hm-avail {
+  color: #000000 !important;
+}
+
+/* ADT utilisation data anomaly */
+.hm-cell.hm-green-anomaly {
+  background: #22C55E !important;
+  color: #FFFFFF !important;
+  box-shadow: inset 0 0 0 1px #D63C4B;
+}
+
+.hm-cell.hm-green-anomaly .hm-used,
+.hm-cell.hm-green-anomaly .hm-avail {
+  color: #FFFFFF !important;
+}
+
+.hm-anomaly-key {
+  background: #22C55E !important;
+  border: 1px solid #D63C4B !important;
+}

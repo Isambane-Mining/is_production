@@ -17,6 +17,7 @@ class TestHourlyProductivityExcel(TestCase):
     def setUp(self):
         fixture = fixtures.TestHourlyProductivityAnalysis()
         fixture.setUp()
+        fixture.plan["month_actual_bcm"] = 4321
         docs = [fixture.f.doc("07:00-08:00", rows=[fixture.f.row(bcm=880)]),
                 fixture.f.doc("08:00-09:00", rows=[fixture.f.row(bcm=400)])]
         fatigue = [{"site": "Koppie", "shift": "Day", "day_type": "Weekday",
@@ -28,10 +29,10 @@ class TestHourlyProductivityExcel(TestCase):
         book = load_workbook(BytesIO(content))
         summary, month = book["Summary"], book["October 2026"]
         self.assertEqual([cell.value for cell in summary[9]], [
-            "Month", "Days", "Actual BCM", "Target BCM", "Achievement",
+            "Month", "Days", "Actual BCM (MPP)", "Target BCM", "Achievement",
             "Green hrs", "Orange hrs", "Red hrs", "Fatigue / Non-working hrs"])
         self.assertEqual([summary.cell(10, col).value for col in range(6, 10)], [1, 1, 21.5, .5])
-        self.assertEqual(summary["C10"].value, 1280)
+        self.assertEqual(summary["C10"].value, 4321)
         self.assertEqual(summary["D10"].value, 7920)
         self.assertEqual(
             sum(cell["target_bcm"] for cell in self.data["rows"][0]["cells"]),
@@ -67,7 +68,8 @@ class TestHourlyProductivityExcel(TestCase):
         fixture = fixtures.TestHourlyProductivityAnalysis()
         fixture.setUp()
         september = dict(fixture.plan, name="SEP", prod_month_start_date="2026-09-01",
-                         prod_month_end_date="2026-09-30")
+                         prod_month_end_date="2026-09-30", month_actual_bcm=1111)
+        fixture.plan["month_actual_bcm"] = 2222
         september["month_prod_days"] = [{
             "shift_start_date": "2026-09-30",
             "production_excavators": "2",
@@ -86,6 +88,8 @@ class TestHourlyProductivityExcel(TestCase):
         book = load_workbook(BytesIO(make_workbook(data)))
         self.assertEqual(book.sheetnames, ["Summary", "September 2026", "October 2026"])
         summary = book["Summary"]
+        self.assertEqual(summary["C10"].value, 1111)
+        self.assertEqual(summary["C11"].value, 2222)
         self.assertEqual(summary.auto_filter.ref, "A9:I11")
         for row in (10, 11):
             self.assertEqual([summary.cell(row, col).value for col in range(6, 10)], [0, 0, 24, 0])
@@ -95,7 +99,7 @@ class TestHourlyProductivityExcel(TestCase):
     def test_spare_fleet_does_not_raise_excel_bcm_thresholds(self):
         fixture = fixtures.TestHourlyProductivityAnalysis()
         fixture.setUp()
-        plan = dict(fixture.plan, num_excavators=1)
+        plan = dict(fixture.plan, num_excavators=1, month_actual_bcm=1280)
         plan["month_prod_days"] = [
             dict(row, production_excavators="1", bcm_per_day=3960)
             for row in fixture.plan["month_prod_days"]
@@ -151,10 +155,8 @@ class TestHourlyProductivityExcel(TestCase):
                     str(sheet[address].value).rstrip("*" + chr(8224))
                 )
 
-        self.assertAlmostEqual(
-            exported_actual,
-            book["Summary"]["C10"].value
-        )
+        self.assertEqual(book["Summary"]["C10"].value, 4321)
+        self.assertNotEqual(exported_actual, book["Summary"]["C10"].value)
 
     def test_monthly_export_includes_day_and_night_average_columns(self):
         book = load_workbook(BytesIO(make_workbook(self.data)))
