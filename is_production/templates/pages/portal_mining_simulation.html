@@ -413,6 +413,7 @@ canvas.chart { width: 100%; display: block; }
 .bnd-col { border: 1px solid var(--line); border-radius: var(--r); padding: 8px 10px; background: var(--field); min-width: 0; }
 .bnd-col.in { border-left: 4px solid #2fbf7a; } .bnd-col.out { border-left: 4px solid var(--bad); }
 .bnd-h { font-weight: 600; font-size: var(--fs-s); margin-bottom: 6px; }
+.tbl tr.ign td:not(.use) { opacity: .5; }
 .mg-scale .bar .mk { position: absolute; top: -4px; bottom: -4px; transform: translateX(-50%); }
 .mg-scale .bar .mk.in { width: 4px; background: #fff; border-radius: 1px; box-shadow: 0 0 0 1px var(--ink); }
 .mg-scale .bar .mk.cut { width: 0; border-left: 2px dashed var(--ink); }
@@ -2688,7 +2689,7 @@ const Model = (() => {
      (less than 1% left) and partly mined, the area cut, and where the survey lies above the model (not in situ) */
   function depletionStats(ws) {
     if (!ws || !ws.surf0 || !ws.dep) return null;
-    const P = ws.project, nL = P.layers.length, key = P.layers.map(L => L.density).join('|');
+    const P = ws.project, nL = P.layers.length, key = P.layers.map(L => L.density + (L.ignore ? 'x' : '')).join('|');
     if (ws._depl && ws._depl.surf === ws.surf && ws._depl.key === key) return ws._depl.q; // (kept until the surfaces or the densities change)
     // (as the schedule has them: after the seam cut-off, which the model as built gets too)
     const w0 = Object.assign({}, ws, { surfRaw: ws.surf0, surf: ws.surf0 }); applyCutoff(w0);
@@ -2756,7 +2757,7 @@ const Model = (() => {
      In ws.surf the cut-off seam has no thickness and its neighbour has taken its place, so volumes, the schedule and
      the drawings all follow. ws.cut keeps what was cut off. */
   // a layer that can take a cut-off seam: waste, and topsoil too when topsoil is handled as waste (P.topsoilAsWaste)
-  const isWasteLayer = (P, L) => !!L && L.type !== 'coal' && (L.type !== 'topsoil' || P.topsoilAsWaste === true);
+  const isWasteLayer = (P, L) => !!L && !L.ignore && L.type !== 'coal' && (L.type !== 'topsoil' || P.topsoilAsWaste === true); // (not an ignored layer)
   function cutTargets(P, l) { // the layers that can take seam l as waste: [above, below] (-1 = not possible)
     return [l > 0 && isWasteLayer(P, P.layers[l - 1]) ? l - 1 : -1, isWasteLayer(P, P.layers[l + 1]) ? l + 1 : -1];
   }
@@ -2778,7 +2779,7 @@ const Model = (() => {
     };
     for (let l = 0; l < nL && l + 1 < raw.length; l++) {
       const L = P.layers[l];
-      if (L.type !== 'coal') continue;
+      if (L.type !== 'coal' || L.ignore) continue; // (an ignored seam is not cut off into its neighbour: it is not counted at all)
       const min = +L.minThick > 0 ? +L.minThick : 0, tgt = cutTarget(P, l), top = raw[l], bot = raw[l + 1];
       cut.min[l] = min; cut.target[l] = tgt;
       /* Quality cut-offs (L.qcut = {cv: lowest CV, ash: highest ASH, ts: highest TS}, Block Margin Rank tab): a block whose value of
@@ -2823,11 +2824,14 @@ const Model = (() => {
       }
       cut.layers.push(sum);
     }
-    // the lowest seam that is still coal in each block, where a seam below it was cut off (-1: no coal left at all)
-    if (cut.any) for (let b = 0; b < nB; b++) {
+    // the lowest seam that is still coal in each block, where a seam below it was cut off or is ignored (-1: no coal left
+    // at all): with "stop above a bottom seam that is cut off or ignored" the block is not dug below it (blockLimits)
+    cut.ign = P.layers.some(L => L.type === 'coal' && L.ignore);
+    if (cut.any || cut.ign) for (let b = 0; b < nB; b++) {
       let k = -1, lost = false;
       for (let l = nL - 1; l >= 0; l--) {
         if (P.layers[l].type !== 'coal') continue;
+        if (P.layers[l].ignore) { lost = true; continue; }
         if (cut.rawVol[b][l] - cut.vol[b][l] > 1e-3) { k = l; break; }
         if (cut.vol[b][l] > 1e-3) lost = true;
       }
@@ -2839,14 +2843,20 @@ const Model = (() => {
   function layerIndex(project, id) { return project.layers.findIndex(l => l.id === id); }
 
   /* Per-block per-layer in-situ volumes (bcm). rampFloor optional Float32Array (min elevation that may be mined). */
+  /* A geological layer ignored (L.ignore, Geological Data tab: its Use box cleared) has no volume here, and so none in the
+     schedule (nothing to mine: it holds nothing up, and where layers under it are mined the pit goes through it without
+     counting it), the block margin and strip ratio, the reserve, the coal tons, the drilling and blasting, the Finance and
+     BOQ tabs. Its surfaces stay as they are (the ground and the drawings do not change). */
+  const ignored = L => !!(L && L.ignore);
   function blockVolumes(ws, rampFloor) {
-    const P = ws.project, nL = P.layers.length, S = ws.surf;
+    const P = ws.project, nL = P.layers.length, S = ws.surf, use = P.layers.map(L => !ignored(L));
     return ws.blockCells.map((cells, b) => {
       const v = new Float64Array(nL);
       const k = ws.A * ws.blockCorr[b];
       for (const c of cells) {
         const rf = rampFloor ? rampFloor[c] : -Infinity;
         for (let l = 0; l < nL; l++) {
+          if (!use[l]) continue;
           const zt = Math.min(S[l][c], S[0][c]), zb = Math.max(S[l + 1][c], rf);
           if (zt > zb) v[l] += (zt - zb) * k;
         }
@@ -2968,7 +2978,7 @@ const Model = (() => {
     });
     // seam cut-off with "stop above a cut-off bottom seam": no reason to dig below the lowest seam that is still coal
     const cut = new Uint8Array(nB);
-    if (P.cutoff && P.cutoff.stop && ws.cut && ws.cut.any) for (let b = 0; b < nB; b++) {
+    if (P.cutoff && P.cutoff.stop && ws.cut && (ws.cut.any || ws.cut.ign)) for (let b = 0; b < nB; b++) {
       const k = ws.cut.stopAt[b];
       if (!out[b] && k < lim[b]) { lim[b] = k; zone[b] = -1; cut[b] = 1; any = true; }
     }
@@ -4839,6 +4849,7 @@ const Sim = (() => {
     const parts = []; for (let k = -1; k < pits.length; k++) if (inPart[k + 1] || (k < 0 && !P.blocks.length)) parts.push(k);
     const where = k => (pits.length ? (k >= 0 ? ` in pit "${pits[k].name}"` : ' outside the pits') : '');
     P.layers.forEach((L, l) => {
+      if (L.ignore) return; // (ignored: nothing to mine, it holds nothing up)
       for (const k of parts) {
         const acts = P.activities.filter(a => a.layerId === L.id && Model.pitIndex(P, a) === k);
         if (!acts.length) out.push({ type: 'warn', msg: `Layer "${L.name}" has no mining activity${where(k)}, so nothing below it can be mined${pits.length ? ' there' : ''}.` });
@@ -4848,6 +4859,7 @@ const Sim = (() => {
     for (const a of P.activities) {
       const l = Model.layerIndex(P, a.layerId);
       if (l < 0) { out.push({ type: 'warn', msg: `Activity "${a.name}" is not linked to a layer.` }); continue; }
+      if (P.layers[l].ignore) { out.push({ type: 'info', msg: `Activity "${a.name}" is not scheduled: its layer, ${P.layers[l].name}, is ignored (Geological Data tab).` }); continue; }
       const pk = Model.pitIndex(P, a), key = pk + '|' + a.layerId;
       if (seen.has(key)) continue; seen.add(key);
       if (pits.length && !inPart[pk + 1]) { if (a.path.length) out.push({ type: 'warn', msg: `Activity "${a.name}" works ${pk >= 0 ? `in pit "${pits[pk].name}"` : 'outside the pits'}, where there are no blocks; its path is skipped.` }); continue; }
@@ -5036,10 +5048,10 @@ const Sim = (() => {
        one activity for each layer in each pit, with its own path; blocks of another pit in a path are skipped. */
     const pits = P.pits || [], nP = pits.length, pitOf = Model.blockPits(P, ws);
     const acts = [];
-    const usedLayer = new Set();
+    const usedLayer = new Set(), IGN = P.layers.map(L => !!L.ignore); // (the layers ignored: not mined, not counted)
     P.activities.forEach(a => {
       const l = Model.layerIndex(P, a.layerId), pit = Model.pitIndex(P, a);
-      if (l < 0 || usedLayer.has((pit + 1) * nL + l)) return;
+      if (l < 0 || usedLayer.has((pit + 1) * nL + l) || IGN[l]) return;
       usedLayer.add((pit + 1) * nL + l);
       const path = []; const inPath = new Set();
       let other = 0;
@@ -6047,6 +6059,7 @@ const Sim = (() => {
         const zt = Math.min(ins, S[l][c]), zb = Math.max(S[l + 1][c], z);
         if (zt - zb <= 1e-4) continue;
         const v = (zt - zb) * k; got += zt - zb;
+        if (IGN[l]) continue; // (a ramp through an ignored layer does not count it)
         const vr = Math.max(0, zt - Math.max(zb, rf)) * k; // the part that was counted in the block's volume
         if (vr > 0) remain[b][l] = Math.max(0, remain[b][l] - vr);
         const X = P.layers[l].type === 'coal' ? actOfLayer.get((pitOf[b] + 1) * nL + l) : null;
@@ -6733,7 +6746,7 @@ const Sim = (() => {
       const minesDone = acts.every(X => X.done || X.halted), jobsLeft = jobs.some(J => !J.done);
       if (produced > 0 || moved > 0) { lastActive = day; idle = 0; } else if (w && !(minesDone && jobsLeft) && !acts.some(X => !X.done && !X.halted && day < X.startDay)) idle++; // (waiting for a start date is not being stuck)
       if (minesDone && !jobsLeft) { day++; break; }
-      if (idle > 500) { events.push({ day, type: 'error', msg: 'Mining stopped: no activity could continue for 500 working days. Check the paths, precedence and dump space.' }); day++; break; }
+      if (idle > 500) { const ig = P.layers.filter((L, l) => IGN[l]).map(L => L.name); events.push({ day, type: 'error', msg: `Mining stopped: no activity could continue for 500 working days. Check the paths, precedence and dump space.${ig.length ? ` ${ig.join(', ')} ${ig.length === 1 ? 'is' : 'are'} ignored (Geological Data tab): the voids the activities push and tip into, and the dumps, may need ${ig.length === 1 ? 'it' : 'them'} mined.` : ''}` }); day++; break; }
     }
     const nDays = Math.max(1, Math.min(day, lastActive + 2));
     dayStart[nDays] = dCell.n;
@@ -8168,8 +8181,8 @@ const Margin = (() => {
   // ready: the inputs the margin needs are there
   function ready(P) { const M = settings(P); return num(M.price) > 0 || (!M.fromFin && M.revBy === 'seam' && Object.values(M.seamPrice || {}).some(v => num(v) > 0)); }
   // a seam counted as coal here: coal in the model, and not counted as waste in the Block Margin Rank tab
-  const isCoal = (M, L) => L.type === 'coal' && !(M.waste && M.waste[L.id]);
-  const isWasteSeam = (M, L) => L.type === 'coal' && !isCoal(M, L);
+  const isCoal = (M, L) => L.type === 'coal' && !L.ignore && !(M.waste && M.waste[L.id]);
+  const isWasteSeam = (M, L) => L.type === 'coal' && !L.ignore && !isCoal(M, L); // (an ignored seam is neither: it is not counted)
 
   function compute(P, ws) {
     const M = settings(P), nB = P.blocks.length, nL = P.layers.length, FR = M.fromFin ? finRates(P, ws, M) : null;
@@ -8463,7 +8476,7 @@ const Tons = (() => {
     const raw = Model.blockVolumes(Object.assign({}, ws, { surf: ws.surfRaw || ws.surf }));
     const seams = [];
     P.layers.forEach((L, l) => {
-      if (L.type !== 'coal') return;
+      if (L.type !== 'coal' || L.ignore) return;
       const lo = Model.losses(P, L), so = o.seams[L.id] || {}, counted = Margin.isCoal(M, L);
       const mis = num(so.mIs) != null ? num(so.mIs) : o.mIs, mad = num(so.mAd) != null ? num(so.mAd) : o.mAd;
       const cols = {}; for (const q of Q) cols[q.k] = Margin.colFor(P, M, L, q.k);
@@ -9766,7 +9779,7 @@ const Blast = (() => {
   // whether each layer is drilled and blasted: set by the user, else as recommended
   function plan(P, ws) {
     const o = settings(P), R = recommend(P, ws);
-    return R.map(r => Object.assign(r, { set: o.layers[r.id] != null, on: o.on && (o.layers[r.id] != null ? !!o.layers[r.id] : r.need) }));
+    return R.map(r => { const ig = !!(P.layers[r.l] || {}).ignore; return Object.assign(r, { set: o.layers[r.id] != null, on: !ig && o.on && (o.layers[r.id] != null ? !!o.layers[r.id] : r.need), ignored: ig }, ig ? { why: 'ignored (Geological Data tab): not mined' } : {}); });
   }
 
   /* The blast design of a bench h m high: holes, drill metres and the explosives of a hole, and how much a hole can take
@@ -14802,7 +14815,7 @@ const Tabs = (() => {
     const by = sel([['block', 'Per block — average thickness of the seam in the block'], ['cell', `Per grid cell${P.grid ? ' (' + P.grid.cell + ' m)' : ''} — only the thin part of a block`]], CO.by === 'cell' ? 'cell' : 'block', v => { CO.by = v; App.changed('cutoff'); UI.renderTab(); });
     by.setAttribute('aria-label', 'How the thickness is tested');
     parts.push(fld('Thickness is tested', by));
-    parts.push(chk('Stop above a bottom seam that is cut off', !!CO.stop, v => { CO.stop = v; App.changed('cutoff'); UI.renderTab(); }));
+    parts.push(chk('Stop above a bottom seam that is cut off or ignored', !!CO.stop, v => { CO.stop = v; App.changed('cutoff'); UI.renderTab(); }));
     if (ws && C && C.any) {
       const nL = P.layers.length;
       let nStop = 0, nNone = 0; for (let b = 0; b < C.stopAt.length; b++) if (C.stopAt[b] < nL - 1) { nStop++; if (C.stopAt[b] < 0) nNone++; }
@@ -14825,6 +14838,22 @@ const Tabs = (() => {
       }),
       hint(`${P.topsoilAsWaste === true ? 'On' : 'Off'}: ${P.topsoilAsWaste === true ? 'topsoil is mined and dumped like the overburden: its activity tips on the waste dumps, the trucks may use it to fill ramps, and a thin seam right under it can be cut off into it.' : 'topsoil goes to its own stockpile and is not used for ramp fill.'} Either way it counts as waste in the totals, the strip ratio and the monthly waste target; the running totals under the Gantt chart show it in its own column.${Water.settings(P).on !== false && Water.settings(P).soilDirect !== false ? ' Where backfill has reached its final level, the topsoil goes straight onto it first (Rehab tab, “Backfill and final landform”).' : ''}${has ? '' : ' This model has no layer of the type Topsoil.'}`));
   }
+  /* What ignoring layers does, and a word where waste is still mined below the deepest seam used while a seam under it is
+     ignored (it would be dug for nothing) */
+  function ignoreNotes(P) {
+    const ign = P.layers.filter(L => L.ignore), out = [];
+    if (!ign.length) return out;
+    const list = a => a.map(L => L.name).join(', ');
+    out.push(msg('info', `Ignored: ${list(ign)}. ${ign.length === 1 ? 'It is' : 'They are'} not mined or counted anywhere: the schedule, the Production, Finance and BOQ tabs, the block margin, strip ratio and reserve, the coal tons and the drilling and blasting. Where an ignored layer lies above layers that are mined, the pit goes through it without counting it (no bcm, tons, time, cost or spoil); the ground and the drawings are as before.`));
+    const used = P.layers.map((L, l) => (L.type === 'coal' && !L.ignore ? l : -1)).filter(l => l >= 0), deep = used.length ? used[used.length - 1] : -1;
+    if (deep >= 0 && P.layers.slice(deep + 1).some(L => L.ignore && L.type === 'coal')) {
+      const still = P.layers.slice(deep + 1).filter(L => !L.ignore && L.type !== 'coal'), one = still.length === 1;
+      if (still.length && P.cutoff && P.cutoff.stop) out.push(h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `${list(still)}, below ${P.layers[deep].name} (the deepest seam used), ${one ? 'stays' : 'stay'} in the ground: “Stop above a bottom seam that is cut off or ignored” is on (Seam cut-off).`));
+      else if (still.length) out.push(msg('warn', `${list(still)}, below ${P.layers[deep].name} (the deepest seam used), ${one ? 'is' : 'are'} still mined although the seam under ${one ? 'it' : 'them'} is ignored: tick “Stop above a bottom seam that is cut off or ignored” (Seam cut-off), ignore ${one ? 'it' : 'them'} too, or set a depth limit, if ${one ? 'it' : 'they'} should stay in the ground.`));
+    }
+    if (!P.layers.some(L => L.type === 'coal' && !L.ignore)) out.push(msg('warn', 'Every seam is ignored: there is no coal.'));
+    return out;
+  }
   function layersTable() {
     const P = App.rv().P, ws = App.rv().ws;
     const numCols = (P.attrColumns || []).filter(c => c !== P.idColumn);
@@ -14836,9 +14865,13 @@ const Tabs = (() => {
       color.addEventListener('change', () => { App.changed('colors'); UI.renderTab(); }); // the activities of the layer follow (Sequence tab)
       const q = h('select', { multiple: true, size: 2, title: 'Quality columns reported as tonnage-weighted averages (hold Ctrl to pick several)' }, numCols.map(c => h('option', { value: c, selected: (L.qualityFields || []).includes(c) }, c)));
       q.addEventListener('change', () => { L.qualityFields = Array.from(q.selectedOptions).map(o => o.value); App.changed('layers'); });
-      return h('tr', null,
+      const use = h('input', { type: 'checkbox', checked: !L.ignore, title: L.ignore ? 'Ignored: not mined or counted anywhere. Tick to use it again.' : 'Used. Clear it to ignore the layer: not mined or counted anywhere.' });
+      use.setAttribute('aria-label', `Use ${L.name}`);
+      use.addEventListener('change', () => App.setLayerUse(L, use.checked));
+      return h('tr', L.ignore ? { class: 'ign' } : null,
+        h('td', { class: 'use' }, use),
         h('td', null, color),
-        h('td', null, txt(L.name, v => { L.name = v.trim() || L.name; App.changed('layers'); })),
+        h('td', null, txt(L.name, v => { L.name = v.trim() || L.name; App.changed('layers'); }), L.ignore ? h('div', { class: 'dt' }, 'ignored') : null),
         h('td', null, sel(Object.entries(Model.LAYER_TYPES).map(([k, t]) => [k, t.label]), L.type, v => { L.type = v; App.changed('layers'); })),
         h('td', null, num(L.density, v => { L.density = v > 0 ? v : L.density; App.changed('layers'); }, { step: 0.01, min: 0.5 })),
         h('td', null, num(L.swell, v => { L.swell = v >= 1 ? v : L.swell; App.changed('layers'); }, { step: 0.01, min: 1 })),
@@ -14847,8 +14880,9 @@ const Tabs = (() => {
         h('td', null, L.type === 'coal' ? q : ''));
     });
     return h('div', null, h('div', { class: 'sec-h', style: { marginTop: '4px' } }, h('h3', null, 'Layers')),
-      h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', null, ''), h('th', null, 'Layer'), h('th', null, 'Type'), h('th', null, 't/bcm'), h('th', null, 'Swell'), h('th', { class: 'r', title: 'Thinnest block average' }, 'Min m'), h('th', { class: 'r', title: 'Thickest block average' }, 'Max m'), h('th', { class: 'r', title: 'Average over the blocks' }, 'Avg m'), h('th', null, 'Density column'), h('th', null, 'Quality columns'))), h('tbody', null, rows))),
-      hint('Density is used for tonnes; a density column from the attribute file overrides it block by block. Every volume is bcm; the swell is how much more room a bcm takes once dumped, so it sizes the dumps and the backfill. Min, Max and Avg are the thickness of each layer in the blocks: its average thickness in each block where it is present, the thinnest and thickest of those, and their average' + (App.rv().ws && App.rv().ws.blockCells.length ? '.' : ' (once the 3D model and the block layout are loaded).')));
+      ...ignoreNotes(P),
+      h('div', { class: 'tbl-wrap' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', { title: 'Used: mined and counted. Cleared: ignored everywhere.' }, 'Use'), h('th', null, ''), h('th', null, 'Layer'), h('th', null, 'Type'), h('th', null, 't/bcm'), h('th', null, 'Swell'), h('th', { class: 'r', title: 'Thinnest block average' }, 'Min m'), h('th', { class: 'r', title: 'Thickest block average' }, 'Max m'), h('th', { class: 'r', title: 'Average over the blocks' }, 'Avg m'), h('th', null, 'Density column'), h('th', null, 'Quality columns'))), h('tbody', null, rows))),
+      hint('Use: clear the box to ignore a layer everywhere (it is not mined or counted); tick it to use it again. Density is used for tonnes; a density column from the attribute file overrides it block by block. Every volume is bcm; the swell is how much more room a bcm takes once dumped, so it sizes the dumps and the backfill. Min, Max and Avg are the thickness of each layer in the blocks: its average thickness in each block where it is present, the thinnest and thickest of those, and their average' + (App.rv().ws && App.rv().ws.blockCells.length ? '.' : ' (once the 3D model and the block layout are loaded).')));
   }
   async function buildModel(cell) {
     const P = App.P;
@@ -15393,7 +15427,7 @@ const Tabs = (() => {
       const host = Model.fleetHost(P, a);
       return h('div', { class: 'item' + (a.id === App.actId ? ' sel' : ''), onclick: () => { App.actId = a.id; UI.renderTab(); App.refreshOverlays(); if (App.colorBy === 'sequence') App.refreshTint(); } },
         h('span', { class: 'sw', style: { background: a.color } }),
-        h('div', { style: { minWidth: 0 } }, h('div', { class: 't' }, a.name), h('div', { class: 's' }, `${L ? L.name : 'no layer'} · ${methodName(a)} ${dest}${limitText(a) ? ' · ' + limitText(a) : ''}${host !== a ? ' · teams of ' + host.name : ''}`)),
+        h('div', { style: { minWidth: 0 } }, h('div', { class: 't' }, a.name), h('div', { class: 's' }, `${L ? L.name : 'no layer'}${L && L.ignore ? ' (ignored: not scheduled)' : ''} · ${methodName(a)} ${dest}${limitText(a) ? ' · ' + limitText(a) : ''}${host !== a ? ' · teams of ' + host.name : ''}`)),
         h('span', { class: 'chip' }, a.path.length + ' blk'));
     };
     // with pits the activities are listed pit by pit
@@ -16799,7 +16833,8 @@ const Tabs = (() => {
         } }
       // the attribute columns of each seam
       const cols = [['', '— none —']].concat((P.attrColumns || []).filter(c => c !== P.idColumn && P.blocks.some(b => b.attrs && isFinite(parseFloat(b.attrs[c])))).map(c => [c, c]));
-      const coalL = P.layers.filter(L => L.type === 'coal');
+      const coalL = P.layers.filter(L => L.type === 'coal' && !L.ignore), coalIgn = P.layers.filter(L => L.type === 'coal' && L.ignore);
+      if (coalIgn.length) parts.push(h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `Ignored (Geological Data tab), so not counted: ${coalIgn.map(L => L.name).join(', ')}.`));
       if (coalL.length) {
         // each seam: counted as coal or as waste here, and the attribute columns of its qualities
         const setWaste = (L, v) => { const m = P.margin || (P.margin = {}); const w = m.waste || (m.waste = {}); if (v) w[L.id] = true; else delete w[L.id]; App.changed('margin'); UI.renderTab(); };
@@ -17004,7 +17039,7 @@ const Tabs = (() => {
       kp('Waste', `${U.fmtBig(S.waste, 'bcm')}`), kp(`Coal (${S.basis})`, `${U.fmtBig(S.coalT, 't')} · ${U.fmtBig(S.coalB, 'bcm')}`),
       kp('Strip ratio', S.sr === S.sr ? `${U.fmtNum(S.sr, 2)} bcm/t` : '–'), kp('Blocks', `${U.fmtNum(S.n)} of ${U.fmtNum(S.N)}`)));
     if (A && (A.areas > 1 || A.holes)) parts.push(h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `The boundary is ${A.areas} area${A.areas === 1 ? '' : 's'}${A.holes ? ` less ${A.holes} hole${A.holes === 1 ? '' : 's'}` : ''}: the area is theirs added up, less the holes.`));
-    const typ = q => { const t = (Model.LAYER_TYPES[q.type] || {}).label || q.type; return q.type === 'coal' && !q.coal ? `${t}, counted as waste` : t; };
+    const typ = q => { const t = (Model.LAYER_TYPES[q.type] || {}).label || q.type, Lq = P.layers[q.l]; return Lq && Lq.ignore ? `${t}, ignored` : q.type === 'coal' && !q.coal ? `${t}, counted as waste` : t; };
     const pc = (a, b) => (b > 0 ? `${U.fmtNum((a / b) * 100, 1)}%` : '–');
     const row = (cells, cls) => h('tr', cls ? { class: cls } : null, ...cells.map((c, i) => h('td', i >= 2 ? { class: 'r num' } : null, c)));
     const line = q => row([q.name, typ(q), n0(q.v), n0(q.t), ...(part ? [n0(q.vAll), pc(q.v, q.vAll)] : [])]);
@@ -18165,7 +18200,7 @@ const Tabs = (() => {
       const head = [th('Layer'), th('Surveyed bcm', 1), th('Surveyed t', 1)].concat(plan ? [th('Scheduled bcm', 1), th('Diff.', 1)] : []);
       const rows = L.map((Ly, l) => {
         const q = C.layers[l], y = plan ? plan.layers[l] : null;
-        return h('tr', null, td(Ly.name), td(f0(q.bcm), 1), td(f0(q.t), 1), ...(y ? [td(f0(y.bcm), 1), td(y.bcm > 0 ? `${q.bcm >= y.bcm ? '+' : '−'}${U.fmtNum((Math.abs(q.bcm - y.bcm) / y.bcm) * 100, 0)}%` : '–', 1)] : []));
+        return h('tr', null, td(Ly.ignore ? `${Ly.name} (ignored)` : Ly.name), td(f0(q.bcm), 1), td(f0(q.t), 1), ...(y ? [td(f0(y.bcm), 1), td(y.bcm > 0 ? `${q.bcm >= y.bcm ? '+' : '−'}${U.fmtNum((Math.abs(q.bcm - y.bcm) / y.bcm) * 100, 0)}%` : '–', 1)] : []));
       });
       const sum = (src, k, coal) => L.reduce((s, Ly, l) => s + (coal == null || (Ly.type === 'coal') === coal ? src[l][k] : 0), 0);
       for (const [nm, coal] of [['Total waste', false], ['Total coal', true]]) rows.push(h('tr', { class: 'tot' }, td(nm), td(f0(sum(C.layers, 'bcm', coal)), 1), td(f0(sum(C.layers, 't', coal)), 1), ...(plan ? [td(f0(sum(plan.layers, 'bcm', coal)), 1), td('', 1)] : [])));
@@ -20532,7 +20567,7 @@ const Report = (() => {
       ...(A && !S.on && S.src !== 'layout' ? [['Reserve boundary', 'switched off: every block is in the reserve']] : []),
       ['Plan area of the reserve blocks (m²)', r0(S.plan)], ['Blocks in the reserve', S.n], ['Blocks in the resource layout', S.N], [],
       ['Layer', 'Type', 'Reserve (bcm)', 'Reserve (t)', 'Resource layout (bcm)', 'Resource layout (t)', 'In the reserve (% of the bcm)']];
-    const typ = q => { const t = (Model.LAYER_TYPES[q.type] || {}).label || q.type; return q.type === 'coal' && !q.coal ? `${t}, counted as waste` : t; };
+    const typ = q => { const t = (Model.LAYER_TYPES[q.type] || {}).label || q.type, Lq = P.layers[q.l]; return Lq && Lq.ignore ? `${t}, ignored` : q.type === 'coal' && !q.coal ? `${t}, counted as waste` : t; };
     for (const q of S.layers) aoa.push([q.name, typ(q), r0(q.v), r0(q.t), r0(q.vAll), r0(q.tAll), q.vAll > 0 ? r1((q.v / q.vAll) * 100) : null]);
     aoa.push(['Waste', '', r0(S.waste), r0(S.wasteT), r0(S.wasteAll), r0(S.wasteTAll), S.wasteAll > 0 ? r1((S.waste / S.wasteAll) * 100) : null],
       [`Coal (${S.basis})`, '', r0(S.coalB), r0(S.coalT), r0(S.coalBAll), r0(S.coalTAll), S.coalBAll > 0 ? r1((S.coalB / S.coalBAll) * 100) : null],
@@ -21584,10 +21619,10 @@ const LoM = (() => {
     rows.forEach((q, i) => { set(0, 4 + i, q[0]); set(1, 4 + i, q[1], q[2], q[5]); set(2, 4 + i, q[3]); set(3, 4 + i, q[4]); });
     let r = 14;
     set(0, r++, 'Layers');
-    ['Layer', 'Type', 'Density (t/bcm)', 'Swell', 'Geological loss (%)', 'Mining loss (%)', 'Contamination (%)', 'As received factor'].forEach((h, c) => set(c, r, h)); r++;
+    ['Layer', 'Type', 'Density (t/bcm)', 'Swell', 'Geological loss (%)', 'Mining loss (%)', 'Contamination (%)', 'As received factor', 'Used'].forEach((h, c) => set(c, r, h)); r++;
     for (const Ly of L) {
       const coal = Ly.type === 'coal', q = Model.losses(P, Ly);
-      set(0, r, Ly.name); set(1, r, Ly.type); set(2, r, +Ly.density || null, null, '0.000'); set(3, r, +Ly.swell || null, null, '0.00');
+      set(0, r, Ly.name); set(1, r, Ly.type); set(8, r, Ly.ignore ? 'No: ignored (not mined or counted)' : 'Yes'); set(2, r, +Ly.density || null, null, '0.000'); set(3, r, +Ly.swell || null, null, '0.00');
       if (coal) { set(4, r, q.geo, null, '0.0'); set(5, r, q.mining, null, '0.0'); set(6, r, q.contam, null, '0.0'); set(7, r, Model.arFactor(P, Ly), `(1-E${r + 1}/100)*(1-F${r + 1}/100)*(1+G${r + 1}/100)`, '0.0000'); }
       r++;
     }
@@ -22021,6 +22056,14 @@ const App = {
   },
 
   // ---------- overlays ----------
+  /* A geological layer used or ignored (Geological Data tab): an ignored one has no volume anywhere (Model.blockVolumes), the
+     seam cut-off is worked out again without it, and the schedule needs a new run */
+  setLayerUse(L, use) {
+    if (!this.P) return;
+    if (use) delete L.ignore; else L.ignore = true;
+    if (this.colorBy === 'thick' && !use) this.refreshTint();
+    this.recut(); this.changed('layers', { now: true }); UI.renderTab(); UI.renderColorBy();
+  },
   /* The strip ratio written inside each block of the 3D view (Layers menu: Strip ratio in the blocks; the Strip Ratio tab and
      the reserve boundary's legend): each block of the resource layout at its centre, as the block margin works it out
      (waste bcm ÷ coal t), underlined in its colour on the strip ratio scale; '–' without coal; faded outside the reserve
@@ -22356,7 +22399,7 @@ const App = {
      block margin is worked out again on every change but the view's and the bill's) */
   boqQ() {
     if (!this.P || !this.ws) return null;
-    const P = this.P, b = P.boq || {}, from = Boq.settings(P).from, key = JSON.stringify([from, b.coalBasis, b.months, P.blast || {}, P.accTable && P.accTable.groups, P.layers.map(L => [L.type, L.name]), (P.fin || {}).presplitW]);
+    const P = this.P, b = P.boq || {}, from = Boq.settings(P).from, key = JSON.stringify([from, b.coalBasis, b.months, P.blast || {}, P.accTable && P.accTable.groups, P.layers.map(L => [L.type, L.name, !!L.ignore]), (P.fin || {}).presplitW]);
     if (from === 'reserve') {
       const R = this.margin(), run = this.res && !this.stale ? this.res : null; if (!R) return null;
       if (!this._boq || this._boq.R !== R || this._boq.res !== run || this._boq.ws !== this.ws || this._boq.key !== key) {
