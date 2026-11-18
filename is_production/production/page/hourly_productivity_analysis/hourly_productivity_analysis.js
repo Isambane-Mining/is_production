@@ -650,6 +650,12 @@
   function renderMachineMatrix(data, unavailableNumber = null, viewMode = 'utilisation') {
     let lastMonth = '';
     const isAvailability = viewMode === 'availability';
+    const availabilityPalette = {
+      green: '#B9EDC5',
+      orange: '#FFC18A',
+      red: '#F3A6AE',
+      unknown: '#E8EDF2'
+    };
 
     const averageAvailable = cells => {
       const values = cells
@@ -713,6 +719,18 @@
 
         const totalFleet = metric(row.fleet_total, 'hm-total', 0);
 
+        const availabilitySegments = cell.production_availability_segments || [];
+        const availabilityBackground = isAvailability
+          ? (availabilitySegments.length
+            ? `background:linear-gradient(90deg,${availabilitySegments.map(segment => {
+                const left = Math.max(0, Math.min(100, Number(segment.start_minute) / 60 * 100));
+                const right = Math.max(left, Math.min(100, Number(segment.end_minute) / 60 * 100));
+                const colour = availabilityPalette[segment.category] || availabilityPalette.unknown;
+                return `${colour} ${left}% ${right}%`;
+              }).join(',')})`
+            : `background:${availabilityPalette.unknown}`)
+          : '';
+
         const value = isAvailability
           ? (available === '—' && totalFleet === '—' ? '—' : `${available} / ${totalFleet}`)
           : (available === '—' && utilised === '—' ? '—' : `${utilised} / ${available}`);
@@ -728,6 +746,7 @@
         return `<td class="hpa-cell hm-cell hm-hour-cell ${cellClass} ${
           index === 12 ? 'hpa-night-start' : ''
         } ${highlighted ? 'hm-unavailable-match' : ''}"
+          ${availabilityBackground ? `style="${availabilityBackground}"` : ''}
           data-hm-row="${rowIndex}" data-hm-hour="${index}"
           tabindex="0" aria-haspopup="dialog" aria-expanded="false"
           aria-controls="hm-machine-card"
@@ -745,9 +764,13 @@
     return `${viewMode === 'availability' ? `
     <section class="hpa-chart hm-chart" aria-label="Availability legend">
       <div class="hm-availability-legend">
-        <strong>Availability</strong>
+        <strong>ADT Availability</strong>
         <div><i class="hm-available-key"></i><span>Available ADTs</span></div>
         <div><i class="hm-total-key"></i><span>Total fleet</span></div>
+        <div><i class="hm-green-key"></i><span>Green · Production requirement met</span></div>
+        <div><i class="hm-orange-key"></i><span>Orange · One ADT below requirement</span></div>
+        <div><i class="hm-red-key"></i><span>Red · More than one ADT below requirement</span></div>
+        <div><i class="hm-unknown-key"></i><span>Grey · Unverified / future</span></div>
       </div>
     </section>` : `
     <section class="hpa-chart hm-chart" aria-label="Machine utilisation legend">
@@ -821,6 +844,168 @@
     `;
   }
 
+
+
+
+  function renderExcavatorAvailabilityDetails(row, cell) {
+    const fleet = Number(row.fleet_total) || 0;
+    const available = cell.available == null
+      ? "Unverified"
+      : `${cell.available} / ${fleet} available`;
+
+    const machines = (cell.details || []).map(machine => {
+      const status = machine.status || "Unverified";
+      const statusClass = status === "Available" ? "available" :
+        status === "Unavailable" ? "unavailable" : "unknown";
+
+      const events = (machine.events || []).map(event => `
+        <div class="he-event">
+          <div class="he-event-heading">
+            <strong>${escape(event.downtime_type)}</strong>
+            <span>${escape(event.status)}</span>
+          </div>
+          <div class="he-event-reason">${escape(event.reason)}</div>
+          <dl>
+            <dt>Started</dt><dd>${escape(event.start || "—")}</dd>
+            <dt>Resolved</dt>
+            <dd>${escape(event.resolved || (event.status === "Open" ? "Still open" : "Not recorded"))}</dd>
+            <dt>Effective end</dt><dd>${escape(event.effective_end || "—")}</dd>
+            <dt>A&U excluded</dt><dd>${event.exclude_from_au ? "Yes" : "No"}</dd>
+            ${event.resolution ? `<dt>Resolution</dt><dd>${escape(event.resolution)}</dd>` : ""}
+          </dl>
+        </div>
+      `).join("");
+
+      return `
+        <article class="he-machine-detail">
+          <div class="he-machine-heading">
+            <strong>${escape(machine.label || machine.asset)}</strong>
+            <span class="he-machine-status he-${statusClass}">${escape(status)}</span>
+          </div>
+          ${events || `<div class="he-no-event">${
+            status === "Available"
+              ? "No overlapping breakdown or maintenance."
+              : "Availability could not be verified."
+          }</div>`}
+        </article>`;
+    }).join("");
+
+    return `
+      <div class="he-popup-summary">
+        <strong>${escape(available)}</strong>
+        <span>${escape(cell.label)}</span>
+      </div>
+      <div class="he-machine-list">${machines}</div>`;
+  }
+
+
+  function renderExcavatorAvailabilityMatrix(data) {
+    let lastMonth = "";
+
+    const palette = {
+      green: "#B9EDC5",
+      orange: "#FFC18A",
+      red: "#F3A6AE",
+      unknown: "#E8EDF2",
+    };
+
+    const rows = data.rows.map((row, rowIndex) => {
+      const divider = row.month_key !== lastMonth
+        ? `<tr class="hpa-month-divider">
+             <th colspan="28"><span>${escape(row.month)}</span></th>
+           </tr>`
+        : "";
+
+      lastMonth = row.month_key;
+
+      const total = Number(row.fleet_total) || 0;
+
+      const cells = row.cells.map((cell, index) => {
+        const category = ["green", "orange", "red"].includes(cell.category)
+          ? cell.category : "neutral";
+
+        const available = cell.available == null
+          ? "—"
+          : Number(cell.available).toLocaleString("en-US", {
+              maximumFractionDigits: 0
+            });
+
+        const segments = (cell.segments || []).map(segment => {
+          const start = Math.max(0, Math.min(
+            100, Number(segment.start_minute) / 60 * 100
+          ));
+          const end = Math.max(start, Math.min(
+            100, Number(segment.end_minute) / 60 * 100
+          ));
+          const colour = palette[segment.category] || palette.unknown;
+          return `${colour} ${start}% ${end}%`;
+        });
+
+        const background = segments.length
+          ? `background:linear-gradient(90deg,${segments.join(",")})`
+          : "";
+
+        return `
+          <td class="hpa-cell hm-cell hm-hour-cell he-excavator-cell hm-${category} ${
+            index === 12 ? "hpa-night-start" : ""
+          }"
+            data-he-row="${rowIndex}"
+            data-he-hour="${index}"
+            tabindex="0"
+            role="button"
+            aria-haspopup="dialog"
+            aria-expanded="false"
+            aria-label="${escape(row.date)} ${escape(cell.label)}: ${escape(available)} of ${total} excavators available"
+            ${background ? `style="${background}"` : ""}
+          >${available} / ${total}</td>`;
+      }).join("");
+
+      return `${divider}<tr>
+        <th scope="row" class="hpa-sticky-date">${escape(row.date)}</th>
+        <td class="hpa-sticky-day">${escape(row.day)}</td>
+        <td class="hpa-sticky-month">${escape(row.month)}</td>
+        <td class="hm-cell hm-total">${total}</td>
+        ${cells}
+      </tr>`;
+    }).join("");
+
+    return `
+      <section class="hpa-chart hm-chart" aria-label="Excavator availability legend">
+        <div class="hm-availability-legend">
+          <strong>Excavator Availability · Production + Spare</strong>
+          <div><i class="hm-green-key"></i><span>Green · All running</span></div>
+          <div><i class="hm-orange-key"></i><span>Orange · 1 unavailable</span></div>
+          <div><i class="hm-red-key"></i><span>Red · 2 or more unavailable</span></div>
+          <div><i class="hm-unknown-key"></i><span>Grey · Missing / unverified</span></div>
+          <div><span>Click an hour to inspect individual excavators.</span></div>
+        </div>
+      </section>
+
+      <div class="hpa-scroll hm-availability-scroll" tabindex="0"
+           role="region" aria-label="Hourly excavator availability">
+        <table class="hpa-table hm-matrix hm-availability-matrix">
+          <caption>Total excavator fleet (Production + Spare) · ${escape(data.site)}</caption>
+          <thead>
+            <tr>
+              <th rowspan="2" class="hpa-sticky-date">Date</th>
+              <th rowspan="2" class="hpa-sticky-day">Day</th>
+              <th rowspan="2" class="hpa-sticky-month">Month</th>
+              <th rowspan="2">Total Fleet</th>
+              <th colspan="12" class="hpa-shift-day">DAY SHIFT · 06:00–18:00</th>
+              <th colspan="12" class="hpa-shift-night">NIGHT SHIFT · 18:00–06:00</th>
+            </tr>
+            <tr>
+              ${data.hours.map((hour, index) =>
+                `<th class="hpa-hour ${index === 12 ? "hpa-night-start" : ""}">
+                  ${escape(hour.replaceAll(":00", ""))}
+                </th>`
+              ).join("")}
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  }
   function renderProductivityTabs() {
     return `<div class="hpt-shell">
       <div class="hpt-tabs" role="tablist" aria-label="Hourly productivity reports">
@@ -828,10 +1013,12 @@
         <button type="button" role="tab" id="hpt-analysis-tab" aria-controls="hpt-analysis-panel" aria-selected="false" tabindex="-1" data-report-tab="analysis" data-mobile-label="Historical">Hourly Productivity Analysis</button>
         <button type="button" role="tab" id="hpt-availability-tab" aria-controls="hpt-machines-panel" aria-selected="false" tabindex="-1" data-report-tab="availability" data-mobile-label="ADT Avail">ADT Avail</button>
         <button type="button" role="tab" id="hpt-machines-tab" aria-controls="hpt-machines-panel" aria-selected="false" tabindex="-1" data-report-tab="machines" data-mobile-label="ADT Util">ADT Util</button>
+        <button type="button" role="tab" id="hpt-excavator-tab" aria-controls="hpt-excavator-panel" aria-selected="false" tabindex="-1" data-report-tab="excavator" data-mobile-label="Excavator Avail">Excavator Avail</button>
       </div>
       <div class="hpt-summary-panel" id="hpt-summary-panel" role="tabpanel" aria-labelledby="hpt-summary-tab"></div>
       <div class="hpt-analysis-panel" id="hpt-analysis-panel" role="tabpanel" aria-labelledby="hpt-analysis-tab" hidden></div>
       <div class="hpt-machines-panel" id="hpt-machines-panel" role="tabpanel" aria-labelledby="hpt-machines-tab" hidden></div>
+      <div class="hpt-excavator-panel" id="hpt-excavator-panel" role="tabpanel" aria-labelledby="hpt-excavator-tab" hidden></div>
     </div>`;
   }
 
@@ -1117,6 +1304,276 @@
       return machineLoading;
     };
 
+
+
+    let excavatorLoading = null;
+
+    const loadExcavators = () => {
+      if (excavatorLoading) return excavatorLoading;
+
+      const panel = page.main.find(".hpt-excavator-panel");
+
+      panel.html(`
+        <div class="hpa-shell hm-shell he-shell">
+          <div class="hpa-filters hm-filters he-filters">
+            <div class="he-site"></div>
+            <div class="he-from_date"></div>
+            <div class="he-to_date"></div>
+            <button type="button" class="btn btn-primary he-refresh">Refresh</button>
+            <button type="button" class="btn btn-default he-export">Export Excel</button>
+          </div>
+          <div class="he-status hm-status" role="status" aria-live="polite">
+            Select a site and date range.
+          </div>
+          <div class="he-content hm-content"></div>
+          <div class="he-popup" role="dialog"
+               aria-label="Excavator hourly availability details" hidden>
+            <div class="he-popup-header">
+              <strong>Excavator Availability Details</strong>
+              <button type="button" class="he-popup-close"
+                      aria-label="Close details">×</button>
+            </div>
+            <div class="he-popup-body"></div>
+          </div>
+        </div>
+      `);
+
+      let initializing = true;
+      let requestToken = 0;
+      let data = null;
+      const controls = {};
+
+      const draw = () => {
+        if (data) {
+          panel.find(".he-content").html(
+            renderExcavatorAvailabilityMatrix(data)
+          );
+        }
+      };
+
+      const refresh = async () => {
+        if (initializing) return;
+
+        const token = ++requestToken;
+        const site = controls.site.get_value();
+        const from_date = controls.from_date.get_value();
+        const to_date = controls.to_date.get_value();
+
+        const status = panel.find(".he-status");
+        const content = panel.find(".he-content");
+
+        content.empty();
+
+        if (!site || !from_date || !to_date || from_date > to_date) {
+          status.text("Select a valid site and date range.");
+          return;
+        }
+
+        status.text("Loading excavator availability…");
+
+        try {
+          const response = await frappe.call({
+            method:
+              "is_production.production.page.hourly_productivity_analysis.hourly_productivity_analysis.get_excavator_availability",
+            args: {site, from_date, to_date}
+          });
+
+          if (token !== requestToken) return;
+
+          const result = response.message;
+
+          if (result?.planning_error || result?.configuration_error) {
+            const error = result.planning_error || result.configuration_error;
+            status.text(error.title || "Excavator configuration unavailable.");
+            return;
+          }
+
+          if (!result?.rows?.length) {
+            status.text("No excavator availability data available.");
+            return;
+          }
+
+          data = result;
+          draw();
+          status.empty();
+
+        } catch (error) {
+          if (token === requestToken) {
+            status.text("Unable to load excavator availability. Check permissions and MPP.");
+          }
+        }
+      };
+
+      for (const [name, label, type, options] of [
+        ["site", "Site", "Link", "Location"],
+        ["from_date", "From Date", "Date"],
+        ["to_date", "To Date", "Date"]
+      ]) {
+        controls[name] = frappe.ui.form.make_control({
+          parent: panel.find(".he-" + name),
+          render_input: true,
+          df: {
+            fieldname: "he_" + name,
+            label,
+            fieldtype: type,
+            options,
+            reqd: 1,
+            onchange: () => {
+              if (!initializing) {
+                const tabs = wrapper.hourlyProductivityTabs;
+                if (name === "site") tabs?.markSite("excavator");
+                else tabs?.markDates("excavator");
+              }
+              refresh();
+            }
+          }
+        });
+      }
+
+
+      panel.find(".he-refresh").on("click", refresh);
+
+      panel.find(".he-export").on("click", () => {
+        const site = controls.site.get_value();
+        const from_date = controls.from_date.get_value();
+        const to_date = controls.to_date.get_value();
+
+        if (!site || !from_date || !to_date || from_date > to_date) {
+          frappe.msgprint("Select a valid Site, From Date and To Date.");
+          return;
+        }
+
+        const params = new URLSearchParams({
+          site, from_date, to_date
+        });
+
+        window.location.href =
+          "/api/method/is_production.production.page.hourly_productivity_analysis.hourly_productivity_analysis.export_excavator_availability_excel?"
+          + params.toString();
+      });
+
+
+      const popup = panel.find(".he-popup")[0];
+      let activeExcavatorCell = null;
+
+      const hideExcavatorPopup = () => {
+        activeExcavatorCell?.setAttribute("aria-expanded", "false");
+        activeExcavatorCell = null;
+        popup.hidden = true;
+      };
+
+      const showExcavatorPopup = cell => {
+        const row = data?.rows?.[Number(cell.dataset.heRow)];
+        const index = Number(cell.dataset.heHour);
+        const hour = row?.cells?.[index];
+        if (!row || !hour) return;
+
+        hideExcavatorPopup();
+        activeExcavatorCell = cell;
+        cell.setAttribute("aria-expanded", "true");
+
+        popup.querySelector(".he-popup-body").innerHTML =
+          `<h3>${escape(row.date)} · ${escape(hour.label)}</h3>` +
+          renderExcavatorAvailabilityDetails(row, hour);
+
+        popup.hidden = false;
+
+        const anchor = cell.getBoundingClientRect();
+        const bounds = popup.getBoundingClientRect();
+        const left = Math.max(12, Math.min(
+          anchor.left, window.innerWidth - bounds.width - 12
+        ));
+
+        let top = anchor.bottom + 8;
+        if (top + bounds.height > window.innerHeight - 12) {
+          top = anchor.top - bounds.height - 8;
+        }
+
+        popup.style.left = `${left}px`;
+        popup.style.top = `${Math.max(12, top)}px`;
+      };
+
+      panel.on("click", ".he-excavator-cell", event => {
+        if (activeExcavatorCell === event.currentTarget) {
+          hideExcavatorPopup();
+        } else {
+          showExcavatorPopup(event.currentTarget);
+        }
+      });
+
+      panel.on("keydown", ".he-excavator-cell", event => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          event.currentTarget.click();
+        }
+      });
+
+      panel.on("click", ".he-popup-close", () => {
+        const cell = activeExcavatorCell;
+        hideExcavatorPopup();
+        cell?.focus({preventScroll:true});
+      });
+
+      document.addEventListener("keydown", event => {
+        if (event.key === "Escape" && activeExcavatorCell) {
+          const cell = activeExcavatorCell;
+          hideExcavatorPopup();
+          cell?.focus({preventScroll:true});
+        }
+      });
+
+      document.addEventListener("pointerdown", event => {
+        if (activeExcavatorCell &&
+            !popup.contains(event.target) &&
+            !activeExcavatorCell.contains(event.target)) {
+          hideExcavatorPopup();
+        }
+      });
+
+
+
+      const initialize = async () => {
+        try {
+          const analysis = wrapper.hourlyProductivityAnalysis;
+
+          let from_date = analysis.from_date.get_value();
+          let to_date = analysis.to_date.get_value();
+
+          if (!from_date || !to_date) {
+            const response = await frappe.call({
+              method:
+                "is_production.production.page.hourly_productivity_analysis.hourly_productivity_analysis.get_defaults"
+            });
+            from_date = response.message.from_date;
+            to_date = response.message.to_date;
+          }
+
+          await controls.from_date.set_value(from_date);
+          await controls.to_date.set_value(to_date);
+
+          const site = analysis.site.get_value();
+          if (site) await controls.site.set_value(site);
+
+          initializing = false;
+          if (site) await refresh();
+
+        } catch (error) {
+          initializing = false;
+          panel.find(".he-status").text("Select a site and date range.");
+        }
+      };
+
+      wrapper.hourlyProductivityExcavators = {
+        refresh, draw,
+        site: controls.site,
+        from_date: controls.from_date,
+        to_date: controls.to_date
+      };
+
+      excavatorLoading = Promise.resolve(initialize());
+      return excavatorLoading;
+    };
+
     // Machine scope defaults are shared, but each tab remains independent.
     let lastMachineScope = 'all';
     const editedMachineScopes = new Set();
@@ -1178,13 +1635,16 @@
       const analysis = wrapper.hourlyProductivityAnalysis;
       const summary = wrapper.hourlyProductivitySummary;
       const machines = wrapper.hourlyProductivityMachines;
+      const excavators = wrapper.hourlyProductivityExcavators;
 
       const sourceName = from === 'availability' ? 'machines' : from;
       const targetName = to === 'availability' ? 'machines' : to;
       const source = sourceName === 'summary' ? summary :
-        sourceName === 'analysis' ? analysis : machines;
+        sourceName === 'analysis' ? analysis :
+        sourceName === 'excavator' ? excavators : machines;
       const target = targetName === 'summary' ? summary :
-        targetName === 'analysis' ? analysis : machines;
+        targetName === 'analysis' ? analysis :
+        targetName === 'excavator' ? excavators : machines;
 
       if (!source || !target) return;
 
@@ -1217,7 +1677,7 @@
 
     const tabs = Array.from(root.querySelectorAll('[role=tab]'));
     const activate = name => {
-      if (!['analysis','summary','machines','availability'].includes(name)) return;
+      if (!['analysis','summary','machines','availability','excavator'].includes(name)) return;
       const previous = tabFilterState.active;
       tabFilterState.active = name;
       wrapper.hourlyProductivityAnalysis.hideHourCard();
@@ -1251,6 +1711,14 @@
           await syncFilters(previous,name);
           if (tabFilterState.active === name) applyScope('machines');
         });
+      } else if (name === 'excavator') {
+        loadExcavators().then(async () => {
+          if (tabFilterState.active !== name) return;
+          await syncFilters(previous,name);
+          if (tabFilterState.active === name) {
+            wrapper.hourlyProductivityExcavators?.refresh();
+          }
+        });
       } else if (name === 'analysis') {
         syncFilters(previous,name).then(() => {
           if (tabFilterState.active === 'analysis') applyScope('analysis');
@@ -1277,5 +1745,5 @@
   }
 
   if (typeof frappe !== 'undefined') frappe.pages['hourly-productivity-analysis'].on_page_load = mountProductivityTabs;
-  if (typeof module !== 'undefined' && module.exports) module.exports = {renderAnalysis, renderHourDetails, renderMobileAnalysis, HourlyProductivityAnalysisPage, renderProductivityTabs, mountProductivityTabs, renderMachineMatrix, renderMachineDetails, matchesUnavailableRange, renderShiftAverageDetails, renderMachineAverageDetails};
+  if (typeof module !== 'undefined' && module.exports) module.exports = {renderAnalysis, renderHourDetails, renderMobileAnalysis, HourlyProductivityAnalysisPage, renderProductivityTabs, mountProductivityTabs, renderMachineMatrix, renderMachineDetails, renderExcavatorAvailabilityMatrix, matchesUnavailableRange, renderShiftAverageDetails, renderMachineAverageDetails};
 })();
