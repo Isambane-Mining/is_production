@@ -99,6 +99,82 @@
     };
   }
 
+  function filteredMean(values) {
+    const valid = values.filter(value =>
+      value != null && Number.isFinite(value)
+    );
+    return valid.length
+      ? valid.reduce((sum, value) => sum + value, 0) / valid.length
+      : null;
+  }
+
+  function averageRateClass(value) {
+    if (value == null || !Number.isFinite(Number(value))) return '';
+    return Number(value) < 220
+      ? 'hpa-rate-below-target'
+      : 'hpa-rate-meets-target';
+  }
+
+  function hasPlannedShift(row, shift) {
+    const value = row[shift === "day" ? "mpp_day_hours" : "mpp_night_hours"];
+    return value != null && String(value).trim() !== "" &&
+      Number.isFinite(Number(value)) && Number(value) > 0;
+  }
+
+  function filteredHourlyAverage(rows, hourIndex, shift) {
+    const rates = [];
+
+    for (const row of rows) {
+      if (!hasPlannedShift(row, shift)) continue;
+
+      const cell = row.cells[hourIndex];
+      if (!cell || !cell.completed || !cell.has_record) continue;
+
+      if (cell.actual_bcm == null || cell.average_productive_hours == null) {
+        continue;
+      }
+
+      const actual = Number(cell.actual_bcm);
+      const productiveHours = Number(cell.average_productive_hours);
+      const productionExcavators = Number(row.excavator_fleet?.production);
+
+      if (!Number.isFinite(actual) ||
+          !Number.isFinite(productiveHours) ||
+          productiveHours <= 0 ||
+          !Number.isFinite(productionExcavators) ||
+          productionExcavators <= 0) continue;
+
+      rates.push(actual / productiveHours / productionExcavators);
+    }
+
+    return filteredMean(rates);
+  }
+
+  function filteredShiftAverage(rows, shift) {
+    const averages = [];
+
+    for (const row of rows) {
+      if (!hasPlannedShift(row, shift)) continue;
+
+      const cells = shift === "day"
+        ? row.cells.slice(0, 12)
+        : row.cells.slice(12, 24);
+
+      const average = shiftAverageMetrics(cells).average;
+      const productionExcavators = Number(row.excavator_fleet?.production);
+
+      if (
+        average != null &&
+        Number.isFinite(productionExcavators) &&
+        productionExcavators > 0
+      ) {
+        averages.push(average / productionExcavators);
+      }
+    }
+
+    return filteredMean(averages);
+  }
+
   function renderShiftAverageDetails(row, shift) {
     const cells = shift === "day"
       ? row.cells.slice(0, 12)
@@ -139,13 +215,66 @@
     }).join(',');
     const shiftAverage = cells => shiftAverageMetrics(cells).average;
 
+    const filteredDayAverage = filteredShiftAverage(data.rows, "day");
+    const filteredNightAverage = filteredShiftAverage(data.rows, "night");
+
+    const filteredAverageRow = `<tr class="hpa-filtered-average-row">
+      <th colspan="3" class="hpa-filtered-average-label">
+        Filtered Avg · BCM/h per production excavator
+      </th>
+      ${data.hours.map((hour, index) => {
+        const shift = index < 12 ? "day" : "night";
+        const average = filteredHourlyAverage(data.rows, index, shift);
+        const value = average == null ? "—" : number(average, 1);
+
+        return `<td class="hpa-filtered-average-value ${averageRateClass(average)}">${value}</td>${
+          index === 11
+            ? `<td class="hpa-filtered-average-value hpa-filtered-average-shift ${averageRateClass(filteredDayAverage)}">${
+                filteredDayAverage == null ? "—" : number(filteredDayAverage, 1)
+              }</td>`
+            : ""
+        }${
+          index === 23
+            ? `<td class="hpa-filtered-average-value hpa-filtered-average-shift ${averageRateClass(filteredNightAverage)}">${
+                filteredNightAverage == null ? "—" : number(filteredNightAverage, 1)
+              }</td>`
+            : ""
+        }`;
+      }).join("")}
+    </tr>`;
+
+    const fleetRow = data.rows[data.rows.length - 1];
+    const fleet = fleetRow?.excavator_fleet;
+
+    const fleetCard = `
+      <section class="hpa-excavator-fleet-card" aria-label="MPP Excavator Fleet">
+        <div class="hpa-excavator-fleet-heading">
+          <strong>MPP Excavator Fleet</strong>
+          <small>${escape(fleetRow?.date || "")} · Last selected date</small>
+        </div>
+        <div class="hpa-excavator-fleet-grid">
+          <div class="hpa-fleet-production">
+            <strong>${fleet?.production ?? "—"}</strong>
+            <span>Production</span>
+          </div>
+          <div class="hpa-fleet-spare">
+            <strong>${fleet?.spare ?? "—"}</strong>
+            <span>Spare</span>
+          </div>
+          <div class="hpa-fleet-total">
+            <strong>${fleet?.total ?? "—"}</strong>
+            <span>Total</span>
+          </div>
+        </div>
+      </section>`;
+
     const aria = categories.map(([key, , label]) => `${label}: ${number(data.pie.categories[key].hours, 2)} hours, ${number(data.pie.categories[key].percent, 1)}%`).join('; ');
     return `      <section class="hpa-chart" aria-label="Proportion of hourly performance categories"><div class="hpa-pie" role="img"
         aria-label="${escape(aria)}" style="background:conic-gradient(${gradient})"></div>
         <div class="hpa-legend"><strong>Hourly performance · ${number(data.pie.total_hours)} hours</strong><small>Thresholds combine excavators and scale for partial hours.</small>
           ${categories.map(([key, colour, label]) => `<div><i style="background:${colour}"></i><span>${escape(label)}</span>
             <b>${number(data.pie.categories[key].percent, 1)}%</b><small>${number(data.pie.categories[key].hours, 2)} hours</small></div>`).join('')}
-        </div></section><div class="hpa-scroll hpa-analysis-scroll" tabindex="0" role="region" aria-label="Hourly BCM table; scroll horizontally">
+        </div>${fleetCard}</section><div class="hpa-scroll hpa-analysis-scroll" tabindex="0" role="region" aria-label="Hourly BCM table; scroll horizontally">
       <table class="hpa-table hpa-analysis-matrix"><caption>Hourly recorded excavator BCM · ${escape(data.site)}</caption>
         <thead><tr><th rowspan="2" class="hpa-sticky-date">Date</th><th rowspan="2" class="hpa-sticky-day">Day</th>
           <th rowspan="2" class="hpa-sticky-month">Month</th><th colspan="13" class="hpa-shift-day"><span>DAY SHIFT · 06:00–18:00</span></th>
@@ -156,16 +285,23 @@
           const divider = row.month_key !== lastMonth ? `<tr class="hpa-month-divider"><th colspan="29"><span>${escape(row.month)}</span></th></tr>` : '';
           lastMonth = row.month_key;
 
-          const dayAverage = shiftAverage(row.cells.slice(0, 12));
-          const nightAverage = shiftAverage(row.cells.slice(12, 24));
+          const productionExcavators = Number(row.excavator_fleet?.production);
 
-          const dayAverageCell = `<td class="hpa-cell hpa-shift-average hpa-day-average"
+          const dayAverage = productionExcavators > 0
+            ? shiftAverage(row.cells.slice(0, 12)) / productionExcavators
+            : null;
+
+          const nightAverage = productionExcavators > 0
+            ? shiftAverage(row.cells.slice(12, 24)) / productionExcavators
+            : null;
+
+          const dayAverageCell = `<td class="hpa-cell hpa-shift-average hpa-day-average ${averageRateClass(dayAverage)}"
             data-hpa-row="${rowIndex}" data-hpa-average-shift="day"
             tabindex="0" aria-haspopup="dialog" aria-expanded="false"
             aria-controls="${escape(cardId)}"
             title="Open Day shift average details">${dayAverage == null ? '—' : number(dayAverage, 1)}</td>`;
 
-          const nightAverageCell = `<td class="hpa-cell hpa-shift-average hpa-night-average"
+          const nightAverageCell = `<td class="hpa-cell hpa-shift-average hpa-night-average ${averageRateClass(nightAverage)}"
             data-hpa-row="${rowIndex}" data-hpa-average-shift="night"
             tabindex="0" aria-haspopup="dialog" aria-expanded="false"
             aria-controls="${escape(cardId)}"
@@ -181,7 +317,7 @@
                 data-hpa-row="${rowIndex}" data-hpa-hour="${index}" aria-haspopup="dialog" aria-expanded="false" aria-controls="${escape(cardId)}"
                 aria-label="${escape(hourHeading(row, cell))}; ${number(cell.actual_bcm, 1)} BCM. View hourly production details.">${needsTextBacking(cell) ? `<span class="hpa-mixed-text">${cellValue(cell)}</span>` : cellValue(cell)}</td>${index === 11 ? dayAverageCell : ''}${index === 23 ? nightAverageCell : ''}`;
             }).join('')}</tr>`;
-        }).join('')}</tbody></table></div>
+        }).join('')}${filteredAverageRow}</tbody></table></div>
       ${renderMobileAnalysis(data,cardId)}
 `;
   }
@@ -441,22 +577,19 @@
     }
   }
 
-  function machineColour(production, available, utilised, verified) {
+  function machineColour(production, productionAvailable, utilised, totalAvailable, verified) {
     const valid = value => value != null && String(value).trim() !== '' &&
       Number.isFinite(Number(value)) && Number(value) >= 0;
-    if (!verified || ![production, available, utilised].every(valid) ||
+
+    if (!verified ||
+        ![production, productionAvailable, utilised, totalAvailable].every(valid) ||
         Number(production) <= 0) return 'neutral';
 
-    const shortfall = Number(production) - Number(utilised);
+    const expected = Math.min(Number(production), Number(totalAvailable));
 
-    // Data anomaly: utilisation cannot physically exceed availability.
-    // Keep performance green, but flag the data with a thin red border.
-    // Allow up to 1 hour above availability; flag only clear anomalies.
-    if (Number(utilised) >= Number(available) + 1) return 'green-anomaly';
+    if (Number(utilised) > Number(totalAvailable)) return 'green-anomaly';
 
-    if (shortfall <= 0) return 'green';
-    if (shortfall <= 1) return 'orange';
-    return 'red';
+    return Number(utilised) >= expected ? 'green' : 'red';
   }
 
   function matchesUnavailableRange(total, available, selected) {
@@ -514,10 +647,48 @@
       </div>`;
   }
 
-  function renderMachineAverageDetails(row, shift) {
+  function renderMachineAverageDetails(row, shift, viewMode = "availability") {
     const cells = shift === "day"
       ? row.cells.slice(0, 12)
       : row.cells.slice(12, 24);
+
+    const label = shift === "day"
+      ? "DAY SHIFT · 06:00–18:00"
+      : "NIGHT SHIFT · 18:00–06:00";
+
+    if (viewMode === "utilisation") {
+      const productionFleet = Number(row.production_fleet_total);
+
+      const valid = cells.filter(cell => {
+        const utilisedValue = cell.all_utilised ?? cell.utilised;
+        const productionAvailable = Number(cell.production_available);
+
+        return Number.isFinite(productionFleet) && productionFleet > 0 &&
+          cell.completed && cell.has_record &&
+          Number(cell.non_working_minutes || 0) <= 0 &&
+          utilisedValue != null && Number.isFinite(Number(utilisedValue)) &&
+          Number(utilisedValue) >= 0 &&
+          cell.production_available != null &&
+          Number.isFinite(productionAvailable) && productionAvailable > 0;
+      });
+
+      const utilised = valid.reduce(
+        (sum, cell) => sum + Number(cell.all_utilised ?? cell.utilised), 0
+      );
+
+      const available = valid.reduce(
+        (sum, cell) => sum + Math.min(productionFleet, Number(cell.production_available)), 0
+      );
+      const percentage = available > 0
+        ? `${(utilised / available * 100).toFixed(1)}%` : "—";
+
+      return `<h3>${escape(row.date)} · ${label}</h3>
+        <div class="hm-popup-average">
+          <span>Average utilisation</span>
+          <strong>${percentage}</strong>
+          <small>${utilised.toFixed(1)} utilised / ${available.toFixed(1)} available ADT-hours · ${valid.length} hours included</small>
+        </div>`;
+    }
 
     const values = cells
       .filter(cell => cell.availability_verified &&
@@ -528,10 +699,6 @@
     const average = values.length
       ? values.reduce((sum, value) => sum + value, 0) / values.length
       : null;
-
-    const label = shift === "day"
-      ? "DAY SHIFT · 06:00–18:00"
-      : "NIGHT SHIFT · 18:00–06:00";
 
     const formatted = average == null ? "—" :
       average.toLocaleString("en-US", {
@@ -580,7 +747,7 @@
       activeCell = cell;
       cell.setAttribute("aria-expanded", "true");
       card.querySelector(".hpa-card-body").innerHTML = averageShift
-        ? renderMachineAverageDetails(row, averageShift)
+        ? renderMachineAverageDetails(row, averageShift, getMode())
         : renderMachineDetails(row, row.cells[index], index, getMode(), getScope());
 
       card.hidden = false;
@@ -680,6 +847,37 @@
         : null;
     };
 
+    const averageUtilisation = (cells, productionFleet) => {
+      const productionCount = Number(productionFleet);
+      if (!Number.isFinite(productionCount) || productionCount <= 0) return null;
+
+      const valid = cells.filter(cell => {
+        const utilised = cell.all_utilised ?? cell.utilised;
+        const productionAvailable = Number(cell.production_available);
+
+        return cell.completed && cell.has_record &&
+          Number(cell.non_working_minutes || 0) <= 0 &&
+          utilised != null && Number.isFinite(Number(utilised)) &&
+          Number(utilised) >= 0 &&
+          cell.production_available != null &&
+          Number.isFinite(productionAvailable) && productionAvailable > 0;
+      });
+
+      if (!valid.length) return null;
+
+      const utilised = valid.reduce(
+        (sum, cell) => sum + Number(cell.all_utilised ?? cell.utilised), 0
+      );
+
+      const expected = valid.reduce(
+        (sum, cell) => sum + Math.min(productionCount, Number(cell.production_available)), 0
+      );
+
+      return expected > 0
+        ? {percentage: utilised / expected * 100, utilised, available: expected, hours: valid.length}
+        : null;
+    };
+
     const metric = (value, cls, digits) =>
       Number.isFinite(Number(value)) && value != null && Number(value) >= 0
         ? `<span class="${cls}">${Number(value).toLocaleString('en-US',{maximumFractionDigits:digits})}</span>`
@@ -690,10 +888,91 @@
     const fleetComposition = fleetSummaryRow?.fleet_composition || {};
     const fleetCount = value => value == null ? '—' : number(value);
 
+    const filteredHourlyUtilisationAverage = (sourceRows, hourIndex, shift) => {
+      const values = [];
+
+      for (const sourceRow of sourceRows) {
+        if (!hasPlannedShift(sourceRow, shift)) continue;
+
+        const cell = sourceRow.cells[hourIndex];
+        if (!cell) continue;
+
+        const average = averageUtilisation(
+          [cell], sourceRow.production_fleet_total
+        );
+
+        if (average && Number.isFinite(average.percentage)) {
+          values.push(average.percentage);
+        }
+      }
+
+      return filteredMean(values);
+    };
+
+    const filteredShiftUtilisationAverage = (sourceRows, shift) => {
+      const values = [];
+
+      for (const sourceRow of sourceRows) {
+        if (!hasPlannedShift(sourceRow, shift)) continue;
+
+        const cells = shift === 'day'
+          ? sourceRow.cells.slice(0, 12)
+          : sourceRow.cells.slice(12, 24);
+
+        const average = averageUtilisation(
+          cells, sourceRow.production_fleet_total
+        );
+
+        if (average && Number.isFinite(average.percentage)) {
+          values.push(average.percentage);
+        }
+      }
+
+      return filteredMean(values);
+    };
+
+    const filteredHourlyAverages = isAvailability ? [] :
+      data.hours.map((hour, index) =>
+        filteredHourlyUtilisationAverage(
+          data.rows, index, index < 12 ? 'day' : 'night'
+        )
+      );
+
+    const filteredDayAverage = isAvailability ? null :
+      filteredShiftUtilisationAverage(data.rows, 'day');
+
+    const filteredNightAverage = isAvailability ? null :
+      filteredShiftUtilisationAverage(data.rows, 'night');
+
+    const overallAverage = isAvailability ? null :
+      filteredMean(filteredHourlyAverages);
+
+    const formatFilteredAverage = value =>
+      value == null ? '—' : `${number(value, 1)}%`;
+
+    const filteredAverageRow = !isAvailability ? `
+      <tr class="hm-filtered-average-row">
+        <th colspan="3" class="hm-filtered-average-label">
+          Filtered Avg · Utilisation %
+        </th>
+        ${filteredHourlyAverages.map((average, index) =>
+          `<td class="hm-filtered-average-value">${formatFilteredAverage(average)}</td>${
+            index === 11
+              ? `<td class="hm-filtered-average-value hm-filtered-average-shift">${formatFilteredAverage(filteredDayAverage)}</td>`
+              : ''
+          }${
+            index === 23
+              ? `<td class="hm-filtered-average-value hm-filtered-average-shift">${formatFilteredAverage(filteredNightAverage)}</td>`
+              : ''
+          }`
+        ).join('')}
+        <td class="hm-filtered-average-overall">${formatFilteredAverage(overallAverage)}</td>
+      </tr>` : '';
+
     const rows = data.rows.map((row, rowIndex) => {
       const divider = row.month_key !== lastMonth
         ? `<tr class="hpa-month-divider">
-             <th colspan="${isAvailability ? 28 : 27}"><span>${escape(row.month)}</span></th>
+             <th colspan="${isAvailability ? 28 : 30}"><span>${escape(row.month)}</span></th>
            </tr>`
         : '';
 
@@ -716,11 +995,33 @@
           aria-label="${escape(row.date)} ${shift} shift average available ADTs. Open average details.">${value} / ${averageTotal}</td>`;
       };
 
+      const renderUtilisationAverage = (sourceCells, shift) => {
+        const average = averageUtilisation(sourceCells, row.production_fleet_total);
+        const formatted = average == null ? '—' :
+          `${average.percentage.toLocaleString('en-US', {
+            minimumFractionDigits: 1,
+            maximumFractionDigits: 1
+          })}%`;
+
+        const averageClass = average == null ? '' :
+          average.percentage < 85
+            ? 'hm-average-below-target'
+            : 'hm-average-meets-target';
+
+        return `<td class="hpa-cell hm-cell hm-utilisation-average hm-average-cell"
+          data-hm-row="${rowIndex}" data-hm-average-shift="${shift}"
+          tabindex="0" aria-haspopup="dialog" aria-expanded="false"
+          aria-controls="hm-machine-card"
+          aria-label="${escape(row.date)} ${shift} shift average utilisation: ${formatted}. Open average details."><span class="${averageClass}">${formatted}</span></td>`;
+      };
+
       const dayAverageCell = isAvailability
-        ? renderAverage(row.cells.slice(0, 12), 'day') : '';
+        ? renderAverage(row.cells.slice(0, 12), 'day')
+        : renderUtilisationAverage(row.cells.slice(0, 12), 'day');
 
       const nightAverageCell = isAvailability
-        ? renderAverage(row.cells.slice(12, 24), 'night') : '';
+        ? renderAverage(row.cells.slice(12, 24), 'night')
+        : renderUtilisationAverage(row.cells.slice(12, 24), 'night');
 
       const cells = row.cells.map((cell, index) => {
         const verified = isAvailability
@@ -756,8 +1057,11 @@
         // Use the exact Utilised / Available values displayed in the cell
         // for performance and anomaly classification.
         const colour = machineColour(
-          row.production_fleet_total, cell.available,
-          cell.utilised, productionVerified
+          row.production_fleet_total,
+          cell.production_available ?? cell.available,
+          cell.all_utilised ?? cell.utilised,
+          cell.available,
+          productionVerified
         );
 
         const isFatigueOrNonProduction =
@@ -778,7 +1082,7 @@
           data-hm-row="${rowIndex}" data-hm-hour="${index}"
           tabindex="0" aria-haspopup="dialog" aria-expanded="false"
           aria-controls="hm-machine-card"
-          aria-label="${escape(hourHeading(row, cell))}; ${isAvailability ? 'Availability' : 'Utilisation'} details. Open hourly machine details.">${value}</td>${isAvailability && index === 11 ? dayAverageCell : ""}${isAvailability && index === 23 ? nightAverageCell : ""}`;
+          aria-label="${escape(hourHeading(row, cell))}; ${isAvailability ? 'Availability' : 'Utilisation'} details. Open hourly machine details.">${value}</td>${index === 11 ? dayAverageCell : ""}${index === 23 ? nightAverageCell : ""}`;
       }).join('');
 
       const rowClass = row.day === 'Sun' ? 'hm-sunday-row' : '';
@@ -787,6 +1091,7 @@
         <td class="hpa-sticky-day">${escape(row.day)}</td>
         ${isAvailability ? '' : `<td class="hpa-sticky-month">${escape(row.month)}</td>`}
         ${cells}
+        ${isAvailability ? '' : '<td class="hm-utilisation-overall-cell"></td>'}
       </tr>`;
     }).join('');
 
@@ -872,12 +1177,8 @@
               <span><strong>Green</strong> · Production requirement met or exceeded</span>
             </div>
             <div class="hm-classification-item">
-              <i class="hm-orange-key"></i>
-              <span><strong>Orange</strong> · 1 ADT below production requirement</span>
-            </div>
-            <div class="hm-classification-item">
               <i class="hm-red-key"></i>
-              <span><strong>Red</strong> · 2+ ADTs below production requirement</span>
+              <span><strong>Red</strong> · Any shortfall below production requirement</span>
             </div>            <div class="hm-classification-item">
               <i class="hm-anomaly-key"></i>
               <span><strong>Green + red border</strong> · Utilised ADTs exceed available ADTs (data anomaly)</span>
@@ -891,29 +1192,30 @@
       </div>
     </section>`}<div class="hpa-scroll ${isAvailability ? "hm-availability-scroll" : ""}" tabindex="0" role="region"
       aria-label="${viewMode === "availability" ? "Available versus total fleet hourly table" : "Machine utilised versus available hourly table"}; scroll horizontally and vertically">
-      <table class="hpa-table hm-matrix ${isAvailability ? "hm-availability-matrix" : ""}">
+      <table class="hpa-table hm-matrix ${isAvailability ? "hm-availability-matrix" : "hm-utilisation-matrix"}">
         <caption>${viewMode === "availability" ? "Available / Total fleet ADTs" : "Utilised / Available ADTs"} · ${escape(data.site)}</caption>
         <thead>
           <tr>
             <th rowspan="2" class="hpa-sticky-date">Date</th>
             <th rowspan="2" class="hpa-sticky-day">Day</th>
             ${isAvailability ? '' : '<th rowspan="2" class="hpa-sticky-month">Month</th>'}
-            <th colspan="${isAvailability ? 13 : 12}" class="hpa-shift-day">
+            <th colspan="13" class="hpa-shift-day">
               DAY SHIFT · 06:00–18:00
             </th>
-            <th colspan="${isAvailability ? 13 : 12}" class="hpa-shift-night">
+            <th colspan="13" class="hpa-shift-night">
               NIGHT SHIFT · 18:00–06:00
             </th>
+            ${isAvailability ? '' : '<th rowspan="2" class="hm-utilisation-average-heading hm-utilisation-overall-heading">Overall Avg</th>'}
           </tr>
           <tr>
             ${data.hours.map((hour,index) =>
               `<th class="hpa-hour ${
                 index === 12 ? 'hpa-night-start' : ''
-              }">${escape(hour.replaceAll(':00',''))}</th>${isAvailability && index === 11 ? '<th class="hpa-hour hm-availability-average-heading">Day Avg</th>' : ''}${isAvailability && index === 23 ? '<th class="hpa-hour hm-availability-average-heading">Night Avg</th>' : ''}`
+              }">${escape(hour.replaceAll(':00',''))}</th>${index === 11 ? `<th class="hpa-hour ${isAvailability ? 'hm-availability-average-heading' : 'hm-utilisation-average-heading'}">Day Avg</th>` : ''}${index === 23 ? `<th class="hpa-hour ${isAvailability ? 'hm-availability-average-heading' : 'hm-utilisation-average-heading'}">Night Avg</th>` : ''}`
             ).join('')}
           </tr>
         </thead>
-        <tbody>${rows}</tbody>
+        <tbody>${rows}${filteredAverageRow}</tbody>
       </table>
     </div>
     `;
@@ -986,6 +1288,7 @@
 
     const palette = {
       green: "#22C55E",
+      orange: "#F59E0B",
       red: "#EF4444",
       unknown: "#E5E7EB",
     };
@@ -1002,8 +1305,8 @@
       const total = Number(row.fleet_total) || 0;
 
       const cells = row.cells.map((cell, index) => {
-        const category = ["green", "red"].includes(cell.category)
-          ? cell.category : "unknown";
+        const category = ["green", "orange", "red"].includes(cell.category)
+          ? cell.category : "neutral";
 
         const available = cell.available == null
           ? "—"

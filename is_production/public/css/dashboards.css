@@ -5533,3 +5533,161 @@ body .hod-performance-dashboard:not(.hod-export-dashboard) {
   background: #22C55E !important;
   border: 1px solid #D63C4B !important;
 }
+
+/* ADT Util Day/Night weighted average percentage columns */
+.hm-utilisation-matrix .hm-utilisation-average,
+.hm-utilisation-matrix .hm-utilisation-average-heading {
+  background: #DBEAFE !important;
+  border-left: 2px solid #60A5FA !important;
+  border-right: 2px solid #60A5FA !important;
+  font-weight: 800 !important;
+  white-space: nowrap;
+  text-align: center;
+  width: 64px !important;
+  min-width: 64px !important;
+  max-width: 64px !important;
+  box-sizing: border-box;
+  font-variant-numeric: tabular-nums;
+}
+
+.hm-utilisation-matrix .hm-utilisation-average-heading {
+  top: 30px;
+}
+
+
+/* HOURLY PRODUCTIVITY FILTERED AVERAGE FOOTER */
+.hpa-analysis-matrix .hpa-filtered-average-row > * {
+    background: #DDEBF7 !important;
+    color: #183153 !important;
+    font-weight: 800 !important;
+    text-align: center !important;
+    border-top: 2px solid #183153 !important;
+    border-bottom: 2px solid #183153 !important;
+    border-left: 1px solid #183153 !important;
+    border-right: 1px solid #183153 !important;
+    padding: 9px 5px !important;
+}
+
+.hpa-analysis-matrix .hpa-filtered-average-row .hpa-filtered-average-label {
+    background: #C6DDF3 !important;
+    text-align: left !important;
+    padding-left: 14px !important;
+}
+
+.hpa-analysis-matrix .hpa-filtered-average-row .hpa-filtered-average-shift {
+    background: #AFCBED !important;
+    color: #123B68 !important;
+    border-left: 2px solid #183153 !important;
+    border-right: 2px solid #183153 !important;
+}
+
+/* ADT Util shift averages: 85% target */
+.hm-utilisation-matrix .hm-average-below-target {
+  color: #DC2626 !important;
+  font-weight: 800 !important;
+}
+
+.hm-utilisation-matrix .hm-average-meets-target {
+  color: #16A34A !important;
+  font-weight: 800 !important;
+}
+
+
+/* HOURLY PRODUCTIVITY MPP EXCAVATOR FLEET CARD */
+.hpa-excavator-fleet-card {
+    margin-left: auto;
+    min-width: 255px;
+    align-self: stretch;
+    padding: 13px;
+    border: 1px solid #183153;
+    border-radius: 8px;
+    background: #F8FAFC;
+}
+
+.hpa-excavator-fleet-heading {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-bottom: 12px;
+    color: #183153;
+}
+
+.hpa-excavator-fleet-heading small {
+    color: #64748B;
+    font-size: 11px;
+}
+
+.hpa-excavator-fleet-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.hpa-excavator-fleet-grid > div {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 10px 5px;
+    border-radius: 6px;
+}
+
+.hpa-excavator-fleet-grid strong {
+    font-size: 25px;
+    line-height: 1.2;
+    font-weight: 800;
+}
+
+.hpa-excavator-fleet-grid span {
+    font-size: 11px;
+    color: #475569;
+}
+
+.hpa-fleet-production { background: #DCFCE7; color: #166534; }
+.hpa-fleet-spare { background: #F3E8FF; color: #7E22CE; }
+.hpa-fleet-total { background: #DBEAFE; color: #1E40AF; }
+
+@media (max-width: 767px) {
+    .hpa-excavator-fleet-card {
+        width: 100%;
+        min-width: 0;
+        margin-left: 0;
+    }
+}
+
+
+/* HOURLY PRODUCTIVITY AVERAGE RATE TEXT COLOURS */
+.hpa-analysis-matrix .hpa-rate-below-target {
+    color: #DC2626 !important;
+    font-weight: 800 !important;
+}
+
+.hpa-analysis-matrix .hpa-rate-meets-target {
+    color: #16A34A !important;
+    font-weight: 800 !important;
+}
+
+/* ADT Util filtered average footer */
+.hm-utilisation-matrix .hm-filtered-average-row > th,
+.hm-utilisation-matrix .hm-filtered-average-row > td {
+  background: #E8EEF6 !important;
+  color: #172033 !important;
+  border-top: 2px solid #64748B !important;
+  font-weight: 800 !important;
+  text-align: center;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.hm-utilisation-matrix .hm-filtered-average-label {
+  text-align: left !important;
+  padding-left: 10px !important;
+}
+
+.hm-utilisation-matrix .hm-utilisation-overall-heading,
+.hm-utilisation-matrix .hm-utilisation-overall-cell,
+.hm-utilisation-matrix .hm-filtered-average-overall {
+  border-left: 2px solid #60A5FA !important;
+  border-right: 2px solid #60A5FA !important;
+  min-width: 72px;
+}

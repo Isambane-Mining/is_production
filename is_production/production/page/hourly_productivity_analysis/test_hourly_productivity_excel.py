@@ -1,5 +1,6 @@
 """Inspect real XLSX output from the analysis and its download endpoint."""
 from io import BytesIO
+from datetime import datetime
 from copy import deepcopy
 from unittest import TestCase
 from unittest.mock import patch
@@ -23,6 +24,13 @@ class TestHourlyProductivityExcel(TestCase):
         fatigue = [{"site": "Koppie", "shift": "Day", "day_type": "Weekday",
                     "fatigue_start": "13:00", "fatigue_end": "13:30"}]
         self.data = fixture.build(docs, fatigue=fatigue)
+
+        self.availability_data = report.build_machine_availability_analysis(
+            "2026-10-12", "2026-10-12", "Koppie",
+            [fixture.plan], fixture.f.assets, [],
+            now=datetime(2026, 10, 14),
+            machine_scope="all",
+        )
 
     def test_workbook_four_categories_fractional_totals_colours_and_chart(self):
         content = make_workbook(self.data)
@@ -189,35 +197,35 @@ class TestHourlyProductivityExcel(TestCase):
     def test_availability_export_includes_day_and_night_average_columns(self):
         response = {}
 
-        with patch.object(report, "get_machine_analysis", return_value=self.data) as get_machine_analysis, \
+        with patch.object(report, "get_machine_availability", return_value=self.availability_data) as get_machine_availability, \
                 patch.object(report.frappe, "response", response):
             report.export_machine_excel(
                 "Koppie", "2026-10-12", "2026-10-12",
-                machine_scope="all", view_mode="availability"
+                "all", view_mode="availability"
             )
 
-        get_machine_analysis.assert_called_once_with(
-            "Koppie", "2026-10-12", "2026-10-12", machine_scope="all"
+        get_machine_availability.assert_called_once_with(
+            "Koppie", "2026-10-12", "2026-10-12", "all"
         )
         self.assertEqual(response["type"], "download")
 
         book = load_workbook(BytesIO(response["filecontent"]))
         sheet = book["October 2026"]
-        row = self.data["rows"][0]
+        row = self.availability_data["rows"][0]
 
-        self.assertEqual(sheet["P6"].value, "Day Avg")
-        self.assertEqual(sheet["AC6"].value, "Night Avg")
-        self.assertEqual(sheet["Q6"].value, row["cells"][12]["label"])
-        self.assertEqual(sheet["AB6"].value, row["cells"][23]["label"])
+        self.assertEqual(sheet["AB6"].value, "Day Avg")
+        self.assertEqual(sheet["BA6"].value, "Night Avg")
+        self.assertEqual(sheet["AC6"].value, row["cells"][12]["label"])
+        self.assertEqual(sheet["AY6"].value, row["cells"][23]["label"])
         self.assertTrue(str(sheet["AB7"].value).strip())
 
         for address, cells in (
-            ("P7", row["cells"][:12]),
-            ("AC7", row["cells"][12:24]),
+            ("AB7", row["cells"][:12]),
+            ("BA7", row["cells"][12:24]),
         ):
             values = []
             for cell in cells:
-                if not cell.get("completed") or not cell.get("has_record"):
+                if not cell.get("availability_verified"):
                     continue
                 try:
                     value = float(cell.get("available"))
@@ -264,8 +272,7 @@ class TestHourlyProductivityExcel(TestCase):
             )
 
         get_machine_analysis.assert_called_once_with(
-            "Koppie", "2026-10-12", "2026-10-12",
-            machine_scope="production"
+            "Koppie", "2026-10-12", "2026-10-12", "production"
         )
 
         sheet = load_workbook(BytesIO(response["filecontent"]))["October 2026"]
@@ -278,14 +285,14 @@ class TestHourlyProductivityExcel(TestCase):
         self.assertEqual(sheet["F7"].value, "4 / 5")
         self.assertEqual(sheet["G7"].value, "3 / 5")
 
-        self.assertEqual(sheet["E7"].fill.fgColor.rgb, "FFB9EDC5")
-        self.assertEqual(sheet["F7"].fill.fgColor.rgb, "FFFFC18A")
-        self.assertEqual(sheet["G7"].fill.fgColor.rgb, "FFF3A6AE")
+        self.assertEqual(sheet["E7"].fill.fgColor.rgb, "FF22C55E")
+        self.assertEqual(sheet["F7"].fill.fgColor.rgb, "FFEF4444")
+        self.assertEqual(sheet["G7"].fill.fgColor.rgb, "FFEF4444")
 
 
 
     def test_availability_export_preserves_averages_and_filter_across_months(self):
-        data = deepcopy(self.data)
+        data = deepcopy(self.availability_data)
         second = deepcopy(data["rows"][0])
         second.update({
             "date": "2026-11-01",
@@ -297,17 +304,17 @@ class TestHourlyProductivityExcel(TestCase):
 
         response = {}
 
-        with patch.object(report, "get_machine_analysis", return_value=data) as get_machine_analysis, \
+        with patch.object(report, "get_machine_availability", return_value=data) as get_machine_availability, \
                 patch.object(report.frappe, "response", response):
             report.export_machine_excel(
                 "Koppie", "2026-10-12", "2026-11-01",
-                machine_scope="all",
+                "all",
                 unavailable_number="1",
                 view_mode="availability"
             )
 
-        get_machine_analysis.assert_called_once_with(
-            "Koppie", "2026-10-12", "2026-11-01", machine_scope="all"
+        get_machine_availability.assert_called_once_with(
+            "Koppie", "2026-10-12", "2026-11-01", "all"
         )
 
         book = load_workbook(BytesIO(response["filecontent"]))
@@ -316,10 +323,10 @@ class TestHourlyProductivityExcel(TestCase):
 
         for name in ("October 2026", "November 2026"):
             sheet = book[name]
-            self.assertEqual(sheet["P6"].value, "Day Avg")
-            self.assertEqual(sheet["AC6"].value, "Night Avg")
-            self.assertIn("/", str(sheet["P7"].value))
-            self.assertIn("/", str(sheet["AC7"].value))
+            self.assertEqual(sheet["AB6"].value, "Day Avg")
+            self.assertEqual(sheet["BA6"].value, "Night Avg")
+            self.assertIn("/", str(sheet["AB7"].value))
+            self.assertIn("/", str(sheet["BA7"].value))
 
     def test_download_endpoint_returns_readable_workbook_and_preserves_scope(self):
         response = {}
