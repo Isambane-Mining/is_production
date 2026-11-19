@@ -7,8 +7,8 @@ function fixture() {
     actual_bcm: 0, target_bcm: 220, average_productive_hours: 1,
     has_record: false, record_status: 'missing', excavator_available: 1}));
   return {site: '<Koppie>', warnings: ['Missing <records>'], hours: cells.map(x=>x.label),
-    rows: [{date: '2026-09-30', day: 'Wed', month: 'September 2026', month_key: '2026-09', plan_name: 'SEP', cells},
-      {date: '2026-10-01', day: 'Thu', month: 'October 2026', month_key: '2026-10', plan_name: 'OCT', cells}],
+    rows: [{date: '2026-09-30', day: 'Wed', month: 'September 2026', month_key: '2026-09', plan_name: 'SEP', mpp_day_hours: 12, mpp_night_hours: 12, excavator_fleet: {production: 1, spare: 0, total: 1}, cells},
+      {date: '2026-10-01', day: 'Thu', month: 'October 2026', month_key: '2026-10', plan_name: 'OCT', mpp_day_hours: 12, mpp_night_hours: 12, excavator_fleet: {production: 1, spare: 0, total: 1}, cells}],
     pie: {total_hours: 48, categories: Object.fromEntries(['green','amber','red','grey'].map(key=>
       [key,{hours:key==='red'?48:0,percent:key==='red'?100:0}]))}};
 }
@@ -271,7 +271,7 @@ test('machine matrix preserves unknown counts and suppresses pending and missing
   const html=renderMachineMatrix(data);
   assert.ok(!html.includes('999'));
   assert.ok(!html.includes('997'));
-  assert.ok(html.includes('Zero available / unknown / missing / pending / spare-only'));
+  assert.ok(html.includes('Non-production hours / fatigue / unavailable or unverified'));
   assert.ok(html.includes('—'));
 });
 
@@ -375,14 +375,14 @@ test('ADT availability renders independent green and orange half-hour background
   const availability = renderMachineMatrix(data, null, 'availability');
 
   assert.ok(availability.includes(
-    'linear-gradient(90deg,#B9EDC5 0% 50%,#FFC18A 50% 100%)'
+    'linear-gradient(90deg,#22C55E 0% 50%,#F59E0B 50% 100%)'
   ));
   assert.ok(availability.includes('ADT Availability'));
   assert.ok(availability.includes('Production requirement met'));
   assert.ok(availability.includes('More than one ADT below requirement'));
 
   const utilisation = renderMachineMatrix(data, null, 'utilisation');
-  assert.ok(!utilisation.includes('linear-gradient(90deg,#B9EDC5'));
+  assert.ok(!utilisation.includes('linear-gradient(90deg,#22C55E'));
 });
 
 test('shift averages use weighted productive hours and exclude fatigue time', () => {
@@ -452,7 +452,7 @@ test('ADT Util colour classification includes utilised spare machines', () => {
 
   cell.all_utilised = 7;
   html = renderMachineMatrix(data);
-  assert.match(firstCell(html), /hm-orange/);
+  assert.match(firstCell(html), /hm-red/);
 
   cell.all_utilised = 6;
   html = renderMachineMatrix(data);
