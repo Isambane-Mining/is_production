@@ -5346,9 +5346,9 @@ const Sim = (() => {
        mining left is reported. A coal or waste target still holds its own part. */
     const TV = tgLimit && (+TG.totalMin > 0 || +TG.totalMax > 0) ? (() => {
       const mx = +TG.totalMax > 0 ? +TG.totalMax : 0, mn = +TG.totalMin > 0 ? +TG.totalMin : 0;
-      return { min: mx > 0 ? Math.min(mn, mx) : mn, max: mx, minBud: 0, maxBud: Infinity, used: 0, bind: false, held: 0, short: [] };
+      return { min: mx > 0 ? Math.min(mn, mx) : mn, max: mx, minBud: 0, maxBud: Infinity, used: 0, bind: false, held: 0, short: [], rampHeld: 0, rampSaid: new Set(), batHeld: 0, fresh: true };
     })() : null;
-    if (TV) events.push({ day: 0, type: 'info', msg: `Total volume: ${TV.min > 0 && TV.max > 0 ? `between ${U.fmtNum(TV.min, 0)} and ${U.fmtNum(TV.max, 0)}` : TV.max > 0 ? `at most ${U.fmtNum(TV.max, 0)}` : `at least ${U.fmtNum(TV.min, 0)}`} bcm of waste and coal together in an average month (the activities, the ramps and the highwall batters; not the rehandling), following the ${TL.work ? 'working' : 'calendar'} days of each month.${TV.max > 0 ? ' The teams move no more than the maximum: the coal first, up to its target, the waste the rest (the ramps, the batters and the blocks a ramp opens are not held back).' : ''}${TV.min > 0 ? (WF ? ' The waste that follows the coal (not the topsoil) moves ahead faster when a month would stay below the minimum.' : ' The minimum is reached as far as the teams and the mining allow.') : ''}` });
+    if (TV) events.push({ day: 0, type: 'info', msg: `Total volume: ${TV.min > 0 && TV.max > 0 ? `between ${U.fmtNum(TV.min, 0)} and ${U.fmtNum(TV.max, 0)}` : TV.max > 0 ? `at most ${U.fmtNum(TV.max, 0)}` : `at least ${U.fmtNum(TV.min, 0)}`} bcm of waste and coal together in an average month (the activities, the ramps and the highwall batters; not the rehandling), following the ${TL.work ? 'working' : 'calendar'} days of each month.${TV.max > 0 ? ' The teams move no more than the maximum: the coal first, up to its target, the waste the rest; a ramp waits rather than mine a block whole ahead of the sequence when the month has no room for it, and so does a highwall batter cut (the ramps’ own road cuts are not held back).' : ''}${TV.min > 0 ? (WF ? ' The waste that follows the coal (not the topsoil) moves ahead faster when a month would stay below the minimum.' : ' The minimum is reached as far as the teams and the mining allow.') : ''}` });
     if (MW) events.push({ day: 0, type: 'info', msg: `Minimum waste: at least ${U.fmtNum(MW.min, 0)} ${TL.wT ? 't' : 'bcm'} of waste in an average month (the waste activities, the ramps and the highwall batters), following the ${TL.work ? 'working' : 'calendar'} days of each month.` });
     /* Extra coal to free the waste (P.targets.coalExtra, with a coal target scheduled to): after the day's mining, a
        waste activity that stands idle only because a coal seam above it in its block is not mined yet, while the teams
@@ -5453,6 +5453,7 @@ const Sim = (() => {
       if (WF && WF.ramp && (!TL.work || w)) WF.held += (TL.coal * (1 - Monthly.rampFactor(P, day))) / TL.per;
       targetMonth(date);
       if (!w) return;
+      if (TV) TV.fresh = false; // (the month's first working day: its ramps and batters have had the first call on the maximum)
       for (let g = 0; g < 3; g++) { tg.left[g] = tg.bud[g] === Infinity ? Infinity : Math.max(0, tg.bud[g] - tg.used[g]) / Math.max(1, tg.wdLeft); tg.resv[g] = 0; }
       // the total volume's maximum: the teams move no more than the rest of the month's maximum ÷ the working days left
       // (TV.held: what that holds back of the teams, given back to the rehandling after the mining)
@@ -5468,7 +5469,7 @@ const Sim = (() => {
         // a new month: its budgets from the days it has (from the start date in the first month)
         // (the total volume: below the minimum while there was mining left)
         if (TV && TV.min > 0 && tg.key >= 0 && TV.used < 0.99 * TV.minBud && acts.some(X => !X.done && !X.halted && X.path.length && X.startDay < day)) TV.short.push({ key: tg.key, used: TV.used, bud: TV.minBud });
-        tg.key = key; tg.used = [0, 0, 0]; tg.wdLeft = 0; if (TV) TV.used = 0;
+        tg.key = key; tg.used = [0, 0, 0]; tg.wdLeft = 0; if (TV) { TV.used = 0; TV.fresh = true; }
         let base = 0, baseC = 0, i = 0;
         for (let d = new Date(date.getTime()); d.getUTCMonth() === date.getUTCMonth(); d = new Date(d.getTime() + U.DAY_MS), i++) { const wk = isWorking(cal, d); if (wk) tg.wdLeft++; if (!TL.work || wk) { base++; baseC += Monthly.rampFactor(P, day + i); } }
         // (the waste target: the start-up waste over the first months of mining, then the steady target)
@@ -6120,9 +6121,24 @@ const Sim = (() => {
     const actFor = new Map(); for (const X of acts) for (const b of X.path) { const k = b * nL + X.l; if (!actFor.has(k)) actFor.set(k, X); }
     const rampOpened = []; // {ramp, b, day, l, bcm, t}
     const byRamp = new Uint8Array(nB * nL); // layers of a block that a ramp mined out (the toe follows the mining, not these)
+    const tvRoom = () => TV.maxBud - TV.used - batterDaily[day] - rampDaily[day]; // (the month's room left of the maximum total volume, today's ramp and batter cuts in it)
     function rampOpen(R, b, list) {
       let m = 0;
       for (; m < nL; m++) { let fine = true; for (const [c, t] of list) if (Math.min(insitu[c], S[m][c]) > t + 0.05) { fine = false; break; } if (fine) break; }
+      /* The total volume's maximum (Production tab): a block is mined whole for the ramp only while the month has room for
+         it; else the ramp waits at it (-1), until the month has room (the next month at the latest) or its activities mine
+         it in their turn. A block bigger than a whole month's maximum is opened at the start of a month, before anything else. */
+      if (TV && TV.maxBud < Infinity) {
+        let vol = 0;
+        for (let l = 0; l < m; l++) { if (layerDone[b][l] || remain[b][l] <= 1e-3) continue; if (!actFor.get(b * nL + l) || !scheduled[b][l]) break; vol += remain[b][l]; }
+        const room = tvRoom();
+        if (vol > 1e-3 && vol > room + 1e-6 && !(vol > TV.maxBud && TV.fresh && room >= TV.maxBud - 1e-6)) {
+          TV.rampHeld++;
+          const k = R.road.name + '|' + b;
+          if (!TV.rampSaid.has(k)) { TV.rampSaid.add(k); if (TV.rampSaid.size <= 12) events.push({ day, type: 'info', msg: `Ramp "${R.road.name}" waits at block ${P.blocks[b].id}: mining it whole for the ramp (${U.fmtBig(vol, 'bcm')}) would pass the maximum total volume of the month (${U.fmtBig(Math.max(0, room), 'bcm')} left). The ramp goes on when the month has room for it (the next month at the latest), or once the block is mined in its turn.` }); }
+          return -1;
+        }
+      }
       let bcm = 0, coal = 0, last = -1;
       for (let l = 0; l < m; l++) {
         if (layerDone[b][l]) continue;
@@ -6243,7 +6259,7 @@ const Sim = (() => {
           const tgt = Math.min(zgOf(c), z + (R.aT - cs[i]) * g);
           if (insitu[c] > tgt + 0.05) { if (!need) need = new Map(); if (!need.has(cb)) need.set(cb, []); need.get(cb).push([c, tgt]); }
         }
-        if (need) for (const [b, list] of need) rampOpen(R, b, list);
+        if (need) { let held = false; for (const [b, list] of need) if (rampOpen(R, b, list) < 0) held = true; if (held) return; } // (the ramp waits today: the month has no room to mine a block on its way whole)
       }
       let cutBank = 0, dFill = 0, blocked = 0, top = R.aT, hw = 0, bf = 0;
       for (let i = 0; i < cells.length && cs[i] <= R.aT + 1e-6; i++) {
@@ -6592,6 +6608,12 @@ const Sim = (() => {
         let down = blockDone[own] === 1;
         if (!down) { down = true; for (let l = 0; l < Math.min(B.k, nL); l++) if (scheduled[own][l] && vol0[own][l] > 1e-3 && !layerDone[own][l]) { down = false; break; } }
         if (!down) continue;
+        // (the total volume's maximum: a cut the month has no room for waits, the next month at the latest)
+        if (TV && TV.maxBud < Infinity) {
+          let est = 0; for (const [c, zb] of list) { if (keep.any && keep.k[c] <= 0) continue; if (insitu[c] > zb + 0.05) { const cb = ws.cellBlock[c]; est += (insitu[c] - zb) * A * (cb >= 0 ? ws.blockCorr[cb] : 1); } }
+          const room = tvRoom();
+          if (est > 1e-3 && est > room + 1e-6 && !(est > TV.maxBud && TV.fresh && room >= TV.maxBud - 1e-6)) { TV.batHeld++; continue; }
+        }
         B.done.add(own);
         const t0 = rampTDaily[day], k0 = rampCoalT[day]; let v = 0;
         curMat = 255;
@@ -6631,7 +6653,10 @@ const Sim = (() => {
             if (!R.isRoad[k] || cb < 0 || cb === R.foot || (R.foot >= 0 && pitOf[cb] !== pitOf[R.foot]) || !isSched[cb] || blockDone[cb] || insitu[c] <= R.zd[k] + 0.05 || (keep.any && keep.k[c] <= 0)) continue;
             if (!need) need = new Map(); if (!need.has(cb)) need.set(cb, []); need.get(cb).push([c, R.zd[k]]);
           }
-          if (need) for (const [b, list] of need) rampOpen(R, b, list);
+          if (need) {
+            let held = null; for (const [b, list] of need) if (rampOpen(R, b, list) < 0) (held || (held = new Set())).add(b);
+            if (held) for (let k = R.ptr; k < e; k++) if (held.has(ws.cellBlock[R.cells[k]])) { e = k; break; } // (the ramp waits at a block the month has no room to mine whole)
+          }
         }
         for (; R.ptr < e; R.ptr++) {
           const c = R.cells[R.ptr], z = R.zd[R.ptr];
@@ -6960,6 +6985,7 @@ const Sim = (() => {
       if (XC.added > 0) events.push({ day: nDays - 1, type: 'info', msg: `Extra coal: ${U.fmtNum(XC.added, 0)} ${tu} was mined over the coal target to free the waste and went onto the ROM stockpile; ${U.fmtNum(XC.rec, 0)} ${tu} of it made up months below the target, and ${U.fmtNum(XC.stock, 0)} ${tu} is left on it when mining ends (sold then). The most it held: ${U.fmtNum(Math.max(0, ...XC.months.map(q => q.closing + q.reclaimed)), 0)} ${tu}.` });
       else events.push({ day: nDays - 1, type: 'info', msg: 'Extra coal: the waste never stood idle under a coal seam with teams to spare, so no coal was mined over the target.' });
     }
+    if (TV && (TV.rampHeld || TV.batHeld)) events.push({ day: nDays - 1, type: 'info', msg: `Total volume: held to the maximum, ${[TV.rampHeld ? `the ramps waited ${TV.rampHeld} time${TV.rampHeld === 1 ? '' : 's'} at ${TV.rampSaid.size} block${TV.rampSaid.size === 1 ? '' : 's'} they would have mined whole` : '', TV.batHeld ? `highwall batter cuts waited ${TV.batHeld} time${TV.batHeld === 1 ? '' : 's'}` : ''].filter(Boolean).join(', and ')}, until the month had room for them (the next month at the latest).` });
     if (TV && TV.short.length) events.push({ day: nDays - 1, type: 'warn', msg: `Minimum total volume not met in ${TV.short.length} month${TV.short.length === 1 ? '' : 's'}: ${TV.short.slice(0, 8).map(q => `${mName(q.key)} (${U.fmtNum(q.used, 0)} of ${U.fmtNum(q.bud, 0)} bcm)`).join(', ')}${TV.short.length > 8 ? ', …' : ''}. The mining could not move faster: the teams, a coal or waste target, a dependency, a void or a dump held it back.` });
     if (MW && MW.short.length) events.push({ day: nDays - 1, type: 'warn', msg: `Minimum waste not met in ${MW.short.length} month${MW.short.length === 1 ? '' : 's'}: ${MW.short.slice(0, 8).map(q => `${mName(q.key)} (${U.fmtNum(q.used, 0)} of ${U.fmtNum(q.bud, 0)} ${TL.wT ? 't' : 'bcm'})`).join(', ')}${MW.short.length > 8 ? ', …' : ''}. The waste could not be moved faster: the teams, a dependency, a void or a dump held it back.` });
     events.sort((a, b) => (a.day || 0) - (b.day || 0));
@@ -17614,7 +17640,7 @@ const Tabs = (() => {
         limit && tmax > 0 && both && tc + tw > tmax + 1e-6 && tc <= tmax ? msg('info', `The coal and waste targets add up to about ${f0(tc + tw)} bcm a month, more than the maximum: the maximum holds the waste back to ${f0(tmax - tc)} bcm (the coal first).`) : null,
         any && !limit ? msg('info', 'The targets are only compared (Monthly targets, below: “Use the targets to”): the schedule is not held to the total volume.') : null,
         any && App.res && App.stale ? msg('warn', 'Run the simulation again to schedule to the total volume.') : null,
-        hint(`Waste and coal together in bcm: all that the activities mine (topsoil, overburden, interburden, partings and coal), with the ramps and the highwall batters; the rehandling is not counted. Each month gets the figure × its ${basis === 'working' ? 'working days ÷ ' + U.fmtNum(per, 1) : 'days ÷ 30.44'} (Monthly targets, below: “Each month follows its”). The maximum holds the schedule back: each working day the teams move no more than the rest of the month’s maximum ÷ the working days left, the coal first (up to its target) and the waste the rest; the ramps, the highwall batters and the blocks a ramp opens ahead of the sequence are not held back, so a month may pass it by them. The minimum: each working day the schedule moves at least the rest of the month’s minimum ÷ the working days left, as far as the teams, the dumps and the voids allow; with the waste following the coal, the overburden, interburden and partings move ahead faster to make it up (not the topsoil: it is stripped as the coal needs it, its stockpiles being emptied only onto the backfill). A coal or waste target still holds its own part. Months below the minimum are reported in the Results tab. Empty: no limit.`)));
+        hint(`Waste and coal together in bcm: all that the activities mine (topsoil, overburden, interburden, partings and coal), with the ramps and the highwall batters; the rehandling is not counted. Each month gets the figure × its ${basis === 'working' ? 'working days ÷ ' + U.fmtNum(per, 1) : 'days ÷ 30.44'} (Monthly targets, below: “Each month follows its”). The maximum holds the schedule back: each working day the teams move no more than the rest of the month’s maximum ÷ the working days left, the coal first (up to its target) and the waste the rest. A ramp waits rather than mine a block whole ahead of the sequence when the month has no room left for it, and a highwall batter cut waits the same way (the next month at the latest); only the ramps’ own road cuts are not held back, so a month may pass the maximum by them. The minimum: each working day the schedule moves at least the rest of the month’s minimum ÷ the working days left, as far as the teams, the dumps and the voids allow; with the waste following the coal, the overburden, interburden and partings move ahead faster to make it up (not the topsoil: it is stripped as the coal needs it, its stockpiles being emptied only onto the backfill). A coal or waste target still holds its own part. Months below the minimum are reported in the Results tab. Empty: no limit.`)));
     }
     // ---- rain: the waste derated in the wet months
     {
