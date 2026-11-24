@@ -5336,6 +5336,19 @@ const Sim = (() => {
        left. A month that stays below it (the teams, a dependency, a void or a dump held the waste back) is reported,
        unless the waste of the schedule was all moved. */
     const MW = tgLimit && +TG.wasteMin > 0 ? { min: +TG.wasteMin, bud: 0, short: [] } : null;
+    /* Total volume (P.targets.totalMin, P.targets.totalMax, Production tab; scheduled to): the bcm of waste and coal together in
+       an average month (what the activities mine, the ramps and the highwall batters; not the rehandling), following the days
+       (or working days) of each month like the targets. The maximum: each working day the teams move no more than the rest
+       of the month's maximum ÷ the working days left, the coal first (up to its target) and the waste the rest; the
+       rehandling gets back what that holds back. The minimum: each working day the waste held to an allowance (the waste that
+       follows the coal) gets at least the rest of the month's minimum ÷ the working days left, less the coal of the day;
+       without allowances the teams move all they can, up to the maximum. A month that stays below the minimum while there is
+       mining left is reported. A coal or waste target still holds its own part. */
+    const TV = tgLimit && (+TG.totalMin > 0 || +TG.totalMax > 0) ? (() => {
+      const mx = +TG.totalMax > 0 ? +TG.totalMax : 0, mn = +TG.totalMin > 0 ? +TG.totalMin : 0;
+      return { min: mx > 0 ? Math.min(mn, mx) : mn, max: mx, minBud: 0, maxBud: Infinity, used: 0, bind: false, held: 0, short: [] };
+    })() : null;
+    if (TV) events.push({ day: 0, type: 'info', msg: `Total volume: ${TV.min > 0 && TV.max > 0 ? `between ${U.fmtNum(TV.min, 0)} and ${U.fmtNum(TV.max, 0)}` : TV.max > 0 ? `at most ${U.fmtNum(TV.max, 0)}` : `at least ${U.fmtNum(TV.min, 0)}`} bcm of waste and coal together in an average month (the activities, the ramps and the highwall batters; not the rehandling), following the ${TL.work ? 'working' : 'calendar'} days of each month.${TV.max > 0 ? ' The teams move no more than the maximum: the coal first, up to its target, the waste the rest (the ramps, the batters and the blocks a ramp opens are not held back).' : ''}${TV.min > 0 ? (WF ? ' The waste that follows the coal (not the topsoil) moves ahead faster when a month would stay below the minimum.' : ' The minimum is reached as far as the teams and the mining allow.') : ''}` });
     if (MW) events.push({ day: 0, type: 'info', msg: `Minimum waste: at least ${U.fmtNum(MW.min, 0)} ${TL.wT ? 't' : 'bcm'} of waste in an average month (the waste activities, the ramps and the highwall batters), following the ${TL.work ? 'working' : 'calendar'} days of each month.` });
     /* Extra coal to free the waste (P.targets.coalExtra, with a coal target scheduled to): after the day's mining, a
        waste activity that stands idle only because a coal seam above it in its block is not mined yet, while the teams
@@ -5371,8 +5384,9 @@ const Sim = (() => {
        first), then by the volume of their paths */
     function topUp(ws, extra) {
       if (!(extra > 1e-6) || !ws.length) return;
+      const given = new Set(ws);
       if (WF) for (const key of WF.keys || []) {
-        const X = acts[WF.owner[key]]; if (!X || X.g !== 1 || !X.act || X.wCap === Infinity) continue;
+        const X = acts[WF.owner[key]]; if (!X || X.g !== 1 || !X.act || X.wCap === Infinity || !given.has(X)) continue;
         X.tuGot = (X.tuDay === day ? X.tuGot : 0) + remain[(key / nL) | 0][key % nL]; X.tuDay = day;
         if (X.tuGot > X.wCap) { const add = Math.min(X.tuGot - X.wCap, extra); X.wCap += add; extra -= add; if (extra <= 1e-6) return; }
       }
@@ -5440,6 +5454,9 @@ const Sim = (() => {
       targetMonth(date);
       if (!w) return;
       for (let g = 0; g < 3; g++) { tg.left[g] = tg.bud[g] === Infinity ? Infinity : Math.max(0, tg.bud[g] - tg.used[g]) / Math.max(1, tg.wdLeft); tg.resv[g] = 0; }
+      // the total volume's maximum: the teams move no more than the rest of the month's maximum ÷ the working days left
+      // (TV.held: what that holds back of the teams, given back to the rehandling after the mining)
+      if (TV) { const v = TV.maxBud === Infinity ? Infinity : Math.max(0, TV.maxBud - TV.used) / Math.max(1, tg.wdLeft); TV.bind = v < tg.left[2] - 1e-6; TV.held = TV.bind ? tg.left[2] - v : 0; if (TV.bind) tg.left[2] = v; }
       targetSplit();
     }
     function targetMonth(date) {
@@ -5449,7 +5466,9 @@ const Sim = (() => {
         // the month before: below the minimum waste while there was waste still to move
         if (MW && tg.key >= 0 && tg.used[1] < 0.99 * MW.bud && acts.some(X => X.g === 1 && !X.done && !X.halted && X.path.length)) MW.short.push({ key: tg.key, used: tg.used[1], bud: MW.bud });
         // a new month: its budgets from the days it has (from the start date in the first month)
-        tg.key = key; tg.used = [0, 0, 0]; tg.wdLeft = 0;
+        // (the total volume: below the minimum while there was mining left)
+        if (TV && TV.min > 0 && tg.key >= 0 && TV.used < 0.99 * TV.minBud && acts.some(X => !X.done && !X.halted && X.path.length && X.startDay < day)) TV.short.push({ key: tg.key, used: TV.used, bud: TV.minBud });
+        tg.key = key; tg.used = [0, 0, 0]; tg.wdLeft = 0; if (TV) TV.used = 0;
         let base = 0, baseC = 0, i = 0;
         for (let d = new Date(date.getTime()); d.getUTCMonth() === date.getUTCMonth(); d = new Date(d.getTime() + U.DAY_MS), i++) { const wk = isWorking(cal, d); if (wk) tg.wdLeft++; if (!TL.work || wk) { base++; baseC += Monthly.rampFactor(P, day + i); } }
         // (the waste target: the start-up waste over the first months of mining, then the steady target)
@@ -5457,6 +5476,7 @@ const Sim = (() => {
         tg.su = TL.waste > 0 && suM < Monthly.startMonths(P); // (a start-up month, or before mining)
         tg.bud = [TL.coal > 0 ? (TL.coal * baseC) / TL.per : Infinity, wM > 0 ? (wM * base) / TL.per : Infinity, TL.team * tg.wdLeft];
         if (MW) MW.bud = (MW.min * base) / TL.per; // (the month's minimum waste)
+        if (TV) { TV.minBud = (TV.min * base) / TL.per; TV.maxBud = TV.max > 0 ? (TV.max * base) / TL.per : Infinity; } // (the month's total volume, bcm)
         if (SW) SW.bud = (SW.rate * base) / TL.per; // (the month's steady waste, bcm)
       }
     }
@@ -5501,6 +5521,20 @@ const Sim = (() => {
       const sumNom = [0, 0];
       for (const X of on) if (inTier(X)) sumNom[X.g] += X.nom;
       for (const X of on) if (tg.left[X.g] !== Infinity) { X.alloc = !inTier(X) ? 0 : sumNom[X.g] > 0 ? (tg.left[X.g] * X.nom) / sumNom[X.g] : tg.left[X.g]; tg.resv[X.g] += X.alloc; }
+      /* the total volume's minimum: the waste held to an allowance (following the coal) gets at least the rest of the month's
+         minimum ÷ the working days left, less the coal the target has for today (bcm) and the allowances it has already (a
+         waste activity with no allowance takes what the teams have left after them anyway). Not the topsoil: it is stripped
+         as the coal needs it, as its stockpiles are emptied only onto the backfill (stripped ahead it would fill them). */
+      if (TV && TV.min > 0) {
+        const ws = on.filter(X => X.g === 1 && X.wCap !== Infinity && X.L.type !== 'topsoil'), today = Math.max(0, TV.minBud - TV.used) / Math.max(1, tg.wdLeft);
+        TV.today = today; TV.used0 = TV.used; // (today's minimum, and what was moved before the mining: the second round makes up the rest)
+        if (ws.length) {
+          let have = 0;
+          for (const X of ws) have += X.wCap;
+          for (const X of on) if (X.g === 0) have += tg.left[0] === Infinity ? Infinity : X.alloc / Math.max(0.01, (+X.L.density || 1.5) * (TL.ar ? X.arF : 1) * (TL.prod ? X.yAvg : 1));
+          if (have < today) topUp(ws, today - have);
+        }
+      }
       // the teams: the coal first, up to its target; then the waste that follows the coal, up to what the coal needs; the
       // rest by the volume of the paths (a priority pit before the others)
       let T = tg.left[2];
@@ -6101,7 +6135,7 @@ const Sim = (() => {
           const dens = Model.blockDensity(P, b, l), sw = X.sw, u = got * unitOf(X, b);
           X.bcm[day] += got; X.t[day] += got * dens;
           records.push({ d: day, a: X.idx, b, v: got, t: got * dens });
-          tg.used[X.g] += u; if (tg.left[X.g] !== Infinity) tg.left[X.g] -= u; tg.used[2] += got; tg.left[2] -= got;
+          tg.used[X.g] += u; if (tg.left[X.g] !== Infinity) tg.left[X.g] -= u; tg.used[2] += got; tg.left[2] -= got; if (TV) TV.used += got;
           // a rollover pushes into its void when that is mined out; otherwise it all goes to the dumps
           const v = X.voidMode ? X.recv.get(b) : -1;
           let dest = null;
@@ -6614,13 +6648,19 @@ const Sim = (() => {
       if (TL.waste > 0 || MW) tg.used[1] += TL.wT ? rampTDaily[day] : rampDaily[day]; // ramp excavation is waste of this month too
       if (TL.waste > 0 || MW) tg.used[1] += TL.wT ? batterTDaily[day] : batterDaily[day]; tg.used[2] += batterDaily[day]; // and so are the highwall batters
       tg.used[2] += rampDaily[day]; // and the teams do it
+      if (TV) TV.used += rampDaily[day] + batterDaily[day]; // (the ramps and the batters are volume moved too)
       targetDay(date, w);
       if (w) {
         // a second round: what some activities could not use goes to the ones the targets or the teams stopped
         // (a third round with extra coal: the coal activities whose seam holds idle waste, over the target, onto the ROM stockpile)
         for (let round = 0; round < (XC ? 3 : 2); round++) for (const X of (round === 2 ? xcPlan() : acts)) {
           if (X.done || X.halted || day < X.startDay) continue;
-          if (round === 2 ? !(X.xNeed > 1e-3 && tg.left[2] > 1e-3) : round && !(X.capNow && tg.left[2] > 1e-3 && tg.left[X.g] > 1e-3)) continue;
+          /* (the total volume's minimum: in the second round a waste activity that stopped only for its allowance, the waste that
+             follows the coal, may move what today still lacks of the minimum, in the order of the activities: the upper layers
+             first; not the topsoil) */
+          const tvMore = round === 1 && TV && TV.min > 0 && X.g === 1 && X.wfNow && X.wCap !== Infinity && X.L.type !== 'topsoil' ? Math.max(0, TV.today - (TV.used - TV.used0)) : 0;
+          if (round === 2 ? !(X.xNeed > 1e-3 && tg.left[2] > 1e-3) : round && !((X.capNow || tvMore > 1e-3) && tg.left[2] > 1e-3 && tg.left[X.g] > 1e-3)) continue;
+          if (tvMore > 1e-3 && !X.capNow) X.wLeft = tvMore;
           // this activity's part of today's budgets, plus what the activities before it did not use
           // (rain: a waste activity held to an allowance loses the derate of it too: the rain stops it for that part of the day)
           if (!round) { if (tg.left[X.g] !== Infinity) tg.resv[X.g] -= X.alloc; tg.resv[2] -= X.allocT; X.wLeft = X.g === 1 && RD > 0 && X.wCap !== Infinity ? X.wCap * (1 - RD) : X.wCap; }
@@ -6638,7 +6678,7 @@ const Sim = (() => {
             if (lim <= 1e-3) { X.why = 0; break; }
             const bG = roomG / ug, bT = roomT / swT, maxBcm = Math.min(bG, bT, lim, X.wLeft);
             if (X.wLeft <= 1e-3) { X.why = 0; X.wfNow = true; break; }
-            if (Math.min(bG, bT) <= 1e-3) { X.why = 0; X.capNow = true; X.capBy = bG < bT ? 0 : 1; break; }
+            if (Math.min(bG, bT) <= 1e-3) { X.why = 0; X.capNow = true; X.capBy = bG < bT || (TV && TV.bind) ? 0 : 1; break; } // (the total volume's maximum: held to a target)
             let got = 0, placed = true, lost = 0;
             if (X.meth === 'mixed') {
               /* Pushed into the void when it is open (up to the share of the block set for pushing); hauled to the dumps
@@ -6687,7 +6727,7 @@ const Sim = (() => {
               roomG -= u; roomT -= ut;
               if (round === 2) { X.xNeed -= u; XC.day += u; } // (coal over the target: onto the ROM stockpile, not counted against it)
               else { if (tg.left[X.g] !== Infinity) tg.left[X.g] -= u; tg.used[X.g] += u; }
-              tg.left[2] -= ut; tg.used[2] += ut;
+              tg.left[2] -= ut; tg.used[2] += ut; if (TV) TV.used += got;
               if (X.wLeft !== Infinity) X.wLeft -= got;
               X.bcm[day] += got; X.t[day] += got * dens;
               records.push({ d: day, a: X.idx, b, v: got, t: got * dens });
@@ -6736,10 +6776,12 @@ const Sim = (() => {
         const r0 = rampDaily[day], t0 = rampTDaily[day];
         if (!rampsFree) for (const R of roads.follows) updateFollow(R);
         if (TL.waste > 0 || MW) tg.used[1] += TL.wT ? rampTDaily[day] - t0 : rampDaily[day] - r0; tg.used[2] += rampDaily[day] - r0;
+        if (TV) TV.used += rampDaily[day] - r0;
       }
       // once all mining is finished, ramps that follow the mining are no longer needed: rehandling may fill them
       if (!rampsFree && jobs.length && acts.every(X => X.done || X.halted)) freeRamps();
       if (!drainsCut && acts.every(X => X.done || X.halted)) cutDrains();
+      if (TV && TV.held > 0) { tg.left[2] += TV.held; TV.held = 0; } // (the rehandling is not held to the total volume)
       const moved = w && jobs.length ? rehandleDay() : 0;
       tg.used[2] += moved; // the rehandling is done by the teams too
       if (graphDirty) { roads.graph = buildGraph(ws, profMap, new Set(roads.follows.filter(R => R.retired >= 0 || day < R.from).map(R => R.road.id).concat(roads.ramps.filter(R => R.ended || day < R.from).map(R => R.road.id)))); routeCache.clear(); graphDirty = false; }
@@ -6918,6 +6960,7 @@ const Sim = (() => {
       if (XC.added > 0) events.push({ day: nDays - 1, type: 'info', msg: `Extra coal: ${U.fmtNum(XC.added, 0)} ${tu} was mined over the coal target to free the waste and went onto the ROM stockpile; ${U.fmtNum(XC.rec, 0)} ${tu} of it made up months below the target, and ${U.fmtNum(XC.stock, 0)} ${tu} is left on it when mining ends (sold then). The most it held: ${U.fmtNum(Math.max(0, ...XC.months.map(q => q.closing + q.reclaimed)), 0)} ${tu}.` });
       else events.push({ day: nDays - 1, type: 'info', msg: 'Extra coal: the waste never stood idle under a coal seam with teams to spare, so no coal was mined over the target.' });
     }
+    if (TV && TV.short.length) events.push({ day: nDays - 1, type: 'warn', msg: `Minimum total volume not met in ${TV.short.length} month${TV.short.length === 1 ? '' : 's'}: ${TV.short.slice(0, 8).map(q => `${mName(q.key)} (${U.fmtNum(q.used, 0)} of ${U.fmtNum(q.bud, 0)} bcm)`).join(', ')}${TV.short.length > 8 ? ', …' : ''}. The mining could not move faster: the teams, a coal or waste target, a dependency, a void or a dump held it back.` });
     if (MW && MW.short.length) events.push({ day: nDays - 1, type: 'warn', msg: `Minimum waste not met in ${MW.short.length} month${MW.short.length === 1 ? '' : 's'}: ${MW.short.slice(0, 8).map(q => `${mName(q.key)} (${U.fmtNum(q.used, 0)} of ${U.fmtNum(q.bud, 0)} ${TL.wT ? 't' : 'bcm'})`).join(', ')}${MW.short.length > 8 ? ', …' : ''}. The waste could not be moved faster: the teams, a dependency, a void or a dump held it back.` });
     events.sort((a, b) => (a.day || 0) - (b.day || 0));
 
@@ -6925,6 +6968,7 @@ const Sim = (() => {
       startISO: P.startDate, nDays, dayStart: dayStart.slice(0, nDays + 1), wasteFollows: WF ? { months: WF.months, coal: TL.coal, ar: TL.ar, rampHeld: WF.held } : null,
       steadyWaste: SW ? { rate: SW.rate, auto: SW.auto, days: SW.days, over: SW.over } : null, mineStart: mineDay0,
       rain: RN.on ? { pct: RN.pct.slice(), per100: RN.per100 } : null,
+      totalVol: TV ? { min: TV.min, max: TV.max, short: TV.short.map(q => ({ label: mName(q.key), used: q.used, bud: q.bud })) } : null,
       minWaste: MW ? { min: MW.min, unit: TL.wT ? 't' : 'bcm', short: MW.short.map(q => ({ label: mName(q.key), used: q.used, bud: q.bud })) } : null,
       romStock: XC ? { basis: TL.prod ? 'product' : TL.ar ? 'ar' : 'insitu', unit: TL.prod ? 't of product' : TL.ar ? 't as received' : 't in situ', daily: XC.daily.slice(0, nDays), months: XC.months.map(q => ({ key: q.key, label: mName(q.key), added: q.added, reclaimed: q.reclaimed, closing: q.closing })), added: XC.added, reclaimed: XC.rec, end: XC.stock, max: XC.max < Infinity ? XC.max : null } : allRom,
       dCell: dCell.done(), dIns: dIns.done(), dFill: dFill.done(), dMat: dMat.done(),
@@ -6947,7 +6991,7 @@ const Sim = (() => {
           strips: gates.reduce((n, G) => n + G.total, 0), stripsDone: gates.reduce((n, G) => n + G.done, 0), openDay: gateNeed > 0 && opened.length ? Math.min(...opened) : -1, opened: live.length ? live.every(G => G.open) : gates[0].open,
           parts: nP ? live.map(G => ({ pit: G.pit, strips: G.total, stripsDone: G.done, openDay: G.need > 0 && G.open ? G.day : -1, opened: G.open, pushers: G.pushers, dozeDay: dozeNeed > 0 && G.doze ? G.dozeDay : -1, dozeOpened: G.doze })) : null };
       })(),
-      target: { limit: TL.any, coal: TL.coal, waste: TL.waste, wasteUnit: TL.wT ? 't' : 'bcm', basis: TL.work ? 'working' : 'calendar', coalBasis: TL.prod ? 'product' : TL.ar ? 'ar' : 'insitu' },
+      target: { limit: TL.any || !!TV, coal: TL.coal, waste: TL.waste, totalMin: TV ? TV.min : 0, totalMax: TV ? TV.max : 0, wasteUnit: TL.wT ? 't' : 'bcm', basis: TL.work ? 'working' : 'calendar', coalBasis: TL.prod ? 'product' : TL.ar ? 'ar' : 'insitu' },
       teams: Object.assign({}, TM),
       voidDaily: cut(voidDaily), rampDaily: cut(rampDaily), records, events, unplaced,
       rampFillDaily: cut(rampFillDaily), rampFromWaste: cut(rampFromWaste), rampOwed: rampNeed, rampCoalT: cut(rampCoalT), rampTDaily: cut(rampTDaily), batterDaily: cut(batterDaily), batterTDaily: cut(batterTDaily), batters: batters.map(B => ({ id: B.bt.id, name: B.bt.name, angle: B.ang, surf: Model.surfaceLabel(P, B.k), plan: B.vol, bcm: B.bcm, t: B.t, coalT: B.coalT || 0, first: B.first, last: B.last, blocks: B.groups.size, cut: B.done.size, side: B.side })),
@@ -7179,7 +7223,9 @@ const Monthly = (() => {
     const coalTg = !(+T.coal > 0) ? null : !rampN ? spread(T.coal) : (() => { const a = mk(); for (let d = 0; d < nD; d++) if (basis !== 'working' || res.working[d]) a[mOf[d]] += (+T.coal * rampFactor(P, d)) / per; return a; })();
     // the washed product (washability, Geological Data tab): as received coal × yield, block by block
     const prod = typeof Wash !== 'undefined' ? Wash.schedule(P, res, mOf, nM) : null;
-    const target = { limit, rampMonths: rampN, coalAvg: +T.coal > 0 ? +T.coal : null, wasteAvg: +T.waste > 0 ? +T.waste : null, coal: coalTg, waste: +T.waste > 0 ? (() => { const a = mk(), m0 = res.mineStart > 0 && res.mineStart < nD ? mOf[res.mineStart] : 0; for (let m = 0; m < nM; m++) a[m] = (wasteTarget(P, Math.max(0, m - m0)) * base[m]) / per; return a; })() : null, wasteStart: startMonths(P) ? { months: startMonths(P), avg: +T.wasteStart } : null, wasteUnit, basis, per, coalBasis: T.coalBasis === 'ar' ? 'ar' : T.coalBasis === 'product' && prod ? 'product' : 'insitu' };
+    // the total volume (waste and coal, bcm): its minimum and maximum (a minimum over the maximum is taken as the maximum)
+    const tvMax = +T.totalMax > 0 ? +T.totalMax : null, tvMin = +T.totalMin > 0 ? (tvMax ? Math.min(+T.totalMin, tvMax) : +T.totalMin) : null;
+    const target = { limit, rampMonths: rampN, coalAvg: +T.coal > 0 ? +T.coal : null, wasteAvg: +T.waste > 0 ? +T.waste : null, totalMinAvg: tvMin, totalMaxAvg: tvMax, totalMin: spread(tvMin), totalMax: spread(tvMax), coal: coalTg, waste: +T.waste > 0 ? (() => { const a = mk(), m0 = res.mineStart > 0 && res.mineStart < nD ? mOf[res.mineStart] : 0; for (let m = 0; m < nM; m++) a[m] = (wasteTarget(P, Math.max(0, m - m0)) * base[m]) / per; return a; })() : null, wasteStart: startMonths(P) ? { months: startMonths(P), avg: +T.wasteStart } : null, wasteUnit, basis, per, coalBasis: T.coalBasis === 'ar' ? 'ar' : T.coalBasis === 'product' && prod ? 'product' : 'insitu' };
 
     const nDays = sum(days), months = nDays / AVG_MONTH; // length of the schedule in average months
     // topsoil put back on the backfill (soil: its room, for the area it covers; soilB: bcm), and rehandling (bcm), a month
@@ -7190,16 +7236,16 @@ const Monthly = (() => {
     /* As received coal: the tons mined × (1 − geological loss) × (1 − mining loss) × (1 + contamination) of its seam.
        The teams: the bcm moved in each month (mining, ramps, batters and rehandling) and how many teams that keeps busy:
        the bcm ÷ what one team moves in the month's working days (its bcm an operational hour × the operational hours). */
-    const TM = Model.teams(P), coalAR = mk(), bcmMine = mk(), bcmRamp = mk(), bcmBatter = mk(), bcmReh = mk(), moved = mk(), teamsUsed = mk();
+    const TM = Model.teams(P), coalAR = mk(), bcmMine = mk(), bcmRamp = mk(), bcmBatter = mk(), bcmReh = mk(), moved = mk(), teamsUsed = mk(), totalB = mk();
     for (const a of acts) {
       for (let m = 0; m < nM; m++) bcmMine[m] += a.bcm[m];
       if (a.coal) { const f = Model.arFactor(P, L[a.A.layer]); a.arF = f; /* the losses as they are now: they do not change the schedule */ a.ar = mk(); for (let m = 0; m < nM; m++) { a.ar[m] = a.t[m] * f; coalAR[m] += a.ar[m]; } }
     }
     if (pits) for (const q of pits) { q.coalAR = mk(); for (const a of acts) if (a.A.pit === q.pit && a.coal) for (let m = 0; m < nM; m++) q.coalAR[m] += a.ar[m]; }
     for (const J of rehandles) for (let m = 0; m < nM; m++) bcmReh[m] += J.v[m];
-    for (let m = 0; m < nM; m++) { bcmRamp[m] = rampB[m]; bcmBatter[m] = batterB[m]; moved[m] = bcmMine[m] + bcmRamp[m] + bcmBatter[m] + bcmReh[m]; const cap = TM.perDay * work[m]; teamsUsed[m] = cap > 0 ? moved[m] / cap : 0; }
+    for (let m = 0; m < nM; m++) { bcmRamp[m] = rampB[m]; bcmBatter[m] = batterB[m]; moved[m] = bcmMine[m] + bcmRamp[m] + bcmBatter[m] + bcmReh[m]; totalB[m] = bcmMine[m] + bcmRamp[m] + bcmBatter[m]; const cap = TM.perDay * work[m]; teamsUsed[m] = cap > 0 ? moved[m] / cap : 0; }
     const teams = Object.assign({}, TM, { avg: sum(work) > 0 ? sum(moved) / (TM.perDay * sum(work)) : 0, peak: Math.max(0, ...teamsUsed) });
-    return { k0, nM, mOf, days, work, nDays, months, acts, pits, rampB, rampT, batterB, batterT, coalT, coalB, coalAR, prod, wasteB, wasteT, adc, adcT, attrs, target, sum, soil, soilB, rehandles, moved, bcmMine, bcmRamp, bcmBatter, bcmReh, teamsUsed, teams,
+    return { k0, nM, mOf, days, work, nDays, months, acts, pits, rampB, rampT, batterB, batterT, coalT, coalB, coalAR, prod, wasteB, wasteT, adc, adcT, attrs, target, sum, soil, soilB, rehandles, moved, totalB, bcmMine, bcmRamp, bcmBatter, bcmReh, teamsUsed, teams,
       label: m => U.MONTHS[(k0 + m) % 12] + '/' + Math.floor((k0 + m) / 12), date: m => new Date(Math.floor((k0 + m) / 12), (k0 + m) % 12, 1) };
   }
 
@@ -17337,7 +17383,7 @@ const Tabs = (() => {
     let prog = null; // the progress line and bar while it runs
     const kept = () => {
       const k = [T.basis === 'working' ? 'targets by working days' : null, +T.rampMonths > 0 ? `a coal ramp-up of ${T.rampMonths} months` : null, Monthly.startMonths(P) ? `start-up waste of ${U.fmtNum(+T.wasteStart, 0)} ${wu} a month for ${Monthly.startMonths(P)} months` : null,
-        +T.wasteMin > 0 ? `a minimum waste of ${U.fmtNum(+T.wasteMin, 0)} ${wu}` : null, T.coalExtra ? 'extra coal onto the ROM stockpile' : null].filter(Boolean);
+        +T.wasteMin > 0 ? `a minimum waste of ${U.fmtNum(+T.wasteMin, 0)} ${wu}` : null, +T.totalMin > 0 || +T.totalMax > 0 ? `a total volume of ${+T.totalMin > 0 && +T.totalMax > 0 ? `${U.fmtNum(+T.totalMin, 0)} – ${U.fmtNum(+T.totalMax, 0)}` : +T.totalMax > 0 ? `at most ${U.fmtNum(+T.totalMax, 0)}` : `at least ${U.fmtNum(+T.totalMin, 0)}`} bcm a month` : null, T.coalExtra ? 'extra coal onto the ROM stockpile' : null].filter(Boolean);
       return k.length ? `The other target settings are kept: ${k.join(', ')}. ` : '';
     };
     const nRuns = () => { const L = Math.max(1, Math.round(o.levels) || 1), n = new Set(Array.from({ length: L }, (_, i) => sig3(L === 1 ? o.from : o.from + ((o.to - o.from) * i) / (L - 1)))).size; return [n, n + (o.refine ? 4 : 0)]; };
@@ -17505,6 +17551,7 @@ const Tabs = (() => {
     const PT = P.teams || (P.teams = { count: 4, rate: Model.TEAM_RATE });
     const y0 = (U.parseISO(P.startDate) || new Date()).getUTCFullYear(), wdm = Monthly.workDaysPerMonth(P, y0, y0 + 3) || Monthly.AVG_MONTH;
     scheduleSection(body, wdm);
+    const tgB = { coal: 0, waste: 0 }; // the coal and waste targets in bcm a month (the teams work them out)
     // ---- teams
     {
       const ni = num(+PT.count > 0 ? PT.count : null, v => { PT.count = v > 0 ? Math.round(v * 10) / 10 : 0; App.changed('sim'); UI.renderTab(); }, { min: 0, step: 1, allowEmpty: true, placeholder: '0' });
@@ -17517,6 +17564,7 @@ const Tabs = (() => {
       const PRD = T.coalBasis === 'product' ? Wash.product(P) : null;
       const arF = coalL.length ? coalL.reduce((x, L) => x + Model.arFactor(P, L) * (PRD ? (PRD.seams.get(P.layers.indexOf(L)) || { yAvg: 1 }).yAvg : 1), 0) / coalL.length : 1;
       let coalB = +T.coal > 0 ? +T.coal / (cD * (T.coalBasis === 'ar' || PRD ? arF : 1)) : 0, wasteB = +T.waste > 0 ? (T.wasteUnit === 't' ? +T.waste / wD : +T.waste) : 0;
+      tgB.coal = coalB; tgB.waste = wasteB;
       /* With one target only, the other part follows from the whole plan: the waste that has to be stripped for the coal
          (or the coal that comes with the waste), from the volumes of the blocks in the mining paths. */
       let planTxt = '';
@@ -17541,6 +17589,32 @@ const Tabs = (() => {
         planTxt ? h('div', { class: 'dt', style: { whiteSpace: 'normal', fontSize: 'var(--fs-xs)', color: 'var(--muted)' } }, `Teams needed ${planTxt}.`) : null,
         TM.count > 0 && coalB + wasteB > 0 && need > TM.count + 1e-6 ? msg('warn', `The targets need ${U.fmtNum(need, 1)} teams but there are ${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)}: the months stay below the targets.`) : null,
         hint(`The teams do all the mining — topsoil, waste and coal, the ramps, the highwall batters and the rehandling — in bcm. A team moves its bcm an operational hour for the operational hours of each shift (Schedule, above), so a working day gives the teams × the rate × the shifts × the hours of a shift, and a month its working days × that. Every working day the coal gets the teams it needs for its target first; the rest of the teams are shared between the other activities by the bcm in their paths, so the layers keep pace with each other. Without a coal target the coal shares in the same way. With a coal target and no waste target the waste gets only the teams it needs to uncover the coal (Monthly targets below), and the rest stay idle. A priority pit (Sequence tab, Pits) gets the teams first.`)));
+    }
+    // ---- total volume a month: waste and coal together, the least and the most the schedule moves
+    {
+      const limit = T.mode !== 'compare', basis = T.basis === 'working' ? 'working' : 'calendar', save = () => { App.changed('sim'); UI.renderTab(); };
+      const tmin = +T.totalMin > 0 ? +T.totalMin : 0, tmax = +T.totalMax > 0 ? +T.totalMax : 0, any = tmin > 0 || tmax > 0;
+      const mn = num(tmin || null, v => { if (v > 0) T.totalMin = v; else delete T.totalMin; save(); }, { min: 0, step: 10000, allowEmpty: true, placeholder: 'none' });
+      const mx = num(tmax || null, v => { if (v > 0) T.totalMax = v; else delete T.totalMax; save(); }, { min: 0, step: 10000, allowEmpty: true, placeholder: 'no limit' });
+      mn.setAttribute('aria-label', 'Minimum total volume per month'); mx.setAttribute('aria-label', 'Maximum total volume per month');
+      mn.disabled = mx.disabled = !edit();
+      const teamMonth = TM.perDay * wdm, teamsFor = v => (teamMonth > 0 ? v / teamMonth : 0), f1 = v => U.fmtNum(v, 1), f0 = v => U.fmtNum(v, 0);
+      const eg = v => (basis === 'working' ? `${f0(v / per)} bcm a working day` : `${f0((v * 31) / per)} bcm in a 31-day month, ${f0((v * 28) / per)} bcm in February`);
+      const tc = tgB.coal, tw = tgB.waste, both = +T.coal > 0 && +T.waste > 0;
+      body.append(sec('Total volume (waste and coal)', any ? h('span', { class: 'chip' }, limit ? (tmin > 0 && tmax > 0 ? `${f0(tmin)} – ${f0(tmax)} bcm` : tmax > 0 ? `at most ${f0(tmax)} bcm` : `at least ${f0(tmin)} bcm`) : 'compare only') : null,
+        h('div', { class: 'grid2' }, fld('Minimum (bcm per month)', mn), fld('Maximum (bcm per month)', mx)),
+        any ? h('div', { class: 'kv' },
+          tmin > 0 ? h('span', { class: 'k' }, 'The minimum') : null, tmin > 0 ? h('span', { class: 'v' }, `${eg(tmin)}; ${f1(teamsFor(tmin))} teams`) : null,
+          tmax > 0 ? h('span', { class: 'k' }, 'The maximum') : null, tmax > 0 ? h('span', { class: 'v' }, `${eg(tmax)}; ${f1(teamsFor(tmax))} teams`) : null,
+          tc > 0 ? h('span', { class: 'k' }, 'Of it, the coal target') : null, tc > 0 ? h('span', { class: 'v' }, `about ${f0(tc)} bcm a month`) : null) : null,
+        tmin > 0 && tmax > 0 && tmin > tmax ? msg('error', `The minimum (${f0(tmin)} bcm) is more than the maximum (${f0(tmax)} bcm): the schedule takes the maximum for both.`) : null,
+        limit && tmin > 0 && TM.count > 0 && teamsFor(Math.min(tmin, tmax || tmin)) > TM.count + 1e-6 ? msg('warn', `The minimum needs ${f1(teamsFor(Math.min(tmin, tmax || tmin)))} teams but there are ${U.fmtNum(TM.count, TM.count % 1 ? 1 : 0)} (Teams, above): the months stay below it.`) : null,
+        limit && tmax > 0 && tc > tmax + 1e-6 ? msg('warn', `The coal target alone is about ${f0(tc)} bcm a month, more than the maximum: the coal gets the volume first, so the months stay below the coal target and no waste is moved.`) : null,
+        limit && tmin > 0 && both && tc + tw < Math.min(tmin, tmax || tmin) - 1e-6 ? msg('warn', `The coal and waste targets add up to about ${f0(tc + tw)} bcm a month, less than the minimum: a target is the most its part may move, so the months stay below the minimum. Clear the waste target (Monthly targets, below) to let the minimum set the waste.`) : null,
+        limit && tmax > 0 && both && tc + tw > tmax + 1e-6 && tc <= tmax ? msg('info', `The coal and waste targets add up to about ${f0(tc + tw)} bcm a month, more than the maximum: the maximum holds the waste back to ${f0(tmax - tc)} bcm (the coal first).`) : null,
+        any && !limit ? msg('info', 'The targets are only compared (Monthly targets, below: “Use the targets to”): the schedule is not held to the total volume.') : null,
+        any && App.res && App.stale ? msg('warn', 'Run the simulation again to schedule to the total volume.') : null,
+        hint(`Waste and coal together in bcm: all that the activities mine (topsoil, overburden, interburden, partings and coal), with the ramps and the highwall batters; the rehandling is not counted. Each month gets the figure × its ${basis === 'working' ? 'working days ÷ ' + U.fmtNum(per, 1) : 'days ÷ 30.44'} (Monthly targets, below: “Each month follows its”). The maximum holds the schedule back: each working day the teams move no more than the rest of the month’s maximum ÷ the working days left, the coal first (up to its target) and the waste the rest; the ramps, the highwall batters and the blocks a ramp opens ahead of the sequence are not held back, so a month may pass it by them. The minimum: each working day the schedule moves at least the rest of the month’s minimum ÷ the working days left, as far as the teams, the dumps and the voids allow; with the waste following the coal, the overburden, interburden and partings move ahead faster to make it up (not the topsoil: it is stripped as the coal needs it, its stockpiles being emptied only onto the backfill). A coal or waste target still holds its own part. Months below the minimum are reported in the Results tab. Empty: no limit.`)));
     }
     // ---- rain: the waste derated in the wet months
     {
@@ -17597,7 +17671,7 @@ const Tabs = (() => {
       const bs = sel([['calendar', 'Calendar days'], ['working', 'Working days']], basis, v => { T.basis = v; save(); });
       const ms = sel([['limit', 'Schedule to them'], ['compare', 'Only compare']], limit ? 'limit' : 'compare', v => { T.mode = v; save(); });
       ci.setAttribute('aria-label', 'Coal target per month'); wi.setAttribute('aria-label', 'Waste target per month'); cs.setAttribute('aria-label', 'Coal target in'); us.setAttribute('aria-label', 'Waste target unit'); bs.setAttribute('aria-label', 'Target follows'); ms.setAttribute('aria-label', 'Use the targets to');
-      const any = +T.coal > 0 || +T.waste > 0;
+      const any = +T.coal > 0 || +T.waste > 0 || +T.totalMin > 0 || +T.totalMax > 0;
       const eg = (v, u) => (basis === 'working' ? `${U.fmtNum(v / per, 0)} ${u} per working day` : `${U.fmtNum((v * 31) / per, 0)} ${u} in a 31-day month, ${U.fmtNum((v * 30) / per, 0)} ${u} in a 30-day month and ${U.fmtNum((v * 28) / per, 0)} ${u} in February`);
       body.append(sec('Monthly targets', any ? h('span', { class: 'chip' }, limit ? 'drive the schedule' : 'compare only') : null,
         h('div', { class: 'grid2' }, fld('Coal target (t per month)', ci), fld('Coal target in', cs)),
@@ -18344,14 +18418,20 @@ const Tabs = (() => {
       if (mo.adcT) tiles.push(kp('ADC tons, average month', U.fmtBig(avg(mo.adcT), 't')), kp('ADC tons, total', U.fmtBig(mo.sum(mo.adcT), 't')));
       if (G.coal) tiles.push(kp('Coal target by month' + (G.coalBasis === 'ar' ? ' (as received)' : G.coalBasis === 'product' ? ' (washed product)' : ''), lohi(G.coal, 't')), kp('Months below coal target', `${short(cAct, G.coal)} of ${mo.nM}`));
       if (G.waste) tiles.push(kp('Waste target by month', lohi(G.waste, wUnit)), kp('Months below waste target', `${short(wAct, G.waste)} of ${mo.nM}`));
+      // the total volume (waste and coal): the months with mining (not the last, a part month) below its minimum or over its maximum
+      const tvN = (lim, below) => { let n = 0; for (let m = 0; m < mo.nM - 1; m++) if (mo.totalB[m] > 0 && (below ? mo.totalB[m] < lim[m] - 0.5 : mo.totalB[m] > lim[m] + 0.5)) n++; return n; };
+      if (G.totalMin || G.totalMax) tiles.push(kp('Total volume (waste and coal), average month', U.fmtBig(avg(mo.totalB), 'bcm')));
+      if (G.totalMin) tiles.push(kp('Months below the minimum total', `${tvN(G.totalMin, true)} of ${mo.nM}`));
+      if (G.totalMax) tiles.push(kp('Months over the maximum total', `${tvN(G.totalMax, false)} of ${mo.nM}`));
       const ran = res.target && res.target.limit; // this run was held to targets
       const held = res.acts.filter(A => A.tgtDays > 0), busy = res.acts.filter(A => A.teamDays > 0);
       tiles.push(kp('Teams used, average month', `${U.fmtNum(TMo.avg, 1)} of ${U.fmtNum(TMo.count, TMo.count % 1 ? 1 : 0)}`), kp('Teams used, busiest month', U.fmtNum(TMo.peak, 1)));
-      body.append(sec('Monthly production', G.coal || G.waste ? h('span', { class: 'chip' }, ran ? 'scheduled to target' : 'compared with target') : null,
+      body.append(sec('Monthly production', G.coal || G.waste || G.totalMin || G.totalMax ? h('span', { class: 'chip' }, ran ? 'scheduled to target' : 'compared with target') : null,
         h('div', { class: 'kpis' }, tiles),
         held.length ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, 'Held to the target: ' + held.map(A => `${A.name} on ${U.fmtNum(A.tgtDays, 0)} working days`).join(', ') + '.') : null,
         busy.length ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, 'Waited for the teams: ' + busy.map(A => `${A.name} on ${U.fmtNum(A.teamDays, 0)} working days`).join(', ') + '.') : null,
         res.rain ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `The waste was derated for the rain: ${U.MONTHS.map((mn, i) => (res.rain.pct[i] >= 0.05 ? `${mn} ${U.fmtNum(res.rain.pct[i], 1)}%` : null)).filter(Boolean).join(', ')} (Production tab).`) : null,
+        res.totalVol ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `Total volume ${res.totalVol.min > 0 && res.totalVol.max > 0 ? `${U.fmtNum(res.totalVol.min, 0)} – ${U.fmtNum(res.totalVol.max, 0)}` : res.totalVol.max > 0 ? `at most ${U.fmtNum(res.totalVol.max, 0)}` : `at least ${U.fmtNum(res.totalVol.min, 0)}`} bcm in an average month (Production tab)` + (res.totalVol.min > 0 ? (res.totalVol.short.length ? `: the minimum was not met in ${res.totalVol.short.length} month${res.totalVol.short.length === 1 ? '' : 's'} (${res.totalVol.short.slice(0, 6).map(q => `${q.label}: ${U.fmtNum(q.used, 0)} of ${U.fmtNum(q.bud, 0)}`).join(', ')}${res.totalVol.short.length > 6 ? ', …' : ''}); the teams, a target, a dependency, a void or a dump held the mining back.` : ': the minimum was met in every month with mining left.') : '.')) : null,
         res.minWaste ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `Minimum waste ${U.fmtNum(res.minWaste.min, 0)} ${res.minWaste.unit} in an average month: ` + (res.minWaste.short.length ? `not met in ${res.minWaste.short.length} month${res.minWaste.short.length === 1 ? '' : 's'} (${res.minWaste.short.slice(0, 6).map(q => `${q.label}: ${U.fmtNum(q.used, 0)} of ${U.fmtNum(q.bud, 0)}`).join(', ')}${res.minWaste.short.length > 6 ? ', …' : ''}); the teams, a dependency, a void or a dump held the waste back.` : 'met in every month while there was waste to move.')) : null,
         res.steadyWaste ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `The waste was smoothed to ${U.fmtNum(res.steadyWaste.rate, 0)} bcm in an average month${res.steadyWaste.auto ? ' (the average of the schedule)' : ''}; the exposed coal ran short, so the waste moved faster, on ${U.fmtNum(res.steadyWaste.over, 0)} of ${U.fmtNum(res.steadyWaste.days, 0)} working days${res.steadyWaste.over > res.steadyWaste.days / 4 ? ' (a dependency in whole strips, or little exposed coal kept ahead, keeps the waste from getting ahead: see the Production tab)' : ''}.`) : null,
         res.wasteFollows ? h('div', { class: 'dt', style: { whiteSpace: 'normal' } }, `The waste followed the coal, keeping ${U.fmtNum(res.wasteFollows.months, res.wasteFollows.months % 1 ? 1 : 0)} month${res.wasteFollows.months === 1 ? '' : 's'} of coal exposed ahead.` + (res.acts.some(A => A.wfDays > 0) ? ' Held to what the coal needed: ' + res.acts.filter(A => A.wfDays > 0).map(A => `${A.name} on ${U.fmtNum(A.wfDays, 0)} working days`).join(', ') + '.' : '')) : null,
@@ -18537,9 +18617,10 @@ const Tabs = (() => {
         h('div', { class: 'vv' }, U.fmtBig(tb, 'bcm'), h('br'), h('span', { class: 'dt' }, U.fmtBig(tt, 't'))));
     });
     body.append(sec('Activities', null, h('div', null, rows)));
-    const c1 = h('div', { class: 'chart-box' }), c2 = h('div', { class: 'chart-box' });
+    const c1 = h('div', { class: 'chart-box' }), c2 = h('div', { class: 'chart-box' }), c3 = mo.target.totalMin || mo.target.totalMax ? h('div', { class: 'chart-box' }) : null;
     body.append(sec('Coal per month (kt)', null, c1), sec(mo.target.wasteUnit === 't' ? 'Waste per month (kt)' : 'Waste per month (kbcm)', null, c2));
-    requestAnimationFrame(() => { Charts.monthly(c1, res, P, 'coal', mo); Charts.monthly(c2, res, P, 'waste', mo); });
+    if (c3) body.append(sec('Total volume per month: waste and coal (kbcm)', null, c3));
+    requestAnimationFrame(() => { Charts.monthly(c1, res, P, 'coal', mo); Charts.monthly(c2, res, P, 'waste', mo); if (c3) Charts.monthly(c3, res, P, 'total', mo); });
     body.append(hint('The water in the pit is in the Hydrogeological tab, what is drilled and blasted in the Drill and Blast tab, and the final landform in the Rehab tab.'));
     const anyOut = res.dumps.some(D => D.removed > 0);
     const dr = res.dumps.map(D => {
@@ -18596,8 +18677,20 @@ const Charts = (() => {
     const k0 = mk(0), k1 = mk(res.nDays - 1), nM = k1 - k0 + 1;
     const series = [];
     const inT = which === 'waste' && !!mo && mo.target.wasteUnit === 't' && !!res.rampTDaily; // waste in tonnes, like its target
-    const tgtRaw = mo ? (which === 'coal' ? mo.target.coal : mo.target.waste) : null, tgt = tgtRaw && tgtRaw.length === nM ? Array.from(tgtRaw, v => v / 1000) : null;
-    for (const A of res.acts) {
+    // the lines over the columns: the target (coal, waste), or the minimum and maximum (the total volume)
+    const kOf = a => (a && a.length === nM ? Array.from(a, v => v / 1000) : null), tl = [];
+    if (mo && which === 'total') {
+      const mx = kOf(mo.target.totalMax), mn = kOf(mo.target.totalMin);
+      if (mx) tl.push({ name: 'Maximum', color: css('--ink') || '#222', v: mx });
+      if (mn) tl.push({ name: 'Minimum', color: css('--accent') || '#cf5516', v: mn, dash: true });
+    } else if (mo) { const t = kOf(which === 'coal' ? mo.target.coal : mo.target.waste); if (t) tl.push({ name: 'Target', color: css('--ink') || '#222', v: t }); }
+    if (which === 'total') { // waste and coal together, bcm: the coal, the waste, the ramps and the highwall batters
+      const vc = new Float64Array(nM), vw = new Float64Array(nM), vr = new Float64Array(nM);
+      for (const A of res.acts) { const v = A.type === 'coal' ? vc : vw; for (let d = 0; d < res.nDays; d++) v[mk(d) - k0] += A.bcm[d] / 1000; }
+      for (let d = 0; d < res.nDays; d++) vr[mk(d) - k0] += ((res.rampDaily ? res.rampDaily[d] : 0) + (res.batterDaily ? res.batterDaily[d] : 0)) / 1000;
+      series.push({ name: 'Coal', color: '#3b3b42', v: vc }, { name: 'Waste', color: '#2a78d6', v: vw });
+      if (vr.some(x => x > 0)) series.push({ name: 'Ramps and batters', color: '#898781', v: vr });
+    } else for (const A of res.acts) {
       const isCoal = A.type === 'coal';
       if ((which === 'coal') !== isCoal) continue;
       const v = new Float64Array(nM);
@@ -18614,9 +18707,10 @@ const Charts = (() => {
     }
     if (!series.length) { container.append(h('div', { class: 'hint' }, 'Nothing to show.')); return; }
     const H = 170, { cv, ctx, w } = setup(container, H);
-    legend(container, series.map(s => [s.name, s.color]).concat(tgt ? [['Target', css('--ink'), true]] : []));
+    const tipN = series.length + tl.length;
+    legend(container, series.map(s => [s.name, s.color]).concat(tl.map(t => [t.name, t.color, true])));
     const tot = new Float64Array(nM); for (const s of series) for (let m = 0; m < nM; m++) tot[m] += s.v[m];
-    const max = Math.max(...tot, ...(tgt || [0])) || 1, step = niceStep(max), top = Math.ceil(max / step) * step;
+    const max = Math.max(...tot, ...tl.map(t => Math.max(...t.v)), 0) || 1, step = niceStep(max), top = Math.ceil(max / step) * step;
     const L = 40, R = 6, T = 8, B = 20, pw = w - L - R, ph = H - T - B;
     const y = v => T + ph - (v / top) * ph;
     const band = pw / nM, bw = Math.max(2, Math.min(24, band * 0.72));
@@ -18643,11 +18737,12 @@ const Charts = (() => {
         ctx.globalAlpha = 1;
       }
       ctx.strokeStyle = css('--axis') || '#c3c2b7'; ctx.beginPath(); ctx.moveTo(L, Math.round(y(0)) + 0.5); ctx.lineTo(w - R, Math.round(y(0)) + 0.5); ctx.stroke();
-      if (tgt) { // the target of each month, as steps
+      for (const t of tl) { // the target (or the minimum, the maximum) of each month, as steps
         ctx.save(); ctx.lineJoin = 'round';
-        const path = () => { ctx.beginPath(); for (let m = 0; m < nM; m++) { const yy = y(tgt[m]); if (m) ctx.lineTo(L + band * m, yy); else ctx.moveTo(L, yy); ctx.lineTo(L + band * (m + 1), yy); } ctx.stroke(); };
+        const path = () => { ctx.beginPath(); for (let m = 0; m < nM; m++) { const yy = y(t.v[m]); if (m) ctx.lineTo(L + band * m, yy); else ctx.moveTo(L, yy); ctx.lineTo(L + band * (m + 1), yy); } ctx.stroke(); };
         ctx.strokeStyle = css('--panel') || '#fff'; ctx.lineWidth = 3.5; path();
-        ctx.strokeStyle = css('--ink') || '#222'; ctx.lineWidth = 1.5; path();
+        if (t.dash) ctx.setLineDash([5, 3]);
+        ctx.strokeStyle = t.color; ctx.lineWidth = 1.5; path();
         ctx.restore();
       }
     };
@@ -18657,7 +18752,7 @@ const Charts = (() => {
       if (m < 0 || m >= nM) { draw(null); UI.tip(null); return; }
       draw(m);
       const k = k0 + m;
-      UI.tip(e.clientX, e.clientY - 20 - 18 * series.length, `<b>${U.MONTHS[k % 12]}/${Math.floor(k / 12)}</b><br>` + series.map(s => `${U.esc(s.name)}: ${U.fmtNum(s.v[m], 1)}`).join('<br>') + (tgt ? `<br>Target: ${U.fmtNum(tgt[m], 1)} (${tot[m] - tgt[m] >= 0 ? '+' : '−'}${U.fmtNum(Math.abs(tot[m] - tgt[m]), 1)})` : '') + (series.length > 1 ? `<br>Total: ${U.fmtNum(tot[m], 1)}` : ''));
+      UI.tip(e.clientX, e.clientY - 20 - 18 * tipN, `<b>${U.MONTHS[k % 12]}/${Math.floor(k / 12)}</b><br>` + series.map(s => `${U.esc(s.name)}: ${U.fmtNum(s.v[m], 1)}`).join('<br>') + tl.map(t => `<br>${t.name}: ${U.fmtNum(t.v[m], 1)} (${tot[m] - t.v[m] >= 0 ? '+' : '−'}${U.fmtNum(Math.abs(tot[m] - t.v[m]), 1)})`).join('') + (series.length > 1 ? `<br>Total: ${U.fmtNum(tot[m], 1)}` : ''));
     });
     cv.addEventListener('pointerleave', () => { draw(null); UI.tip(null); });
   }
@@ -20687,6 +20782,12 @@ const Report = (() => {
     }
     if (M.sum(M.rampB) > 0) { add('Ramp excavation', 'bcm', M.rampB); add('Ramp excavation', 't', M.rampT); }
     if (M.batterB && M.sum(M.batterB) > 0) { add('Highwall batters', 'bcm', M.batterB); add('Highwall batters', 't', M.batterT); }
+    gap(); title('TOTAL VOLUME — waste and coal (the activities, the ramps and the highwall batters; not the rehandling)');
+    if (T.totalMin) add(`Minimum total volume (${U.fmtNum(T.totalMinAvg, 0)} bcm in an average month, following the ${basisTxt})`, 'bcm', T.totalMin, { avg: T.totalMinAvg });
+    if (T.totalMax) add(`Maximum total volume (${U.fmtNum(T.totalMaxAvg, 0)} bcm in an average month, following the ${basisTxt})`, 'bcm', T.totalMax, { avg: T.totalMaxAvg });
+    add('Total volume moved — schedule', 'bcm', M.totalB);
+    if (T.totalMin) add('Total volume − minimum', 'bcm', diff(M.totalB, T.totalMin));
+    if (T.totalMax) add('Total volume − maximum', 'bcm', diff(M.totalB, T.totalMax));
     // drill and blast (Drill and Blast tab): drill metres, holes, explosives and what is blasted
     if (BL && BL.o.on) {
       const DB = Blast.monthly(BL, M.mOf, nM, M.work), tot = a => arr(DB.waste[a]).map((v, m) => v + DB.coal[a][m]);
