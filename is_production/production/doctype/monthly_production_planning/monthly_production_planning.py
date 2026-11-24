@@ -424,6 +424,9 @@ class MonthlyProductionPlanning(Document):
         Other users may still save unrelated Monthly Production
         Planning fields if their normal Frappe permissions allow it.
         """
+        if getattr(frappe.flags, "mpp_machine_sync", False):
+            return
+
         user = frappe.session.user
         roles = set(frappe.get_roles(user) or [])
 
@@ -1217,3 +1220,218 @@ def get_previous_tub_factor_rows(location):
         copied_names.add(tub_factor_name)
 
     return output
+
+
+def refresh_all_active_mpp_machines(dry_run=False):
+    """
+    Daily server-side equivalent of the Monthly Production Planning
+    Refresh Machines button.
+
+    Refreshes current and future plans only. Preserves assignments,
+    exclusions, production excavator flags and dozer settings.
+    """
+    today = getdate()
+    names = frappe.get_all(
+        "Monthly Production Planning",
+        filters={
+            "docstatus": ["<", 2],
+            "prod_month_end_date": [">=", today],
+            "location": ["!=", ""],
+        },
+        pluck="name",
+    )
+
+    result = {"checked": 0, "changed": 0, "saved": 0, "errors": 0}
+
+    for name in names:
+        result["checked"] += 1
+
+        try:
+            doc = frappe.get_doc(
+                "Monthly Production Planning", name, for_update=True
+            )
+
+            assets = frappe.get_all(
+                "Asset",
+                filters={
+                    "location": doc.location,
+                    "docstatus": 1,
+                    "asset_category": [
+                        "in", ["Excavator", "ADT", "Dozer"]
+                    ],
+                },
+                fields=["name", "item_name", "asset_category"],
+                order_by="name asc",
+                limit_page_length=0,
+            )
+
+            excavators = {
+                a.name for a in assets
+                if a.asset_category == "Excavator"
+            }
+            trucks = {
+                a.name for a in assets
+                if a.asset_category == "ADT"
+            }
+            dozers = {
+                a.name for a in assets
+                if a.asset_category == "Dozer"
+            }
+
+            excluded = {
+                row.asset
+                for row in doc.get("excluded_production_machines") or []
+                if row.asset
+            }
+
+            changed = False
+
+            # Remove machines no longer at the site, preserving
+            # the onsite half of an Excavator/ADT assignment.
+            for row in list(doc.get("excavator_truck_assignments") or []):
+                old_excavator = row.excavator
+                old_truck = row.truck
+
+                if old_excavator and old_truck:
+                    row.is_production_excavator = 1
+
+                if old_excavator and old_excavator not in excavators:
+                    row.excavator = None
+                    row.excavator_model = None
+                    changed = True
+
+                if old_truck and old_truck not in trucks:
+                    row.truck = None
+                    row.truck_model = None
+                    changed = True
+
+                if not row.excavator and not row.truck:
+                    doc.remove(row)
+                    changed = True
+
+            for row in list(doc.get("dozer_table") or []):
+                if not row.asset_name or row.asset_name not in dozers:
+                    doc.remove(row)
+                    changed = True
+
+            # Add missing machines without automatically assigning
+            # new ADTs or selecting a dozing type.
+            existing_excavators = {
+                r.excavator for r in doc.get("excavator_truck_assignments") or []
+                if r.excavator
+            }
+            existing_trucks = {
+                r.truck for r in doc.get("excavator_truck_assignments") or []
+                if r.truck
+            }
+            existing_dozers = {
+                r.asset_name for r in doc.get("dozer_table") or []
+                if r.asset_name
+            }
+
+            for asset in assets:
+                if asset.name in excluded:
+                    continue
+
+                if asset.asset_category == "Dozer":
+                    if asset.name not in existing_dozers:
+                        doc.append("dozer_table", {
+                            "asset_name": asset.name,
+                            "item_name": asset.item_name,
+                            "dozing_type": "",
+                        })
+                        existing_dozers.add(asset.name)
+                        changed = True
+
+                elif asset.asset_category in ("Excavator", "ADT"):
+                    existing = (
+                        existing_excavators
+                        if asset.asset_category == "Excavator"
+                        else existing_trucks
+                    )
+
+                    if asset.name not in existing:
+                        is_excavator = asset.asset_category == "Excavator"
+                        doc.append("excavator_truck_assignments", {
+                            "excavator": asset.name if is_excavator else None,
+                            "excavator_model": asset.item_name if is_excavator else None,
+                            "truck": None if is_excavator else asset.name,
+                            "truck_model": None if is_excavator else asset.item_name,
+                        })
+                        existing.add(asset.name)
+                        changed = True
+
+            # Recalculate counts using persisted production flags
+            # and the existing assignment/dozer rules.
+            assignments = doc.get("excavator_truck_assignments") or []
+
+            production_excavators = {
+                r.excavator for r in assignments
+                if r.excavator
+                and r.excavator not in excluded
+                and (int(r.is_production_excavator or 0) == 1 or r.truck)
+            }
+
+            production_trucks = sum(
+                1 for r in assignments
+                if r.excavator and r.truck
+                and r.excavator not in excluded
+                and r.truck not in excluded
+            )
+
+            production_dozers = sum(
+                1 for r in doc.get("dozer_table") or []
+                if r.asset_name not in excluded and r.dozing_type
+            )
+
+            counts = {
+                "num_excavators": len(production_excavators),
+                "num_trucks": production_trucks,
+                "num_dozers": production_dozers,
+            }
+
+            for field, value in counts.items():
+                if int(doc.get(field) or 0) != value:
+                    doc.set(field, value)
+                    changed = True
+
+            if changed:
+                result["changed"] += 1
+
+                if not dry_run:
+                    previous_flag = getattr(
+                        frappe.flags, "mpp_machine_sync", False
+                    )
+                    try:
+                        frappe.flags.mpp_machine_sync = True
+                        doc.save(ignore_permissions=True)
+                        frappe.db.commit()
+                        result["saved"] += 1
+                    finally:
+                        frappe.flags.mpp_machine_sync = previous_flag
+
+        except Exception:
+            frappe.db.rollback()
+            result["errors"] += 1
+            frappe.log_error(
+                frappe.get_traceback(),
+                f"Daily MPP Machine Refresh - {name}",
+            )
+
+    frappe.logger("mpp_machine_refresh").info(
+        f"Daily refresh result: {result}"
+    )
+    return result
+
+
+def queue_daily_mpp_machine_refresh(dry_run=False):
+    """Queue the daily MPP machine synchronisation independently."""
+    frappe.enqueue(
+        "is_production.production.doctype.monthly_production_planning."
+        "monthly_production_planning.refresh_all_active_mpp_machines",
+        queue="short",
+        job_name="Monthly Production Planning - Daily Machine Refresh",
+        timeout=30 * 60,
+        dry_run=dry_run,
+    )
+    return "ENQUEUED"
