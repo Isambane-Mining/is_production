@@ -769,6 +769,35 @@ def build_excavator_availability(
     }
 
 
+
+def get_mpp_shift_hours(plan, date, shift):
+    """Return the saved MPP working hours for one operational shift."""
+    fields = {
+        "Day": "shift_day_hours",
+        "Night": "shift_night_hours",
+    }
+    field = fields.get(shift)
+    if field is None:
+        raise ValueError("Invalid shift")
+
+    matching = [
+        row for row in (plan.get("month_prod_days") or [])
+        if row.get("shift_start_date")
+        and getdate(row["shift_start_date"]) == getdate(date)
+    ]
+
+    if len(matching) != 1:
+        return None
+
+    value = matching[0].get(field)
+    try:
+        hours = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    return hours if isfinite(hours) and hours >= 0 else None
+
+
 def get_mpp_daily_target(plan, date):
     """Read the authoritative saved daily target from Monthly Production Days."""
     matching = [
@@ -950,7 +979,11 @@ def build_analysis(from_date, to_date, site, plans, assets, breakdowns, document
         rows.append({"date": date.isoformat(), "day": date.strftime("%a"), "month": date.strftime("%B %Y"),
                      "month_key": date.strftime("%Y-%m"), "plan_name": plan["name"],
                      "fleet_total": fleet_total, "cells": cells, "load_times": load_times,
-                     "mpp_daily_target_bcm": mpp_daily_target, "mpp_month_actual_bcm": get_mpp_month_actual(plan)})
+                     "mpp_daily_target_bcm": mpp_daily_target,
+                     "mpp_month_actual_bcm": get_mpp_month_actual(plan),
+                     "mpp_day_hours": get_mpp_shift_hours(plan, date, "Day"),
+                     "mpp_night_hours": get_mpp_shift_hours(plan, date, "Night"),
+                     "excavator_fleet": mpp_excavator_composition(plan)})
         if include_machine_targets:
             rows[-1]["production_fleet_total"] = (
                 len(production_scope) if plan.get("excavator_truck_assignments") is not None else None
@@ -1820,25 +1853,21 @@ def export_machine_excel(site, from_date, to_date, machine_scope="all", unavaila
             return "unknown"
 
         production = valid_nonnegative(row.get("production_fleet_total"))
-        utilised = valid_nonnegative(cell.get("utilised"))
+        available = valid_nonnegative(cell.get("available"))
+        utilised = valid_nonnegative(cell.get("all_utilised", cell.get("utilised")))
 
-        if production is None or utilised is None or production <= 0:
+        if production is None or available is None or utilised is None or production <= 0:
             return "unknown"
 
-        shortfall = production - utilised
-
-        if shortfall <= 0:
-            return "green"
-        if shortfall <= 1:
-            return "orange"
-        return "red"
+        expected = min(production, available)
+        return "green" if utilised >= expected else "red"
 
     def utilisation_anomaly(cell, verified):
         if not verified or machine_scope == "spare":
             return False
 
         available = valid_nonnegative(cell.get("available"))
-        utilised = valid_nonnegative(cell.get("utilised"))
+        utilised = valid_nonnegative(cell.get("all_utilised", cell.get("utilised")))
 
         if available is None or utilised is None:
             return False
@@ -1882,10 +1911,9 @@ def export_machine_excel(site, from_date, to_date, machine_scope="all", unavaila
         overview.write("A11", "Available", blue)
         overview.write("B11", "PBM-adjusted ADT count", normal)
         overview.write("A13", "Green · Production requirement met or exceeded", formats["green"])
-        overview.write("A14", "Orange · 1 ADT below production requirement", formats["orange"])
-        overview.write("A15", "Red · 2+ ADTs below production requirement", formats["red"])
-        overview.write("A16", "Green + red border · Utilised ADTs exceed available ADTs (data anomaly)", anomaly_format)
-        overview.write("A17", "Grey · Non-production hours / fatigue / unavailable or unverified", formats["unknown"])
+        overview.write("A14", "Red · Any shortfall below production requirement", formats["red"])
+        overview.write("A15", "Green + red border · Utilised ADTs exceed available ADTs (data anomaly)", anomaly_format)
+        overview.write("A16", "Grey · Non-production hours / fatigue / unavailable or unverified", formats["unknown"])
 
     for month, rows in months.items():
         sheet = book.add_worksheet(rows[0]["month"][:31])
@@ -2046,8 +2074,13 @@ def export_machine_excel(site, from_date, to_date, machine_scope="all", unavaila
                             and deficit <= selected_range + epsilon
                         )
 
+                fatigue_minutes = (
+                    valid_nonnegative(cell.get("non_working_minutes")) or 0
+                )
+
                 cell_format = (
                     anomaly_format if anomaly
+                    else formats["unknown"] if fatigue_minutes > 0
                     else highlighted_formats[colour] if highlighted
                     else formats[colour]
                 )

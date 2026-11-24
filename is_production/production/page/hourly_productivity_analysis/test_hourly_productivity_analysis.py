@@ -1243,6 +1243,44 @@ class TestHourlyProductivityAnalysis(TestCase):
         plan = dict(self.plan, excavator_truck_assignments=assignments)
         self.assertIsNone(report.mpp_production_adt_roster(plan))
 
+    def test_mpp_shift_hours_reads_day_and_night_schedule(self):
+        plan = {
+            "month_prod_days": [{
+                "shift_start_date": "2026-10-12",
+                "shift_day_hours": 0,
+                "shift_night_hours": 9,
+            }]
+        }
+
+        self.assertEqual(
+            report.get_mpp_shift_hours(plan, "2026-10-12", "Day"), 0
+        )
+        self.assertEqual(
+            report.get_mpp_shift_hours(plan, "2026-10-12", "Night"), 9
+        )
+
+    def test_mpp_shift_hours_missing_schedule_is_unverified(self):
+        self.assertIsNone(
+            report.get_mpp_shift_hours({}, "2026-10-12", "Day")
+        )
+        self.assertIsNone(
+            report.get_mpp_shift_hours(
+                {"month_prod_days": [{
+                    "shift_start_date": "2026-10-12",
+                    "shift_day_hours": None,
+                }]},
+                "2026-10-12",
+                "Day",
+            )
+        )
+
+    def test_analysis_rows_include_mpp_excavator_composition(self):
+        result = self.build()
+        self.assertEqual(
+            result["rows"][0]["excavator_fleet"],
+            report.mpp_excavator_composition(self.plan),
+        )
+
     def test_average_productive_hours_respects_first_normal_and_last_hour_targets(self):
         self.assertAlmostEqual(
             report.get_average_productive_hours(110, 2, 0), 0.25
